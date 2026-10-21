@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { toast } from 'sonner'
+import { toast } from '@pdlc/ui/ui'
 import { RepositoryBrowserPage } from './index'
 
 const mocks = vi.hoisted(() => ({
@@ -35,7 +35,7 @@ vi.mock('@/api/hooks', () => ({
   useCreateRelease: mocks.createRelease,
   useDeleteRelease: mocks.deleteRelease,
 }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { success: vi.fn(), error: vi.fn() } }))()}))
 
 function result<T>(data: T, refetch = vi.fn()) {
   return { data, isLoading: false, error: null, refetch }

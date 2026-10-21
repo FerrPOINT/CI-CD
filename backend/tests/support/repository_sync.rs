@@ -3,6 +3,15 @@ use cicd_app::repository_sync::{self as app, Access, Crypto};
 use cicd_domain::repository_sync::{Direction, Provider, SaveConnection, Settings};
 use cicd_infra::{repository_sync::PgSyncStore, secrets::Secrets};
 
+#[path = "repository_sync_api_contract.rs"]
+mod api_contract;
+#[path = "repository_sync_ci_pinned_config.rs"]
+mod ci_pinned_config;
+
+#[path = "repository_sync_available.rs"]
+mod available;
+#[path = "repository_sync_list_scope.rs"]
+mod list_scope;
 #[path = "repository_sync_live.rs"]
 mod live;
 
@@ -72,6 +81,183 @@ async fn sync_protects_linked_project_defaults_without_explicit_entries() {
             }
         );
     }
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "Requires an owned Compose PostgreSQL killed/restarted by the QA coordinator"]
+async fn postgres_restart_preserves_unknown_intent_and_idempotency() {
+    use cicd_domain::repository_sync::RefResult;
+    let marker = std::path::PathBuf::from(
+        std::env::var("FORGE_SYNC_RESTART_MARKER").expect("explicit disposable QA coordinator"),
+    );
+    assert!(marker.starts_with("/evidence"));
+    assert!(!marker.with_extension("ready").exists());
+    assert!(!marker.with_extension("resumed").exists());
+    let pool = test_pool().await;
+    let repository = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+        .bind(repository)
+        .bind(format!("restart-{}", repository.simple()))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let store = PgSyncStore {
+        pool: pool.clone(),
+        worker_enabled: true,
+        interval_seconds: 300,
+    };
+    let access = Access {
+        actor_id: Uuid::new_v4(),
+        project_id: None,
+        admin: true,
+        machine: false,
+        writable: true,
+    };
+    let command = SaveConnection {
+        expected_version: 0,
+        settings: Settings {
+            provider: Provider::Github,
+            instance_url: "https://github.com".into(),
+            repository_path: "fixture/repository".into(),
+            direction: Direction::Both,
+            automatic: false,
+        },
+        token: Some("fictional-restart-credential".into()),
+    };
+    let operation = Uuid::new_v4();
+    let secrets = Secrets(Some([7; 32]));
+    app::save(
+        &store,
+        &secrets,
+        repository,
+        operation,
+        access,
+        command.clone(),
+        &[],
+    )
+    .await
+    .unwrap();
+    let run_key = Uuid::new_v4();
+    let run = store
+        .enqueue(repository, "manual", Some((run_key, access)))
+        .await
+        .unwrap();
+    let owner = Uuid::new_v4();
+    let (_, generation) = store.claim(run.id, owner).await.unwrap().unwrap();
+    let reference = RefResult {
+        ref_name: "refs/heads/main".into(),
+        direction: "push".into(),
+        old_sha: Some("a".repeat(40)),
+        new_sha: Some("b".repeat(40)),
+        state: "unknown".into(),
+        reason: Some("outcome_unknown".into()),
+        event_delivered: true,
+    };
+    store
+        .record_plan(run.id, std::slice::from_ref(&reference))
+        .await
+        .unwrap();
+    let mut slot = store.slot(1).await.unwrap().unwrap();
+    assert!(store.slot(1).await.unwrap().is_none());
+    let mut uncommitted = pool.begin().await.unwrap();
+    sqlx::query("UPDATE repository_sync_connections SET version=999 WHERE repository_id=$1")
+        .bind(repository)
+        .execute(&mut *uncommitted)
+        .await
+        .unwrap();
+    std::fs::write(marker.with_extension("ready"), serde_json::to_vec(&serde_json::json!({"repository_id":repository,"run_id":run.id,"generation":generation})).unwrap()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(180), async {
+        while !marker.with_extension("resumed").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("QA coordinator must restart only its disposable database");
+    assert!(
+        sqlx::query("SELECT 1").execute(&mut slot).await.is_err(),
+        "old advisory slot session must die"
+    );
+    assert!(
+        sqlx::query("SELECT 1")
+            .execute(&mut *uncommitted)
+            .await
+            .is_err(),
+        "old transaction must die"
+    );
+    drop(slot);
+    drop(uncommitted);
+    let connection = store.connection(repository, access).await.unwrap().unwrap();
+    assert_eq!(connection.version, 1, "uncommitted update must roll back");
+    assert!(connection.has_credential);
+    let restored = store.run(repository, run.id).await.unwrap();
+    assert_eq!(restored.connection_version, 1);
+    assert!(
+        restored.finished_at.is_none(),
+        "unknown Git outcome cannot become terminal on DB restart"
+    );
+    let (refs, total) = store.refs(run.id, 20, 0).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(
+        serde_json::to_value(&refs[0]).unwrap(),
+        serde_json::to_value(reference).unwrap()
+    );
+    assert_eq!(
+        store
+            .enqueue(repository, "manual", Some((run_key, access)))
+            .await
+            .unwrap()
+            .id,
+        run.id
+    );
+    assert_eq!(
+        app::save(
+            &store,
+            &secrets,
+            repository,
+            operation,
+            access,
+            command,
+            &[]
+        )
+        .await
+        .unwrap()
+        .version,
+        1
+    );
+    assert!(
+        store.slot(1).await.unwrap().is_some(),
+        "restart must release the advisory slot"
+    );
+    sqlx::query(
+        "UPDATE repository_sync_runs SET lease_until=now()-interval '1 second' WHERE id=$1",
+    )
+    .bind(run.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let new_owner = Uuid::new_v4();
+    let (recovered, new_generation) = store.claim(run.id, new_owner).await.unwrap().unwrap();
+    assert_eq!(recovered.state, "reconciling");
+    assert!(new_generation > generation);
+    assert!(store.heartbeat(run.id, owner, generation).await.is_err());
+    assert!(
+        store
+            .ref_state(
+                run.id,
+                "refs/heads/main",
+                "applied",
+                None,
+                owner,
+                generation
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.refs(run.id, 20, 0).await.unwrap().0[0].state,
+        "unknown"
+    );
     pool.close().await;
 }
 

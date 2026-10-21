@@ -1,0 +1,22 @@
+diff --git a/.base-revision b/.base-revision
+index 783f253..0293b79 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-a434ee2226ee0532367e86ea0196441444239139
++44e48f3a88a0985f97d5c0bd137572f52c7737ac
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 4c3d489..a74e5ff 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,10 @@
+ 
+ ## [Unreleased]
+ 
++- Общий Base snapshot обновлён до 44e48f3: SSR drawer учитывает summary
++  и фактическую видимость controls при Tab/Shift+Tab. React shell, API,
++  данные и принятый runtime не меняются.
++
+ - Общий Base snapshot обновлён до a434ee2 с исправлением SSR states.
+   Геометрия shell, доменные API и принятый runtime не меняются.
+ 

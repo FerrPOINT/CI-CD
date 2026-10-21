@@ -1,7 +1,8 @@
+import { chooseValue } from '../../test/choice'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { toast } from 'sonner'
+import { toast } from '@pdlc/ui/ui'
 import { ArtifactsPage } from './index'
 
 const mocks = vi.hoisted(() => ({
@@ -24,7 +25,7 @@ vi.mock('@/api/client', () => ({
   downloadArtifact: mocks.download,
   saveDownloadedArtifact: mocks.save,
 }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { success: vi.fn() } }))()}))
 
 const originalClipboard = navigator.clipboard
 
@@ -69,7 +70,7 @@ afterEach(() => {
 })
 
 describe('ArtifactsPage UX', () => {
-  it('shows searchable pages, status filters and touch-sized actions', () => {
+  it('shows searchable pages, status filters and touch-sized actions', async () => {
     setup(25)
     expect(screen.getAllByRole('listitem')).toHaveLength(20)
     expect(screen.getByRole('button', { name: 'artifacts.downloadFor report-01.txt' })).toHaveClass('h-10', 'w-10')
@@ -82,12 +83,14 @@ describe('ArtifactsPage UX', () => {
     expect(screen.queryByRole('navigation', { name: 'artifacts.pages' })).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByRole('searchbox', { name: 'artifacts.search' }), { target: { value: '' } })
-    fireEvent.change(screen.getByRole('combobox', { name: 'artifacts.status' }), { target: { value: 'expired' } })
+    await chooseValue(screen.getByRole('combobox', { name: 'artifacts.status' }), 'expired')
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
-    expect(screen.getAllByText('artifacts.expired')).toHaveLength(2)
+    expect(screen.getByRole('listitem')).toHaveTextContent('artifacts.expired')
+    expect(screen.getByRole('combobox', { name: 'artifacts.status' })).toHaveTextContent('artifacts.expired')
     expect(screen.queryByRole('button', { name: 'artifacts.downloadFor report-02.txt' })).not.toBeInTheDocument()
-    fireEvent.change(screen.getByRole('combobox', { name: 'artifacts.status' }), { target: { value: 'purged' } })
-    expect(screen.getAllByText('artifacts.purged')).toHaveLength(2)
+    await chooseValue(screen.getByRole('combobox', { name: 'artifacts.status' }), 'purged')
+    expect(screen.getByRole('listitem')).toHaveTextContent('artifacts.purged')
+    expect(screen.getByRole('combobox', { name: 'artifacts.status' })).toHaveTextContent('artifacts.purged')
     expect(screen.queryByRole('button', { name: 'artifacts.downloadFor report-03.txt' })).not.toBeInTheDocument()
   })
 

@@ -11,6 +11,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import {
+  Select,
   Button,
   Input,
   Label,
@@ -25,8 +26,7 @@ import {
   Tabs,
   TabsContent,
   TabsList,
-  TabsTrigger,
-} from '@pdlc/ui/ui'
+  TabsTrigger, Radio } from '@pdlc/ui/ui'
 import { withNamespaceLocation } from '@pdlc/ui/lib'
 import { api, ApiError } from '@/api/client'
 import {
@@ -40,8 +40,6 @@ import type { components } from '@/api/schema'
 import { useNamespaceRef } from '@/widgets/namespace-context'
 import { useWorkspace } from '@/api/workspaces'
 
-const inputClass =
-  'min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-2 focus-visible:outline-accent'
 const modes = [
   {
     value: 'disabled',
@@ -101,12 +99,16 @@ const diagnostics: Record<string, string> = {
   git_tls_failed: 'Не удалось проверить TLS-сертификат провайдера.',
   git_network_failed: 'Провайдер недоступен.',
   git_outcome_unknown: 'Результат Git-операции уточняется.',
+  namespace_admission_lost:
+    'Не удалось подтвердить доступ к репозиторию. Результат синхронизации уточняется.',
   sync_version_conflict: 'Сохранённая версия настроек изменилась.',
   sync_running:
     'Настройки нельзя менять во время запуска; доступно отключение.',
 }
 const message = (error: unknown) =>
-  error instanceof Error
+  error instanceof ApiError && error.kind === 'network'
+    ? 'Не удалось связаться с сервером.'
+    : error instanceof Error
     ? (diagnostics[error.message] ?? error.message)
     : 'Не удалось выполнить действие'
 const offsetOf = (value: string | null) => {
@@ -219,19 +221,10 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
               <Label htmlFor="new-repository">
                 Доступный hosted-репозиторий без подключения
               </Label>
-              <select
-                id="new-repository"
-                className={inputClass}
-                value={selection}
-                onChange={(event) => setSelection(event.target.value)}
-              >
-                <option value="">Выберите репозиторий</option>
-                {available.data.items.map((repo) => (
-                  <option key={repo.id} value={repo.id}>
-                    {repo.public_name}
-                  </option>
-                ))}
-              </select>
+              <Select id="new-repository"
+className="w-full"
+value={selection}
+onValueChange={(nextValue) => setSelection(nextValue)} options={[{ value: "", label: "Выберите репозиторий" }, ...(available.data.items.map((repo) => ({ value: String(repo.id), label: String(repo.public_name) })) ?? [])]} />
               {selection &&
                 available.data.items.some((repo) => repo.id === selection) && (
                   <Button asChild>
@@ -271,44 +264,27 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
         </div>
         <div>
           <Label htmlFor="provider-filter">Провайдер</Label>
-          <select
-            id="provider-filter"
-            className={inputClass}
-            value={params.get('provider') ?? ''}
-            onChange={(event) => update('provider', event.target.value)}
-          >
-            <option value="">Все провайдеры</option>
-            <option value="github">GitHub.com</option>
-            <option value="gitlab">Свой GitLab</option>
-          </select>
+          <Select id="provider-filter"
+className="w-full"
+value={params.get('provider') ?? ''}
+onValueChange={(nextValue) => update('provider', nextValue)} options={[{ value: "", label: "Все провайдеры" }, { value: "github", label: "GitHub.com" }, { value: "gitlab", label: "Свой GitLab" }]} />
         </div>
         <div>
           <Label htmlFor="state-filter">Состояние</Label>
-          <select
-            id="state-filter"
-            className={inputClass}
-            value={params.get('state') ?? ''}
-            onChange={(event) => update('state', event.target.value)}
-          >
-            <option value="">Все подключения</option>
-            <option value="enabled">Включённые</option>
-            <option value="disabled">Отключённые</option>
-            {[
-              'queued',
-              'running',
-              'stopping',
-              'reconciling',
-              'success',
-              'partial',
-              'conflict',
-              'failed',
-              'canceled',
-            ].map((value) => (
-              <option key={value} value={value}>
-                {states[value]}
-              </option>
-            ))}
-          </select>
+          <Select id="state-filter"
+className="w-full"
+value={params.get('state') ?? ''}
+onValueChange={(nextValue) => update('state', nextValue)} options={[{ value: "", label: "Все подключения" }, { value: "enabled", label: "Включённые" }, { value: "disabled", label: "Отключённые" }, ...([
+        'queued',
+        'running',
+        'stopping',
+        'reconciling',
+        'success',
+        'partial',
+        'conflict',
+        'failed',
+        'canceled'
+    ].map((value) => ({ value: String(value), label: String(states[value]) })) ?? [])]} />
         </div>
       </div>
       {list.isError && (
@@ -495,6 +471,11 @@ export function RepositorySyncEditor({
   const [runUncertain, setRunUncertain] = useState(false)
   const pending = useRef<{ key: string; payload: SaveSync } | null>(null)
   const runKey = useRef<string | null>(null)
+  const activeTab = params.get('tab') === 'history' ? 'history' : 'connection'
+  const requestedTab = useRef(activeTab)
+  useEffect(() => {
+    requestedTab.current = activeTab
+  }, [activeTab])
   const writable = connection.writable && !busy && !uncertain
   const endpointChanged =
     draft.provider !== connection.settings.provider ||
@@ -588,6 +569,9 @@ export function RepositorySyncEditor({
     }
   }
   function tab(value: string) {
+    // Pointer focus and mousedown can both activate Radix before the URL commits.
+    if (requestedTab.current === value) return
+    requestedTab.current = value
     const next = new URLSearchParams(params)
     next.set('tab', value)
     setParams(next)
@@ -673,7 +657,7 @@ export function RepositorySyncEditor({
       )}
       {!connection.writable && <p role="status">Доступно только чтение.</p>}
       <Tabs
-        value={params.get('tab') === 'history' ? 'history' : 'connection'}
+        value={activeTab}
         onValueChange={tab}
       >
         <TabsList>
@@ -688,23 +672,16 @@ export function RepositorySyncEditor({
             >
               <div className="space-y-1">
                 <Label htmlFor="provider">Провайдер</Label>
-                <select
-                  id="provider"
-                  className={inputClass}
-                  value={draft.provider}
-                  onChange={(event) =>
-                    patch({
-                      provider: event.target.value as SyncSettings['provider'],
+                <Select id="provider"
+className="w-full"
+value={draft.provider}
+onValueChange={(nextValue) => patch({
+                      provider: nextValue as SyncSettings['provider'],
                       instance_url:
-                        event.target.value === 'github'
+                        nextValue === 'github'
                           ? 'https://github.com'
                           : '',
-                    })
-                  }
-                >
-                  <option value="github">GitHub.com</option>
-                  <option value="gitlab">Свой GitLab</option>
-                </select>
+                    })} options={[{ value: "github", label: "GitHub.com" }, { value: "gitlab", label: "Свой GitLab" }]} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="instance">
@@ -778,16 +755,15 @@ export function RepositorySyncEditor({
                     key={mode.value}
                     className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${draft.direction === mode.value ? 'border-accent bg-surface' : 'border-border'}`}
                   >
-                    <input
-                      className="mt-1 shrink-0 accent-accent"
-                      type="radio"
+                    <Radio
+                      className="mt-1 shrink-0"
                       name="direction"
                       disabled={
                         !!connection.active_run && mode.value !== 'disabled'
                       }
                       value={mode.value}
                       checked={draft.direction === mode.value}
-                      onChange={() => patch({ direction: mode.value })}
+                      onCheckedChange={() => patch({ direction: mode.value })}
                     />
                     <span className="min-w-0">
                       <strong className="flex items-center gap-2 text-sm">
@@ -804,17 +780,16 @@ export function RepositorySyncEditor({
             </fieldset>
             <fieldset disabled={!writable || !!connection.active_run}>
               <legend className="mb-2 font-medium">Способ запуска</legend>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {[false, true].map((automatic) => (
                   <label
                     key={String(automatic)}
                     className={`flex cursor-pointer gap-3 rounded-md border p-3 ${draft.automatic === automatic ? 'border-accent' : 'border-border'}`}
                   >
-                    <input
-                      type="radio"
+                    <Radio
                       name="automatic"
                       checked={draft.automatic === automatic}
-                      onChange={() => patch({ automatic })}
+                      onCheckedChange={() => patch({ automatic })}
                     />
                     <span>
                       <strong className="block text-sm">
@@ -993,12 +968,12 @@ function SyncHistory({
               {runs.data.items.map((run: SyncRun) => (
                 <TableRow key={run.id}>
                   <TableCell>
-                    <button
+                    <Button variant="ghost"
                       className="min-h-10 text-left text-accent"
                       onClick={() => update('run_id', run.id)}
                     >
                       {time(run.created_at)}
-                    </button>
+                    </Button>
                   </TableCell>
                   <TableCell>{sources[run.source] ?? run.source}</TableCell>
                   <TableCell>

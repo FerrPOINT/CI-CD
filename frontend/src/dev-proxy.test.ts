@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// This suite checks proxy configuration. The real compiler plugins are covered
+// by the production build and need not initialize for each environment case.
+vi.mock('@vitejs/plugin-react', () => ({ default: () => ({ name: 'fixture-react-plugin' }) }))
+vi.mock('@tailwindcss/vite', () => ({ default: () => ({ name: 'fixture-tailwind-plugin' }) }))
+
 beforeEach(() => vi.resetModules())
 afterEach(() => vi.unstubAllEnvs())
 

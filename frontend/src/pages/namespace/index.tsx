@@ -1,18 +1,10 @@
-import { LoadingState } from '@pdlc/ui/ui'
+import {LoadingState, NamespaceLink as Link, Button, Input, Label, Select, Dialog, DialogContent, DialogTitle} from '@pdlc/ui/ui'
 import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
-import { NamespaceLink as Link } from '@pdlc/ui/ui'
+
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  Button,
-  Input,
-  Label,
-  Select,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from '@pdlc/ui/ui'
+
 import { useSessionCommand, withNamespaceLocation } from '@pdlc/ui/lib'
 import { api } from '@/api/client'
 import { catalogErrorMessage } from '@/api/catalog-errors'
@@ -287,18 +279,10 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
             </DialogTitle>
             <div className="space-y-2">
               <Label htmlFor="repository-action">Действие</Label>
-              <Select
-                id="repository-action"
-                value={effectiveKind}
-                disabled={busy || !!journal.command}
-                onChange={(e) => setKind(e.target.value as typeof kind)}
-              >
-                <option value="hosted">Создать Git в Forge</option>
-                <option value="external">Подключить внешний Git</option>
-                <option value="existing">
-                  Подключить существующий репозиторий Forge
-                </option>
-              </Select>
+              <Select id="repository-action"
+value={effectiveKind}
+disabled={busy || !!journal.command}
+onValueChange={(nextValue) => setKind(nextValue as typeof kind)} options={[{ value: "hosted", label: "Создать Git в Forge" }, { value: "external", label: "Подключить внешний Git" }, { value: "existing", label: "Подключить существующий репозиторий Forge" }]} />
             </div>
             {effectiveKind === 'existing' ? (
               <AttachRepository
@@ -335,15 +319,10 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
                 )}
                 <div className="space-y-2">
                   <Label htmlFor="visibility">Видимость Git</Label>
-                  <Select
-                    id="visibility"
-                    name="visibility"
-                    defaultValue={journal.command?.visibility ?? 'private'}
-                    disabled={busy || !!journal.command}
-                  >
-                    <option value="private">По авторизации</option>
-                    <option value="public">Публичное чтение</option>
-                  </Select>
+                  <Select id="visibility"
+name="visibility"
+defaultValue={journal.command?.visibility ?? 'private'}
+disabled={busy || !!journal.command} options={[{ value: "private", label: "По авторизации" }, { value: "public", label: "Публичное чтение" }]} />
                 </div>
                 {error && (
                   <p role="alert" className="text-danger">

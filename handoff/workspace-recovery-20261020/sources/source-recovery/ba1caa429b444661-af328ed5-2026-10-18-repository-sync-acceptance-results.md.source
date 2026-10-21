@@ -1,0 +1,82 @@
+# Результат квалификации синхронизации, 2026-10-18
+
+Завершены **55 Rust live-прогонов на настоящих провайдерах:27 GitHub и28 GitLab**. Отдельно пройдены два smoke извлечённого release-архива по6 стадий, один physical PostgreSQL operation-replay opt-in и два реальных browser manual runs. Это не увеличивает число108 подкейсов и не означает, что каждый подкейс пройден у обоих providers.
+
+Текущая браузерная цепочка Save → check → Run → history → независимые Git/DB refs **PASS на обоих провайдерах**. Cleanup собственных continuation/UI ресурсов завершён. Итоговый exact-credential audit после сохранения этого отчёта **пока ожидается**; он не объявляется PASS заранее. Четыре внешних/исторических ограничения перечислены ниже. Кандидат этой задачей в принятый runtime не устанавливался.
+
+## Проверенные исходники и артефакты
+
+- Production backend: `6be6622a7d8f5f19ae7cf807b2b2c1948c5c528e`.
+- Test-only snapshots: `105b449e02bd0f6a93198ff549feb0f315e89fba` и `1d7d45d61d7d1ecf930918d795115d6055ad7cf5`. Production paths совпадают с6be; добавлены тесты и документация.
+- Retained backend archive SHA256: `f5f9e0ed7a3396a51e42f9444a93da6a789951f27df085d592187b9daf34b3f0`; реально исполненный ELF: `0437b356f3d4539df11200bf632779305718b13cf47ee6194377a447001e64de`.
+- Frontend gates snapshot: `3a09f7d08e2760f13f29e7419e0233df7707546d`; archive SHA256 `6ea51bfb68869c05127475fd21b579a14b9027e5c301b1102258c4577630e337`. Все34 production assets байт-идентичны ранее проверенному EAD artifact. В текущем browser-проходе проверена идентичность реально отданных файлов.
+- Base SDK `2ad0834d06d3aa703fa1791a932bfc76650c8e42`, UI `e0759e070326c905f365182d0107f8c87a2e67f6`. OpenAPI compatibility относительно main `97214e5893e91148bbd16c6a72e547950904e41e`.
+
+[Production identity](../../../../evidence/continuation-20261018/current-production-identity.json), [test binary identity](../../../../evidence/continuation-20261018/new-tests-source.json), [served frontend identity](../../../../evidence/continuation-20261018/release-ui.served-identity.json). Evidence хранится вне Git; ссылки рассчитаны на текущий review checkout.
+
+## Завершённые проверки
+
+| Уровень | Результат | Граница |
+|---|---|---|
+| Backend6be | fmt, Clippy,447 workspace tests, release build — PASS | Rust1.88.0, закреплённый SDK |
+| PostgreSQL6be |121 normal +8 opt-in — PASS | Неисполненные ignored definitions не включены в число PASS |
+| Native Git faults | ENOSPC, system-CA/TLS/redirects, bounded output, inherited pipes, scratch/foreign symlink safety — PASS | Настоящий GitSession в собственных fixtures |
+| Frontend |252 tests,44 files,16 sync tests; lint/typecheck/build/OpenAPI — PASS | Node22.20.0/pnpm10.28.1, frozen install |
+| Основная предыдущая фаза |53 real-provider Rust invocations:26 GitHub/27 GitLab — PASS |44 основных +6 дополнительных +GitLab natural expiry +2 physicalPG/liveGit; отдельный immutable inventory |
+| Новое продолжение |2 Rust invocations — PASS:GitLab minimal scopes/revoked и GitHub workflow transport | Итого55:27 GitHub/28 GitLab; каждый selected test exit0 и ровно1 passed |
+| Извлечённый release smoke |2 provider fixtures ×6 стадий — PASS | Реальный retained ELF; worker off/start503, API-only queue, off сохраняет queued, on доводит SHA, off сохраняет history, on no-op без потери receipts/snapshots; CI0/provider baseline неизменён |
+| Current forbidden origin HTTP |400/no-save в release smoke обоих fixtures — PASS | Отклонение до внешнего Git/сети; не только parser unit |
+| Current physicalPG operation replay | Exact ignored selector — PASS | Настоящий SIGKILL/healthy restart того же disposable PG; rollback, смерть старых sessions, same save/run operationID replay, unknown intent и generation fence |
+| Current browser release chain | Save200/v2 → check200 → Run202 → success/manual/v2/history — PASS обоих | Настоящая CentralAuth SSO без auth injection; независимые local Git/DB receipt SHA, HEAD и baseline readback |
+| Исторический browser EAD | SSO/list/unsaved Both check/late refs pagination — PASS в своём scope | Через прежний accepted API; не выдаётся за current6be backend. Текущая browser chain указана отдельной строкой выше |
+
+Предыдущие53 invocations сохранены в [историческом inventory](../../../../evidence/fault-20261018/accepted-live-invocations.json). Два новых Rust cases не смешиваются с двумя release smoke, двумя browser runs и отдельным PostgreSQL replay. Матрица остаётся108 подкейсов с обозначенными scopes.
+
+В начальном полном backend recheck был CLI download deadline failure. Код и threshold не менялись: focused rerun и последующий полный6be recheck прошли. Нулевой exit без исполненного теста, fixture failure до эффекта и похожий сценарий не считаются PASS.
+
+## Исправленные реальные дефекты и восстановление
+
+Потеря namespace admission connection могла оставить Git-процесс с уже потерянным допуском. Worker теперь проверяет именно исходное admission connection, прекращает и дожидается своего Git-процесса, сохраняя reconciling для независимого наблюдения. Проверены потеря допуска до push и после его принятия у обоих providers; принятый push не объявляется ложно отменённым. Диагностика отображается по-русски.
+
+Потеря PostgreSQL slot connection могла допустить третий Git-процесс, пока прежний child оставался жив. Добавлен общий capacity guard на файловых блокировках Git-хранилища, наследуемый дочерними процессами. После исправления оба провайдера удерживают фактический peak2 и продвигают ожидающий третий repository.
+
+Настоящие RED probes отделены от harness failures: [namespace RED](../../../../evidence/fault-20261018/live-github-namespace-loss-probe.json), [capacity RED](../../../../evidence/fault-20261018/live-github-slot-loss-probe2.json), [namespace final](../../../../evidence/fault-20261018/live-github-namespace-loss-final1.json), [capacity final](../../../../evidence/fault-20261018/live-github-slot-loss-final1.json). Первоначальная namespace-loss-red попытка с503 до fault не считается product RED. Аналогичные GitLab proofs сохранены рядом.
+
+Также пройдены отдельные физические границы preclaim/afterclaim/preplan, final ref receipt, pipeline commit до event_delivered, archive/admission/fetch/push/unknown recovery, heartbeat loss и полный PostgreSQL restart при живом Git до эффекта/после принятого push. SHA, generation, effect counters и pipeline UUID подтверждены независимо; synthetic journal не подменяет эти опыты.
+
+Оба провайдера прошли native300s deadline с последующим disable: command-only интервалы GitHub301.91s/GitLab300.85s, один принятый effect и CI0. Manual mode проверен реальными receive-pack/PR merge и более300s без automatic run, затем успешным manual run. Tree-object tags переданы в обе стороны с terminal ci_non_commit_tag и без pipeline.
+
+## Новые точные provider и browser proofs
+
+GitLab minimal read_repository позволяет pull, но реальный push тем же credential отклонён; write_repository разрешает push без api scope. После revoke check503. Собственные токены187/188 имеют readback404; значения не сохранялись. [Test](../../../../evidence/continuation-20261018/live-gitlab-minimal-scopes-final1.json), [cleanup](../../../../evidence/continuation-20261018/gitlab-owned-scope-token-cleanup.json).
+
+GitLab natural expiry доказан отдельно: тот же deploy token читает Git с200 до expires_at и получает401 после. Revoked=false; API expired=false сохранён буквально, не утверждается true. Provenance связывает тот же приватный input с Forge test: exact access-denied, failed/noincoming/noCI, rotation recovery и сохранённая история. Собственный deploy token7 удалён204/readback404. Этот expiry PASS относится только кGitLab.
+
+GitHub workflow проходит через настоящий Forgeworker: Push dispatch-only commit → provider SHA/raw exact bytes; внешний expected-old FF меняет workflow → Forgeworker Pull exact bytes. Actions API branch filter возвращает200 и0 runs до/после; dispatch не вызывался. [Workflow test](../../../../evidence/continuation-20261018/live-github-workflow-final1.json).
+
+Current browser run IDs: GitHub `cc41784f-36c2-4e81-a291-06d0e1d897eb`, GitLab `cbe5acd3-f774-4870-a761-60a8060d5892`. Независимый readback подтвердил4/1 local refs и точные receipt SHA, сохранённый HEAD и неизменённые provider baselines. После проверки соединения отключены v3; история относится кversion2. Этот browser опыт — manual/pull; automatic, прочие направления и CAS имеют собственные tests и не объявляются новыми browser действиями.
+
+[Browser actions](../../../../evidence/continuation-20261018/release-ui-browser-proof.json), [Git/DB oracle](../../../../evidence/continuation-20261018/release-ui.result.json), [GitHub history](../../../../evidence/continuation-20261018/release-ui-github-history.jpg), [GitLab history](../../../../evidence/continuation-20261018/release-ui-gitlab-history.jpg).
+
+## Четыре ограничения квалификации
+
+1. **GitHub private branch protection — BLOCKED:**403 при применении правила; реальный push rejection этим правилом не проверен. Защита Forge и GitLab проверены.
+2. **GitHub read-only positive read → denied push одним credential — BLOCKED:** предоставленный credential получает403 уже на Git read. Альтернативный repo-bound Actions fixture не начал первую step из-за account payment/spending limitation. Токен не был выдан. Это один oracle, повторённый вG-09/4,S-03/4,S-04/3.
+3. **GitHub natural expiry — UNQUALIFIED:** job token не был выдан и не истёк; неверный credential не заменяет natural expiry. GitLab expiry не подменяет GitHub.
+4. **True-empty external на текущем кандидате — historical-only BFE:** исходные сохранённые repositories непустые. Два final1 invocations остановлены fixture guard до эффекта, не являются product RED и не засчитываются PASS. Новые repositories и изменения default/main не выполнялись. Current initial pull в пустой Forge с HEAD preservation доказан отдельно и не заменяет пустой внешний repository.
+
+104 scoped PASS/4 blocked из108 отражают конкретные проверенные scopes; это не100% line/branch coverage и не утверждение, что все per-provider facets выполнены. Вышеуказанные ограничения не переименовываются в дефекты Forge или PASS.
+
+## Очистка, аудит и поставка
+
+В предыдущей фазе удалены только собственные52 GitHub/53 GitLab refs; baseline4 GitHub/1 GitLab refs и SHA восстановлены точно. В продолжении удалены ещё свой workflow ref GitHub и два scope refs GitLab; baseline снова точно восстановлен. [GitHub cleanup](../../../../evidence/continuation-20261018/cleanup-github-apply.json), [GitLab cleanup](../../../../evidence/continuation-20261018/cleanup-gitlab-apply.json).
+
+Continuation backend helper завершён exit0/cleaned:0 контейнеров,сетей,volumes,exports; external cargo cache сохранён. Current UI helper также оставил0 собственных ресурсов; свои UI DB/scratch удалены, credential findings в functional smoke пусты. Начальное ошибочное Docker format.Name наблюдение не используется как PASS: итоговые corrected .Names readbacks действительно пустые. [Backend cleanup](../../../../evidence/continuation-20261018/backend-helper-cleanup.json), [UI cleanup](../../../../evidence/continuation-20261018/release-ui.frontend-cleanup.json).
+
+Текущий глобальный Docker audit **FAIL/exit1**:8 чужих нарушений на3 endpoints, у собственных проектов0. Чужие ресурсы не изменялись. Предыдущий audit с6 чужими нарушениями остаётся историческим; глобальный PASS не заявляется. [Current scope](../../../../evidence/continuation-20261018/docker-groups-audit-scope.json).
+
+Предыдущий exact-credential scan:1804 files/15957 Git objects,6 значений×4 variants,0 matches; его scope не включает будущие continuation outputs. Current first-party scanner прошёл638 text files без изменения scanner/allowlist: [scan](../../../../evidence/continuation-20261018/first-party-secret-scan.json). **Итоговый exact-credential audit после этого отчёта пока pending:** [ожидаемый audit](../../../../evidence/continuation-20261018/credential-audit-final-continuation.json). Root добавит audit result/seal с точными hash; этот текст не объявляет его выполненным заранее.
+
+Новые immutable [matrix](../../../../evidence/continuation-20261018/requirements-matrix-continuation-seal-ready.json) и [manifest](../../../../evidence/continuation-20261018/continuation-manifest-seal-ready.json) сохраняют старые manifests и ограничения. Release smoke: [GitHub](../../../../evidence/continuation-20261018/release-artifact-github-7f9b103eeb114db2968fca19fe18ac0d.json), [GitLab](../../../../evidence/continuation-20261018/release-artifact-gitlab-7b19e91b179040e183775d4c558f21d6.json). [Physical PG operation replay](../../../../evidence/continuation-20261018/pg-operation-replay-5a5cfa8d8dae4ae8bb1b3395612d868c.json).
+
+Установка в принятый runtime — отдельный этап. Эта задача кандидат не устанавливала. Наблюдаемый backend84eb277758ae; weba0094aebc048 отличается от прежнего5915f82098a0, автор изменения неизвестен. Квалификация опирается на зафиксированные source/component identities; наблюдение runtime не выдаётся за установку или приёмку кандидата.

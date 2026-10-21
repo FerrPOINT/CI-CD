@@ -1,7 +1,8 @@
+import { chooseValue } from '../../test/choice'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { toast } from 'sonner'
+import { toast } from '@pdlc/ui/ui'
 import { PullRequestsPage } from './index'
 import { PullRequestDetailPage } from '@/pages/pull-request-detail'
 import type { PullRequest } from '@/api/types'
@@ -36,7 +37,7 @@ vi.mock('@/api/hooks', () => ({
   usePullRequestAction: () => ({ mutate: mocks.action, isPending: false }),
 }))
 vi.mock('@/api/auth', () => ({ currentSession: () => ({ username: 'reviewer' }) }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { success: vi.fn(), error: vi.fn() } }))()}))
 
 function pullRequest(number: number, status: PullRequest['status'] = 'open'): PullRequest {
   return {
@@ -130,9 +131,9 @@ describe('pull request workflow', () => {
     expect(screen.getByRole('status')).toHaveTextContent('pulls.noMatches')
   })
 
-  it('requests a server status filter and resets pagination', () => {
+  it('requests a server status filter and resets pagination', async () => {
     setup([...Array.from({ length: 20 }, (_, index) => pullRequest(index + 1)), pullRequest(21, 'closed')], '/repositories/platform/pulls?page=2')
-    fireEvent.change(screen.getByLabelText('pulls.statusFilter'), { target: { value: 'closed' } })
+    await chooseValue(screen.getByLabelText('pulls.statusFilter'), 'closed')
     expect(screen.getByRole('link', { name: '#21 Change 21' })).toBeInTheDocument()
     expect(screen.getByTestId('location')).toHaveTextContent('?status=closed')
     expect(mocks.list).toHaveBeenLastCalledWith('platform', expect.objectContaining({ offset: 0, status: 'closed' }))
@@ -238,7 +239,8 @@ describe('pull request workflow', () => {
 
   it('distinguishes a detail load error from a missing pull request and retries', () => {
     setup([], '/repositories/platform/pulls/1', { detail: new Error('Unavailable') })
-    expect(screen.getByRole('alert')).toHaveTextContent('Unavailable')
+    expect(screen.getByRole('alert')).toHaveTextContent('baseUi.readError')
+    expect(screen.queryByText('Unavailable')).not.toBeInTheDocument()
     expect(screen.queryByText('pulls.notFound')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
     expect(mocks.refetchDetail).toHaveBeenCalled()

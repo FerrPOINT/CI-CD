@@ -5480,6 +5480,22 @@ paths:
           description: ''
         '404':
           description: ''
+  /api/v1/space-admission:
+    get:
+      tags:
+      - spaces
+      operationId: human_window
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanAdmissionWindowV1'
+        '403':
+          description: ''
+        '503':
+          description: ''
   /api/v1/users:
     get:
       tags:
@@ -7603,6 +7619,29 @@ components:
           - string
           - 'null'
           format: uuid
+    HumanAdmissionWindowV1:
+      type: object
+      description: A display descriptor, never a reusable repository/Git capability.
+      required:
+      - schema_version
+      - enforced
+      properties:
+        enforced:
+          type: boolean
+        remaining_millis:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+        schema_version:
+          type: integer
+          format: int32
+          minimum: 0
+        scope_revision:
+          type:
+          - string
+          - 'null'
     IssueServiceAccountToken:
       type: object
       required:

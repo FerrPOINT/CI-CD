@@ -1,0 +1,81 @@
+diff --cc .github/workflows/ci.yml
+index 80d2b4c,b692264..d79dbec
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@@ -81,14 -74,24 +81,24 @@@ jobs
+        - name: fmt
+          run: cargo fmt --all -- --check
+        - name: clippy
+ -        run: cargo clippy --workspace --all-targets -- -D warnings
+ +        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        - name: unit tests
+ -        run: cargo test --workspace
+ +        run: cargo test --locked --workspace
+        - name: integration tests (real PostgreSQL)
+ -        run: cargo test --features integration --test integration_db -- --test-threads=1
+ +        run: cargo test --locked --features integration --test integration_db -- --test-threads=1
++       - name: Create isolated CLI test database
++         env:
++           PGPASSWORD: forge_test_owner
++         run: createdb -h 127.0.0.1 -p 5432 -U forge_owner forge_test_cli
++       - name: CLI tests (real PostgreSQL)
++         env:
++           CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cli
++         run: cargo test --locked -p cicd-cli --features integration --test cli_real_api -- --test-threads=1
++       - name: CLI integration clippy
++         run: cargo clippy --locked -p cicd-cli --all-targets --features integration -- -D warnings
+        - name: openapi drift gate
+          run: |
+ -          cargo run --bin openapi-dump -- /tmp/openapi.yaml
+ +          cargo run --locked --bin openapi-dump -- /tmp/openapi.yaml
+            diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
+  
+    frontend:
+diff --cc CHANGELOG.md
+index 5eb3474,9c86a1a..81b8807
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@@ -9,16 -9,18 +9,28 @@@
+  
+  ## [Unreleased]
+  
+ +- Повторный явный вход разрешён после отменённого перехода Central Auth;
+ +  автоматический guard не отменяет logout. Отмена перехода не показывает
+ +  ложную ошибку доступности Auth, а ошибка сервера остаётся видимой.
+ +- Локальный Vitest ограничен четырьмя workers, как у остальных потребителей;
+ +  timeout и сценарии тестов не ослаблены.
+ +
+ +- Central logout сохраняет in-memory API session до навигации в Central Auth:
+ +  незавершённые запросы не теряют Bearer token между кликом и переходом.
+ +  Отзыв браузерной сессии остаётся ответственностью Central Auth.
+ +
++ - `pipeline wait` учитывает `--timeout-seconds` / `CICD_TIMEOUT_SECONDS` при опросе, включая чтение тела: HTTP timeout возвращает `TRANSPORT_ERROR`, истечение ожидания — `WAIT_TIMEOUT`; pipeline не отменяется.
++ 
++ - CLI возвращает network exit code `3` и `TRANSPORT_ERROR` при обрыве или таймауте чтения artifact download; существующий файл сохраняется при неудачном скачивании.
++ 
++ - Справка CLI скрывает значения token env variables, сохраняя имена переменных.
++ 
++ - CLI поддерживает управление repositories/PR, pipeline cancel/retry/wait и variables, manual job
++   play/retry, страницы логов выбранного attempt, secret file/stdin и deployment approval/rollback.
++   Добавлены JSON errors/empty success, deadline ожидания и download без перезаписи. CLI integration
++   suite получает отдельную PostgreSQL БД; merge PR работает для repository без CI-проекта.
++   Диагностика скрывает исходные и обрезанные credentials, включая newline в secret stdin.
++ 
+  - CI/CD использует полноширинный общий PlatformHeader из Base: бренд и сервисы
+    находятся слева, тема и аккаунт справа; sidebar содержит только навигацию.
+    Полная identity и центральный выход доступны в меню аккаунта. Mobile drawer
+diff --cc docs/API.md
+index 85a2a11,7872024..c26e081
+--- a/docs/API.md
++++ b/docs/API.md
+@@@ -1586,6 -1586,6 +1586,10 @@@ Git Smart HTTP допускает unaut
+  - `backend/domain/src/lib.rs` — правила переходов статусов.
+  - `docs/TESTING.md` — curl-проверки.
+  
+ +## Общая база
+ +
+ +Подключение версий, границы контрактов и проверки описаны в [BASE_INTEGRATION](BASE_INTEGRATION.md).
+++
++ ## CLI-пакет: merge репозитория без CI-проекта
++ 
++ PR merge для репозитория, ещё не связанного с CI-проектом, использует unprotected policy. Пустой результат агрегирования protected branches преобразуется в `false`, исключая ошибку декодирования SQL NULL/HTTP 500. Для связанного protected target прежняя проверка успешного pipeline на source head сохраняется. Регрессионная проверка: `cli_real_api` repository/PR fixture до создания CI-проекта.

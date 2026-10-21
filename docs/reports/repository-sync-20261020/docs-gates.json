@@ -1,0 +1,11 @@
+{
+  "name": "docs-canonical-gates",
+  "service": "rust",
+  "tree": "5d97e36ad543c2ec078b1e0eb418bac60b825351",
+  "project": "sdlc-qa-sync-merge-dca3d1583b",
+  "base": "2ad0834d06d3aa703fa1791a932bfc76650c8e42",
+  "exit_code": 0,
+  "seconds": 149.0,
+  "script_sha256": "1b22ced70e53f1f2d6183429f0244905baba2a394cf1035209c0c527c4cdbef0",
+  "log_sha256": "1722fcd7390dbcc6181496f12fd15d82147b2fffa883d67c84a99900e40aa7f9"
+}

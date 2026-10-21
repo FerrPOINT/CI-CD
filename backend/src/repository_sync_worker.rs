@@ -96,6 +96,18 @@ async fn all_refs(store: &PgSyncStore, run: Uuid) -> Result<Vec<RefResult>, Erro
     }
     Ok(result)
 }
+
+async fn admission_healthy(lease: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> bool {
+    matches!(
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            sqlx::query("SELECT 1").execute(&mut **lease),
+        )
+        .await,
+        Ok(Ok(_))
+    )
+}
+
 async fn execute(
     store: &PgSyncStore,
     admission: &PgPool,
@@ -106,7 +118,7 @@ async fn execute(
 ) -> Result<(), Error> {
     let storage = crate::git_host::validate_repo_name(storage).map_err(Error::Invalid)?;
     // Namespace admission always precedes the OS mutation guard, as in receive-pack/merge.
-    let lease =
+    let mut lease =
         match crate::repository_catalog::catalog_write_lease_on_pool(admission, repository).await {
             Ok(lease) => Some(lease),
             Err(error) if error.status == StatusCode::CONFLICT => None,
@@ -117,7 +129,13 @@ async fn execute(
         // only already-started work needs read-only outcome reconciliation.
         return Ok(());
     }
-    let guard = Arc::new(MutationGuard::acquire(&config.git.root, repository).await?);
+    let mut guard = MutationGuard::acquire(&config.git.root, repository).await?;
+    // PostgreSQL slot loss must not release real Git capacity while the old
+    // process is alive. The shared-storage slot is inherited with this guard.
+    if !guard.try_reserve_sync_capacity(&config.git.root, config.git_sync.concurrency)? {
+        return Ok(());
+    }
+    let guard = Arc::new(guard);
     let Some(_slot) = store.slot(config.git_sync.concurrency).await? else {
         return Ok(());
     };
@@ -141,19 +159,71 @@ async fn execute(
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     }));
-    let outcome = execute_claimed(
-        store,
-        config,
-        &run,
-        owner,
-        generation,
-        &storage,
-        guard,
-        canceled,
-        lease.is_some(),
-    )
-    .await;
-    match outcome {
+    let namespace_writable = lease.is_some();
+    let initially_healthy = match lease.as_mut() {
+        Some(lease) => admission_healthy(lease).await,
+        None => true,
+    };
+    let (outcome, mut admission_lost) = if initially_healthy {
+        let action = execute_claimed(
+            store,
+            config,
+            &run,
+            owner,
+            generation,
+            &storage,
+            guard.clone(),
+            canceled.clone(),
+            namespace_writable,
+        );
+        tokio::pin!(action);
+        if let Some(lease) = lease.as_mut() {
+            // The store heartbeat uses a different connection and cannot prove
+            // that this transaction still holds namespace admission. Borrow the
+            // actual lease; never replace it with a newly acquired connection.
+            let watch = async {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    if !admission_healthy(lease).await {
+                        break;
+                    }
+                }
+            };
+            tokio::pin!(watch);
+            tokio::select! {
+                outcome = &mut action => (outcome, false),
+                _ = &mut watch => {
+                    canceled.store(true, Ordering::SeqCst);
+                    // GitSession must terminate and drain its owned process
+                    // group before its unknown effect can be reconciled. Do not
+                    // drop the execution future at the cancellation boundary.
+                    (action.await, true)
+                }
+            }
+        } else {
+            // An archived namespace can still reconcile previously accepted
+            // effects, using the existing read-only recovery path.
+            (action.await, false)
+        }
+    } else {
+        (Err(Error::Unavailable("namespace_admission_lost")), true)
+    };
+    if !admission_lost && let Some(lease) = lease.as_mut() {
+        // Also catch a short execution that completes between periodic probes.
+        // A failed lease never produces a claimed terminal success.
+        admission_lost = !admission_healthy(lease).await;
+    }
+    let outcome = if admission_lost {
+        // Even an empty journal needs recovery after admission loss. A fresh
+        // owner must observe refs before interpreting any interrupted effect.
+        Ok((
+            "reconciling".to_owned(),
+            Some("namespace_admission_lost".to_owned()),
+        ))
+    } else {
+        outcome
+    };
+    let result = match outcome {
         Ok((state, message)) => {
             store
                 .finish(id, owner, generation, &state, message.as_deref())
@@ -175,7 +245,10 @@ async fn execute(
                 .finish(id, owner, generation, state, Some(&error.to_string()))
                 .await
         }
-    }
+    };
+    // Keep the original guard through subprocess drain and final journal write.
+    drop(guard);
+    result
 }
 #[allow(clippy::too_many_arguments)]
 async fn execute_claimed(
@@ -198,7 +271,7 @@ async fn execute_claimed(
     settings
         .validate(&config.git_sync.allowed_gitlab_origins)
         .map_err(Error::Invalid)?;
-    let mut git = GitSession::new(
+    let git = GitSession::new_with_guard(
         &config.git.root,
         config.git.root.join(format!("{storage}.git")),
         settings,
@@ -206,9 +279,9 @@ async fn execute_claimed(
         run.id,
         generation,
         canceled.clone(),
+        Some(guard),
     )
     .await?;
-    git.guard = Some(guard);
     let local = git.refs(false).await?;
     let remote = git.refs(true).await?;
     let mut refs = all_refs(store, run.id).await?;

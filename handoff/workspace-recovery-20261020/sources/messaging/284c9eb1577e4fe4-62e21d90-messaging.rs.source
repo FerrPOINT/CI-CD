@@ -1,0 +1,207 @@
+//! Product terminal orchestration; storage row locks fence duplicate completions.
+use sdlc_messaging::{
+    Envelope,
+    contracts::{PipelineFinished, PipelineStatus},
+    postgres::outbox::enqueue,
+};
+use sqlx::{PgPool, Postgres, Transaction};
+use uuid::Uuid;
+
+pub async fn record(
+    tx: &mut Transaction<'_, Postgres>,
+    completion: cicd_infra::pipeline_completion::Completion,
+) -> Result<(), sqlx::Error> {
+    let event_id = Uuid::new_v4();
+    crate::outbox::emit_pipeline_event_tx(
+        tx,
+        event_id,
+        completion.project_id,
+        completion.pipeline_id,
+        &format!("pipeline.{}", completion.status),
+        &completion.status,
+    )
+    .await?;
+    if std::env::var("CICD_MESSAGING_ENABLED").as_deref() == Ok("true") {
+        let status = match completion.status.as_str() {
+            "success" => PipelineStatus::Success,
+            "failed" => PipelineStatus::Failed,
+            "canceled" => PipelineStatus::Canceled,
+            _ => return Err(sqlx::Error::Protocol("invalid terminal status".into())),
+        };
+        let event = Envelope::new(
+            event_id,
+            completion.finished_at,
+            None,
+            PipelineFinished {
+                project_id: completion.project_id,
+                pipeline_id: completion.pipeline_id,
+                completion_seq: completion.sequence,
+                status,
+                finished_at: completion.finished_at,
+            },
+        );
+        enqueue(tx, &event)
+            .await
+            .map_err(|_| sqlx::Error::Protocol("cannot enqueue terminal messaging fact".into()))?;
+    }
+    Ok(())
+}
+
+pub async fn refresh_pipeline(pool: &PgPool, id: Uuid) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    if let Some(completion) = cicd_infra::pipeline_completion::refresh(&mut tx, id).await? {
+        record(&mut tx, completion).await?;
+    }
+    tx.commit().await?;
+    crate::dispatch_signal::notify_runner_work_available();
+    Ok(())
+}
+pub async fn refresh_stage(pool: &PgPool, stage: Uuid) -> Result<(), sqlx::Error> {
+    let id = cicd_infra::pipeline_completion::stage_pipeline(pool, stage).await?;
+    if let Some(id) = id {
+        refresh_pipeline(pool, id).await?;
+    }
+    Ok(())
+}
+
+pub async fn reconcile(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let ids = cicd_infra::pipeline_completion::recoverable_pipelines(pool).await?;
+    for id in &ids {
+        refresh_pipeline(pool, *id).await?;
+    }
+    Ok(ids.len() as u64)
+}
+
+use sdlc_messaging::{
+    Bus, ConnectionStatus, NatsConfig, contracts::ProducerDiagnostics, postgres::outbox::PgOutbox,
+};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::{RwLock, watch};
+
+pub struct ProducerRuntime {
+    pub enabled: bool,
+    pub bus: RwLock<Option<Bus>>,
+}
+impl ProducerRuntime {
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            bus: RwLock::new(None),
+        }
+    }
+}
+
+pub async fn publisher(
+    pool: PgPool,
+    state: Arc<ProducerRuntime>,
+    config: NatsConfig,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    loop {
+        if *shutdown.borrow() {
+            return;
+        }
+        match Bus::connect(config.clone()).await {
+            Ok(bus) => {
+                *state.bus.write().await = Some(bus.clone());
+                sdlc_messaging::publisher::run::<PipelineFinished, _>(
+                    bus,
+                    Arc::new(PgOutbox::for_message::<PipelineFinished>(pool.clone())),
+                    shutdown.clone(),
+                )
+                .await;
+                *state.bus.write().await = None;
+                return;
+            }
+            Err(_) => tracing::warn!("messaging publisher connection unavailable"),
+        }
+        tokio::select! {_=shutdown.changed()=>return,_=tokio::time::sleep(Duration::from_secs(5))=>{}}
+    }
+}
+pub async fn reconciler(pool: PgPool, mut shutdown: watch::Receiver<bool>) {
+    loop {
+        if *shutdown.borrow() {
+            return;
+        }
+        if reconcile(&pool).await.is_err() {
+            tracing::warn!("pipeline completion reconciliation unavailable");
+        }
+        tokio::select! {_=shutdown.changed()=>return,_=tokio::time::sleep(Duration::from_secs(5))=>{}}
+    }
+}
+
+#[derive(Clone)]
+struct DiagnosticsState {
+    pool: PgPool,
+    runtime: Arc<ProducerRuntime>,
+    token_file: Option<String>,
+}
+pub fn status_router(pool: PgPool, runtime: Arc<ProducerRuntime>) -> axum::Router {
+    axum::Router::new()
+        .route(
+            "/internal/messaging/status",
+            axum::routing::get(producer_status),
+        )
+        .with_state(DiagnosticsState {
+            pool,
+            runtime,
+            token_file: std::env::var("CICD_MESSAGING_STATUS_TOKEN_FILE").ok(),
+        })
+}
+async fn producer_status(
+    axum::extract::State(state): axum::extract::State<DiagnosticsState>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::Json<ProducerDiagnostics>, axum::http::StatusCode> {
+    use axum::http::StatusCode;
+    use subtle::ConstantTimeEq;
+    let file = state.token_file.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let expected = tokio::time::timeout(Duration::from_secs(2), tokio::fs::read_to_string(file))
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let provided = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if expected.trim().is_empty()
+        || !bool::from(expected.trim().as_bytes().ct_eq(provided.as_bytes()))
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let connection = state
+        .runtime
+        .bus
+        .read()
+        .await
+        .as_ref()
+        .map(Bus::status)
+        .unwrap_or(ConnectionStatus::Pending);
+    let outbox = PgOutbox::for_message::<PipelineFinished>(state.pool.clone())
+        .metrics()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(axum::Json(ProducerDiagnostics {
+        enabled: state.runtime.enabled,
+        observed_at: chrono::Utc::now(),
+        connection,
+        outbox: Some(outbox),
+        retention: Some(sdlc_messaging::policy::RETENTION),
+        maintenance: sdlc_messaging::postgres::maintenance::observation(
+            &state.pool,
+            &sdlc_messaging::postgres::maintenance::Scope::Outbox {
+                subject: <PipelineFinished as sdlc_messaging::MessageData>::SUBJECT.into(),
+            },
+        )
+        .await
+        .ok()
+        .flatten(),
+        storage_bytes: sqlx::query_scalar::<_, i64>(
+            "SELECT pg_total_relation_size('messaging_outbox')",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .ok()
+        .and_then(|n| u64::try_from(n).ok()),
+    }))
+}

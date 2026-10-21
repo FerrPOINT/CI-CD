@@ -1,0 +1,105 @@
+# AGENTS.md - Forge CI/CD frontend
+
+## Локальный контекст
+
+- Сначала читать `../docs/ARCHITECTURE.md`, `../docs/DATA_MODEL.md`,
+  `../docs/API.md` и релевантный ADR. DTO/API clients типизированы по OpenAPI.
+- Job transitions и permissions определяет backend. Pending/cancel/rerun/log
+  views должны показывать реальный server outcome и сохранять route context.
+- Не переносить human sessions, runner credentials и secrets в общий UI store.
+  Логи и artifacts не раскрывают secrets; длинные потоки прокручиваются локально.
+
+<!-- base-frontend-principles:start -->
+## Общие принципы фронтенда
+
+Блок поддерживается Base. Не править его локально: изменить Base-шаблон и
+выполнить sync. Применяются родительские `AGENTS.md`; эти правила дополняют их
+для UI, не меняют доменные границы и не разрешают commit/push/deploy сами по себе.
+
+Источники: [UI/UX Standard](../../services-base/docs/platform/UI_UX_STANDARD.md),
+[Shell Standard](../../services-base/docs/platform/UI_SHELL_STANDARD.md),
+[Принципы и примеры](../../services-base/docs/platform/FRONTEND_PRINCIPLES.md).
+
+### Композиция и геометрия
+
+- Один визуальный язык: shell, tokens, controls, states и общие композиции
+  принадлежат Base. React использует `@sdlc/ui`, Jinja - его SSR assets/macros.
+  Локальная обёртка допустима для доменного адаптера, но не как второй UI-kit.
+- Новую страницу начинать с Base-паттерна list/form/detail/dashboard/audit.
+  Один `AppShell` и один `PageFrame`; `data-page-layout` только `wide`,
+  `reading` или `detail-with-aside`. Общую композицию менять сначала в Base.
+- Ровное выравнивание через общие gutter, spacing и grid tracks. Flex/Grid
+  распределяют доступное место; fluid children имеют `min-width: 0`, а fluid
+  grid tracks - `minmax(0, 1fr)`. Не вводить собственный page max-width или
+  фиксированную ширину всего body. Точные размеры и breakpoints - в Base.
+- Длинные заголовки, значения и локализованные подписи не ломают сетку:
+  разрешать перенос, осознанно задавать truncation с доступом к полному значению.
+  Размер шрифта не зависит от viewport. Не исправлять layout отрицательными
+  отступами, absolute positioning основного потока или скрытием overflow body.
+- Стабильные размеры toolbar, icon buttons, колонок, boards и repeated items:
+  hover, pending, counters и пустые состояния не должны двигать соседний UI.
+  Широкие таблицы, логи и доски имеют именованный local scroll, не scroll body.
+
+### Минимализм и удобство
+
+- Рабочий интерфейс, не landing page: сначала данные и действия, без hero,
+  декоративных орбов, лишних рамок и текста, рекламирующего возможности UI.
+  Секции не оформлять плавающими карточками; карточки нужны повторяемым объектам,
+  диалогам и действительно обособленным инструментам. Не вкладывать card в card.
+- Компактность - ясная иерархия и разумные интервалы, не теснота и мелкие targets.
+  Использовать Base typography, spacing, radius и semantic colors. Проверять
+  контраст во всех темах; status обозначать не только цветом. Product/namespace
+  accent допустим через согласованный branding-контракт, не через CSS-форк.
+- Выбирать control по смыслу: tabs для views, select/menu для вариантов,
+  checkbox/switch для binary, input/stepper для чисел, swatch для цвета.
+  Familiar icon commands брать из существующей библиотеки (React: lucide),
+  давать accessible name и tooltip. Обычные команды могут быть icon+text.
+  Targets минимум 40 px desktop / 44 px mobile; glyph checkbox не равен target.
+- Один владелец каждого действия: platform actions в shell, CRUD в странице.
+  Не дублировать context/profile между header/sidebar и локальными controls.
+  Таблицы для сравнения строк, cards для самостоятельных объектов; выбор
+  определяется сценарием, а не декоративным предпочтением.
+
+### Поведение, данные и доступность
+
+- Явно различать loading, empty, error, not-found, permission-denied и partial
+  failure. Ошибка не равна пустому списку. Сохранять успешно загруженные данные
+  при refetch/partial error; retry только для повторяемого сбоя. 404 не предлагает
+  CRUD отсутствующего объекта или родителя. Success - только подтверждённый.
+- Формы: label/help/error, required и API bounds; ошибка сохраняет draft,
+  pending защищает handler и control от двойной отправки. Dirty draft защищать
+  при переходе, reload и закрытии. Не повторять автоматически неидемпотентную
+  мутацию с неизвестным исходом; сверить состояние с сервером.
+- Search/filter/sort/pagination/tab хранить в URL через Base helpers; direct
+  open, reload и Back/Forward восстанавливают состояние. Filter change сбрасывает
+  page/cursor. Не помещать credentials и приватные drafts в URL/localStorage.
+- HTML semantics и клавиатура обязательны: один page h1, видимый focus,
+  label связи, accessible names. Modal/drawer управляет focus, Escape и возвратом
+  к инициатору; при его удалении - к безопасному fallback. Disabled/hover/active
+  не единственные носители смысла. Actions не теряются на узкой ширине.
+- API и permissions остаются доменными; скрытая кнопка не заменяет backend authZ.
+  Использовать существующий типизированный API client, session и cache.
+  Не заводить второй auth store, ручные DTO-копии, дублирующие запросы или
+  derived state в нескольких stores. Новая библиотека/абстракция требует
+  реальной необходимости; pagination/virtualization - по объёму и измерениям.
+- System strings через существующую локализацию; user content не переводить.
+  Не хардкодить язык, тему, статусные цвета или геометрию продукта в shared UI.
+
+### Проверка и изменения
+
+- Desktop-first, но не desktop-only поведение. Для изменённого UI проверять
+  1440/1920/2560 px, responsive 375 px и границы shell/detail из Base, все темы,
+  длинные данные и page states. Нет overlap, document overflow, потерянных
+  действий и необъяснённых console/network errors; проверить keyboard/focus.
+- Запускать штатные проверки затронутой области и общий UI gate. Для поведения
+  нужны component/state tests и browser evidence реальных страниц: mocks и
+  статический CSS gate не доказывают фактическую геометрию или интеграцию.
+  Для docs-only изменений проверить ссылки, coverage инструкций и drift;
+  не выдавать это за прохождение UI/runtime QA.
+- README показывает только реальные desktop full-page captures 1920x1080,
+  по представителю применимого mode в default theme; mobile остаётся в QA.
+  Evidence фиксирует route, viewport, theme, product/Base версии и результат.
+- Сохранять чужой dirty work; исправления узкие, заменённые локальные реализации
+  удаляются в той же миграции. Исключение из стандарта требует причины, владельца,
+  scope, условия пересмотра и теста, а не скрытого CSS override.
+<!-- base-frontend-principles:end -->

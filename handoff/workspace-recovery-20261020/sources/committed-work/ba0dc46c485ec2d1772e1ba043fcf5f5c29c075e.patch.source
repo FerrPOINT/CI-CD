@@ -1,0 +1,21 @@
+diff --git a/.base-revision b/.base-revision
+index ace32ea..e560de2 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-c0f175c67fc02ba0910a310b163b8032dac92d06
++0ffb99e209bb62031488cbae1b61c9a2e40faec9
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 351713f..75bce97 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,9 @@
+ 
+ ## [Unreleased]
+ 
++- Общий Base snapshot обновлён до 0ffb99e: verified profile/directory contracts
++  и UI dependency graph без замены shell. Принятый runtime не переключается.
++
+ - Локальная default-ветка согласована с Base UI/UX-веткой: восстановлены
+   исторические SQLx migrations 36–38 и тесты fresh/upgrade/replay/checksum,
+   без замены shell, Base pin и frontend locks. Проверка кандидата отделена

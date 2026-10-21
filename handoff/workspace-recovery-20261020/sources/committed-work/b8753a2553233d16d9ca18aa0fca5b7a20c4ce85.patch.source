@@ -1,0 +1,347 @@
+diff --git a/.base-revision b/.base-revision
+index c8b8359..b3c61dc 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-1487110b50e4b36204098e0241093153335a834b
++a24c995990f5031c1ba96c17e331821e8686c61d
+diff --git a/AGENTS.md b/AGENTS.md
+index c55fa1b..5012bda 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -28,24 +28,26 @@
+ ## Docker и команды проверки
+ 
+ ```bash
+-# Запуск и управление локальным окружением.
+-cp .env.example .env
+-docker compose up --build -d
+-docker compose ps
+-docker compose logs -f
+-docker compose down
+-
+-# Backend: запуск через Docker, если cargo нет на хосте.
+-docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" \
+-  -w /workspace rust:1.88.0-bookworm \
+-  -lc '/usr/local/cargo/bin/cargo test'
++# Установленный workspace: PowerShell 7, из его корня.
++./start-local.ps1 -Workspace sdlc1
++
++# Backend: выполнять внутри собственного Rust 1.88.0 Compose QA-сервиса,
++# с явным endpoint/project/owner/purpose и cleanup в finally.
++cd backend
++cargo fmt --all -- --check
++cargo test --locked --workspace --features integration
++cargo clippy --locked --workspace --all-targets --features integration -- -D warnings
+ 
+ # Frontend.
+ cd frontend && pnpm test
+ cd frontend && pnpm build
+ ```
+ 
+-Для полного backend gate использовать также `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` и `cargo build --release --workspace` в том же Rust-контейнере. `justfile` дублирует основные операции: `just up`, `just down`, `just test-backend`, `just test-frontend`, `just build-frontend`, `just health`.
++Для полного backend gate выполнять также `cargo build --locked --release --workspace`
++в том же QA-сервисе. Integration tests получают только JDBC/SQLx-параметры
++собственного disposable PostgreSQL; проверки migration catalog требуют имени
++базы `forge_test_*`. Штатный installed runtime не используется для тестов.
++Исторические `just up/down` не являются launcher полного workspace.
+ 
+ Не использовать `docker compose restart` для применения нового образа или env: пересоздавать сервисы через `docker compose up -d` либо `docker compose up --build -d`.
+ 
+diff --git a/backend/Cargo.toml b/backend/Cargo.toml
+index bd7529f..0a67fe0 100644
+--- a/backend/Cargo.toml
++++ b/backend/Cargo.toml
+@@ -78,7 +78,7 @@ clap.workspace = true
+ flate2 = "1"
+ serde.workspace = true
+ serde_json.workspace = true
+-# time pinned: 0.3.42+ requires rustc 1.88; fleet toolchain is 1.86
++# Auth/application builds use Rust 1.88.0; Base SDK MSRV is checked separately.
+ time = "=0.3.47"
+ # Fleet auth core: sibling services-base checkout (umbrella compose + CI).
+ sdlc-telemetry = { path = "../../services-base/crates/sdlc-telemetry", features = ["otlp"] }
+diff --git a/backend/src/api/readiness.rs b/backend/src/api/readiness.rs
+index fae2d75..53c6752 100644
+--- a/backend/src/api/readiness.rs
++++ b/backend/src/api/readiness.rs
+@@ -56,9 +56,21 @@ struct ExpectedMigration {
+     )
+ )]
+ pub(crate) async fn readiness(State(state): State<Arc<AppState>>) -> axum::response::Response {
+-    let expected = match expected_migrations().await {
+-        Ok(expected) => expected,
+-        Err(_) => {
++    match tokio::time::timeout(std::time::Duration::from_secs(4), readiness_check(state)).await {
++        Ok(response) => response,
++        Err(_) => readiness_response(
++            StatusCode::SERVICE_UNAVAILABLE,
++            "not_ready",
++            "unknown",
++            migration_readiness_error(&[], "unknown", "readiness timed out"),
++        ),
++    }
++}
++
++async fn readiness_check(state: Arc<AppState>) -> axum::response::Response {
++    let expected = match tokio::time::timeout(READINESS_TIMEOUT, expected_migrations()).await {
++        Ok(Ok(expected)) => expected,
++        _ => {
+             return readiness_response(
+                 StatusCode::SERVICE_UNAVAILABLE,
+                 "not_ready",
+diff --git a/backend/src/runner_docker.rs b/backend/src/runner_docker.rs
+index 9117cd2..cfca336 100644
+--- a/backend/src/runner_docker.rs
++++ b/backend/src/runner_docker.rs
+@@ -107,6 +107,92 @@ impl Client {
+         self.run(&["image", "inspect", image, "--format", "{{.Id}}"])
+             .await
+     }
++    async fn verify_project(&self, project: &str, manifest: &Value, file: &Path) -> io::Result<()> {
++        let filter = format!("label=com.docker.compose.project={project}");
++        let ids = self.run(&["ps", "-aq", "--filter", &filter]).await?;
++        for id in ids.lines() {
++            let inspected: Value = serde_json::from_str(&self.run(&["inspect", id]).await?)?;
++            let labels = &inspected[0]["Config"]["Labels"];
++            verify_resource_labels(project, "services", labels, manifest)?;
++            if labels["com.docker.compose.project.config_files"] != file.to_string_lossy().as_ref()
++            {
++                return Err(invalid("foreign Compose manifest blocks job cleanup"));
++            }
++        }
++        for (kind, section, field) in [
++            ("volume", "volumes", "{{.Name}}"),
++            ("network", "networks", "{{.ID}}"),
++        ] {
++            let ids = self
++                .run(&[kind, "ls", "--filter", &filter, "--format", field])
++                .await?;
++            for id in ids.lines() {
++                let inspected: Value =
++                    serde_json::from_str(&self.run(&[kind, "inspect", id]).await?)?;
++                verify_resource_labels(project, section, &inspected[0]["Labels"], manifest)?;
++            }
++        }
++        Ok(())
++    }
++}
++
++fn verify_resource_labels(
++    project: &str,
++    section: &str,
++    labels: &Value,
++    manifest: &Value,
++) -> io::Result<()> {
++    let field = match section {
++        "services" => "com.docker.compose.service",
++        "volumes" => "com.docker.compose.volume",
++        "networks" => "com.docker.compose.network",
++        _ => return Err(invalid("unsupported resource ownership catalog")),
++    };
++    let logical = labels[field]
++        .as_str()
++        .ok_or_else(|| invalid("resource has no Compose owner"))?;
++    let expected = manifest[section]
++        .get(logical)
++        .ok_or_else(|| invalid("undeclared resource blocks job cleanup"))?;
++    if labels["com.docker.compose.project"] != project {
++        return Err(invalid("foreign project blocks job cleanup"));
++    }
++    if expected["external"] == true {
++        return Err(invalid(
++            "external resource collides with disposable job ownership",
++        ));
++    }
++    let expected_labels = expected["labels"].as_object();
++    // Existing version-one journals declared only Compose ownership for storage.
++    // New invocations declare task/job/attempt/purpose on every owned resource.
++    if (section == "services" || manifest["x-sdlc-ownership-version"] == 2)
++        && expected_labels.is_none()
++    {
++        return Err(invalid("protected manifest has no resource owner"));
++    }
++    if let Some(expected_labels) = expected_labels {
++        if expected_labels
++            .iter()
++            .any(|(name, value)| &labels[name] != value)
++        {
++            return Err(invalid("foreign resource blocks job cleanup"));
++        }
++    } else {
++        for name in [
++            "sdlc.task",
++            "sdlc.purpose",
++            "sdlc.job",
++            "sdlc.attempt",
++            "sdlc.control-volume",
++        ] {
++            if labels.get(name).is_some()
++                && labels[name] != manifest["services"]["transfer"]["labels"][name]
++            {
++                return Err(invalid("foreign owner in legacy job storage"));
++            }
++        }
++    }
++    Ok(())
+ }
+ 
+ pub(crate) async fn stop_job(job_id: Uuid) -> io::Result<()> {
+@@ -221,12 +307,12 @@ impl RemoteJob {
+         let labels = json!({"sdlc.task": format!("job-{id}"), "sdlc.purpose":"cicd-job", "sdlc.job":id.to_string(), "sdlc.attempt":attempt.to_string(),
+             "sdlc.control-volume":std::env::var("CICD_RUNNER_WORKSPACE_VOLUME").unwrap_or_default()});
+         let helper_image = client.image("alpine:3.21").await?;
+-        let manifest = json!({"name":project, "services":{"transfer":{
++        let manifest = json!({"name":project, "x-sdlc-ownership-version":2, "services":{"transfer":{
+             "image":helper_image, "container_name":helper, "pull_policy":"never", "restart":"no",
+             "entrypoint":["/bin/sh"], "command":["-c","sleep 86400"], "network_mode":"none",
+             "read_only":true, "tmpfs":["/tmp:mode=700"], "security_opt":["no-new-privileges:true"],
+             "labels":labels, "volumes":[{"type":"volume","source":"workspace","target":"/workspace"},{"type":"volume","source":"cargo","target":"/cache"}]
+-        }}, "volumes":{"workspace":{}, "cargo":{}}, "networks":{"job":{}}});
++        }}, "volumes":{"workspace":{"labels":labels}, "cargo":{"labels":labels}}, "networks":{"job":{"labels":labels}}});
+         let mut job = Self {
+             client,
+             helper,
+@@ -284,6 +370,10 @@ impl RemoteJob {
+     }
+     async fn compose(&self, tail: &[&str]) -> io::Result<String> {
+         let file = self.directory.join("compose.json");
++        self.client.verify().await?;
++        self.client
++            .verify_project(&self.project, &self.manifest, &file)
++            .await?;
+         let mut args = vec![
+             "compose",
+             "-p",
+@@ -430,8 +520,14 @@ impl Drop for RemoteJob {
+             let client = self.client.clone();
+             let directory = self.directory.clone();
+             let project = self.project.clone();
++            let manifest = self.manifest.clone();
+             tokio::spawn(async move {
+-                if client.verify().await.is_ok() {
++                if client.verify().await.is_ok()
++                    && client
++                        .verify_project(&project, &manifest, &directory.join("compose.json"))
++                        .await
++                        .is_ok()
++                {
+                     let file = directory.join("compose.json");
+                     let _ = client
+                         .run(&[
+@@ -507,6 +603,10 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+                 "journal endpoint/project ownership differs",
+             )));
+         }
++        client
++            .verify_project(&project, &manifest, &manifest_path)
++            .await
++            .map_err(sqlx::Error::Io)?;
+         let containers = client
+             .run(&[
+                 "ps",
+@@ -641,6 +741,44 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value>
+ mod tests {
+     use super::*;
+     #[test]
++    fn cleanup_refuses_undeclared_services_and_foreign_resource_owners() {
++        let owner = json!({"sdlc.task":"job-example", "sdlc.job":"example", "sdlc.attempt":"attempt", "sdlc.purpose":"cicd-job"});
++        let manifest = json!({"x-sdlc-ownership-version":2,
++            "services":{"transfer":{"labels":owner}, "job":{"labels":owner}},
++            "volumes":{"workspace":{"labels":owner}}, "networks":{"job":{"labels":owner}}});
++        for (section, field, logical) in [
++            ("services", "com.docker.compose.service", "job"),
++            ("volumes", "com.docker.compose.volume", "workspace"),
++            ("networks", "com.docker.compose.network", "job"),
++        ] {
++            let mut labels = owner.clone();
++            labels["com.docker.compose.project"] = json!("owned");
++            labels[field] = json!(logical);
++            assert!(verify_resource_labels("owned", section, &labels, &manifest).is_ok());
++            labels["sdlc.purpose"] = json!("another-task");
++            assert!(verify_resource_labels("owned", section, &labels, &manifest).is_err());
++            labels["sdlc.purpose"] = json!("cicd-job");
++            labels[field] = json!("unlisted");
++            assert!(verify_resource_labels("owned", section, &labels, &manifest).is_err());
++            labels[field] = json!(logical);
++            labels["com.docker.compose.project"] = json!("foreign");
++            assert!(verify_resource_labels("owned", section, &labels, &manifest).is_err());
++        }
++    }
++    #[test]
++    fn legacy_journals_accept_unlabelled_owned_storage_but_never_another_owner() {
++        let mut manifest = json!({"services":{"transfer":{"labels":{"sdlc.task":"original"}}},
++            "volumes":{"workspace":{}}});
++        let mut labels =
++            json!({"com.docker.compose.project":"owned","com.docker.compose.volume":"workspace"});
++        assert!(verify_resource_labels("owned", "volumes", &labels, &manifest).is_ok());
++        labels["sdlc.task"] = json!("another-task");
++        assert!(verify_resource_labels("owned", "volumes", &labels, &manifest).is_err());
++        labels.as_object_mut().unwrap().remove("sdlc.task");
++        manifest["x-sdlc-ownership-version"] = json!(2);
++        assert!(verify_resource_labels("owned", "volumes", &labels, &manifest).is_err());
++    }
++    #[test]
+     fn recovery_distinguishes_dead_process_and_current_owner() {
+         #[cfg(target_os = "linux")]
+         assert!(owner_alive(&process_owner()));
+diff --git a/backend/tests/integration_db.rs b/backend/tests/integration_db.rs
+index 8ccbabb..db1a01c 100644
+--- a/backend/tests/integration_db.rs
++++ b/backend/tests/integration_db.rs
+@@ -220,6 +220,36 @@ async fn readiness_reports_database_and_migrations() {
+     );
+ }
+ 
++#[tokio::test]
++async fn readiness_does_not_wait_for_a_business_pool_timeout() {
++    let pool = test_pool().await;
++    let bounded = PgPoolOptions::new()
++        .max_connections(1)
++        .acquire_timeout(std::time::Duration::from_secs(30))
++        .connect_with(pool.connect_options().as_ref().clone())
++        .await
++        .unwrap();
++    let held = bounded.acquire().await.unwrap();
++    let start = std::time::Instant::now();
++    let response = tokio::time::timeout(
++        std::time::Duration::from_secs(5),
++        cicd::api::app(Some(bounded.clone())).oneshot(
++            Request::get("/api/v1/readiness")
++                .body(Body::empty())
++                .unwrap(),
++        ),
++    )
++    .await
++    .unwrap()
++    .unwrap();
++    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
++    assert!(start.elapsed() < std::time::Duration::from_secs(4));
++    Uuid::parse_str(response.headers()["x-request-id"].to_str().unwrap()).unwrap();
++    assert_eq!(response_json(response).await["database"], "unavailable");
++    drop(held);
++    bounded.close().await;
++}
++
+ #[tokio::test]
+ async fn manual_runner_registration_cannot_forge_legacy_heartbeat() {
+     let pool = test_pool().await;
+diff --git a/docs/COMPOSE_RUNNER.md b/docs/COMPOSE_RUNNER.md
+index 56162bc..ac81135 100644
+--- a/docs/COMPOSE_RUNNER.md
++++ b/docs/COMPOSE_RUNNER.md
+@@ -30,6 +30,14 @@ failed с неизвестным результатом исполнения; р
+ Compose manifest. Автоматического replay нет. Повтор требует явного retry API.
+ Чужие labels или неправильный daemon блокируют cleanup и dispatch.
+ 
++Проверка владельца выполняется перед обычными Compose-операциями, cleanup,
++обработкой Drop и восстановлением журнала. Проверяются все контейнеры проекта,
++его сети и volumes: объявленный service/resource, task, purpose, job и attempt;
++для контейнеров также путь сохранённого manifest. Чужой orphan не удаляется.
++Новые журналы версии ownership 2 закрепляют labels на сетях и volumes.
++Старые журналы читаются с проверкой прежних Compose-владельцев и отказом при
++обнаружении несовместимых owner labels.
++
+ Pulse размещается только в приватном Git/project CI/CD `sdlc1`. При импорте
+ сначала передаются проверенные commits и tags, затем регистрируется project:
+ `main`, владелец — администратор `sdlc1`, `max_running_jobs=1`. Pipeline проверяет

@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-15T10:57:39Z",
+    "timestamp": "2026-10-21T03:12:33Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -2572,14 +2572,6 @@
     },
     {
       "type": "library",
-      "name": "sonner",
-      "version": "2.0.3",
-      "purl": "pkg:npm/sonner@2.0.3",
-      "license": "unknown",
-      "scope": "required"
-    },
-    {
-      "type": "library",
       "name": "tailwind-merge",
       "version": "3.2.0",
       "purl": "pkg:npm/tailwind-merge@3.2.0",
@@ -2749,8 +2741,8 @@
     {
       "type": "library",
       "name": "vite",
-      "version": "6.2.0",
-      "purl": "pkg:npm/vite@6.2.0",
+      "version": "6.4.4",
+      "purl": "pkg:npm/vite@6.4.4",
       "license": "unknown",
       "scope": "development"
     },

@@ -1,0 +1,138 @@
+# Architecture Decision Records — Forge CI/CD
+
+## 1. Overview
+
+ADR фиксируют ключевые архитектурные решения: контекст, альтернативы, выбор, последствия. Хранятся в `docs/adr/`. Каждый ADR — одно значимое решение, принятое в ходе разработки Forge CI/CD.
+
+---
+
+## 2. Format
+
+Каждый ADR — файл `NNNN-title.md` в `docs/adr/`:
+
+```markdown
+# ADR-NNNN: Title
+
+## Status
+
+Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
+
+## Context
+
+Какую проблему решаем? Какие ограничения и требования влияют на решение?
+
+## Alternatives Considered
+
+Таблица или список альтернативных вариантов с pros/cons.
+
+## Decision
+
+Что решили? Какой вариант выбран и почему?
+
+## Consequences
+
+Положительные и отрицательные последствия выбора.
+
+## Related
+
+Ссылки на связанные документы и ADR.
+```
+
+---
+
+## 3. Active ADRs
+
+| ID | Title | Status | Дата |
+|----|-------|--------|------|
+| ADR-0001 | Rust + Axum + SQLx для backend | Accepted | 2026-08-26 |
+| ADR-0002 | React + Vite + Tailwind + shadcn/ui для Dashboard | Accepted | 2026-08-26 |
+| ADR-0003 | Ручные переходы статусов job в MVP | Accepted | 2026-08-26 |
+| ADR-0004 | Только PostgreSQL для постоянных данных | Accepted | 2026-08-26 |
+| ADR-0005 | Cargo workspace и слоистая архитектура | Accepted | 2026-08-26 |
+| ADR-0006 | PostgreSQL outbox для асинхронных эффектов | Accepted | 2026-08-26 |
+| ADR-0007 | Исполнение отделено от control plane | Accepted | 2026-08-26 |
+| ADR-0008 | Версионные SQLx migrations | Accepted | 2026-08-26 |
+| ADR-0009 | Канонический реестр имён и приоритет источников | Accepted | 2026-08-27 |
+
+---
+
+## 4. Creating New ADRs
+
+1. Взять следующий свободный номер (сейчас: 0010, затем 0011, ...); следующий ADR о auth/tenancy должен занять зарезервированный 0010.
+2. Создать `docs/adr/NNNN-title.md` (шаблон имени) по формату из раздела 2.
+3. Обновить индекс в этом файле (раздел 3) — добавить строку с номером, названием, статусом и датой.
+4. Открыть PR с описанием решения и ссылкой на связанную issue/task.
+5. После review и merge — статус `Accepted`.
+
+### 4.1. Когда создавать ADR
+
+- Выбор framework, библиотеки, СУБД, протокола.
+- Архитектурное решение, влияющее на несколько компонентов.
+- Решение, которое трудно изменить позже (мigrate cost high).
+- Отказ от очевидной альтернативы с обоснованием.
+- Изменение предыдущего архитектурного решения.
+
+### 4.2. Когда НЕ создавать ADR
+
+- Реализация конкретной фичи (фиксируется в коде и `docs/API.md`).
+- Bug fix, refactor, обновление зависимости (minor/patch).
+- Изменение текста в UI.
+
+---
+
+## 5. Superseding
+
+Если решение меняется:
+
+1. Создать новый ADR со статусом `Accepted`.
+2. Старый ADR меняет статус на `Superseded by ADR-NNNN`.
+3. Обновить индекс в этом файле: старый — `Superseded`, новый — `Accepted`.
+4. В новом ADR указать ссылку на superseded в разделе `Related`.
+
+---
+
+## 6. Principles
+
+- One significant decision — one ADR.
+- Keep ADRs concise (1–2 страницы).
+- Link to related docs (`docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, другие ADR).
+- Язык ADR — русский (в соответствии с языком документации проекта).
+- Код и комментарии — на английском согласно `docs/CODE_STYLE.md`.
+- ADR не удаляется; устаревшие решения помечаются `Deprecated` или `Superseded`.
+
+---
+
+## 7. Reserved / Follow-up ADRs
+
+Эта очередь содержит только решения, которые ещё не закреплены отдельным accepted ADR. Уже реализованные MVP-возможности описаны в активных ADR, `docs/contracts/` и `docs/CURRENT_STATE.md`.
+
+| Резерв | Тема | Основание | Статус |
+|------|------|------|--------|
+| ADR-0010 | Production auth, tenancy, service accounts и session hardening | `docs/AUTHORIZATION.md`, `docs/contracts/AUTHZ_CONTRACT.md` | Target approved |
+| ADR-0011 | Envelope encryption, key provider и rotation policy | `docs/SECRETS_MGMT.md`, `docs/contracts/DATA_LIFECYCLE.md` | Target approved |
+| ADR-0012 | Audit authorization, integrity checkpoints и export retention | `docs/AUTHORIZATION.md`, `docs/INCIDENT_RESPONSE.md` | Target approved |
+| ADR-0013 | Scoped Git credentials и signed internal Git events | `docs/GIT_HOSTING.md`, `docs/contracts/AUTHZ_CONTRACT.md` | Target approved |
+| ADR-0014 | Production runner pools, protected tags, fairness и sandbox backend | `docs/RUNNER_ARCHITECTURE.md`, ADR-0007 | Target approved |
+| ADR-0015 | Object storage adapter, legal hold и resumable artifact sessions | `docs/STORAGE_ARCHITECTURE.md`, `docs/ARTIFACTS.md` | Target approved |
+
+---
+
+## 8. References
+
+- `docs/ARCHITECTURE.md` — общая архитектура.
+- `docs/adr/0001-rust-axum-sqlx.md` — Rust + Axum + SQLx.
+- `docs/adr/0002-react-vite-tailwind.md` — React + Vite + Tailwind.
+- `docs/adr/0003-manual-job-transitions.md` — исторический baseline ручных переходов; current execution частично superseded embedded runner-ом.
+- `docs/adr/0004-postgresql-only.md` — Только PostgreSQL.
+- `docs/adr/0005-workspace-layered-architecture.md` — Cargo workspace и слоистая архитектура.
+- `docs/adr/0006-postgresql-outbox.md` — надёжные асинхронные эффекты.
+- `docs/adr/0007-runner-security-boundary.md` — граница control plane/execution.
+- `docs/adr/0008-versioned-sqlx-migrations.md` — versioned migrations.
+- `docs/adr/0009-canonical-registry.md` — канонический реестр имён и authority matrix.
+- `docs/adr/0016-serializable-runner-claim.md` — сериализуемая проверка проектной квоты при выдаче runner work.
+- `docs/adr/0017-service-pulse-deployment-boundary.md` — сохранённая граница deployment Service Pulse и isolated runner.
+- `docs/adr/0018-platform-messaging-terminal-fact.md` — атомарный terminal fact и SDK messaging outbox.
+- `docs/ROADMAP.md` — план разработки.
+- `docs/CODE_STYLE.md` — конвенции кода.
+
+- [ADR-0019: cleanup и operator replay](adr/0019-messaging-retention-recovery.md).

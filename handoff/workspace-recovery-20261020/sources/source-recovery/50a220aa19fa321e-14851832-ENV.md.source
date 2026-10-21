@@ -1,0 +1,172 @@
+# Переменные окружения (префикс CICD_)
+
+## Read-only delivered QA target — source candidate
+
+Default disabled: `CICD_DELIVERED_TARGET_SUBJECT` — non-nil UUID отдельного
+configured service account; `CICD_DELIVERED_TARGETS` — абсолютный путь к protected
+operator JSON. Никаких credential/secret в mapping или ответа reader нет.
+Project-bound `api:read` token выпускается существующим механизмом Forge отдельно;
+общий PAT не заменяет project/subject binding. Это параметры исходников кандидата,
+не инструкция менять установленный runtime или включать автопоиск.
+
+Mapping `forge/delivered-targets-config/v1` содержит `targets` (1..32):
+`configurationId`, `repositoryId`, `environmentId`, `targetRef`, `root`, `policy`.
+Root/policy — нормализованные абсолютные owner paths existing static target и
+`DeliveryPolicy`; API не принимает их от caller. Пары configuration/target unique,
+nil IDs/unknown fields/links отвергаются. Связка к Tracker ProjectRef/active namespace
+проверяется в PostgreSQL, не задаётся презентационным именем. Origin берётся только
+из existing credential-free policy и возвращается как `targetUrl` исключительно
+после свежего serving readback. Legacy pointer без generation/key не квалифицируется.
+Ни mapping, ни GET не создают target и не запускают delivery.
+
+## Owner-local PostgreSQL delivery
+
+`forge-delivery --postgres` требует `CICD_LOCAL_PG_ROOT`,
+`CICD_LOCAL_PG_POLICY`, `CICD_LOCAL_PG_GUARD_URL` (owner administrator, database
+`postgres`) и protected `CICD_LOCAL_PG_RUNTIME_PASSWORD` для application roles.
+Тот же explicit `CICD_LOCAL_DELIVERY_MODE=local-verification` и owner machine token
+обязательны. Secrets не сохраняются в labels/logs/tracked Compose; runtime connection
+file находится в private owner root, mounted read-only только в application.
+
+Policy `forge/isolated-postgres-policy/v1` связывает temporary project/daemon/system
+identifier, controller IP/HBA, immutable PostgreSQL image/owned volume/network,
+host-visible Compose paths, initial source DB, exact pinned Base/executor/migration
+helper paths, lease5..300s и distinct configured checks. Application protocol:
+port8000, `/.forge/version`, `/identity` (actual database/schemaVersion),
+health/acceptance. Limits: DB16MiB, 16 tables/512 rows per table, complete catalog16
+entries/SQL16KiB each; routines/triggers/shared DB не поддерживаются.
+`--readback` читает immutable history; `--reconcile` только наблюдает completed
+release. Partial Unknown удерживает target. [ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md),
+[contract](contracts/MUTABLE_POSTGRES_DELIVERY.md). Production admission отсутствует.
+
+## Owner-local static delivery
+
+OCI CLI требует дополнительно `CICD_LOCAL_OCI_ROOT` и `CICD_LOCAL_OCI_POLICY`.
+Policy JSON: unique temporary `projectName`, `networkName`/`volumeName` того же QA
+owner, `daemonId`, absolute trusted `dockerBin`/standalone `composeBin`, host-visible
+`composeRoot` для immutable actual execution specs, local
+`volumeRoot`, `dataFile`, exact `dataSha256` и `checks` того же формата, что ниже.
+Read-only snapshot содержит actual `schemaVersion`; mutable DB/migrations не
+поддерживаются. Origin для probes выводится из actual container IP/internal network;
+application contract: port8000, `/.forge/version`, `/compatibility`, configured
+health/acceptance. Данные/manifest mounted read-only в `/forge/`; secrets не
+передаются. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
+По умолчанию disabled; настройки не включаются в permanent Compose.
+
+| Переменная | Граница |
+| --- | --- |
+| `CICD_LOCAL_DELIVERY_ROOT` | Absolute normalized isolated owner target, без symlink/reparse и overlap с Git/artifacts; target привязан к одному project/policy |
+| `CICD_LOCAL_DELIVERY_POLICY` | Owner-controlled JSON file: fixed credential-free origin, distinct health/acceptance paths и exact response-body SHA256 |
+| `CICD_LOCAL_DELIVERY_MODE` | Только CLI effect; требуется exact `local-verification`. Не включает HTTP/SDLC dispatch |
+| `CICD_LOCAL_DELIVERY_TOKEN` | Existing project-bound `forge_sat_`, передаётся только environment; readback требует `api:read`, effect/reconcile также `api:write` |
+
+CLI также использует typed runtime database/Git/artifacts/auth config и
+`CICD_SDLC_WORKSPACE_SUBJECT`. Policy не передаётся caller-ом через API или artifact.
+HTTP redirects/proxy/credentials закрыты, request timeout3s, artifact32MiB,
+version/journals128KiB, health/acceptance64KiB. Origin принадлежит оператору;
+это не публичный URL-fetcher. Root должен обслуживаться отдельным owner application,
+реально возвращающим published manifest и artifact. [ADR-0020](adr/0020-owner-local-manifest-delivery.md).
+
+> **Source of truth:** код приложения (`backend/src/*`) и `docker-compose.yml`. Этот файл — справочник для локального запуска и деплоя. Backend server читает runtime-настройки через `backend/src/config.rs::RuntimeConfig`; невалидные bool, `CICD_RUNNER_MODE`, CORS allowlist, artifact TTL, queue timeout и `CICD_SECRETS_KEY` падают при старте. `cicd-cli` и отдельный `forge-runner` читают свои process-boundary настройки через `clap`/env.
+
+## Основные (задаются в docker-compose)
+
+| Переменная | Default (compose) | Назначение |
+|---|---|---|
+| `CICD_DATABASE_URL` | нет вне compose | Полный URL PostgreSQL для прямого backend/test запуска |
+| `CICD_MIGRATIONS_DIR` | `/app/migrations` в compose | Каталог committed SQLx migrations; прямой cargo-run по умолчанию использует `backend/migrations` |
+| `CICD_BIND` | `0.0.0.0:22801` | Адрес API + Git Smart HTTP |
+| `CICD_GIT_ROOT` | `/var/lib/forge/git` в backend/compose; `.env.example` задаёт `./.forge/git` для прямого local run | Корень bare-репозиториев при локальном запуске |
+| `CICD_GIT_TOKEN` | — | Legacy shared token для Git Smart HTTP; пусто отключает только этот token, а при непустом `CICD_AUTH_SECRET` private/read-write Git routes всё равно требуют JWT/PAT + project membership |
+| `CICD_GIT_INTERNAL_TOKEN` | — | `X-Internal-Token` для post-receive hook; пусто допустимо только для изолированного local development |
+| `CICD_AUTH_SECRET` | — | JWT/PAT auth boundary; пусто оставляет trusted-network режим |
+| `CICD_AUTH_COOKIE_SECURE` | `false` | `Secure` flag для refresh/CSRF cookies; включайте за TLS/reverse proxy |
+| `CICD_AUTH__CENTRAL_JWKS_URI` | — | Внутренний URL JWKS Central Auth; наличие включает fail-closed central human auth |
+| `CICD_AUTH__CENTRAL_ISSUER` | `http://localhost:7701` | Публичный issuer, который должен совпасть с `iss` токена |
+| `CICD_AUTH__CENTRAL_TIMEOUT_SECS` | `5` | Timeout JWKS/session/PAT introspection запросов |
+| `VITE_AUTH_ISSUER` | `http://localhost:7701` | Публичный browser issuer для Authorization Code + PKCE |
+| `CICD_CORS_ALLOWED_ORIGINS` | — | Comma-separated allowlist browser origins для API/Git Dashboard CORS; пусто сохраняет permissive trusted-local режим, explicit `*` запрещён |
+| `CICD_TLS_HOST` | — | Имя internal TLS origin для профиля `docker-compose.tls.yml`; обязательна непустая DNS-safe host label, например `forge.localhost` |
+| `CICD_TLS_HTTPS_PORT` | `22443` | Loopback host/container порт Caddy TLS profile; frontend/API direct ports в этом профиле удалены |
+| `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
+| `CICD_SDLC_WORKSPACE_SUBJECT` | — | Non-nil UUID выделенного existing Forge service account; project-bound `api:write/read` только для blocked workspace operation POST/GET; без настройки API закрыт |
+| `CICD_SDLC_WORKSPACE_OBSERVATION_ROOT` | — | Опциональный absolute owner-local mount existing OwnedWorkspace для bounded read-only origin/SHA/clean preflight; не prepare/admission/dispatch |
+| `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
+| `CICD_ARTIFACT_RETENTION_DAYS` | `30` | TTL новых артефактов в днях (`1..3650`); backend retention worker удаляет expired local files и помечает metadata `purged_at` |
+| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Включает embedded runner внутри backend; при `false` работу забирает внешний `forge-runner`, а backend оставляет maintenance loop для ack-timeout requeue, lease expiry и stale-runner offline reconciliation |
+| `CICD_RUNNER_MODE` | `host` в compose | Режим embedded runner: `host` для локального evidence/dev; `docker` только если Docker executor/socket подключены явно |
+| `CICD_RUNNER_DOCKER_NETWORK` | `sdlc-local_cicd` | Docker network для job-контейнеров embedded runner; umbrella Compose задаёт фактическую сеть workspace |
+| `CICD_RUNNER_SHARED_SOURCES_VOLUME` | пусто | Опциональный Docker volume, доступный job только для чтения в `/runner-sources`; writable checkout и кэши в него не попадают |
+| `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Сохраняет exact `forge-runner-<job-id>` workspace после terminal job только для краткой отладки; stand default удаляет workspace, сохраняя managed logs и declared artifacts. truthy: `true`, `1`, `yes`, `on` |
+| `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS` | `86400` | Safety timeout для dispatch-eligible `queued` job без совместимого execution path; `0` отключает. Таймаут срабатывает только если нет embedded path для untagged work и нет online protocol runner-а с подходящими tags/current `shell` capability |
+| `CICD_RUNNER_REGISTRATION_TOKEN` | — | Bootstrap token для `POST /api/v1/runner/register`; пусто отключает регистрацию внешних runner-ов |
+| `CICD_RUNNER_CREDENTIAL` | — | Bearer credential уже зарегистрированного `forge-runner`; если пусто, runner регистрируется через `CICD_RUNNER_REGISTRATION_TOKEN` |
+| `CICD_RUNNER_NAME` | `forge-runner` | Имя внешнего runner process |
+| `CICD_RUNNER_TAGS` | `linux,host` | Теги внешнего runner process, через запятую |
+| `CICD_RUNNER_TOTAL_SLOTS` | `1` | Количество слотов, которое внешний runner сообщает в heartbeat/poll; current `forge-runner` выполняет один offer за раз и сообщает active lease как busy slot |
+| `CICD_RUNNER_POLL_INTERVAL_SECONDS` | `5` | Интервал пустого poll внешнего `forge-runner`: server long-poll wait capped at 30s + fallback sleep для мгновенного `204` |
+| `CICD_RUNNER_NO_CHECKOUT` | `false` | Отключает Git checkout и создаёт пустой workspace для команд |
+| `CICD_RUNNER_WORK_DIR` | `/var/lib/forge/runner-work` в compose runner profile | Корень checkout workspace внешнего `forge-runner` |
+
+## Сборочные переменные compose (в .env)
+
+| Переменная | Default | Назначение |
+|---|---|---|
+| `CICD_DATABASE_USER` | `cicd` | Пользователь БД |
+| `CICD_DATABASE_PASSWORD` | — (обязателен) | Пароль БД |
+| `CICD_DATABASE_NAME` | `cicd` | Имя БД |
+| `CICD_DATABASE_PORT` | `22543` | Публикация PostgreSQL на хост |
+| `CICD_API_PORT` | `22801` | Публикация API на хост |
+| `CICD_WEB_PORT` | `22802` | Публикация Dashboard на хост |
+
+## Backend/runner-only (используются вне compose)
+
+| Переменная | Default | Назначение |
+|---|---|---|
+| `CICD_RUNNER_MODE` | `docker` вне compose | Режим embedded runner binary: `docker` \| `host` |
+| `CICD_RUNNER_DOCKER_NETWORK` | `sdlc-local_cicd` | Существующая Docker network, к которой подключаются embedded job-контейнеры |
+| `CICD_RUNNER_SHARED_SOURCES_VOLUME` | пусто | Опциональный read-only volume общих исходников для локального umbrella CI |
+| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Отключение embedded execution при запуске внешнего runner-а; runtime maintenance для ack timeout, leases/stale runners продолжает работать |
+| `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS` | `86400` | Сколько секунд dispatch-eligible job может ждать без совместимого runner-а до `failed` diagnostic `no compatible runner before queue timeout`; `0` отключает |
+| `CICD_RUNNER_REGISTRATION_TOKEN` | пусто | Bootstrap token внешнего runner protocol MVP |
+| `CICD_RUNNER_CREDENTIAL` | пусто | Credential внешнего `forge-runner`, полученный при регистрации |
+| `CICD_RUNNER_NAME` | `forge-runner` | Имя внешнего runner-а |
+| `CICD_RUNNER_TAGS` | `linux,host` | Теги внешнего runner-а |
+| `CICD_RUNNER_TOTAL_SLOTS` | `1` | Capacity внешнего runner-а; current `forge-runner` выполняет один offer за раз и heartbeat-ит active lease |
+| `CICD_RUNNER_POLL_INTERVAL_SECONDS` | `5` | Интервал пустого poll: `forge-runner` передаёт `waitSeconds=min(value,30)` и досыпает остаток только после мгновенного `204` |
+| `CICD_RUNNER_NO_CHECKOUT` | `false` | Запускать команды в пустом workspace без Git checkout |
+| `CICD_RUNNER_WORK_DIR` | temp dir `forge-runner` | Workspace root внешнего runner-а |
+| `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job; truthy: `true`, `1`, `yes`, `on` |
+| `CICD_API_URL` | `http://127.0.0.1:7711` | Base URL для `cicd-cli` в локальном стенде |
+| `CICD_TIMEOUT_SECONDS` | `60` | Общий HTTP timeout для `cicd-cli`; `--timeout-seconds` имеет приоритет |
+| `CICD_API_TOKEN` | пусто | Bearer PAT/JWT для `cicd-cli` в auth-mode |
+| `CICD_OUTPUT` | `json` | Формат вывода `cicd-cli`: `json` или `table` |
+| `CICD_ARTIFACT_RETENTION_DAYS` | `30` | TTL новых артефактов; пустое значение равно default, `0` не допускается |
+
+## Генерация ключа
+
+```bash
+openssl rand -base64 32   # CICD_SECRETS_KEY
+openssl rand -hex 16      # CICD_GIT_TOKEN / CICD_GIT_INTERNAL_TOKEN
+openssl rand -hex 32      # CICD_RUNNER_REGISTRATION_TOKEN
+```
+
+> Удалённое legacy-значение `forge-internal-dev-token` отклоняется при старте backend. Для shared deployment задайте уникальный `CICD_GIT_INTERNAL_TOKEN`; пустое значение означает trusted-local режим без проверки internal hook token.
+
+> Ротация `CICD_SECRETS_KEY` без перешифровки секретов сделает их нечитаемыми — см. `docs/STORAGE_ARCHITECTURE.md` (key rotation).
+
+## Валидация значений
+
+- Bool-переменные backend (`CICD_EMBEDDED_RUNNER_ENABLED`, `CICD_RUNNER_KEEP_WORKSPACE`, `CICD_AUTH_COOKIE_SECURE`) принимают `true/false`, `1/0`, `yes/no`, `on/off`.
+- `CICD_RUNNER_MODE` принимает только `docker` или `host`.
+- `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS` принимает `0` для отключения или `1..2592000` секунд.
+- `CICD_ARTIFACT_RETENTION_DAYS` принимает `1..3650`.
+- `CICD_SECRETS_KEY` должен быть base64-encoded 32 bytes.
+- `CICD_CORS_ALLOWED_ORIGINS` не принимает explicit `*`; непустое значение должно содержать хотя бы один origin.
+
+## Кандидат исправления Bug (source candidate, не rollout)
+
+`CICD_BUG_WORK_ENABLED=false` запрещает новые intent/import/build/publication эффекты. Оригинальные чтения и точный replay уже принятой операции сохраняются. `CICD_BUG_WORK_PRODUCER_SUBJECT` — отдельный зарегистрированный project-bound Fleet service account; права актуального CI-токена проверяются в БД. `CICD_BUG_WORK_TRACKER_ORIGIN` задаёт только фиксированный HTTP origin без пути, credentials и query. `CICD_BUG_WORK_TRACKER_READER_TOKEN_FILE` — защищённый абсолютный путь к отдельному PAT CI reader, зарегистрированному Tracker для двух103/104 GET с единственным `task-tracker:read`; человеческие/Fleet/Workflow токены не переиспользуются. `CICD_BUG_WORK_CONTROLLER_ROOT` — существующий защищённый абсолютный каталог вне Git/artifact storage. При включении обязательны все четыре локатора. Значения по умолчанию не включают интеграцию и не создают агента/среду.
+
+Статическая публикация использует существующий privileged `forge-delivery --bug-work` и прежний явный `CICD_LOCAL_DELIVERY_MODE=local-verification`; HTTP приём bundle запускает только реальный pipeline, не deployment. Среды и политика проб берутся из существующего `CICD_DELIVERED_TARGETS`, proof reader — из `CICD_DELIVERED_TARGET_SUBJECT`. Никакие runtime pins или production env этим изменением не применялись.

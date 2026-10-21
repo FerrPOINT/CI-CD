@@ -893,19 +893,22 @@ async fn execute_attempt(
         diagnostic: None,
     };
 
+    let mut processes = AttemptProcesses::new()?;
     for command in &offer.attempt.commands {
-        let command_outcome = match run_shell_command(
+        let command_outcome = match run_shell_command_in_scope(
             command,
             workspace,
             offer.attempt.timeout_seconds,
             log_context.as_ref(),
             secret_env,
+            &mut processes,
         )
         .await
         {
             Ok(status) => status,
             Err(error) => {
                 if error.is::<UnconfirmedExecution>() {
+                    let _ = processes.finish().await;
                     return Err(error);
                 }
                 result = ExecutionResult {
@@ -942,6 +945,19 @@ async fn execute_attempt(
             };
             break;
         }
+    }
+
+    // Background services belong to the attempt, including across successful steps.
+    // Stop them and flush their logs before artifacts, terminal ACK or cleanup.
+    if let Err(error) = processes.finish().await {
+        if error.is::<UnconfirmedExecution>() {
+            return Err(error);
+        }
+        result = ExecutionResult {
+            outcome: "failed",
+            exit_code: None,
+            diagnostic: Some(truncate_diagnostic(&format!("{error:#}"))),
+        };
     }
 
     let artifact_error = if result.outcome == "canceled" {
@@ -1013,12 +1029,127 @@ async fn prepare_workspace(
     Ok(workspace)
 }
 
+/// One live process-group leader pins ownership until the whole attempt ends.
+/// Keeping the leader alive prevents a completed step's group ID being reused.
+struct AttemptProcesses {
+    #[cfg(unix)]
+    anchor: tokio::process::Child,
+    #[cfg(unix)]
+    group: u32,
+    stopped: bool,
+    logs: Vec<tokio::task::JoinHandle<anyhow::Result<()>>>,
+}
+
+impl AttemptProcesses {
+    fn new() -> anyhow::Result<Self> {
+        #[cfg(target_os = "linux")]
+        if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) } != 0 {
+            return Err(anyhow::Error::new(UnconfirmedExecution)
+                .context("cannot establish descendant reaping"));
+        }
+        #[cfg(unix)]
+        let (anchor, group) = {
+            use std::os::unix::process::CommandExt;
+            let mut command = shell("exec sleep 2147483647");
+            command.as_std_mut().process_group(0);
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command.kill_on_drop(true);
+            let child = command
+                .spawn()
+                .context("spawn attempt process-group anchor")?;
+            let group = child.id().ok_or(UnconfirmedExecution)?;
+            (child, group)
+        };
+        Ok(Self {
+            #[cfg(unix)]
+            anchor,
+            #[cfg(unix)]
+            group,
+            stopped: false,
+            logs: Vec::new(),
+        })
+    }
+
+    async fn stop(&mut self) -> anyhow::Result<()> {
+        if !self.stopped {
+            #[cfg(unix)]
+            terminate_command_group(&mut self.anchor, self.group).await?;
+            self.stopped = true;
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    async fn stop_active(&mut self, child: &mut tokio::process::Child) -> anyhow::Result<()> {
+        signal_command_group(self.group)?;
+        // Reap Tokio's direct child before collecting adopted descendants.
+        child.wait().await.map_err(|_| UnconfirmedExecution)?;
+        self.stop().await
+    }
+
+    async fn flush_logs(&mut self) -> anyhow::Result<()> {
+        let mut first_error = None;
+        for task in std::mem::take(&mut self.logs) {
+            if let Err(error) = await_log_task(Some(task)).await {
+                first_error.get_or_insert(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    async fn finish(&mut self) -> anyhow::Result<()> {
+        self.stop().await?;
+        self.flush_logs().await
+    }
+}
+
+impl Drop for AttemptProcesses {
+    fn drop(&mut self) {
+        // A failed execution cannot publish completion; still request scoped stop.
+        #[cfg(unix)]
+        if !self.stopped && self.anchor.id().is_some() {
+            if let Ok(group) = i32::try_from(self.group) {
+                unsafe { libc::kill(-group, libc::SIGKILL) };
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 async fn run_shell_command(
     command: &str,
     cwd: &Path,
     timeout_seconds: i32,
     log_context: Option<&LogContext>,
     secret_env: &[(String, String)],
+) -> anyhow::Result<CommandOutcome> {
+    let mut processes = AttemptProcesses::new()?;
+    let result = run_shell_command_in_scope(
+        command,
+        cwd,
+        timeout_seconds,
+        log_context,
+        secret_env,
+        &mut processes,
+    )
+    .await;
+    processes.finish().await?;
+    result
+}
+
+async fn run_shell_command_in_scope(
+    command: &str,
+    cwd: &Path,
+    timeout_seconds: i32,
+    log_context: Option<&LogContext>,
+    secret_env: &[(String, String)],
+    processes: &mut AttemptProcesses,
 ) -> anyhow::Result<CommandOutcome> {
     eprintln!("running: {command}");
     if let Some(context) = log_context {
@@ -1033,6 +1164,13 @@ async fn run_shell_command(
     }
 
     let mut command_process = shell(command);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command_process
+            .as_std_mut()
+            .process_group(i32::try_from(processes.group).map_err(|_| UnconfirmedExecution)?);
+    }
     command_process.current_dir(cwd).stdin(Stdio::null());
     for (name, value) in secret_env {
         command_process.env(name, value);
@@ -1068,6 +1206,8 @@ async fn run_shell_command(
         _ => None,
     };
 
+    processes.logs.extend(stdout_task);
+    processes.logs.extend(stderr_task);
     let timeout = tokio::time::sleep(Duration::from_secs(timeout_seconds.max(1) as u64));
     tokio::pin!(timeout);
     let control_delay = tokio::time::sleep(Duration::from_secs(CONTROL_POLL_INTERVAL_SECONDS));
@@ -1077,10 +1217,13 @@ async fn run_shell_command(
         tokio::select! {
             status = child.wait() => break status.map_err(|_| anyhow::Error::new(UnconfirmedExecution)),
             _ = &mut timeout => {
-                let _ = child.kill().await;
-                child.wait().await.map_err(|_| UnconfirmedExecution)?;
-                let _ = await_log_task(stdout_task).await;
-                let _ = await_log_task(stderr_task).await;
+                #[cfg(unix)]
+                processes.stop_active(&mut child).await?;
+                #[cfg(not(unix))]
+                {
+                    child.kill().await.map_err(|_| UnconfirmedExecution)?;
+                    child.wait().await.map_err(|_| UnconfirmedExecution)?;
+                }
                 bail!("command timed out after {timeout_seconds}s");
             }
             _ = &mut control_delay, if log_context.is_some() => {
@@ -1098,10 +1241,13 @@ async fn run_shell_command(
                                 }],
                             )
                             .await;
-                            let _ = child.kill().await;
-                            child.wait().await.map_err(|_| UnconfirmedExecution)?;
-                            let _ = await_log_task(stdout_task).await;
-                            let _ = await_log_task(stderr_task).await;
+                            #[cfg(unix)]
+                processes.stop_active(&mut child).await?;
+                #[cfg(not(unix))]
+                {
+                    child.kill().await.map_err(|_| UnconfirmedExecution)?;
+                    child.wait().await.map_err(|_| UnconfirmedExecution)?;
+                }
                             return Ok(CommandOutcome::Canceled);
                         }
                         Ok(false) => {}
@@ -1116,9 +1262,53 @@ async fn run_shell_command(
         }
     }?;
 
-    await_log_task(stdout_task).await?;
-    await_log_task(stderr_task).await?;
+    #[cfg(not(unix))]
+    processes.flush_logs().await?;
     Ok(CommandOutcome::Exited(status))
+}
+
+#[cfg(unix)]
+fn signal_command_group(process_id: u32) -> anyhow::Result<()> {
+    let group = i32::try_from(process_id).map_err(|_| UnconfirmedExecution)?;
+    if unsafe { libc::kill(-group, libc::SIGKILL) } != 0
+        && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    {
+        return Err(
+            anyhow::Error::new(UnconfirmedExecution).context("cannot stop attempt process group")
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn terminate_command_group(
+    child: &mut tokio::process::Child,
+    process_id: u32,
+) -> anyhow::Result<()> {
+    // The anchor pins ownership until all member processes have been signaled.
+    signal_command_group(process_id)?;
+    child.wait().await.map_err(|_| UnconfirmedExecution)?;
+    #[cfg(unix)]
+    {
+        let group = i32::try_from(process_id).map_err(|_| UnconfirmedExecution)?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            // Linux subreaper/PID 1 adopts command descendants. Do not reap other groups.
+            while unsafe { libc::waitpid(-group, std::ptr::null_mut(), libc::WNOHANG) } > 0 {}
+            if unsafe { libc::kill(-group, 0) } != 0 {
+                if std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                    break;
+                }
+                return Err(anyhow::Error::new(UnconfirmedExecution));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(anyhow::Error::new(UnconfirmedExecution)
+                    .context("command descendants remain unconfirmed"));
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+    Ok(())
 }
 
 async fn poll_lease_cancel_requested(context: &LogContext) -> anyhow::Result<bool> {
@@ -1872,5 +2062,111 @@ mod tests {
                 .is_some_and(|value| value.contains("timed out"))
         );
         let _ = std::fs::remove_dir_all(work_dir);
+    }
+    #[cfg(target_os = "linux")]
+    async fn descendant_termination_case(mode: &str) {
+        let root = std::env::temp_dir().join(format!("forge-process-tree-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().route(
+            "/{*path}",
+            axum::routing::get(|| async { axum::Json(json!({"cancelRequested": true})) })
+                .post(|| async { axum::http::StatusCode::OK }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let context = LogContext {
+            client: reqwest::Client::new(),
+            base,
+            credential: "test-credential".into(),
+            lease_id: Uuid::new_v4(),
+            lease_token: "test-lease".into(),
+            fencing_token: 1,
+            attempt_id: Uuid::new_v4(),
+            masks: vec![],
+        };
+        let command = if mode == "normal" {
+            "sleep 20 & echo $! > child.pid; printf 'normal-output\\n'"
+        } else {
+            "sleep 20 & echo $! > child.pid; wait"
+        };
+        let timeout = if mode == "timeout" { 1 } else { 30 };
+        let started = tokio::time::Instant::now();
+        let result = run_shell_command(command, &root, timeout, Some(&context), &[]).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "descendant held the log pipe"
+        );
+        match mode {
+            "timeout" => assert!(result.unwrap_err().to_string().contains("timed out")),
+            "normal" => {
+                assert!(matches!(result.unwrap(), CommandOutcome::Exited(s) if s.success()))
+            }
+            _ => assert!(matches!(result.unwrap(), CommandOutcome::Canceled)),
+        }
+        let pid: i32 = std::fs::read_to_string(root.join("child.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "descendant remains alive or unreaped"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn timeout_terminates_descendants_with_open_log_pipes() {
+        descendant_termination_case("timeout").await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn cancellation_terminates_descendants_before_terminal_completion() {
+        descendant_termination_case("cancel").await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn normal_exit_reaps_leftover_children_and_preserves_success() {
+        descendant_termination_case("normal").await;
+    }
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn background_service_survives_between_commands_and_stops_at_attempt_end() {
+        let root = std::env::temp_dir().join(format!("forge-background-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let mut processes = AttemptProcesses::new().unwrap();
+        for command in [
+            "sleep 20 > background.log 2>&1 & echo $! > child.pid",
+            "kill -0 $(cat child.pid); printf 'next-step-ok\n'",
+        ] {
+            let result = run_shell_command_in_scope(command, &root, 10, None, &[], &mut processes)
+                .await
+                .unwrap();
+            assert!(matches!(result, CommandOutcome::Exited(s) if s.success()));
+        }
+        let pid: i32 = std::fs::read_to_string(root.join("child.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        processes.finish().await.unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

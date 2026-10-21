@@ -1,0 +1,427 @@
+//! Existing-Issue candidate/publication identity. No Task/PM surrogate or caller proof flag.
+use crate::delivered_target::{DeliveredProjectRef, DeliveredTargetStatus, ServingIdentity};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+pub const MAX_BUNDLE_BYTES: u64 = 32 * 1024 * 1024;
+pub const MAX_SAFE_REVISION: i64 = 9_007_199_254_740_991;
+pub fn sha256(v: &str) -> bool {
+    hex(v, 64)
+}
+fn hex(v: &str, n: usize) -> bool {
+    v.len() == n
+        && v.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+pub fn commit(v: &str) -> bool {
+    hex(v, 40) || hex(v, 64)
+}
+pub fn operation_key(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= 128
+        && v.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+}
+fn text(v: &str, n: usize) -> bool {
+    !v.trim().is_empty() && v.len() <= n && !v.chars().any(char::is_control)
+}
+fn version(v: i64) -> bool {
+    (1..=MAX_SAFE_REVISION).contains(&v)
+}
+
+/// Hash fields refer to exact retained owner103/104 JSON, not timestamp-rebuilt DTOs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkPublicationBinding {
+    pub bug_id: Uuid,
+    pub assignment_id: Uuid,
+    pub assignment_sha256: String,
+    pub fence: i64,
+    pub owner_subject: String,
+    pub runtime_binding_sha256: String,
+    pub source_context_sha256: String,
+    pub verification_basis_sha256: String,
+    pub canonical_basis_sha256: String,
+    pub base_commit_sha: String,
+    pub candidate_commit_sha: String,
+}
+impl BugWorkPublicationBinding {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.bug_id.is_nil()
+            || self.assignment_id.is_nil()
+            || !version(self.fence)
+            || !text(&self.owner_subject, 256)
+            || [
+                &self.assignment_sha256,
+                &self.runtime_binding_sha256,
+                &self.source_context_sha256,
+                &self.verification_basis_sha256,
+                &self.canonical_basis_sha256,
+            ]
+            .iter()
+            .any(|s| !sha256(s))
+            || !commit(&self.base_commit_sha)
+            || !commit(&self.candidate_commit_sha)
+            || self.base_commit_sha == self.candidate_commit_sha
+        {
+            return Err("invalid exact Bug work candidate identity");
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkOperationRequest {
+    pub contract_version: u8,
+    pub operation_key: String,
+    pub project: DeliveredProjectRef,
+    pub bug_work: BugWorkPublicationBinding,
+    pub repository_id: Uuid,
+    pub candidate_tree_id: String,
+    pub bundle_sha256: String,
+    pub bundle_size_bytes: u64,
+}
+impl BugWorkOperationRequest {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        self.bug_work.validate()?;
+        if self.contract_version != 1
+            || !operation_key(&self.operation_key)
+            || self.project.tracker_instance_id.is_nil()
+            || self.project.project_id.is_nil()
+            || self.repository_id.is_nil()
+            || !commit(&self.candidate_tree_id)
+            || !sha256(&self.bundle_sha256)
+            || !(1..=MAX_BUNDLE_BYTES).contains(&self.bundle_size_bytes)
+        {
+            return Err("invalid bounded Bug work source operation");
+        }
+        Ok(())
+    }
+    pub fn candidate_ref(&self) -> String {
+        format!(
+            "refs/fleet/bug-work/{}/{}",
+            self.bug_work.assignment_id, self.bug_work.candidate_commit_sha
+        )
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkPipelineIdentity {
+    pub pipeline_id: Uuid,
+    pub config_sha256: String,
+    pub plan_sha256: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkOperationIdentity {
+    pub operation_id: Uuid,
+    pub operation_key: String,
+    pub request_sha256: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkOperationIntent {
+    pub schema: String,
+    pub operation_id: Uuid,
+    pub configuration_id: Uuid,
+    pub request_sha256: String,
+    pub request: BugWorkOperationRequest,
+    pub recorded_at: DateTime<Utc>,
+}
+/// Minted only after immutable import + actual pipeline creation, atomically with its DB row.
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkOperationAccepted {
+    pub schema: String,
+    pub operation: BugWorkOperationIdentity,
+    pub intent_operation_id: Uuid,
+    pub configuration_id: Uuid,
+    pub request: BugWorkOperationRequest,
+    pub candidate_ref: String,
+    pub pipeline: BugWorkPipelineIdentity,
+    pub accepted_at: DateTime<Utc>,
+}
+impl BugWorkOperationAccepted {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        self.request.validate()?;
+        if self.schema != "forge/bug-work-operation-accepted/v1"
+            || self.operation.operation_id.is_nil()
+            || self.intent_operation_id.is_nil()
+            || self.configuration_id.is_nil()
+            || self.operation.operation_key != self.request.operation_key
+            || !sha256(&self.operation.request_sha256)
+            || self.candidate_ref != self.request.candidate_ref()
+            || self.pipeline.pipeline_id.is_nil()
+            || !sha256(&self.pipeline.config_sha256)
+            || !sha256(&self.pipeline.plan_sha256)
+        {
+            return Err("invalid actual accepted Bug candidate");
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkOperationReadback {
+    pub intent: BugWorkOperationIntent,
+    pub accepted: Option<BugWorkOperationAccepted>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkArtifactIdentity {
+    pub artifact_id: Uuid,
+    pub job_id: Uuid,
+    pub attempt_id: Uuid,
+    pub sha256: String,
+    pub size_bytes: i64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkDeliveryIdentity {
+    pub delivery_ref: String,
+    pub operation_key: String,
+    pub generation: String,
+    pub manifest_sha256: String,
+    pub commit_sha: String,
+    pub artifact_id: Uuid,
+    pub artifact_digest: String,
+    pub serving_identity: ServingIdentity,
+}
+/// Technical owner observation only. Tracker owns legal business resolution.
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkDeliveryProof {
+    pub schema: String,
+    pub producer_version: String,
+    pub observed_at: DateTime<Utc>,
+    pub project: DeliveredProjectRef,
+    pub configuration_id: Uuid,
+    pub repository_id: Uuid,
+    pub environment_id: Uuid,
+    pub target_ref: String,
+    pub operation: BugWorkOperationIdentity,
+    pub bug_work: BugWorkPublicationBinding,
+    pub pipeline: BugWorkPipelineIdentity,
+    pub artifact: Option<BugWorkArtifactIdentity>,
+    pub delivery: Option<BugWorkDeliveryIdentity>,
+    pub status: DeliveredTargetStatus,
+    pub blocked_reasons: Vec<String>,
+}
+impl BugWorkDeliveryProof {
+    pub fn require_confirmed(
+        &self,
+        original: &BugWorkOperationAccepted,
+    ) -> Result<(), &'static str> {
+        original.validate()?;
+        let (Some(artifact), Some(delivery)) = (&self.artifact, &self.delivery) else {
+            return Err("actual delivered Bug candidate unavailable");
+        };
+        let generation = delivery.generation.parse::<u64>().ok();
+        if self.schema != "forge/bug-work-delivery-proof/v1"
+            || !text(&self.producer_version, 128)
+            || self.status != DeliveredTargetStatus::Confirmed
+            || !self.blocked_reasons.is_empty()
+            || self.project != original.request.project
+            || self.configuration_id != original.configuration_id
+            || self.repository_id != original.request.repository_id
+            || self.environment_id.is_nil()
+            || !crate::delivered_target::valid_target_ref(&self.target_ref)
+            || self.operation != original.operation
+            || self.bug_work != original.request.bug_work
+            || self.pipeline != original.pipeline
+            || [artifact.artifact_id, artifact.job_id, artifact.attempt_id]
+                .iter()
+                .any(Uuid::is_nil)
+            || !sha256(&artifact.sha256)
+            || artifact.size_bytes <= 0
+            || delivery.commit_sha != self.bug_work.candidate_commit_sha
+            || delivery.artifact_id != artifact.artifact_id
+            || delivery.artifact_digest != format!("sha256:{}", artifact.sha256)
+            || !operation_key(&delivery.operation_key)
+            || generation.is_none_or(|n| n == 0 || n.to_string() != delivery.generation)
+            || !sha256(&delivery.manifest_sha256)
+            || delivery.serving_identity.version_body_sha256 != delivery.manifest_sha256
+            || delivery.serving_identity.artifact_body_sha256 != artifact.sha256
+            || !text(&delivery.delivery_ref, 512)
+            || !delivery
+                .delivery_ref
+                .strip_prefix("forge:delivered:")
+                .is_some_and(|s| !s.is_empty())
+            || !(-5..=60).contains(
+                &self
+                    .observed_at
+                    .signed_duration_since(delivery.serving_identity.observed_at)
+                    .num_seconds(),
+            )
+        {
+            return Err("delivered identity differs from the exact accepted Bug candidate");
+        }
+        Ok(())
+    }
+}
+
+/// Additive closed carrier. Existing Task manifest/command bytes are unchanged.
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkStaticManifest {
+    pub schema: String,
+    pub operation_receipt: BugWorkOperationAccepted,
+    pub pipeline_id: Uuid,
+    pub artifact: BugWorkArtifactIdentity,
+    pub config_sha256: String,
+    pub plan_sha256: String,
+    pub target_policy_sha256: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkPublishCommand {
+    pub schema: String,
+    pub operation_key: String,
+    pub original_operation_key: String,
+    pub original_request_sha256: String,
+    pub target_ref: String,
+    pub artifact_id: Uuid,
+    pub expected_manifest_sha256: Option<String>,
+}
+impl BugWorkPublishCommand {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.schema != "forge/bug-work-publication-command/v1"
+            || !operation_key(&self.operation_key)
+            || !operation_key(&self.original_operation_key)
+            || !sha256(&self.original_request_sha256)
+            || !crate::delivered_target::valid_target_ref(&self.target_ref)
+            || self.artifact_id.is_nil()
+            || self
+                .expected_manifest_sha256
+                .as_ref()
+                .is_some_and(|v| !sha256(v))
+        {
+            return Err("invalid original Bug work publication command");
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkPublishReceipt {
+    pub schema: String,
+    pub command: BugWorkPublishCommand,
+    pub command_sha256: String,
+    pub original_operation: BugWorkOperationAccepted,
+    pub manifest_sha256: String,
+    pub previous_manifest_sha256: Option<String>,
+    pub status: crate::task_delivery::DeliveryStatus,
+    pub version: Option<crate::task_delivery::DeliveryProbe>,
+    pub served_artifact: Option<crate::task_delivery::DeliveryProbe>,
+    pub health: Option<crate::task_delivery::DeliveryProbe>,
+    pub acceptance: Option<crate::task_delivery::DeliveryProbe>,
+    pub recorded_at: DateTime<Utc>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BugWorkPublishReadback {
+    pub receipt: BugWorkPublishReceipt,
+    pub current_manifest_sha256: Option<String>,
+    pub reconciliation_needed: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fixture() -> (BugWorkDeliveryProof, BugWorkOperationAccepted) {
+        let vector: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/bug-work-delivery-v1.json"))
+                .unwrap();
+        let proof: BugWorkDeliveryProof = serde_json::from_value(vector["proof"].clone()).unwrap();
+        assert_eq!(serde_json::to_value(&proof).unwrap(), vector["proof"]);
+        let request = BugWorkOperationRequest {
+            contract_version: 1,
+            operation_key: proof.operation.operation_key.clone(),
+            project: proof.project.clone(),
+            bug_work: proof.bug_work.clone(),
+            repository_id: proof.repository_id,
+            candidate_tree_id: "c".repeat(40),
+            bundle_sha256: "d".repeat(64),
+            bundle_size_bytes: 1024,
+        };
+        let original = BugWorkOperationAccepted {
+            schema: "forge/bug-work-operation-accepted/v1".into(),
+            operation: proof.operation.clone(),
+            intent_operation_id: Uuid::new_v4(),
+            configuration_id: proof.configuration_id,
+            candidate_ref: request.candidate_ref(),
+            request,
+            pipeline: proof.pipeline.clone(),
+            accepted_at: proof.observed_at,
+        };
+        (proof, original)
+    }
+    #[test]
+    fn owner_proof_roundtrips_shared_vector_and_rejects_old_deployment_or_cross_binding() {
+        let (proof, original) = fixture();
+        proof.require_confirmed(&original).unwrap();
+        for change in 0..10 {
+            let mut wrong = proof.clone();
+            match change {
+                0 => {
+                    wrong.delivery.as_mut().unwrap().commit_sha =
+                        wrong.bug_work.base_commit_sha.clone()
+                }
+                1 => wrong.artifact.as_mut().unwrap().artifact_id = Uuid::new_v4(),
+                2 => wrong.bug_work.runtime_binding_sha256 = "0".repeat(64),
+                3 => wrong.bug_work.canonical_basis_sha256 = "0".repeat(64),
+                4 => wrong.repository_id = Uuid::new_v4(),
+                5 => wrong.operation.request_sha256 = "0".repeat(64),
+                6 => {
+                    wrong
+                        .delivery
+                        .as_mut()
+                        .unwrap()
+                        .serving_identity
+                        .version_body_sha256 = "0".repeat(64)
+                }
+                7 => wrong.delivery.as_mut().unwrap().generation = "03".into(),
+                8 => wrong.status = DeliveredTargetStatus::Unavailable,
+                _ => {
+                    wrong
+                        .delivery
+                        .as_mut()
+                        .unwrap()
+                        .serving_identity
+                        .observed_at -= chrono::Duration::seconds(61)
+                }
+            }
+            assert!(
+                wrong.require_confirmed(&original).is_err(),
+                "mutation {change}"
+            );
+        }
+    }
+    #[test]
+    fn closed_candidate_request_cannot_invent_task_refs_or_verified_flags() {
+        let (_, original) = fixture();
+        original.validate().unwrap();
+        let base = serde_json::to_value(&original.request).unwrap();
+        for field in [
+            "verified",
+            "taskId",
+            "rootTaskId",
+            "routingSnapshotId",
+            "workflowTaskRef",
+        ] {
+            let mut wrong = base.clone();
+            wrong[field] = serde_json::json!("caller");
+            assert!(
+                serde_json::from_value::<BugWorkOperationRequest>(wrong).is_err(),
+                "{field}"
+            );
+        }
+        let mut no_fix = original.request.clone();
+        no_fix.bug_work.candidate_commit_sha = no_fix.bug_work.base_commit_sha.clone();
+        assert!(no_fix.validate().is_err());
+        let mut oversize = original.request;
+        oversize.bundle_size_bytes = MAX_BUNDLE_BYTES + 1;
+        assert!(oversize.validate().is_err());
+    }
+}

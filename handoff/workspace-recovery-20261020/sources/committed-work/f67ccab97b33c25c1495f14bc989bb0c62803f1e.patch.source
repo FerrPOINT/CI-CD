@@ -1,0 +1,60 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 54f971c..207137b 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,10 @@
+ 
+ ## [Unreleased]
+ 
++- ADR-0002 и индекс отделяют исторический выбор React/Vite от текущего Base
++  ownership: локальные копии общих UI-компонентов не являются действующей
++  политикой. Исходные alternatives и decision сохранены; runtime не меняется.
++
+ - Repository reference search uses the shared Base label without a local font override.
+ - Notification target tests retain strict layout minima and tolerate only subpixel
+   transform rounding in rendered bounds; 40/44 px control sizes are unchanged.
+diff --git a/docs/ADR.md b/docs/ADR.md
+index 88dc962..8298931 100644
+--- a/docs/ADR.md
++++ b/docs/ADR.md
+@@ -45,7 +45,7 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
+ | ID | Title | Status | Дата |
+ |----|-------|--------|------|
+ | ADR-0001 | Rust + Axum + SQLx для backend | Accepted | 2026-08-26 |
+-| ADR-0002 | React + Vite + Tailwind + shadcn/ui для Dashboard | Accepted | 2026-08-26 |
++| [ADR-0002](adr/0002-react-vite-tailwind.md) | React + Vite + Tailwind для Dashboard | Accepted для стека; UI ownership заменён Base | 2026-08-26 |
+ | ADR-0003 | Ручные переходы статусов job в MVP | Accepted | 2026-08-26 |
+ | ADR-0004 | Только PostgreSQL для постоянных данных | Accepted | 2026-08-26 |
+ | ADR-0005 | Cargo workspace и слоистая архитектура | Accepted | 2026-08-26 |
+diff --git a/docs/adr/0002-react-vite-tailwind.md b/docs/adr/0002-react-vite-tailwind.md
+index 2369547..d20d40a 100644
+--- a/docs/adr/0002-react-vite-tailwind.md
++++ b/docs/adr/0002-react-vite-tailwind.md
+@@ -2,7 +2,16 @@
+ 
+ ## Status
+ 
+-Accepted; current screen set expanded beyond the original manual-transition MVP.
++Accepted для React/Vite и статического deployment. Решение о локальном владении
++общими UI-компонентами заменено действующим
++[Base UI/UX Standard](../../../services-base/docs/platform/UI_UX_STANDARD.md).
++
++Этот ADR сохраняет исходные context, alternatives и decision как историю выбора
++стека. Его упоминания shadcn/ui и локальной адаптации primitives не разрешают
++создавать второй UI-kit: shell, tokens, controls, states и page compositions
++поставляет pinned `@sdlc/ui`. Dashboard определяет доменные slots, данные и
++действия через продуктовые адаптеры. Текущая архитектура и маршрутная карта:
++[ARCHITECTURE](../ARCHITECTURE.md), [UI_UX_MAP](../UI_UX_MAP.md).
+ 
+ ## Context
+ 
+@@ -19,6 +28,9 @@ Dashboard отображает проекты, пайплайны, стадии,
+ 
+ ## Decision
+ 
++Первоначальное решение; часть о владении общими компонентами заменена согласно
++Status выше. React/Vite и статический deployment остаются действующими.
++
+ Использовать React 19 с TypeScript, Vite 6, Tailwind CSS 4 и shadcn/ui. Dashboard собирается в статические файлы и в production обслуживается nginx. Vite proxy в development направляет `/api` в Rust API на `http://localhost:22801`.
+ 
+ shadcn/ui применяется как набор исходных компонентов и паттернов, а не непрозрачная runtime-библиотека: код компонентов остаётся в репозитории и может адаптироваться к задаче Dashboard. Tailwind даёт общий набор design tokens и утилит без отдельного тяжёлого CSS-runtime.

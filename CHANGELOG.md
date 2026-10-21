@@ -15,6 +15,13 @@
 
 ## [Unreleased]
 
+- Исправлен возврат Back/Forward между подключением и историей синхронизации:
+  один выбор вкладки создаёт одну запись истории, сохраняя фильтры URL.
+- Карточки ручного и автоматического запуска располагаются в одну колонку на
+  узком экране, чтобы заголовки и пояснения оставались внутри границ карточек.
+
+- Подключена объединённая версия общего UI Base: адаптивная оболочка, безопасные диалоги и независимая прокрутка панелей брендинга.
+
 ### Added
 
 - Registered namespace reader получает read-only DevOps evidence: исходный
@@ -26,6 +33,9 @@
   Точечные 13-case и generated API gates проходят; installed/live capability не заявлена.
 
 ### Fixed
+
+- Vite обновлён до исправленной версии 6.4.4: устранены три advisory в обработке
+  запуска редактора; проверка зависимостей сохраняет прежний строгий порог.
 
 - Embedded/external runner, candidate observer и owner selector используют общее
   прежнее кодирование artifact paths (`/` и `\` → `__`). Duplicate declarations,
@@ -44,6 +54,12 @@
   `CICD_RUNNER_CGROUP_PARENT` задаётся оператором для Compose jobs и typed build.
   Без настройки сохраняется прежнее размещение jobs. Umbrella-сборка backend
   ограничивает параллелизм через `CARGO_BUILD_JOBS` (по умолчанию 2).
+
+- Git-синхронизация при потере namespace admission останавливает и дожидается
+  дочерних процессов, сохраняя неизвестный результат до сверки refs. Общие
+  файловые слоты удерживают лимит параллелизма после потери PostgreSQL-сессии.
+  Регрессии проверяют реальные процессы, SHA и восстановление. Namespace-bound
+  PostgreSQL fixtures получают явный public Git origin в CI.
 
 - Task child может читать PipelineDetail своего исходного pipeline с проверкой
   current credential, task/source binding и live lease; чужие pipeline закрыты.

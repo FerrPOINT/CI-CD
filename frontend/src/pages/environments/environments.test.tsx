@@ -1,3 +1,4 @@
+import { chooseValue } from '../../test/choice'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
@@ -9,9 +10,9 @@ vi.mock('react-i18next', () => ({
     options?.name ? `${key} ${options.name}` : options?.ref ? `${key} ${options.ref}` : options?.count !== undefined ? `${key} ${options.count}/${options.total}` : key }),
 }))
 
-vi.mock('sonner', () => ({
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({
   toast: { error: vi.fn(), success: vi.fn() },
-}))
+}))()}))
 
 const projectId = '22222222-2222-4222-8222-222222222222'
 const environmentId = '66666666-6666-4666-8666-666666666666'
@@ -190,9 +191,10 @@ describe('EnvironmentsPage protected delivery controls', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: 'environments.search' }), { target: { value: 'env-07' } })
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
     fireEvent.change(screen.getByRole('searchbox', { name: 'environments.search' }), { target: { value: '' } })
-    fireEvent.change(screen.getByRole('combobox', { name: 'environments.statusFilter' }), { target: { value: 'stopped' } })
+    await chooseValue(screen.getByRole('combobox', { name: 'environments.statusFilter' }), 'stopped')
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
-    expect(screen.getAllByText('environments.statusStopped')).toHaveLength(2)
+    expect(screen.getByRole('listitem')).toHaveTextContent('environments.statusStopped')
+    expect(screen.getByRole('combobox', { name: 'environments.statusFilter' })).toHaveTextContent('environments.statusStopped')
   })
 
   it('hides stale rows on loading failure and retries successfully', async () => {

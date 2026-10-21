@@ -1,0 +1,165 @@
+# Дополнительная приёмка синхронизации, 2026-10-18
+
+База main: `97214e5893e91148bbd16c6a72e547950904e41e`.
+Source tree дополнительных интеграционных проверок:
+`bfe7eb99ada178dd535976b9ec068b957f559f76`.
+SDK Base: `2ad0834d06d3aa703fa1791a932bfc76650c8e42`, UI Base:
+`e0759e070326c905f365182d0107f8c87a2e67f6`.
+Rust 1.88.0, Node 22.20.0, pnpm 10.28.1; locked/frozen зависимости.
+
+Это продолжение [предыдущей проверки](2026-10-18-repository-sync-verification.md)
+и [исходного плана](2026-10-17-repository-sync-test-plan.md).
+Новые изменения этого прохода добавляют тесты. Production-код, включая
+исправление ожидания inherited stdout/stderr, совпадает с ранее проверенным
+tree `01aa670e292db8d408f2383801bbf51be5a6bf9a`.
+
+## Завершённые проверки
+
+| Проверка | Результат |
+|---|---|
+| Rust workspace, последовательно | 445 passed; три opt-in definitions отдельно от обычного gate |
+| fmt; clippy workspace/all-targets/all-features, `-D warnings` | PASS |
+| PostgreSQL normal suite | 121 passed, 25 opt-in definitions ignored |
+| Task pipeline/custody/Git HTTP и исторические миграции | 8 passed |
+| Физический SIGKILL и recovery собственного PostgreSQL | 1 passed |
+| Настоящий ENOSPC и повтор после освобождения scratch | PASS |
+| GitSession: TLS, hostname, expired certificate, private CA, redirects | PASS |
+| Frontend | 246 passed, 44 files; lint/typecheck/build PASS |
+| OpenAPI drift и compatibility с main; backend dump | PASS |
+| Release workspace | PASS |
+
+Workspace-тесты выполнены на tree
+`d83cc346172bc5bac22af4c8c7deb34790193072`. Единственное различие с tree
+интеграционных проверок — `backend/tests/support/repository_sync_live.rs`.
+Production, unit tests и frontend идентичны. Содержимое всех файлов нового
+frontend archive совпадает с ранее квалифицированным frontend archive;
+проверка записана в `frontend-artifact-identity.json`.
+
+В первый общий прогон попал отказ существующего CLI deadline test под нагрузкой.
+Повтор всего workspace с прежними assertions/deadlines последовательно прошёл.
+Журналы первого отказа сохранены. Таймауты и assertions не ослаблялись.
+
+## Что дополнительно покрыто
+
+- Точные границы stdout 16 MiB и stderr 1 MiB: граница допускается, лишний байт
+  даёт безопасный отказ; следующий subprocess работает.
+- Реальный отказ прав при cleanup: дочерний процесс без root не удаляет
+  недоступный scratch; повтор после исправления прав удаляет только свой run.
+  Чужой run и цель symlink сохраняются. Helper действительно исполняет один
+  тест; его output проверяется и не удваивает счётчик общего suite.
+- Отдельный API-процесс убит после настоящего provider HTTPS read во время
+  `/sync/check`. Живой Git child удерживает mutation guard. Следующий check
+  убирает orphan scratch; settings, история и обе стороны Git не изменяются.
+- Настоящий viewer login через production HTTP middleware читает настройки
+  и историю; PUT/check/start возвращают 403. Проверены также невалидный provider
+  credential и повторный check сохранённым credential без изменения версии
+  или refs. Это серверный login-тест; отдельный browser viewer login не проведён.
+- Добавлен сценарий падения после одного подтверждённого ref, второго принятого
+  с неизвестным результатом и третьего ещё не отправленного. Он скомпилирован;
+  живое исполнение остаётся в очереди остановленных проверок.
+
+## Живые подключения
+
+Использованы настоящие Git HTTPS endpoints, production router, PostgreSQL,
+worker и независимое чтение refs. Credentials передаются через stdin/FD;
+имитация провайдера не учитывается как живая приёмка.
+
+| Новый самостоятельный сценарий | GitHub | GitLab |
+|---|---|---|
+| Полностью пустой hosted repository: initial no-op, ветка, annotated tag, FF обратно, no-op, сохранение Forge HEAD | PASS | PASS |
+| SIGKILL отдельного API во время check и восстановление scratch/guard | PASS | PASS |
+| Невалидный credential, check без сохранения, viewer login/403 команд | PASS | PASS |
+
+Для пустого repository созданы отдельные приватные fixtures:
+
+- GitHub: `FerrPOINT/forge-sync-qa-empty-20261018-410b7517`.
+- GitLab: `pdlc/forge-sync-qa-empty-20261018-410b7517`, project 230.
+
+В GitHub дополнительно реально передан `.github/workflows/forge-sync-qa.yml`
+с единственным триггером workflow_dispatch. Сверены bytes и SHA; GitHub API
+вернул 0 Actions runs. Автоматический запуск Actions не выполнялся.
+
+Два повторных полных provider matrix прерваны при остановке внешних записей
+после замечания пользователя о созданных repositories и тестовых refs.
+Exit 137 фиксируется как остановка QA, а не как продуктовый дефект или PASS.
+Остальные запланированные новые/повторные живые cases после них не запускались.
+Предыдущие 15 успешно выполненных live cases остаются доказательствами своего
+прохода и своей версии; они не выдаются за 24 новых выполненных cases.
+
+GitHub private branch protection API вернул 403 с сообщением:
+`Upgrade to GitHub Pro or make this repository public to enable this feature.`
+Это ограничение отдельной provider-функции. Обычный Git-обмен работает.
+Видимость, тариф и права аккаунта не менялись. Защита GitLab и защищённые
+ветки Forge подтверждены предыдущей живой матрицей и текущими PG tests.
+
+Последний присланный fine-grained PAT проверен именно по последнему user
+message, без смешивания с прежними credentials. `/user` вернул FerrPOINT/200,
+целевой private repository — 404, чистый Git HTTPS — access denied. Создание
+двух GitHub fixtures и успешные write-проверки использовали ранее настроенный
+credential gh. Отказ записи с credential, которому сначала доступно чтение
+этого repository, пока отдельно не подтверждён.
+
+## Браузерная проверка установленного Forge
+
+В http://localhost:8712 выполнен обычный SSO-вход и реальные checks/manual pulls
+двух ранее созданных собственных QA-подключений:
+
+- GitHub: run `0d7c4f60-212e-45dd-abb4-a0db2afaeb59`, success,
+  61 ref: 50 applied, 11 unchanged.
+- GitLab: run `252e6a95-9a1c-4243-b117-22b457d24b9d`, success,
+  68 refs: 43 applied, 25 unchanged.
+
+История обновилась до terminal без reload. Проверены реальная вторая страница
+refs 51–68, Back, provider filter и URL, Tab между полями; 375/768/1026/1440 px
+не дают горизонтального расширения документа. Оба подключения возвращены
+в disabled/automatic, активных запусков нет. Images/config runtime не обновлялись.
+
+Попытка изолированно загрузить JS/CSS кандидата через browser CDP не завершилась:
+static asset fulfillment вернул Invalid InterceptionId. Interception очищен,
+отдельная вкладка закрыта. Проверка установленного UI и component tests
+не выдаются за новую browser E2E всего установленного кандидата.
+
+## Внешние данные и состояние при остановке
+
+Точный список собственных QA refs с expected SHA и журналом происхождения
+сохранён в `external-cleanup-manifest.json`. На момент независимого readback:
+
+| Repository | Всего refs | Собственные refs с доказанным QA prefix |
+|---|---:|---:|
+| Исходный GitHub QA | 69 | 65 |
+| Дополнительный GitHub empty QA | 2 | 2 |
+| Исходный GitLab QA | 76 | 75 |
+| Дополнительный GitLab empty QA | 2 | 2 |
+
+Main SHA обоих исходных repositories совпадает со snapshot до этого прохода.
+В исходном GitHub вне подтверждённых QA prefixes сохраняются main,
+external-feature, forge-feature и v-sync-qa; в исходном GitLab — main.
+Manifest отделяет их от тестовых refs. Внешние удаления этим проходом пока
+не выполнялись. Дальнейшие внешние записи ожидают уточнения пользователя.
+
+## Локальные доказательства
+
+Журналы и безопасные metadata находятся вне Git в
+`.local/external-repository-sync/evidence/extra-20261018` относительно workspace.
+Там сохранены source export, release/frontend artifacts, результаты gates,
+живых checks, snapshots refs и browser evidence. Для каждого из трёх credentials
+exact-secret audit проверил исходники, все Git objects (включая unreachable),
+логи и содержимое архивов; plaintext и три encoded-варианта не найдены.
+Результаты сохранены в `credential-audit-*.json`.
+
+Base ComposeHelper v2 завершил проект `sdlc-qa-sync-extra-c61306dfb7`
+в состоянии cleaned. Независимо проверены отсутствие его containers, networks,
+disposable volumes и source/build exports; внешний Cargo cache сохранён.
+`cleanup-final.json` содержит readback. Общий Docker audit вернул три нарушения
+у чужих остановленных контейнеров, не относящихся к этому проекту; они не менялись.
+Собственные временные browser tabs закрыты. Runtime images не обновлялись.
+
+Архивы source, backend/frontend candidate и квалифицированных QA executables
+сохранены вместе с SHA-256 manifest. QA executable archive позволяет продолжить
+оставшиеся проверки без сохранения disposable target. Это не установка кандидата.
+
+Это не утверждение о 100% line/branch coverage или завершении всех живых cases.
+
+Продолжение после разрешения пользователя, завершение 17 оставшихся live cases
+и очистка внешних refs отражены в
+[итоговом живом прогоне](2026-10-18-repository-sync-final-live.md).

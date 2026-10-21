@@ -256,32 +256,22 @@ export function ExecutionFilterForm({
         </div>
         <FormField id="execution-status" label="Статус">
           {(attrs) => (
-            <Select
-              {...attrs}
-              value={draft.status}
-              onChange={(e) => update('status', e.target.value)}
-            >
-              <option value="">Все статусы</option>
-              {(deployment
-                ? [
-                    ['pending', 'Ожидает'],
-                    ['running', 'Выполняется'],
-                    ['success', 'Успешно'],
-                    ['failed', 'Ошибка'],
-                  ]
-                : [
-                    ['queued', 'В очереди'],
-                    ['running', 'Выполняется'],
-                    ['success', 'Успешно'],
-                    ['failed', 'Ошибка'],
-                    ['canceled', 'Отменён'],
-                  ]
-              ).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
+            <Select {...attrs}
+value={draft.status}
+onValueChange={(nextValue) => update('status', nextValue)} options={[{ value: "", label: "Все статусы" }, ...((deployment
+        ? [
+            ['pending', 'Ожидает'],
+            ['running', 'Выполняется'],
+            ['success', 'Успешно'],
+            ['failed', 'Ошибка']
+        ]
+        : [
+            ['queued', 'В очереди'],
+            ['running', 'Выполняется'],
+            ['success', 'Успешно'],
+            ['failed', 'Ошибка'],
+            ['canceled', 'Отменён']
+        ]).map(([value, label]) => ({ value: String(value), label: String(label) })) ?? [])]} />
           )}
         </FormField>
         <FormField id="execution-ref" label="Ветка / тег / коммит">
@@ -355,44 +345,26 @@ export function ExecutionFilterForm({
               }
             >
               {(attrs) => (
-                <Select
-                  {...attrs}
-                  disabled={
+                <Select {...attrs}
+disabled={
                     !draft.configuration_id ||
                     environments.isPending ||
                     environments.isError
                   }
-                  value={draft.environment_id}
-                  onChange={(e) => update('environment_id', e.target.value)}
-                >
-                  <option value="">Все окружения</option>
-                  {environments.data?.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </Select>
+value={draft.environment_id}
+onValueChange={(nextValue) => update('environment_id', nextValue)} options={[{ value: "", label: "Все окружения" }, ...(environments.data?.map((item) => ({ value: String(item.id), label: String(item.name) })) ?? [])]} />
               )}
             </FormField>
             <FormField id="execution-approval" label="Подтверждение">
               {(attrs) => (
-                <Select
-                  {...attrs}
-                  value={draft.approval_state}
-                  onChange={(e) => update('approval_state', e.target.value)}
-                >
-                  <option value="">Любое</option>
-                  {[
-                    ['pending', 'Ожидает подтверждения'],
-                    ['approved', 'Подтверждено'],
-                    ['rejected', 'Отклонено'],
-                    ['not_required', 'Не требуется'],
-                  ].map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </Select>
+                <Select {...attrs}
+value={draft.approval_state}
+onValueChange={(nextValue) => update('approval_state', nextValue)} options={[{ value: "", label: "Любое" }, ...([
+        ['pending', 'Ожидает подтверждения'],
+        ['approved', 'Подтверждено'],
+        ['rejected', 'Отклонено'],
+        ['not_required', 'Не требуется']
+    ].map(([value, label]) => ({ value: String(value), label: String(label) })) ?? [])]} />
               )}
             </FormField>
             {environments.isError && (

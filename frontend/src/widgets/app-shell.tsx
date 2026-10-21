@@ -1,6 +1,6 @@
-import { AppShell as BaseAppShell } from '@pdlc/ui/ui'
-import { SidebarNavigationGroup, useSidebarDisclosure, NamespaceNavLink as NavLink } from '@pdlc/ui/ui'
-import { SidebarItem } from '@pdlc/ui/ui'
+import {AppShell as BaseAppShell, SidebarNavigationGroup, useSidebarDisclosure, NamespaceNavLink as NavLink, SidebarItem, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, PlatformHeader, PlatformMark, ThemeMenuItems} from '@pdlc/ui/ui'
+
+
 import { NamespaceShellContext } from './namespace-context'
 import { useProjectDisclosures, WorkspaceNavigation } from './workspace-navigation'
 import { Outlet, useLocation } from 'react-router'
@@ -16,16 +16,7 @@ import {
   Settings,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  PlatformHeader,
-  PlatformMark,
-  ThemeMenuItems,
-} from '@pdlc/ui/ui'
+
 import { useAuth } from '@/shared/auth/auth-provider'
 
 type NavigationListProps = {

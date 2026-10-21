@@ -1,0 +1,76 @@
+# Итог повторной проверки синхронизации Forge
+
+Завершён **61 Rust live-прогон на настоящих провайдерах: 31 GitHub и 30 GitLab**. В этом продолжении реально закрыты GitHub read-only и прекращение действия GitHub job token после естественного завершения job. Повторена основная матрица обоих провайдеров, выполнены полный PostgreSQL набор и инструментальное измерение покрытия. Полная приёмка остаётся незавершённой: private branch protection GitHub и действительно пустой внешний репозиторий текущего кандидата имеют отдельные ограничения ниже.
+
+Матрица сохраняет **50 ID и 108 подкейсов**. Теперь 107 имеют `pass_scoped`, один — `blocked`. Это metadata заданного объёма доказательств; исторический true-empty внешний scope не превращён в текущий PASS. Количество запусков не считается процентом покрытия. Normal и instrumented frontend — два исполнения одного набора из 278 тестов, не 556 уникальных тестов.
+
+## Исходники и завершённые gates
+
+| Область | Точный исходник | Подтверждение |
+|---|---|---|
+| Реальные новые GitHub credential cases | `d3b21efedfa41e7efa68ccf191fcca9ebd0f3135`, binary `integration_db-fb05b5d05abb57ff` | Read-only и lifecycle expiry: каждый selector ровно один passed |
+| Rust instrumented | `7b29d4b23c71bd75b8af0f114072106b4aa29458`, binary `integration_db-57b81b4013c86819` | Rust 1.88.0 / LLVM 20.1.5; fmt/Clippy, 447 workspace passed, 0 failed, 3 ignored; scoped sync PG 20 passed/37 ignored; native TLS один passed |
+| Полный normal PostgreSQL | Тот же Rust tree 7b | 127 passed, 0 failed, 45 ignored; ignored определения не выданы за выполненные |
+| Frontend | `58b2f4f24e18c688fca4ddb191b7ed9c9e312d58` | Каждый normal и V8-инструментальный набор: 45 файлов, 278 passed; 37 sync component и пять transport tests; lint/typecheck/build/OpenAPI завершились |
+| Production | Backend `6be6622a7d8f5f19ae7cf807b2b2c1948c5c528e` | В этом этапе менялись тесты. Все 34 файла последнего frontend production-артефакта побайтно совпадают с прежним квалифицированным артефактом |
+
+[Instrumented backend](../../../../evidence/resumed-20261018/instrumented-gates.json), [полный PG](../../../../evidence/resumed-20261018/full-postgres-normal.json), [frontend](../../../../evidence/resumed-20261018/frontend-complete.json), [последняя frontend identity](../../../../evidence/resumed-20261018/frontend-complete-production-identity.json). Base SDK `2ad0834d06d3aa703fa1791a932bfc76650c8e42`, UI Base `e0759e070326c905f365182d0107f8c87a2e67f6`.
+
+Старые immutable reports/seals не переписываются. Предыдущие release smoke, физические crash/recovery проверки и браузерная цепочка с независимыми Git/DB SHA сохраняют исходный scope. Текущие два instrumented core прогона действительно прошли реальный 300-секундный automatic interval: [GitHub](../../../../evidence/resumed-20261018/live-github-instrumented-matrix.json), [GitLab](../../../../evidence/resumed-20261018/live-gitlab-instrumented-matrix.json), оба имеют `LIVE_MATRIX_OK` и `1 passed; 0 failed`. Они увеличивают прежние 59 до 61; GitHub protection 403 внутри матрицы не считается успешной protection-проверкой.
+
+## Закрытые GitHub credential oracle
+
+Один `GITHUB_TOKEN` с `contents: read` сохранён в Forge. Настоящий Pull завершился success/applied, затем изменение направления с отсутствующим token сохранило тот же credential; реальный Push завершился failed, ref имеет reason `access_denied` и не появился снаружи. API read давал 200 до и после отказа, job ещё выполнялся. После ротации на основной credential тот же ref успешно передан. Это положительный read-only oracle, а не проверка заведомо неправильного token.
+
+[Fixture state](../../../../evidence/resumed-20261018/selfhosted-fixture-state.json), [Rust read-only log](../../../../evidence/resumed-20261018/live-github-job-readonly.log), [точный DB ref reason](../../../../evidence/resumed-20261018/readonly-denied-ref-oracle.json). Exact selector: `repository_sync::live::github_read_only_credential_cannot_push`. Закрыты строго G-09/4, S-03/4 и S-04/3. Первая fixture попытка упала до credential acquisition и не включена в число provider Rust tests.
+
+Job завершился естественно с conclusion success. Тот же credential давал API read 200 до завершения и 401 после, без отдельного revoke API. Forge check вернул 503/git_access_denied; ручной run — failed/git_access_denied; входящего ref и CI нет, provider refs сохранены. Ротация восстановила точный SHA; failed run остался в истории. [Expiry log](../../../../evidence/resumed-20261018/live-github-natural-job-expiry.log), selector `repository_sync::live::expired_credentials::issuer_expired_credential_fails_safely_and_rotation_recovers`. Scope — автоматическое окончание issuer lifecycle `GITHUB_TOKEN` при завершении job, не календарное истечение PAT. Это facet существующего S-03, новый подкейс не добавлен.
+
+## Дополненные содержательные assertions
+
+- U-01: новый actual HTTP PG test saved-list `group_id` проверяет две активные namespace, одинаковые slug и разные UUID; all-scope total 7, group A 4, B 3; combined provider/state/search и offset/total; неизвестная валидная группа даёт пустой результат. Это другой endpoint, чем уже проверенный hosted picker. Selector `repository_sync::list_scope::saved_connections_group_filter_preserves_uuid_namespace_and_combined_page_totals`, [PG log](../../../../evidence/resumed-20261018/full-postgres-normal.log), строка 90.
+- U-03: component tests действительно нажимают четыре направления и ручной/автоматический режим, проверяют exact save payload и отсутствие скрытого check/start. Рендер карточек больше не подменяет выполнение callbacks.
+- U-01/U-02: list Next/Back, ввод и очистка search/state проверяют query, сброс offset и сохранение project/provider.
+- U-02/U-04: history Next/Back при более 20 runs, выбор другого run и сброс старого refs offset проверены по URL и API arguments. Глубокая ссылка сама по себе больше не подменяет эти callbacks.
+- Пять новых transport tests проходят настоящий typed API client с контролируемым fetch: методы, URL, Idempotency-Key и payload; component API spies отдельно от этого transport proof.
+
+[Frontend log](../../../../evidence/resumed-20261018/frontend-complete.log): sync component file — 37 тестов, transport file — пять; normal total строки 225–226, instrumented total 467–468. Браузерные клавиатура, Back/Forward и refs pagination имеют прежние отдельные реальные proofs и не выданы за повторные текущие browser действия.
+
+## Измеренное покрытие
+
+**Rust metrics ниже относятся к целым файлам модулей, включая inline `#[cfg(test)]` код внутри domain и Git adapter. Это не production-only процент покрытия фичи.** LLVM summary — источник counts; диагностические ranges из segments не совпадают с его line denominator и не используются для production-only процента. Для stable Rust branch coverage не заявляется.
+
+| Rust файл | Строки | Функции | Регионы |
+|---|---|---|---|
+| domain/repository_sync.rs | 284/285 · 99,65% | 14/14 | 364/367 |
+| app/repository_sync.rs | 62/70 · 88,57% | 6/8 | 77/90 |
+| infra/repository_sync.rs | 361/371 · 97,30% | 54/57 | 778/859 |
+| infra/sync_git.rs | 1007/1236 · 81,47% | 65/75 | 1569/1973 |
+| src/repository_sync.rs | 305/316 · 96,52% | 32/34 | 429/476 |
+| src/repository_sync_worker.rs | 403/534 · 75,47% | 29/31 | 686/885 |
+
+Отдельные OS workers используют env_clear, а fault fixtures завершают их SIGKILL; такие процессы не всегда сохраняют профили. Это явно ограничивает measured worker coverage. Реальный fault oracle с независимыми SHA/receipts не создаёт отсутствующие counters, а отсутствие counters не отменяет ранее выполненный физический oracle. LLVM сообщает 19 mismatched mappings в зависимостях tracing/hashbrown/tokio; независимая проверка установила **ноль затронутых target component symbols**. [Диагностика](../../../../evidence/resumed-20261018/llvm-mismatch-diagnostics.json).
+
+Frontend измерен через точный `@vitest/coverage-v8@4.1.11`, добавленный только во временный measurement export; project dependencies и lock рабочего checkout не менялись. Source-mapped Istanbul counts совпали с отдельным summary:
+
+| Frontend файл | Строки | Функции | Statements |
+|---|---|---|---|
+| api/repository-sync.ts | 10/10 · 100% | 8/8 · 100% | 10/10 |
+| pages/repository-syncs/index.tsx | 191/199 · 95,97% | 63/67 · 94,02% | 202/212 |
+
+UI branch count отдельно по Istanbul — 251/282, 89%. В сумме двух измеренных frontend файлов: 201/209 строк, 96,17%; этот итог не охватывает весь frontend приложения. Оставшиеся восемь UI строк — error/fallback/retry callbacks и refs pager; часть действий имеет отдельный реальный browser proof. Непокрытые строки не скрыты, и тесты ради формального 100% не добавлялись.
+
+[Component JSON](../../../../evidence/resumed-20261018/component-coverage-final-v2.json), [читаемый coverage report](../../../../evidence/resumed-20261018/component-coverage-final-v2.md), [Istanbul summary](../../../../evidence/resumed-20261018/frontend-complete-coverage/coverage-summary.json). В отчёте перечислены counts, непокрытые диапазоны, сопоставления с selectors и ограничения; совпадение имени теста в mapping не подменяет его execution log.
+
+## Оставшиеся ограничения
+
+1. GitHub private branch protection по-прежнему возвращает 403 из-за возможностей приватного репозитория на текущем тарифе. Реальный protected push oracle остаётся blocked; тариф и visibility не менялись.
+2. Действительно пустой внешний репозиторий текущего кандидата остаётся historical-only BFE scope. Сохранённые исходные QA-репозитории непустые, старые дополнительные empty endpoints возвращают 404. Первый pull в пустой Forge подтверждён отдельно и не подменяет пустой внешний repository.
+
+Требования не сокращались, новые внешние репозитории не создавались. Новая [финальная матрица](../../../../evidence/resumed-20261018/requirements-matrix-resumed-final.json) содержит те же 108 подпунктов и эти явные ограничения. `acceptance_complete=false`; установка кандидата в принятый runtime остаётся отдельным этапом `O-RUNTIME`.
+
+## Cleanup и итоговый seal
+
+Родительский Compose helper завершился с exit 0; собственных QA-ресурсов и exports не осталось, внешний Cargo cache сохранён. GitHub: удалены 16 собственных core/credential refs, затем один точный workflow ref; исходные четыре refs и SHA восстановлены. GitLab: удалены 13 собственных refs, исходный один ref и SHA восстановлены. Ephemeral own runners в GitHub API — ноль; их helpers очищены. [Cleanup](../../../../evidence/resumed-20261018/cleanup-final.json), [GitHub](../../../../evidence/resumed-20261018/cleanup-github-apply.json), [workflow ref](../../../../evidence/resumed-20261018/fixture-cleanup-github-apply.json), [GitLab](../../../../evidence/resumed-20261018/cleanup-gitlab-apply.json).
+
+Итоговая проверка credentials и closing-хэши приведены отдельно: [credential audit](../../../../evidence/resumed-20261018/credential-audit-final.json), [closing seal](../../../../evidence/resumed-20261018/resumed-final-seal.json). Этот документ не объявляет результат этих последующих отдельных отчётов заранее; прежние immutable seals не переписываются.

@@ -5,23 +5,9 @@ import { ChevronLeft, ChevronRight, History, Search, X } from "lucide-react";
 
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-import { InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
-import {
-  Button,
-  Card,
-  Input,
-  Label,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@pdlc/ui/ui";
+import {Select, InitialsAvatar as UserAvatar, Button, Card, Input, Label, ResourceList, ResourceListRow, Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@pdlc/ui/ui'
+
+
 
 const pageSize = 20;
 const maxAuditPage = Math.floor(2_147_483_647 / pageSize) + 1;
@@ -199,7 +185,8 @@ export function AuditLogPage() {
                       className="min-h-10 pl-9 pr-10"
                     />
                     {(searchDraft || query) && (
-                      <button
+                      <Button
+                        variant="ghost"
                         type="button"
                         aria-label={t("auditLog.clearSearch")}
                         title={t("auditLog.clearSearch")}
@@ -207,7 +194,7 @@ export function AuditLogPage() {
                         onClick={clearSearch}
                       >
                         <X className="h-4 w-4" aria-hidden />
-                      </button>
+                      </Button>
                     )}
                   </div>
                   <Button
@@ -224,21 +211,23 @@ export function AuditLogPage() {
                   <Label htmlFor="audit-action" className="sr-only">
                     {t("auditLog.actionFilter")}
                   </Label>
-                  <select
+                  <Select
                     id="audit-action"
                     value={action}
-                    onChange={(event) => changeAction(event.target.value)}
-                    className="min-h-10 w-full min-w-0 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-primary outline-none focus-visible:border-accent"
-                  >
-                    <option value="">{t("auditLog.allActions")}</option>
-                    {actionOptions.map((value) => (
-                      <option key={value} value={value}>
-                        {t(`auditLog.actions.${value}`, {
-                          defaultValue: value,
-                        })}
-                      </option>
-                    ))}
-                  </select>
+                    onValueChange={(nextValue) => changeAction(nextValue)}
+                    className="w-full min-w-0"
+                    options={[
+                      { value: "", label: String(t("auditLog.allActions")) },
+                      ...(actionOptions.map((value) => ({
+                        value: String(value),
+                        label: String(
+                          t(`auditLog.actions.${value}`, {
+                            defaultValue: value,
+                          }),
+                        ),
+                      })) ?? []),
+                    ]}
+                  />
                 </div>
               </div>
 

@@ -1,0 +1,1274 @@
+diff --git a/backend/Dockerfile b/backend/Dockerfile
+index bd0335e..96c2967 100644
+--- a/backend/Dockerfile
++++ b/backend/Dockerfile
+@@ -50,6 +50,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lf
+   | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
+  && useradd --create-home --uid 10001 cicd
+ 
++ARG DOCKER_CLI_VERSION=29.5.0
++RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz \
++ | tar -xz --strip-components=1 -C /usr/local/bin docker/docker
++# Official Compose v5.5.1 release checksums (not downloaded mutable checksums).
++ARG TARGETARCH
++RUN case "${TARGETARCH:-amd64}" in \
++      amd64) compose_arch=x86_64; compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 ;; \
++      arm64) compose_arch=aarch64; compose_sha=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; \
++      *) exit 1 ;; esac \
++ && mkdir -p /usr/local/lib/docker/cli-plugins \
++ && curl -fsSL "https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-${compose_arch}" -o /tmp/docker-compose \
++ && echo "${compose_sha}  /tmp/docker-compose" | sha256sum -c - \
++ && install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose \
++ && rm /tmp/docker-compose \
++ && docker compose version
++
+ WORKDIR /app
+ COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
+ COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner
+diff --git a/backend/Dockerfile.umbrella b/backend/Dockerfile.umbrella
+index bd0335e..0ba416f 100644
+--- a/backend/Dockerfile.umbrella
++++ b/backend/Dockerfile.umbrella
+@@ -50,6 +50,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lf
+   | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
+  && useradd --create-home --uid 10001 cicd
+ 
++# Official Compose v5.5.1 release checksums (not downloaded mutable checksums).
++ARG TARGETARCH
++RUN case "${TARGETARCH:-amd64}" in \
++      amd64) compose_arch=x86_64; compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 ;; \
++      arm64) compose_arch=aarch64; compose_sha=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; \
++      *) exit 1 ;; esac \
++ && mkdir -p /usr/local/lib/docker/cli-plugins \
++ && curl -fsSL "https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-${compose_arch}" -o /tmp/docker-compose \
++ && echo "${compose_sha}  /tmp/docker-compose" | sha256sum -c - \
++ && install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose \
++ && rm /tmp/docker-compose \
++ && docker compose version
++
+ WORKDIR /app
+ COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
+ COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner
+diff --git a/backend/src/api/jobs_routes.rs b/backend/src/api/jobs_routes.rs
+index b24fcb0..7540048 100644
+--- a/backend/src/api/jobs_routes.rs
++++ b/backend/src/api/jobs_routes.rs
+@@ -97,21 +97,19 @@ pub(crate) async fn cancel_pipeline(
+     if pipeline != "queued" && pipeline != "running" {
+         return Err(ApiError::conflict("pipeline is not active"));
+     }
+-    if let Some(running) = state.running_jobs.as_ref() {
+-        let job_ids: Vec<Uuid> = sqlx::query_scalar(
+-            "SELECT j.id FROM jobs j JOIN stages s ON s.id = j.stage_id WHERE s.pipeline_id = $1",
+-        )
+-        .bind(pipeline_id)
+-        .fetch_all(pool)
+-        .await
+-        .map_err(ApiError::internal)?;
+-        let mut guard = running.lock().await;
+-        for job_id in job_ids {
+-            if let Some(pid) = guard.remove(&job_id) {
+-                kill_running_job(job_id, pid).await;
+-            }
+-        }
+-    }
++    let job_ids: Vec<Uuid> = sqlx::query_scalar(
++        "SELECT j.id FROM jobs j JOIN stages s ON s.id = j.stage_id WHERE s.pipeline_id = $1",
++    )
++    .bind(pipeline_id)
++    .fetch_all(pool)
++    .await
++    .map_err(ApiError::internal)?;
++    // Serialize cancellation with the final pre-spawn check; keep the job
++    // reserved until its worker has completed cleanup, including preparation.
++    let guard = match state.running_jobs.as_ref() {
++        Some(running) => Some(running.lock().await),
++        None => None,
++    };
+     sqlx::query("UPDATE pipelines SET status = 'canceled', finished_at = now() WHERE id = $1")
+         .bind(pipeline_id)
+         .execute(pool)
+@@ -153,6 +151,13 @@ pub(crate) async fn cancel_pipeline(
+     .execute(pool)
+     .await
+     .map_err(ApiError::internal)?;
++    if let Some(guard) = guard.as_ref() {
++        for job_id in job_ids {
++            if let Some(pid) = guard.get(&job_id).copied().filter(|pid| *pid != 0) {
++                kill_running_job(job_id, pid).await;
++            }
++        }
++    }
+     Ok(Json(CanceledPipelineResult {
+         canceled: pipeline_id,
+     }))
+@@ -161,17 +166,17 @@ pub(crate) async fn cancel_pipeline(
+ /// Kill a running job process: try Docker container stop by name, then
+ /// SIGTERM and SIGKILL the child PID as fallback.
+ pub(crate) async fn kill_running_job(job_id: Uuid, pid: u32) {
+-    let container_name = format!("forge-job-{job_id}");
+-    let _ = tokio::process::Command::new("docker")
+-        .args(["stop", "-t", "2", &container_name])
+-        .status()
+-        .await;
++    let _ = tokio::time::timeout(
++        Duration::from_secs(15),
++        crate::runner_docker::stop_job(job_id),
++    )
++    .await;
+     let _ = tokio::process::Command::new("kill")
+         .arg("-TERM")
+         .arg(pid.to_string())
+         .status()
+         .await;
+-    let _ = tokio::time::timeout(Duration::from_secs(2), async {}).await;
++    tokio::time::sleep(Duration::from_secs(2)).await;
+     let _ = tokio::process::Command::new("kill")
+         .arg("-KILL")
+         .arg(pid.to_string())
+diff --git a/backend/src/lib.rs b/backend/src/lib.rs
+index bfef519..3960ffa 100644
+--- a/backend/src/lib.rs
++++ b/backend/src/lib.rs
+@@ -35,6 +35,7 @@ pub mod git_host;
+ pub mod platform;
+ pub mod pulls;
+ pub mod runner;
++pub(crate) mod runner_docker;
+ pub mod runner_protocol;
+ pub mod store;
+ 
+diff --git a/backend/src/runner.rs b/backend/src/runner.rs
+index 862ed5a..438dc71 100644
+--- a/backend/src/runner.rs
++++ b/backend/src/runner.rs
+@@ -28,7 +28,7 @@ const DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 =
+ const MAX_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = crate::config::MAX_RUNNER_QUEUE_TIMEOUT_SECONDS;
+ 
+ /// Job processes currently executed by the embedded runner.
+-/// Maps job_id -> child process id so that cancel can kill it.
++/// Maps job_id -> child process id; zero reserves preparation/cleanup.
+ pub type RunningJobs = Arc<Mutex<HashMap<Uuid, u32>>>;
+ 
+ #[derive(Debug)]
+@@ -112,14 +112,25 @@ pub async fn run_job_with_config(
+     running: RunningJobs,
+     config: RuntimeRunnerConfig,
+ ) {
++    {
++        let mut guard = running.lock().await;
++        if guard.contains_key(&job_id) {
++            return;
++        }
++        guard.insert(job_id, 0);
++    }
+     if let Err(error) = run_job_inner(pool.clone(), job_id, running.clone(), &config).await {
+         tracing::error!(%job_id, error = ?error, "runner job failed");
+-        running.lock().await.remove(&job_id);
+         finish_job_after_runner_error(&pool, job_id, &error).await;
+     }
++    running.lock().await.remove(&job_id);
+ }
+ 
+ async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiError) {
++    // A canceled/superseded attempt must not fail a newly queued retry.
++    if !matches!(active_embedded_job_lease(pool, job_id).await, Ok(Some(_))) {
++        return;
++    }
+     let message = truncate_error_tail(format!("runner: internal failure: {}", error.message));
+     let status = match sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id = $1")
+         .bind(job_id)
+@@ -972,6 +983,34 @@ async fn run_job_inner(
+     }
+     envs.extend(secrets.iter().cloned());
+ 
++    let mut remote_job = if config.mode == RunnerMode::Docker {
++        Some(
++            crate::runner_docker::RemoteJob::prepare(job_id, attempt_id, &workspace)
++                .await
++                .map_err(|error| {
++                    ApiError::bad_request(mask_secrets(
++                        &format!("runner: isolated Docker preparation failed: {error}"),
++                        &masks,
++                    ))
++                })?,
++        )
++    } else {
++        None
++    };
++    if let Some(remote) = &remote_job {
++        remote
++            .stage_artifacts(&pipeline_artifacts)
++            .await
++            .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
++        for (key, value) in &mut envs {
++            if key == "CICD_ARTIFACTS_DIR" {
++                *value = "/workspace/artifacts".into();
++            }
++            if key == "CICD_PIPELINE_ARTIFACTS_DIR" {
++                *value = "/workspace/pipeline-artifacts".into();
++            }
++        }
++    }
+     let mut child = if config.mode == RunnerMode::Docker {
+         // prepare_workspace returns <root>/forge-runner-<job>/workspace; the
+         // bind source must be the per-job directory (one level up from the
+@@ -981,8 +1020,7 @@ async fn run_job_inner(
+             .and_then(|parent| parent.file_name())
+             .map(|name| name.to_string_lossy().to_string())
+             .unwrap_or_else(|| format!("forge-runner-{job_id}"));
+-        let mut cmd = tokio::process::Command::new("docker");
+-        cmd.args(docker_run_args(
++        let args = docker_run_args(
+             &format!("forge-job-{job_id}"),
+             &job.image,
+             &command_shell,
+@@ -990,10 +1028,13 @@ async fn run_job_inner(
+             &config.docker_network,
+             config.shared_sources_volume.as_deref(),
+             &workspace_subdir,
+-        ));
+-        for (k, v) in &envs {
+-            cmd.env(k, v);
+-        }
++        );
++        let mut cmd = remote_job
++            .as_mut()
++            .expect("Docker preparation required")
++            .job_command(&args, &envs)
++            .await
++            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+         cmd.current_dir(&workspace)
+             .stdout(Stdio::piped())
+             .stderr(Stdio::piped())
+@@ -1013,13 +1054,36 @@ async fn run_job_inner(
+         cmd
+     };
+ 
++    let mut guard = running.lock().await;
++    let active: bool = sqlx::query_scalar(
++        "SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN job_leases l ON l.attempt_id=a.id \
++         JOIN jobs j ON j.id=a.job_id WHERE a.id=$1 AND l.id=$2 \
++         AND a.status='running' AND j.status='running' AND l.lease_status='active' \
++         AND l.cancel_requested_at IS NULL)",
++    )
++    .bind(attempt_id)
++    .bind(lease.id)
++    .fetch_one(&pool)
++    .await
++    .map_err(ApiError::internal)?;
++    if !active {
++        drop(guard);
++        if let Some(remote) = &mut remote_job {
++            remote.cleanup().await;
++        }
++        if !config.keep_workspace {
++            remove_workspace(&workspace).await;
++        }
++        return Ok(());
++    }
+     let mut child = child
+         .spawn()
+         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+ 
+     if let Some(pid) = child.id() {
+-        running.lock().await.insert(job_id, pid);
++        guard.insert(job_id, pid);
+     }
++    drop(guard);
+ 
+     let mut stdout_task = child.stdout.take().map(|stdout| {
+         let pool = pool.clone();
+@@ -1045,18 +1109,22 @@ async fn run_job_inner(
+             append_attempt_log(&pool, job_id, attempt_id, &message).await?;
+             let _ = child.start_kill();
+             let _ = child.wait().await;
++            if let Some(remote) = &mut remote_job {
++                remote.cleanup().await;
++            }
+             if let Some(task) = stdout_task.take() {
+                 await_stdout_task(task).await?;
+             }
+             if let Some(task) = stderr_task.take() {
+                 let _ = await_stdout_task(task).await;
+             }
+-            running.lock().await.remove(&job_id);
+             let updated = sqlx::query(
+                 "UPDATE jobs SET status = 'failed', finished_at = now() \
+-                 WHERE id = $1 AND status NOT IN ('canceled')",
++                 WHERE id = $1 AND status='running' \
++                 AND EXISTS(SELECT 1 FROM execution_attempts WHERE id=$2 AND status='running')",
+             )
+                 .bind(job_id)
++                .bind(attempt_id)
+                 .execute(&pool)
+                 .await
+                 .map_err(ApiError::internal)?;
+@@ -1090,8 +1158,6 @@ async fn run_job_inner(
+         }
+     };
+ 
+-    running.lock().await.remove(&job_id);
+-
+     if let Some(task) = stdout_task {
+         await_stdout_task(task).await?;
+     }
+@@ -1115,6 +1181,20 @@ async fn run_job_inner(
+     let mut final_status = final_status;
+     let mut exit_code = exit_code;
+     let mut error_tail = error_tail;
++    if let Some(remote) = &mut remote_job {
++        if let Err(error) = remote.copy_back(&workspace).await {
++            final_status = "failed";
++            error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
++        }
++        if let Err(error) = remote
++            .return_artifacts(&job_artifacts, &pipeline_artifacts)
++            .await
++        {
++            final_status = "failed";
++            error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
++        }
++        remote.cleanup().await;
++    }
+     let artifact_error = collect_declared_artifacts(
+         &pool,
+         &config.artifacts,
+@@ -1143,10 +1223,12 @@ async fn run_job_inner(
+ 
+     let updated = sqlx::query(
+         "UPDATE jobs SET status = $2, finished_at = now() \
+-         WHERE id = $1 AND status NOT IN ('canceled')",
++         WHERE id = $1 AND status='running' \
++         AND EXISTS(SELECT 1 FROM execution_attempts WHERE id=$3 AND status='running')",
+     )
+     .bind(job_id)
+     .bind(final_status)
++    .bind(attempt_id)
+     .execute(&pool)
+     .await
+     .map_err(ApiError::internal)?;
+@@ -1685,6 +1767,9 @@ async fn reconcile_runtime_state_with_config(
+     pool: &PgPool,
+     config: &RuntimeRunnerConfig,
+ ) -> Result<(), sqlx::Error> {
++    if config.mode == RunnerMode::Docker {
++        crate::runner_docker::reconcile(pool).await?;
++    }
+     let unacknowledged = reconcile_unacknowledged_leases(pool).await?;
+     if unacknowledged > 0 {
+         tracing::warn!(
+diff --git a/backend/src/runner_docker.rs b/backend/src/runner_docker.rs
+new file mode 100644
+index 0000000..9117cd2
+--- /dev/null
++++ b/backend/src/runner_docker.rs
+@@ -0,0 +1,686 @@
++//! Compose-owned job execution and file transfer. Journals never mount into jobs.
++use serde_json::{Value, json};
++use std::{
++    io,
++    path::{Path, PathBuf},
++    time::Duration,
++};
++use tokio::process::Command;
++use uuid::Uuid;
++
++#[derive(Clone)]
++pub(crate) struct Client {
++    host: String,
++    cert_path: String,
++    daemon_id: String,
++}
++fn invalid(message: &str) -> io::Error {
++    io::Error::other(message)
++}
++
++impl Client {
++    fn from_env() -> io::Result<Self> {
++        let host = std::env::var("DOCKER_HOST").unwrap_or_default();
++        let cert_path = std::env::var("DOCKER_CERT_PATH").unwrap_or_default();
++        let daemon_id = std::env::var("CICD_RUNNER_DOCKER_DAEMON_ID").unwrap_or_default();
++        if daemon_id.is_empty() || !(host.starts_with("unix://") || host.starts_with("tcp://")) {
++            return Err(invalid(
++                "explicit Docker endpoint and expected daemon ID are required",
++            ));
++        }
++        if host.starts_with("tcp://")
++            && (std::env::var("DOCKER_TLS_VERIFY").as_deref() != Ok("1")
++                || ["ca.pem", "cert.pem", "key.pem"]
++                    .iter()
++                    .any(|n| !Path::new(&cert_path).join(n).is_file()))
++        {
++            return Err(invalid(
++                "TCP runner requires existing TLS certificates; fallback is forbidden",
++            ));
++        }
++        Ok(Self {
++            host,
++            cert_path,
++            daemon_id,
++        })
++    }
++    pub(crate) fn apply(&self, command: &mut Command) {
++        command
++            .env_remove("DOCKER_CONTEXT")
++            .env("DOCKER_HOST", &self.host);
++        if self.host.starts_with("tcp://") {
++            command
++                .env("DOCKER_CERT_PATH", &self.cert_path)
++                .env("DOCKER_TLS_VERIFY", "1");
++        } else {
++            command
++                .env_remove("DOCKER_CERT_PATH")
++                .env_remove("DOCKER_TLS_VERIFY");
++        }
++    }
++    fn command(&self) -> Command {
++        let mut c = Command::new("docker");
++        self.apply(&mut c);
++        c.kill_on_drop(true);
++        c
++    }
++    async fn run(&self, args: &[&str]) -> io::Result<String> {
++        let result =
++            tokio::time::timeout(Duration::from_secs(180), self.command().args(args).output())
++                .await
++                .map_err(|_| {
++                    invalid("Docker operation timed out; outcome requires reconciliation")
++                })??;
++        if !result.status.success() {
++            return Err(invalid(
++                "Docker operation failed; protected journal retained",
++            ));
++        }
++        Ok(String::from_utf8_lossy(&result.stdout).trim().to_string())
++    }
++    async fn verify(&self) -> io::Result<()> {
++        if self.run(&["info", "--format", "{{.ID}}"]).await? != self.daemon_id {
++            return Err(invalid("Docker daemon differs from registered workspace"));
++        }
++        if self
++            .run(&["compose", "version", "--short"])
++            .await?
++            .trim_start_matches('v')
++            != "5.5.1"
++        {
++            return Err(invalid("verified Compose plugin 5.5.1 is required"));
++        }
++        Ok(())
++    }
++    async fn image(&self, image: &str) -> io::Result<String> {
++        if let Ok(id) = self
++            .run(&["image", "inspect", image, "--format", "{{.Id}}"])
++            .await
++        {
++            return Ok(id);
++        }
++        // Pinned private/local images must already exist on the selected daemon.
++        if image.starts_with("sha256:") {
++            return Err(invalid("pinned job image is absent on registered daemon"));
++        }
++        self.run(&["pull", image]).await?;
++        self.run(&["image", "inspect", image, "--format", "{{.Id}}"])
++            .await
++    }
++}
++
++pub(crate) async fn stop_job(job_id: Uuid) -> io::Result<()> {
++    let client = Client::from_env()?;
++    client.verify().await?;
++    let inspected: Value = serde_json::from_str(
++        &client
++            .run(&["inspect", &format!("forge-job-{job_id}")])
++            .await?,
++    )?;
++    let container = &inspected[0];
++    let labels = &container["Config"]["Labels"];
++    let attempt = labels["sdlc.attempt"]
++        .as_str()
++        .and_then(|s| Uuid::parse_str(s).ok())
++        .ok_or_else(|| invalid("job container has no valid attempt owner"))?;
++    if labels["sdlc.job"] != job_id.to_string()
++        || labels["com.docker.compose.project"] != format!("sdlc-build-job-{}", attempt.simple())
++        || labels["com.docker.compose.service"] != "job"
++        || labels["sdlc.purpose"] != "cicd-job"
++    {
++        return Err(invalid("refusing to stop a foreign job resource"));
++    }
++    client
++        .run(&[
++            "stop",
++            "-t",
++            "2",
++            container["Id"]
++                .as_str()
++                .ok_or_else(|| invalid("container ID missing"))?,
++        ])
++        .await?;
++    Ok(())
++}
++
++pub(crate) struct RemoteJob {
++    client: Client,
++    helper: String,
++    project: String,
++    directory: PathBuf,
++    manifest: Value,
++    active: bool,
++}
++
++fn literal(value: &mut Value) {
++    match value {
++        Value::String(text) => *text = text.replace('$', "$$"),
++        Value::Array(items) => items.iter_mut().for_each(literal),
++        Value::Object(items) => items.values_mut().for_each(literal),
++        _ => (),
++    }
++}
++fn write_private(path: &Path, value: &Value) -> io::Result<()> {
++    use std::io::Write;
++    let temp = path.with_extension("tmp");
++    let mut options = std::fs::OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::OpenOptionsExt;
++        options.mode(0o600);
++    }
++    let mut file = options.open(&temp)?;
++    file.write_all(serde_json::to_string_pretty(value)?.as_bytes())?;
++    file.sync_all()?;
++    std::fs::rename(temp, path)
++}
++
++fn process_owner() -> String {
++    let pid = std::process::id();
++    format!("{pid}:{}", process_start(pid).unwrap_or_default())
++}
++
++fn process_start(pid: u32) -> Option<String> {
++    // PID plus Linux process start ticks distinguishes a reused PID after a container restart.
++    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
++    stat.rsplit_once(") ")?
++        .1
++        .split_whitespace()
++        .nth(19)
++        .map(str::to_owned)
++}
++
++fn owner_alive(owner: &str) -> bool {
++    let Some((pid, start)) = owner.split_once(':') else {
++        return false;
++    };
++    pid.parse::<u32>().ok().and_then(process_start).as_deref() == Some(start)
++}
++
++impl RemoteJob {
++    pub(crate) async fn prepare(id: Uuid, attempt: Uuid, workspace: &Path) -> io::Result<Self> {
++        let client = Client::from_env()?;
++        client.verify().await?;
++        let root = PathBuf::from(
++            std::env::var("CICD_RUNNER_WORKSPACE_ROOT").unwrap_or_else(|_| "/workspaces".into()),
++        )
++        .join(".compose-control");
++        std::fs::create_dir_all(&root)?;
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
++        }
++        let project = format!("sdlc-build-job-{}", attempt.simple());
++        let directory = root.join(&project);
++        // A persisted invocation is never replayed, even if no container is currently visible.
++        std::fs::create_dir(&directory)
++            .map_err(|_| invalid("attempt journal exists; reconcile instead of reexecuting"))?;
++        let helper = format!("forge-transfer-{attempt}");
++        let labels = json!({"sdlc.task": format!("job-{id}"), "sdlc.purpose":"cicd-job", "sdlc.job":id.to_string(), "sdlc.attempt":attempt.to_string(),
++            "sdlc.control-volume":std::env::var("CICD_RUNNER_WORKSPACE_VOLUME").unwrap_or_default()});
++        let helper_image = client.image("alpine:3.21").await?;
++        let manifest = json!({"name":project, "services":{"transfer":{
++            "image":helper_image, "container_name":helper, "pull_policy":"never", "restart":"no",
++            "entrypoint":["/bin/sh"], "command":["-c","sleep 86400"], "network_mode":"none",
++            "read_only":true, "tmpfs":["/tmp:mode=700"], "security_opt":["no-new-privileges:true"],
++            "labels":labels, "volumes":[{"type":"volume","source":"workspace","target":"/workspace"},{"type":"volume","source":"cargo","target":"/cache"}]
++        }}, "volumes":{"workspace":{}, "cargo":{}}, "networks":{"job":{}}});
++        let mut job = Self {
++            client,
++            helper,
++            project,
++            directory,
++            manifest,
++            active: true,
++        };
++        job.record("prepared")?;
++        let prepared = async {
++            job.save_manifest()?;
++            job.compose(&["up", "-d", "--no-build", "--pull", "never", "transfer"])
++                .await?;
++            let parent = workspace
++                .parent()
++                .ok_or_else(|| invalid("job checkout parent missing"))?;
++            job.client
++                .run(&[
++                    "cp",
++                    &format!("{}/.", parent.display()),
++                    &format!("{}:/workspace", job.helper),
++                ])
++                .await?;
++            job.client
++                .run(&[
++                    "exec",
++                    &job.helper,
++                    "chown",
++                    "-R",
++                    "10001:10001",
++                    "/workspace",
++                    "/cache",
++                ])
++                .await?;
++            Ok::<_, io::Error>(())
++        }
++        .await;
++        if let Err(e) = prepared {
++            job.cleanup().await;
++            return Err(e);
++        }
++        Ok(job)
++    }
++    fn record(&self, phase: &str) -> io::Result<()> {
++        write_private(
++            &self.directory.join("journal.json"),
++            &json!({"project":self.project,
++            "daemon_id":self.client.daemon_id, "phase":phase, "owner":process_owner(), "manifest":self.directory.join("compose.json")}),
++        )
++    }
++    fn save_manifest(&self) -> io::Result<()> {
++        let mut value = self.manifest.clone();
++        literal(&mut value);
++        write_private(&self.directory.join("compose.json"), &value)
++    }
++    async fn compose(&self, tail: &[&str]) -> io::Result<String> {
++        let file = self.directory.join("compose.json");
++        let mut args = vec![
++            "compose",
++            "-p",
++            &self.project,
++            "-f",
++            file.to_str()
++                .ok_or_else(|| invalid("invalid manifest path"))?,
++        ];
++        args.extend_from_slice(tail);
++        self.client.run(&args).await
++    }
++    pub(crate) async fn job_command(
++        &mut self,
++        args: &[String],
++        envs: &[(String, String)],
++    ) -> io::Result<Command> {
++        let source = std::env::var("CICD_RUNNER_SHARED_SOURCES_VOLUME").unwrap_or_default();
++        if source.is_empty() {
++            return Err(invalid("immutable source volume is required"));
++        }
++        let volume: Value =
++            serde_json::from_str(&self.client.run(&["volume", "inspect", &source]).await?)?;
++        let revision = std::env::var("CICD_RUNNER_BASE_REVISION").unwrap_or_default();
++        let workspace = std::env::var("CICD_RUNNER_WORKSPACE_PROJECT").unwrap_or_default();
++        if revision.len() != 40
++            || !matches!(workspace.as_str(), "sdlc1" | "sdlc2")
++            || volume[0]["Labels"]["sdlc.base-revision"] != revision
++            || volume[0]["Labels"]["sdlc.workspace"] != workspace
++        {
++            return Err(invalid(
++                "source volume provenance differs from registered Base revision/workspace",
++            ));
++        }
++        let mut service = compose_job(args, envs)?;
++        service["image"] = json!(
++            self.client
++                .image(service["image"].as_str().unwrap())
++                .await?
++        );
++        service["labels"] = self.manifest["services"]["transfer"]["labels"].clone();
++        self.manifest["services"]["job"] = service;
++        self.manifest["volumes"]["sources"] = json!({"external":true,"name":source});
++        self.save_manifest()?;
++        self.compose(&["config", "--quiet"]).await?;
++        self.record("execution-started")?;
++        let mut cmd = self.client.command();
++        cmd.args([
++            "compose",
++            "-p",
++            &self.project,
++            "-f",
++            self.directory.join("compose.json").to_str().unwrap(),
++            "run",
++            "--no-deps",
++            "-T",
++            "--name",
++            self.manifest["services"]["job"]["container_name"]
++                .as_str()
++                .unwrap(),
++            "job",
++        ]);
++        Ok(cmd)
++    }
++    pub(crate) async fn copy_back(&self, workspace: &Path) -> io::Result<()> {
++        self.client
++            .run(&[
++                "cp",
++                &format!("{}:/workspace/workspace/.", self.helper),
++                &workspace.to_string_lossy(),
++            ])
++            .await?;
++        Ok(())
++    }
++    pub(crate) async fn stage_artifacts(&self, directory: &Path) -> io::Result<()> {
++        self.client
++            .run(&[
++                "exec",
++                &self.helper,
++                "mkdir",
++                "-p",
++                "/workspace/artifacts",
++                "/workspace/pipeline-artifacts",
++            ])
++            .await?;
++        self.client
++            .run(&[
++                "cp",
++                &format!("{}/.", directory.display()),
++                &format!("{}:/workspace/pipeline-artifacts", self.helper),
++            ])
++            .await?;
++        self.client
++            .run(&[
++                "exec",
++                &self.helper,
++                "chown",
++                "-R",
++                "10001:10001",
++                "/workspace",
++                "/cache",
++            ])
++            .await?;
++        Ok(())
++    }
++    pub(crate) async fn return_artifacts(&self, job: &Path, pipeline: &Path) -> io::Result<()> {
++        for (name, path) in [("artifacts", job), ("pipeline-artifacts", pipeline)] {
++            self.client
++                .run(&[
++                    "cp",
++                    &format!("{}:/workspace/{name}/.", self.helper),
++                    &path.to_string_lossy(),
++                ])
++                .await?;
++        }
++        Ok(())
++    }
++    pub(crate) async fn cleanup(&mut self) {
++        if self.client.verify().await.is_err()
++            || self
++                .compose(&["down", "--remove-orphans", "--volumes"])
++                .await
++                .is_err()
++        {
++            let _ = self.record("cleanup-required");
++            return;
++        }
++        let _ = self.record("cleaned");
++        self.active = false;
++        // Erase per-job environment only after successful cleanup. Keep safe recovery journal.
++        for service in self.manifest["services"]
++            .as_object_mut()
++            .unwrap()
++            .values_mut()
++        {
++            service.as_object_mut().unwrap().remove("environment");
++        }
++        let _ = self.save_manifest();
++    }
++}
++impl Drop for RemoteJob {
++    fn drop(&mut self) {
++        if self.active {
++            let _ = self.record("cleanup-required");
++            let client = self.client.clone();
++            let directory = self.directory.clone();
++            let project = self.project.clone();
++            tokio::spawn(async move {
++                if client.verify().await.is_ok() {
++                    let file = directory.join("compose.json");
++                    let _ = client
++                        .run(&[
++                            "compose",
++                            "-p",
++                            &project,
++                            "-f",
++                            file.to_str().unwrap(),
++                            "down",
++                            "--remove-orphans",
++                            "--volumes",
++                        ])
++                        .await;
++                }
++                // Keep cleanup-required journal after abnormal unwinding; reconciliation verifies resources.
++            });
++        }
++    }
++}
++
++/// Reconcile persisted attempts before dispatch. Never replay an uncertain execution.
++pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
++    let root = PathBuf::from(
++        std::env::var("CICD_RUNNER_WORKSPACE_ROOT").unwrap_or_else(|_| "/workspaces".into()),
++    )
++    .join(".compose-control");
++    if !root.is_dir() {
++        return Ok(());
++    }
++    let entries = std::fs::read_dir(&root).map_err(sqlx::Error::Io)?;
++    for entry in entries {
++        let directory = entry.map_err(sqlx::Error::Io)?.path();
++        if !directory.is_dir() || directory.is_symlink() {
++            continue;
++        }
++        let journal_path = directory.join("journal.json");
++        if !journal_path.is_file() {
++            continue;
++        }
++        let journal: Value =
++            serde_json::from_slice(&std::fs::read(&journal_path).map_err(sqlx::Error::Io)?)
++                .map_err(|_| sqlx::Error::Io(invalid("invalid protected Compose journal")))?;
++        if journal["phase"] == "cleaned" {
++            continue;
++        }
++        if journal["phase"] != "cleanup-required"
++            && journal["owner"].as_str().is_some_and(owner_alive)
++        {
++            continue;
++        }
++        let manifest_path = directory.join("compose.json");
++        let manifest: Value =
++            serde_json::from_slice(&std::fs::read(&manifest_path).map_err(sqlx::Error::Io)?)
++                .map_err(|_| sqlx::Error::Io(invalid("invalid protected Compose manifest")))?;
++        let labels = &manifest["services"]["transfer"]["labels"];
++        let attempt = labels["sdlc.attempt"]
++            .as_str()
++            .and_then(|s| Uuid::parse_str(s).ok())
++            .ok_or_else(|| sqlx::Error::Io(invalid("journal attempt missing")))?;
++        let id = labels["sdlc.job"]
++            .as_str()
++            .and_then(|s| Uuid::parse_str(s).ok())
++            .ok_or_else(|| sqlx::Error::Io(invalid("journal job missing")))?;
++        let project = format!("sdlc-build-job-{}", attempt.simple());
++        let client = Client::from_env().map_err(sqlx::Error::Io)?;
++        client.verify().await.map_err(sqlx::Error::Io)?;
++        if journal["daemon_id"] != client.daemon_id
++            || journal["project"] != project
++            || manifest["name"] != project
++            || directory.file_name().and_then(|n| n.to_str()) != Some(project.as_str())
++        {
++            return Err(sqlx::Error::Io(invalid(
++                "journal endpoint/project ownership differs",
++            )));
++        }
++        let containers = client
++            .run(&[
++                "ps",
++                "-aq",
++                "--filter",
++                &format!("label=com.docker.compose.project={project}"),
++            ])
++            .await
++            .map_err(sqlx::Error::Io)?;
++        for container_id in containers.lines() {
++            let inspected: Value = serde_json::from_str(
++                &client
++                    .run(&["inspect", container_id])
++                    .await
++                    .map_err(sqlx::Error::Io)?,
++            )
++            .map_err(|_| sqlx::Error::Io(invalid("invalid container ownership response")))?;
++            let actual = &inspected[0]["Config"]["Labels"];
++            if actual["sdlc.job"] != id.to_string()
++                || actual["sdlc.attempt"] != attempt.to_string()
++                || actual["sdlc.purpose"] != "cicd-job"
++            {
++                return Err(sqlx::Error::Io(invalid(
++                    "foreign resource blocks journal cleanup",
++                )));
++            }
++        }
++        // Mark the old attempt terminal before cleanup. A later explicit retry is untouched.
++        let mut tx = pool.begin().await?;
++        sqlx::query("UPDATE execution_attempts SET status='failed', finished_at=COALESCE(finished_at,now()), error_tail=COALESCE(error_tail,'runner interrupted; execution outcome uncertain; explicit retry required') WHERE id=$1 AND job_id=$2 AND status IN ('queued','running')")
++            .bind(attempt).bind(id).execute(&mut *tx).await?;
++        let stage: Option<Uuid> = sqlx::query_scalar("UPDATE jobs SET status='failed', finished_at=COALESCE(finished_at,now()) WHERE id=$1 AND status IN ('queued','running') AND EXISTS (SELECT 1 FROM job_queue WHERE job_id=$1 AND attempt_id=$2) RETURNING stage_id")
++            .bind(id).bind(attempt).fetch_optional(&mut *tx).await?;
++        sqlx::query("UPDATE job_leases SET lease_status='expired', terminal_status='failed', completed_at=COALESCE(completed_at,now()), error_tail=COALESCE(error_tail,'runner interrupted; explicit retry required') WHERE attempt_id=$1 AND lease_status='active'")
++            .bind(attempt).execute(&mut *tx).await?;
++        sqlx::query("UPDATE job_queue SET state='completed', completed_at=COALESCE(completed_at,now()), updated_at=now() WHERE attempt_id=$1 AND state IN ('queued','leased')")
++            .bind(attempt).execute(&mut *tx).await?;
++        tx.commit().await?;
++        if let Some(stage) = stage {
++            crate::api::refresh_statuses(pool, stage)
++                .await
++                .map_err(|e| {
++                    sqlx::Error::Io(invalid(&format!("status reconciliation failed: {e:?}")))
++                })?;
++        }
++        let mut job = RemoteJob {
++            helper: manifest["services"]["transfer"]["container_name"]
++                .as_str()
++                .unwrap_or_default()
++                .into(),
++            client,
++            project,
++            directory,
++            manifest,
++            active: true,
++        };
++        job.cleanup().await;
++        if job.active {
++            return Err(sqlx::Error::Io(invalid(
++                "Compose cleanup incomplete; dispatch blocked",
++            )));
++        }
++        tracing::warn!(job_id=%id, attempt_id=%attempt, "interrupted Compose attempt reconciled without replay");
++    }
++    Ok(())
++}
++
++/// The old argument builder is a declarative adapter only; never passed to Docker.
++fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> {
++    let mut service = json!({"pull_policy":"never", "restart":"no", "networks":["job"], "volumes":[
++        {"type":"volume","source":"workspace","target":"/workspace"},
++        {"type":"volume","source":"cargo","target":"/usr/local/cargo/registry"},
++        {"type":"volume","source":"sources","target":"/runner-sources","read_only":true}]});
++    let mut index = 1;
++    while index < args.len() && args[index].starts_with('-') {
++        let flag = args[index].as_str();
++        index += 1;
++        if flag == "--rm" {
++            continue;
++        }
++        if flag == "--read-only" {
++            service["read_only"] = json!(true);
++            continue;
++        }
++        let value = args
++            .get(index)
++            .ok_or_else(|| invalid("incomplete job adapter option"))?;
++        index += 1;
++        match flag {
++            "--name" => service["container_name"] = json!(value),
++            "--network" | "--mount" => (),
++            "--cap-drop" => service["cap_drop"] = json!([value]),
++            "--security-opt" => {
++                if service.get("security_opt").is_none() {
++                    service["security_opt"] = json!([]);
++                }
++                service["security_opt"]
++                    .as_array_mut()
++                    .unwrap()
++                    .push(json!(value));
++            }
++            "--tmpfs" => service["tmpfs"] = json!([value]),
++            "--memory" => service["mem_limit"] = json!(value),
++            "--memory-swap" => service["memswap_limit"] = json!(value),
++            "--pids-limit" => {
++                service["pids_limit"] = json!(
++                    value
++                        .parse::<u32>()
++                        .map_err(|_| invalid("invalid pids limit"))?
++                )
++            }
++            "--workdir" => service["working_dir"] = json!(value),
++            "--user" => service["user"] = json!(value),
++            _ => return Err(invalid("unsupported declarative job adapter option")),
++        }
++    }
++    service["image"] = json!(
++        args.get(index)
++            .ok_or_else(|| invalid("job image missing"))?
++    );
++    service["entrypoint"] = json!(args[index + 1..].to_vec());
++    let environment: serde_json::Map<String, Value> = envs
++        .iter()
++        .filter(|(k, _)| !k.starts_with("DOCKER_") && !k.starts_with("CICD_RUNNER_"))
++        .map(|(k, v)| (k.clone(), json!(v)))
++        .collect();
++    service["environment"] = Value::Object(environment);
++    Ok(service)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn recovery_distinguishes_dead_process_and_current_owner() {
++        #[cfg(target_os = "linux")]
++        assert!(owner_alive(&process_owner()));
++        assert!(!owner_alive("4294967295:0"));
++        assert!(!owner_alive("unverified"));
++    }
++    #[test]
++    fn job_has_no_control_workspace_or_tls_mount() {
++        let args = [
++            "run",
++            "--rm",
++            "--name",
++            "forge-job-test",
++            "--mount",
++            "type=volume,src=control,dst=/workspaces",
++            "--user",
++            "10001:10001",
++            "rust:1.88",
++            "sh",
++            "-c",
++            "echo $CICD_JOB_ID",
++        ]
++        .map(String::from);
++        let value = compose_job(
++            &args,
++            &[
++                ("DOCKER_HOST".into(), "secret".into()),
++                ("CICD_JOB_ID".into(), "test".into()),
++            ],
++        )
++        .unwrap();
++        assert!(!value.to_string().contains("control"));
++        assert!(!value.to_string().contains("secret"));
++        assert_eq!(value["entrypoint"][2], "echo $CICD_JOB_ID");
++        assert_eq!(value["volumes"].as_array().unwrap().len(), 3);
++    }
++    #[test]
++    fn compose_preserves_literal_dollars() {
++        let mut value = json!({"command":"printf '%s' '${TOKEN}'"});
++        literal(&mut value);
++        assert_eq!(value["command"], "printf '%s' '$${TOKEN}'");
++    }
++}
+diff --git a/docs/COMPOSE_RUNNER.md b/docs/COMPOSE_RUNNER.md
+new file mode 100644
+index 0000000..6dd4e89
+--- /dev/null
++++ b/docs/COMPOSE_RUNNER.md
+@@ -0,0 +1,43 @@
++# Локальный Compose runner
++
++Локальные jobs и transfer helpers принадлежат настоящему Compose-проекту
++`sdlc-build-job-<attempt UUID>`. Backend содержит Docker CLI и Linux Compose
++5.5.1 с закреплёнными checksums. Обновление daemon для plugin не требуется.
++
++Регистрация workspace задаёт TLS endpoint, CA/client certificates, ожидаемый
++daemon ID, immutable source volume, Base SHA и имя workspace. Переменные:
++`DOCKER_HOST`, `DOCKER_TLS_VERIFY=1`, `DOCKER_CERT_PATH`,
++`CICD_RUNNER_DOCKER_DAEMON_ID`, `CICD_RUNNER_SHARED_SOURCES_VOLUME`,
++`CICD_RUNNER_BASE_REVISION`, `CICD_RUNNER_WORKSPACE_PROJECT`.
++Несовпадение daemon ID, отсутствие plugin или source provenance блокирует job.
++Fallback на другой Docker context запрещён.
++
++Каждый attempt получает собственные workspace/cache volumes и сеть. Sources
++подключаются readonly. Transfer выполняется Compose-сервисом того же attempt.
++Сохраняются seccomp, resource limits, exit code, timeout, cancellation, logs
++и artifacts. Job не получает runner TLS, Docker endpoint или control journal.
++
++Журнал и manifest находятся в `.compose-control` существующего volume,
++смонтированного в backend как `/workspaces`. Каталог имеет mode 0700, файлы —
++0600. Manifest может содержать job secrets; его нельзя публиковать как artifact.
++После успешного `compose down --remove-orphans --volumes` environment удаляется
++из сохранённого manifest. Удаляются только volumes данного attempt; immutable
++sources объявлены external и сохраняются.
++
++После прерывания backend сверяет journal, daemon, labels, execution attempt
++и состояние БД перед новой диспетчеризацией. Оборванный attempt становится
++failed с неизвестным результатом исполнения; ресурсы очищаются через его
++Compose manifest. Автоматического replay нет. Повтор требует явного retry API.
++Чужие labels или неправильный daemon блокируют cleanup и dispatch.
++
++Pulse размещается только в приватном Git/project CI/CD `sdlc1`. При импорте
++сначала передаются проверенные commits и tags, затем регистрируется project:
++`main`, владелец — администратор `sdlc1`, `max_running_jobs=1`. Pipeline проверяет
++Rust 1.88, frontend, OpenAPI и browser tests с mock API/Auth и собственным
++webServer. Sources Base экспортируются из точного commit штатным Base CLI.
++
++Локальные shell helpers требуют явные `SDLC_WORKSPACE_DIR`,
++`SDLC_DOCKER_CONTEXT` и `SDLC_TASK`. Backup wrapper дополнительно требует
++`SDLC_PROJECT`, сохранённый `SDLC_SIGNING_KEY` и защищённый output archive;
++использует полный workspace profile и согласованную остановку писателей.
++Retention или удаление старых данных wrapper не выполняет.
+diff --git a/scripts/backup-stand.sh b/scripts/backup-stand.sh
+index e245e94..1788de0 100755
+--- a/scripts/backup-stand.sh
++++ b/scripts/backup-stand.sh
+@@ -1,48 +1,14 @@
+ #!/usr/bin/env bash
+-# M5: Nightly backup for the Base stand -- all PostgreSQL databases + persistent payloads.
+-# Retention: 7 days. Restore procedure: see docs/BACKUP_RESTORE.md of each repo.
++# Complete coherent workspace backup; no deletion or guessed legacy volumes.
+ set -euo pipefail
+-
+-BACKUP_ROOT="${BACKUP_ROOT:-/opt/dev/sdlc-backups}"
+-DATE="$(date +%Y-%m-%d_%H%M)"
+-DIR="$BACKUP_ROOT/$DATE"
+-RETENTION_DAYS=7
+-
+-declare -A DBS=(
+-  [task-tracker]="sdlc-local-tt-postgres-1"
+-  [wiki]="sdlc-local-wiki-postgres-1"
+-  [fleet-control]="sdlc-local-fc-postgres-1"
+-  [cicd]="sdlc-local-cicd-postgres-1"
+-  [java-agent]="sdlc-local-ja-db-1"
+-)
+-
+-mkdir -p "$DIR"
+-
+-# PostgreSQL custom-format dumps support validation and isolated restore drills.
+-for name in "${!DBS[@]}"; do
+-  container="${DBS[$name]}"
+-  db="$(docker exec "$container" printenv POSTGRES_DB)"
+-  user="$(docker exec "$container" printenv POSTGRES_USER)"
+-  out="$DIR/${name}-${DATE}.dump"
+-  if docker exec "$container" pg_dump -U "$user" -Fc -d "$db" > "$out" 2>"$DIR/${name}.err"; then
+-    size="$(du -h "$out" | cut -f1)"
+-    echo "OK   ${name}: ${size} -> ${out}"
+-  else
+-    echo "FAIL ${name}: see $DIR/${name}.err" >&2
+-  fi
+-done
+-
+-# Persistent payloads outside the databases.
+-if docker volume inspect sdlc-local_ja_chromium >/dev/null 2>&1; then
+-  docker run --rm -v sdlc-local_ja_chromium:/data:ro -v "$DIR":/backup alpine \
+-    tar czf "/backup/ja-chromium-${DATE}.tar.gz" -C /data . 2>/dev/null \
+-    && echo "OK   ja-chromium volume" || echo "FAIL ja-chromium volume" >&2
+-fi
+-if docker volume inspect sdlc-local_tt_uploads >/dev/null 2>&1; then
+-  docker run --rm -v sdlc-local_tt_uploads:/data:ro -v "$DIR":/backup alpine \
+-    tar czf "/backup/tt-uploads-${DATE}.tar.gz" -C /data . 2>/dev/null \
+-    && echo "OK   tt-uploads volume" || echo "FAIL tt-uploads volume" >&2
+-fi
+-
+-find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +$RETENTION_DAYS -exec rm -rf {} \;
+-echo "Retention: kept last ${RETENTION_DAYS} days under $BACKUP_ROOT"
++umask 077
++: "${SDLC_WORKSPACE_DIR:?Select the initialized workspace}"
++: "${SDLC_PROJECT:?Set sdlc1 or sdlc2}"
++: "${SDLC_DOCKER_CONTEXT:?Select the Docker context}"
++: "${SDLC_SIGNING_KEY:?Select the preserved Auth signing key}"
++case "$SDLC_PROJECT" in sdlc1|sdlc2) ;; *) echo 'Unknown workspace project' >&2; exit 2 ;; esac
++exec python3 "$SDLC_WORKSPACE_DIR/services-base/scripts/platform_backup.py" backup \
++  --project "$SDLC_PROJECT" --workspace-profile "$SDLC_WORKSPACE_DIR/workspace.local.json" \
++  --compose-file "$SDLC_WORKSPACE_DIR/docker-compose.local.yml" \
++  --project-directory "$SDLC_WORKSPACE_DIR" --docker-context "$SDLC_DOCKER_CONTEXT" \
++  --layout shared --quiesce --signing-key "$SDLC_SIGNING_KEY" --output "${1:?Specify a protected output archive}"
+diff --git a/scripts/gate-backend.sh b/scripts/gate-backend.sh
+new file mode 100644
+index 0000000..14bf210
+--- /dev/null
++++ b/scripts/gate-backend.sh
+@@ -0,0 +1,12 @@
++#!/usr/bin/env bash
++set -euo pipefail
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++: "${SDLC_WORKSPACE_DIR:?Select the source workspace}"
++: "${SDLC_DOCKER_CONTEXT:?Select the Docker context}"
++: "${SDLC_TASK:?Set the task owner}"
++exec python3 "$SDLC_WORKSPACE_DIR/services-base/scripts/compose_probe.py" \
++  --docker-context "$SDLC_DOCKER_CONTEXT" --task "$SDLC_TASK" --purpose cicd-rust-gate -- \
++  --rm --entrypoint /bin/bash -v "$ROOT:/sources/CI-CD:ro" \
++  -v "$SDLC_WORKSPACE_DIR/services-base:/sources/services-base:ro" \
++  --workdir /sources/CI-CD/backend rust:1.88.0-bookworm -ceu \
++  'rustup component add rustfmt clippy; export CARGO_TARGET_DIR=/tmp/target; cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace'
+diff --git a/scripts/scan_container_images.sh b/scripts/scan_container_images.sh
+index d38bd23..a27665c 100755
+--- a/scripts/scan_container_images.sh
++++ b/scripts/scan_container_images.sh
+@@ -1,5 +1,8 @@
+ #!/usr/bin/env bash
+ set -euo pipefail
++: "${SDLC_WORKSPACE_DIR:?Select the source workspace}"
++: "${SDLC_DOCKER_CONTEXT:?Select the Docker context}"
++: "${SDLC_TASK:?Set the task owner}"
+ 
+ TRIVY_IMAGE="${CICD_TRIVY_IMAGE:-aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969}"
+ TRIVY_SEVERITY="${CICD_TRIVY_SEVERITY:-CRITICAL}"
+@@ -13,12 +16,13 @@ fi
+ mkdir -p "$TRIVY_CACHE_DIR"
+ 
+ for image in "$@"; do
+-  if ! docker image inspect "$image" >/dev/null 2>&1; then
++  if ! docker --context "$SDLC_DOCKER_CONTEXT" image inspect "$image" >/dev/null 2>&1; then
+     echo "container scan: image '$image' is missing; build it before scanning" >&2
+     exit 2
+   fi
+ 
+-  docker run --rm \
++  python3 "$SDLC_WORKSPACE_DIR/services-base/scripts/compose_probe.py" \
++    --docker-context "$SDLC_DOCKER_CONTEXT" --task "$SDLC_TASK" --purpose container-vulnerability-scan -- --rm \
+     -v /var/run/docker.sock:/var/run/docker.sock \
+     -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
+     "$TRIVY_IMAGE" image \
+diff --git a/scripts/tests/test_base_stand_backup.py b/scripts/tests/test_base_stand_backup.py
+index 0251271..771d0a0 100644
+--- a/scripts/tests/test_base_stand_backup.py
++++ b/scripts/tests/test_base_stand_backup.py
+@@ -1,25 +1,36 @@
+ #!/usr/bin/env python3
+-"""Regression coverage for the Base stand backup payload."""
+-
+-from __future__ import annotations
+-
+-import unittest
++"""The wrapper must select a complete profile and refuse an unknown project."""
++import os
+ from pathlib import Path
++import shutil
++import subprocess
++import tempfile
++import unittest
+ 
++ROOT=Path(__file__).resolve().parents[2]
+ 
+-ROOT = Path(__file__).resolve().parents[2]
+-SCRIPT = ROOT / "scripts" / "backup-stand.sh"
+-
+-
++@unittest.skipUnless(os.name == 'posix' and shutil.which('bash'), 'requires POSIX shell')
+ class BaseStandBackupTests(unittest.TestCase):
+-    def test_backups_cover_all_databases_and_persistent_payloads(self) -> None:
+-        content = SCRIPT.read_text(encoding="utf-8")
+-        for database in ("task-tracker", "wiki", "fleet-control", "cicd", "java-agent"):
+-            self.assertIn(f"[{database}]", content)
+-        self.assertIn("sdlc-local_tt_uploads", content)
+-        self.assertIn("sdlc-local_ja_chromium", content)
+-        self.assertNotIn("sdlc-local_ja_data", content)
+-
+-
+-if __name__ == "__main__":
+-    unittest.main()
++    def invoke(self, project):
++        with tempfile.TemporaryDirectory() as directory:
++            path=Path(directory)
++            runner=path/'python3'
++            runner.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$RECEIPT\"\n")
++            runner.chmod(0o700)
++            env=dict(os.environ,PATH=str(path)+os.pathsep+os.environ['PATH'],
++                SDLC_WORKSPACE_DIR=str(path),SDLC_PROJECT=project,SDLC_DOCKER_CONTEXT='selected',
++                SDLC_SIGNING_KEY=str(path/'preserved.pem'),RECEIPT=str(path/'args'))
++            result=subprocess.run(['bash',str(ROOT/'scripts/backup-stand.sh'),str(path/'backup.tar.gz')],env=env,capture_output=True)
++            return result.returncode,(path/'args').read_text().splitlines() if (path/'args').exists() else []
++    def test_complete_profile_and_quiescence_forwarded(self):
++        code,args=self.invoke('sdlc1')
++        self.assertEqual(code,0)
++        for required in ('--workspace-profile','--quiesce','--signing-key','--docker-context'):
++            self.assertIn(required,args)
++        self.assertNotIn('--skip-file-volumes',args)
++    def test_unknown_project_does_not_invoke_backup(self):
++        code,args=self.invoke('old-demo')
++        self.assertNotEqual(code,0)
++        self.assertEqual(args,[])
++
++if __name__=='__main__':unittest.main()

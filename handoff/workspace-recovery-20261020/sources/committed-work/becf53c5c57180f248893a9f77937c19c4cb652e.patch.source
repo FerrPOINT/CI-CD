@@ -1,0 +1,64 @@
+diff --git a/docs/plans/2026-10-05-settings-keyboard-focus.md b/docs/plans/2026-10-05-settings-keyboard-focus.md
+new file mode 100644
+index 0000000..7988dda
+--- /dev/null
++++ b/docs/plans/2026-10-05-settings-keyboard-focus.md
+@@ -0,0 +1,29 @@
++# Клавиатурный фокус поиска настроек
++
++## Обнаруженный отказ
++
++Приёмка source-attested CI/CD image выявила отказ business keyboard focus на
++`/settings` во всех трёх темах и десяти ширинах. Единственный interactive
++элемент страницы — поиск переменных. Native input убирал outline, оставляя
++только изменение цвета границы; общий стандарт приёмки требует видимый
++focus outline/ring. Layout, SSO, reload, console и network проверки прошли.
++
++## Исправление и границы
++
++Использовать существующий `Input` из pinned Base вместо ручного native input.
++Сохранить type search, доступное название, фильтрацию, очищение и отступы для
++иконок. Общий компонент обеспечивает принятый focus ring и tokens. Не менять
++маршруты, роли, API, модели, миграции и текущие runtime images.
++
++## Проверки
++
++1. Frozen install, packed Base consumer и typecheck.
++2. Существующие SettingsPage tests: фильтрация по ключу/описанию, clear и empty.
++3. Lint, production build, route contract, diff hygiene и README.
++4. Source commit, затем candidate image; повторить actual-image `/settings`
++   keyboard/focus во всей матрице тем/ширин и полный свежий QA.
++5. Полную приёмку и gallery evidence коммитить отдельно после браузера;
++   первоначальный отказ сохраняется в защищённых диагностических артефактах.
++
++Gate не ослабляется. Исходники первоначального кандидата остаются неизменными
++до завершения его текущей изолированной проверки и scoped cleanup.
+diff --git a/frontend/src/pages/settings/index.tsx b/frontend/src/pages/settings/index.tsx
+index 1716c0c..48e036f 100644
+--- a/frontend/src/pages/settings/index.tsx
++++ b/frontend/src/pages/settings/index.tsx
+@@ -1,7 +1,7 @@
+ import { useState } from 'react'
+ import { useTranslation } from 'react-i18next'
+ import { Search, Settings, X } from 'lucide-react'
+-import { Button } from '@sdlc/ui/ui'
++import { Button, Input } from '@sdlc/ui/ui'
+ 
+ const configGroups = [
+   {
+@@ -71,13 +71,13 @@ export function SettingsPage() {
+           <h2 id="variables-heading" className="text-base font-semibold">{t('settings.envVars')}</h2>
+           <div className="relative w-full sm:w-72">
+             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" aria-hidden />
+-            <input
++            <Input
+               type="search"
+               aria-label={t('settings.search')}
+               placeholder={t('settings.search')}
+               value={search}
+               onChange={event => setSearch(event.target.value)}
+-              className="min-h-10 w-full rounded-md border border-border bg-surface py-2 pl-9 pr-10 text-sm text-text-primary outline-none focus-visible:border-accent"
++              className="pl-9 pr-10"
+             />
+             {search && <Button type="button" variant="ghost" size="icon" aria-label={t('settings.clearSearch')} onClick={() => setSearch('')} className="absolute right-0 top-0 h-10 w-10"><X className="h-4 w-4" /></Button>}
+           </div>

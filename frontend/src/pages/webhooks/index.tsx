@@ -12,19 +12,12 @@ import {
   useNotificationEvents,
   useSaveNotifications,
 } from "@/api/hooks";
-import { Card, ResourceList, ResourceListRow } from "@pdlc/ui/ui";
-import { Button } from "@pdlc/ui/ui";
-import { Input } from "@pdlc/ui/ui";
-import { Label } from "@pdlc/ui/ui";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@pdlc/ui/ui";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@pdlc/ui/ui";
+import {Select, Card, ResourceList, ResourceListRow, Button, Input, Label, Tabs, TabsContent, TabsList, TabsTrigger, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, toast, ConfirmDialog} from '@pdlc/ui/ui'
+
+
+
+
+
 import {
   ChevronLeft,
   ChevronRight,
@@ -34,8 +27,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
-import { ConfirmDialog } from "@pdlc/ui/ui";
+
+
 import { QueryState } from "@/shared/ui/query-state";
 import type {
   NotificationConfig,
@@ -225,7 +218,7 @@ export function WebhooksPage() {
                           <Button
                             type="button"
                             size="icon"
-                            variant="ghost"
+                            variant="destructive-outline"
                             aria-label={`${t("common.delete")} ${w.url}`}
                             title={t("common.delete")}
                             className="h-10 w-10 shrink-0 text-danger hover:text-danger"
@@ -266,7 +259,7 @@ export function WebhooksPage() {
                             <Button
                               type="button"
                               size="icon"
-                              variant="ghost"
+                              variant="destructive-outline"
                               aria-label={`${t("common.delete")} ${w.url}`}
                               title={t("common.delete")}
                               className="h-10 w-10 text-danger hover:text-danger"
@@ -450,45 +443,53 @@ function DeliveryHistorySection() {
                   <Label htmlFor="delivery-status" className="sr-only">
                     {t("deliveries.statusFilter")}
                   </Label>
-                  <select
+                  <Select
                     id="delivery-status"
                     value={status}
-                    onChange={(event) =>
-                      changeFilter("status", event.target.value)
+                    onValueChange={(nextValue) =>
+                      changeFilter("status", nextValue)
                     }
-                    className="min-h-10 w-full rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus-visible:border-accent"
-                  >
-                    <option value="all">{t("deliveries.allStatuses")}</option>
-                    {deliveryStatuses.map((value) => (
-                      <option key={value} value={value}>
-                        {t(
-                          value === "retry_scheduled"
-                            ? "deliveries.retryScheduled"
-                            : `deliveries.${value}`,
-                        )}
-                      </option>
-                    ))}
-                  </select>
+                    className="w-full"
+                    options={[
+                      {
+                        value: "all",
+                        label: String(t("deliveries.allStatuses")),
+                      },
+                      ...(deliveryStatuses.map((value) => ({
+                        value: String(value),
+                        label: String(
+                          t(
+                            value === "retry_scheduled"
+                              ? "deliveries.retryScheduled"
+                              : `deliveries.${value}`,
+                          ),
+                        ),
+                      })) ?? []),
+                    ]}
+                  />
                 </div>
                 <div>
                   <Label htmlFor="delivery-channel" className="sr-only">
                     {t("deliveries.channelFilter")}
                   </Label>
-                  <select
+                  <Select
                     id="delivery-channel"
                     value={channel}
-                    onChange={(event) =>
-                      changeFilter("channel", event.target.value)
+                    onValueChange={(nextValue) =>
+                      changeFilter("channel", nextValue)
                     }
-                    className="min-h-10 w-full rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus-visible:border-accent"
-                  >
-                    <option value="all">{t("deliveries.allChannels")}</option>
-                    {deliveryChannels.map((value) => (
-                      <option key={value} value={value}>
-                        {t(`deliveries.channel_${value}`)}
-                      </option>
-                    ))}
-                  </select>
+                    className="w-full"
+                    options={[
+                      {
+                        value: "all",
+                        label: String(t("deliveries.allChannels")),
+                      },
+                      ...(deliveryChannels.map((value) => ({
+                        value: String(value),
+                        label: String(t(`deliveries.channel_${value}`)),
+                      })) ?? []),
+                    ]}
+                  />
                 </div>
               </div>
               <p
@@ -787,7 +788,8 @@ function DeliveryOpenButton({
 }) {
   const { t } = useTranslation();
   return (
-    <button
+    <Button
+      variant="ghost"
       type="button"
       className="min-h-10 w-full text-left hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       aria-label={t("deliveries.openDetails", {
@@ -808,7 +810,7 @@ function DeliveryOpenButton({
           {delivery.last_error}
         </span>
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -917,7 +919,7 @@ function NotificationsSection() {
                   />
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="destructive-outline"
                     size="icon"
                     aria-label={t("common.delete")}
                     title={t("common.delete")}

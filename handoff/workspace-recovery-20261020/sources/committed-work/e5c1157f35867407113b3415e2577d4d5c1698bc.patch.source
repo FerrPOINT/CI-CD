@@ -1,0 +1,31 @@
+diff --cc CHANGELOG.md
+index 81b8807,81e2df4..cb84d65
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@@ -15,22 -15,10 +15,26 @@@
+  - Локальный Vitest ограничен четырьмя workers, как у остальных потребителей;
+    timeout и сценарии тестов не ослаблены.
+  
+ +- Central logout сохраняет in-memory API session до навигации в Central Auth:
+ +  незавершённые запросы не теряют Bearer token между кликом и переходом.
+ +  Отзыв браузерной сессии остаётся ответственностью Central Auth.
+ +
+ +- `pipeline wait` учитывает `--timeout-seconds` / `CICD_TIMEOUT_SECONDS` при опросе, включая чтение тела: HTTP timeout возвращает `TRANSPORT_ERROR`, истечение ожидания — `WAIT_TIMEOUT`; pipeline не отменяется.
+ +
+ +- CLI возвращает network exit code `3` и `TRANSPORT_ERROR` при обрыве или таймауте чтения artifact download; существующий файл сохраняется при неудачном скачивании.
+ +
+ +- Справка CLI скрывает значения token env variables, сохраняя имена переменных.
+ +
+ +- CLI поддерживает управление repositories/PR, pipeline cancel/retry/wait и variables, manual job
+ +  play/retry, страницы логов выбранного attempt, secret file/stdin и deployment approval/rollback.
+ +  Добавлены JSON errors/empty success, deadline ожидания и download без перезаписи. CLI integration
+ +  suite получает отдельную PostgreSQL БД; merge PR работает для repository без CI-проекта.
+ +  Диагностика скрывает исходные и обрезанные credentials, включая newline в secret stdin.
+ +
++ - PostgreSQL policy-тесты scheduler/approval используют авторизованные тестовые
++   учётки вместо устаревших anonymous requests. Повторный голос проверяется по
++   реальному subject, разные участники имеют разные JWT; защита API не менялась.
++ 
+  - CI/CD использует полноширинный общий PlatformHeader из Base: бренд и сервисы
+    находятся слева, тема и аккаунт справа; sidebar содержит только навигацию.
+    Полная identity и центральный выход доступны в меню аккаунта. Mobile drawer

@@ -1,3 +1,4 @@
+import { chooseValue } from '../../test/choice'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -91,9 +92,7 @@ describe('AuditLogPage', () => {
       q: 'qa',
     }))
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'auditLog.actionFilter' }), {
-      target: { value: 'auth.login_success' },
-    })
+    await chooseValue(screen.getByRole('combobox', { name: 'auditLog.actionFilter' }), 'auth.login_success')
     await waitFor(() => expect(mocks.useAuditLog).toHaveBeenLastCalledWith({
       action: 'auth.login_success',
       limit: 20,
@@ -156,7 +155,7 @@ describe('AuditLogPage', () => {
       q: undefined,
     })
     expect(screen.getByRole('alert')).toHaveTextContent('auditLog.loadFailed')
-    fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
     expect(mocks.refetch).toHaveBeenCalledOnce()
   })
 })

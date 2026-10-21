@@ -1,25 +1,41 @@
-import { SpaceAdmissionBoundary } from './space-admission-boundary'
-import { LoadingState } from '@pdlc/ui/ui'
+import { SpaceAdmissionBoundary } from "./space-admission-boundary";
+import { LoadingState, Button } from "@pdlc/ui/ui";
 // K2: layout route guard driven by AuthProvider.
 
-import { Navigate, Outlet, useLocation } from 'react-router'
-import { useAuth } from './auth-provider'
-import { getPlatformProduct } from '@pdlc/ui/platform'
+import { Navigate, Outlet, useLocation } from "react-router";
+import { useAuth } from "./auth-provider";
+import { getPlatformProduct } from "@pdlc/ui/platform";
 
 export function ProtectedRoute() {
-  const { status, error, invalidate } = useAuth()
-  const location = useLocation()
+  const { status, error, invalidate } = useAuth();
+  const location = useLocation();
 
-  if (status === 'checking') {
-    return <LoadingState />
+  if (status === "checking") {
+    return <LoadingState />;
   }
-  if (status === 'authenticated') {
-    return <SpaceAdmissionBoundary><Outlet /></SpaceAdmissionBoundary>
+  if (status === "authenticated") {
+    return <SpaceAdmissionBoundary><Outlet /></SpaceAdmissionBoundary>;
   }
-  if (status === 'unavailable') return <section role="alert"><p>{error}</p><button onClick={invalidate}>Повторить</button></section>
+  if (status === "unavailable")
+    return (
+      <section role="alert">
+        <p>{error}</p>
+        <Button variant="ghost" onClick={invalidate}>
+          Повторить
+        </Button>
+      </section>
+    );
   if (getPlatformProduct()) {
-    getPlatformProduct()?.requireLogin(location.pathname + location.search + location.hash)
-    return null
+    getPlatformProduct()?.requireLogin(
+      location.pathname + location.search + location.hash,
+    );
+    return null;
   }
-  return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
+  return (
+    <Navigate
+      to="/login"
+      replace
+      state={{ from: location.pathname + location.search }}
+    />
+  );
 }

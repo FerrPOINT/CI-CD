@@ -1,0 +1,19 @@
+diff --git a/backend/cli/src/task_git.rs b/backend/cli/src/task_git.rs
+index 9801115..e46397d 100644
+--- a/backend/cli/src/task_git.rs
++++ b/backend/cli/src/task_git.rs
+@@ -22,6 +22,14 @@ fn private_file(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
+         .context("Не удалось создать private Git file")?;
+     file.write_all(contents)?;
+     file.sync_all()?;
++    #[cfg(unix)]
++    {
++        let parent = path
++            .parent()
++            .filter(|p| !p.as_os_str().is_empty())
++            .unwrap_or(Path::new("."));
++        fs::File::open(parent)?.sync_all()?;
++    }
+     Ok(())
+ }
+ 

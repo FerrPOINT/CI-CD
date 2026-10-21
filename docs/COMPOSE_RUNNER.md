@@ -127,3 +127,29 @@ Pure regression suite запускается отдельным процессо
 ## Host workload budget
 
 Operator `CICD_RUNNER_CGROUP_PARENT` применяется к Compose transfer/job/deployment и к RUN-контейнерам typed image-build через штатный `buildx --cgroup-parent`. Job не выбирает и не переопределяет host budget. Без настройки сохраняется прежняя команда. На Firebat2 `pdlc4-workloads.slice` имеет 4 CPU/4 GiB и находится внутри общего `pdlc4.slice` 4 CPU/7 GiB. Это не заменяет admission через host execution slot и приёмку настоящего Forge/Fleet-задания.
+
+## Отдельная сборка external runner
+
+Для ограниченного хоста `scripts/prepare_standalone_runner.py` экспортирует
+закреплённые Git blobs `forge-runner`, `runner_workspace` вместе с preparation
+и его domain-моделями. Исходники этих модулей не урезаются. Неизменённый HTTP/DB
+control plane и embedded runner в этот binary boundary не входят.
+
+```sh
+python3 scripts/prepare_standalone_runner.py --repository . --revision SOURCE_SHA --output /private/new-runner-context
+python3 scripts/prepare_standalone_runner.py --check-lock --output /private/new-runner-context
+```
+
+После разрешения Cargo graph проверка lock обязательна до тестов/компиляции:
+каждый registry package/version/checksum должен существовать в исходном lock.
+Исходный lock, hashes всех экспортированных blobs и recipe сохраняются отдельно.
+Сборка и весь test target `--release --locked --bin forge-runner` выполняются
+в закреплённом Rust toolchain через отдельный Compose project и общий host slot.
+Это scoped runner qualification, а не полный backend/server gate.
+
+Проверенный binary копируется в отдельный runtime image поверх прежнего
+квалифицированного Forge base; его SHA256, source и recipe входят в release.
+Backend image и SDK pins при этом не меняются. Реальные timeout/cancellation,
+отсутствие дочерних процессов, terminal acknowledgement и сохранность workspace
+проверяются отдельно в целевом окружении. Shell executor остаётся только для
+доверенных заданий и не является sandbox для произвольного кода.

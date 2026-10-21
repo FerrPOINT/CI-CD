@@ -1,0 +1,27 @@
+diff --git a/backend/src/registered_devops_evidence_tests.rs b/backend/src/registered_devops_evidence_tests.rs
+index f3dba21..40db7aa 100644
+--- a/backend/src/registered_devops_evidence_tests.rs
++++ b/backend/src/registered_devops_evidence_tests.rs
+@@ -74,7 +74,8 @@ pub(crate) fn fixture() -> (
+         delegated_credential: Some(sqlx::types::Json(json!({
+             "subject":Uuid::new_v4(), "fingerprint":"d".repeat(64),
+             "context_hash":digest(&context).unwrap(), "context":context,
+-            "encrypted_child":"fixture-private-ciphertext-must-not-be-read"
++            // Matches the DB envelope shape but has an invalid nonce; readback must never decrypt it.
++            "encrypted_child":"v1:AA==:AA=="
+         }))),
+         preparation_job_id: Uuid::new_v4(),
+         intent: sqlx::types::Json(intent),
+diff --git a/backend/src/task_delivery/namespace_evidence_pg_tests.rs b/backend/src/task_delivery/namespace_evidence_pg_tests.rs
+index e5c943a..5dbc2fb 100644
+--- a/backend/src/task_delivery/namespace_evidence_pg_tests.rs
++++ b/backend/src/task_delivery/namespace_evidence_pg_tests.rs
+@@ -366,7 +366,7 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
+         for private in [
+             "encrypted_child",
+             "sdlc_pat_",
+-            "fixture-private-ciphertext",
++            "v1:AA==:AA==",
+             root.0.to_str().unwrap(),
+         ] {
+             assert!(

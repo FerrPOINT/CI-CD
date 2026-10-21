@@ -11,17 +11,11 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { toast } from "sonner";
+import {toast, Button, Input, Label, ResourceList, ResourceListRow, ConfirmDialog} from '@pdlc/ui/ui'
 import { useDeleteSecret, useSecrets, useUpsertSecret } from "@/api/hooks";
 import type { SecretMetadata } from "@/api/types";
-import {
-  Button,
-  Input,
-  Label,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
-import { ConfirmDialog } from "@pdlc/ui/ui";
+
+
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
@@ -193,7 +187,8 @@ export function SecretsPage() {
                   setSaveError("");
                 }}
               />
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 aria-label={t(
                   showValue ? "secrets.hideValue" : "secrets.showValue",
@@ -209,7 +204,7 @@ export function SecretsPage() {
                 ) : (
                   <Eye className="h-4 w-4" aria-hidden />
                 )}
-              </button>
+              </Button>
             </div>
           </div>
           {isReplacing && (
@@ -312,7 +307,8 @@ export function SecretsPage() {
                             )}
                           </time>
                         </div>
-                        <button
+                        <Button
+                          variant="ghost"
                           type="button"
                           aria-label={t("secrets.replaceFor", {
                             name: secret.key,
@@ -323,8 +319,9 @@ export function SecretsPage() {
                           onClick={() => openReplaceForm(secret)}
                         >
                           <RotateCw className="h-4 w-4" aria-hidden />
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="destructive-outline"
                           type="button"
                           aria-label={t("secrets.deleteFor", {
                             name: secret.key,
@@ -338,7 +335,7 @@ export function SecretsPage() {
                           }}
                         >
                           <Trash2 className="h-4 w-4" aria-hidden />
-                        </button>
+                        </Button>
                       </li>
                     </ResourceListRow>
                   ))}

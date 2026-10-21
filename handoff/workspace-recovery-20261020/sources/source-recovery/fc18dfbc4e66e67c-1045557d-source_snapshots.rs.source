@@ -1,0 +1,244 @@
+//! Bounded hosted Git read. No clone, checkout, task creation or caller-authored URL.
+use super::{ApiError, ApiResult, AppState};
+use crate::{auth::AccessClaims, domain::source_snapshot::*, store};
+use axum::{
+    Extension, Router,
+    extract::{Path, Query, State},
+    routing::get,
+};
+use serde::Deserialize;
+use std::{
+    path::Path as FsPath,
+    process::Stdio,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+use tokio::{io::AsyncReadExt, sync::Semaphore};
+use uuid::Uuid;
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SourceQuery {
+    tracker_instance_id: Uuid,
+    project_id: Uuid,
+    repository_id: Uuid,
+    branch_ref: String,
+}
+
+pub(crate) fn routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/v1/projects/{project_id}/source-snapshot", get(read))
+        .layer(axum::middleware::map_response(
+            |mut response: axum::response::Response| async move {
+                response.headers_mut().insert(
+                    "cache-control",
+                    axum::http::HeaderValue::from_static("no-store"),
+                );
+                response
+            },
+        ))
+}
+
+async fn authorized_binding(
+    state: &AppState,
+    claims: &AccessClaims,
+    configuration: Uuid,
+    query: &SourceQuery,
+) -> Result<store::source_snapshot::SourceBinding, ApiError> {
+    let mut tx = state
+        .pool
+        .as_ref()
+        .ok_or_else(ApiError::unavailable)?
+        .begin()
+        .await
+        .map_err(ApiError::internal)?;
+    if !store::delivered_target::authorize_reader(
+        &mut tx,
+        claims.token_id,
+        claims.sub,
+        configuration,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::forbidden());
+    }
+    let binding = store::source_snapshot::lock_binding(
+        &mut tx,
+        configuration,
+        query.repository_id,
+        query.tracker_instance_id,
+        query.project_id,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::forbidden)?;
+    let command: sdlc_shared::resource_context::OwnerCommand =
+        serde_json::from_value(binding.command.clone()).map_err(|_| {
+            ApiError::service_unavailable("Некорректная проекция пространства исходников")
+        })?;
+    crate::namespace::validate_projection(&command)?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(binding)
+}
+
+#[utoipa::path(get,path="/api/v1/projects/{project_id}/source-snapshot",tag="Source snapshots",
+    params(("project_id"=Uuid,Path,description="Forge configuration UUID"),SourceQuery),
+    responses((status=200,body=SourceSnapshot),(status=400),(status=401),(status=403),(status=404),(status=503)))]
+pub(crate) async fn read(
+    State(state): State<Arc<AppState>>,
+    claims: Option<Extension<AccessClaims>>,
+    Path(configuration): Path<Uuid>,
+    Query(query): Query<SourceQuery>,
+) -> ApiResult<SourceSnapshot> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
+    let reader = state
+        .config
+        .sdlc_workspace
+        .source_reader_subject
+        .ok_or_else(|| ApiError::service_unavailable("Чтение версии исходников не настроено"))?;
+    if claims.sub != reader
+        || claims.role != "service_account"
+        || claims.service_account_name.is_none()
+        || claims.token_project_id != Some(configuration)
+        || claims.sid.is_some()
+    {
+        return Err(ApiError::forbidden());
+    }
+    if [
+        configuration,
+        query.tracker_instance_id,
+        query.project_id,
+        query.repository_id,
+    ]
+    .iter()
+    .any(Uuid::is_nil)
+        || !valid_branch_ref(&query.branch_ref)
+    {
+        return Err(ApiError::bad_request("Некорректная ссылка на исходники"));
+    }
+    static READERS: OnceLock<Semaphore> = OnceLock::new();
+    let _permit = READERS
+        .get_or_init(|| Semaphore::new(2))
+        .try_acquire()
+        .map_err(|_| {
+            ApiError::service_unavailable("Лимит одновременного чтения исходников занят")
+        })?;
+    let binding = authorized_binding(&state, &claims, configuration, &query).await?;
+    let commit_sha = read_commit(&state.git.root, &binding.storage_name, &query.branch_ref).await?;
+    let after = authorized_binding(&state, &claims, configuration, &query).await?;
+    if after != binding {
+        return Err(ApiError::service_unavailable(
+            "Связь проекта с исходниками изменилась во время чтения",
+        ));
+    }
+    let (group, slug) = binding
+        .public_name
+        .split_once('/')
+        .ok_or_else(|| ApiError::service_unavailable("Некорректное имя репозитория в каталоге"))?;
+    let clone_url = crate::repository_catalog::public_git_url(group, slug)?;
+    let url = reqwest::Url::parse(&clone_url)
+        .map_err(|_| ApiError::service_unavailable("Некорректный адрес репозитория в каталоге"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(ApiError::service_unavailable(
+            "Некорректный адрес репозитория в каталоге",
+        ));
+    }
+    Ok(axum::Json(SourceSnapshot {
+        schema: "forge/source-snapshot/v1".into(),
+        producer_version: env!("CARGO_PKG_VERSION").into(),
+        project: crate::domain::delivered_target::DeliveredProjectRef {
+            tracker_instance_id: query.tracker_instance_id,
+            project_id: query.project_id,
+        },
+        configuration_id: configuration,
+        repository_id: query.repository_id,
+        branch_ref: query.branch_ref,
+        commit_sha,
+        clone_url,
+        observed_at: chrono::Utc::now(),
+    }))
+}
+
+async fn read_commit(root: &FsPath, storage: &str, branch: &str) -> Result<String, ApiError> {
+    if crate::git_host::validate_repo_name(storage).as_deref() != Ok(storage)
+        || !valid_branch_ref(branch)
+    {
+        return Err(ApiError::service_unavailable(
+            "Некорректная идентичность исходников",
+        ));
+    }
+    // Do not follow a substituted repository directory outside the configured root.
+    let path = root.join(format!("{storage}.git"));
+    let canonical = tokio::fs::canonicalize(&path)
+        .await
+        .map_err(|_| ApiError::service_unavailable("Хранилище исходников недоступно"))?;
+    let canonical_root = tokio::fs::canonicalize(root)
+        .await
+        .map_err(|_| ApiError::service_unavailable("Корень хранилища исходников недоступен"))?;
+    if canonical != canonical_root.join(format!("{storage}.git"))
+        || tokio::fs::symlink_metadata(&path)
+            .await
+            .map_err(|_| ApiError::unavailable())?
+            .file_type()
+            .is_symlink()
+    {
+        return Err(ApiError::service_unavailable(
+            "Идентичность хранилища исходников изменилась",
+        ));
+    }
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut command = tokio::process::Command::new("git");
+        command
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .arg(format!("--git-dir={}", canonical.display()))
+            .args(["rev-parse", "--verify", "--end-of-options"])
+            .arg(format!("{branch}^{{commit}}"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let mut child = command
+            .spawn()
+            .map_err(|_| ApiError::service_unavailable("Чтение исходников недоступно"))?;
+        let mut bytes = Vec::new();
+        child
+            .stdout
+            .take()
+            .ok_or_else(ApiError::unavailable)?
+            .take(129)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| ApiError::unavailable())?;
+        let status = child.wait().await.map_err(|_| ApiError::unavailable())?;
+        let value = std::str::from_utf8(&bytes).unwrap_or("").trim();
+        if !status.success() {
+            return Err(ApiError::not_found_named("ветка исходников"));
+        }
+        if !matches!(value.len(), 40 | 64)
+            || !value
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        {
+            return Err(ApiError::service_unavailable(
+                "Получена некорректная версия исходников",
+            ));
+        }
+        Ok(value.to_owned())
+    })
+    .await;
+    result.map_err(|_| ApiError::service_unavailable("Превышено время чтения исходников"))?
+}

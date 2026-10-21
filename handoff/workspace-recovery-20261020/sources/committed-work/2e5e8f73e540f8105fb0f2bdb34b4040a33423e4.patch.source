@@ -1,0 +1,10 @@
+diff --git a/frontend/AGENTS.md b/frontend/AGENTS.md
+index 2f99e28..6ca4129 100644
+--- a/frontend/AGENTS.md
++++ b/frontend/AGENTS.md
+@@ -1,4 +1,5 @@
+ <!-- BEGIN BASE FRONTEND RULES -->
++
+ ## Общий UI-контракт Base
+ 
+ - Использовать общий shell, branding и tokens Base. Контент и доменные решения

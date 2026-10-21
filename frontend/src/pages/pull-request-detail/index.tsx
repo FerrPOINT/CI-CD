@@ -1,14 +1,9 @@
-import {
-  NamespaceLink as Link,
-  ResourceList,
-  ResourceListRow,
-  DiffBlock,
-} from "@pdlc/ui/ui";
+import {NamespaceLink as Link, ResourceList, ResourceListRow, DiffBlock, Button, InitialsAvatar as UserAvatar} from '@pdlc/ui/ui'
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { usePullRequest, useRepositoryComparison } from "@/api/hooks";
 import { ApiError } from "@/api/client";
-import { Button } from "@pdlc/ui/ui";
+
 import {
   ChevronRight,
   GitPullRequest,
@@ -19,7 +14,7 @@ import type { PullRequest, PullRequestStatus } from "@/api/types";
 import { formatDate } from "@/shared/lib/format";
 import { QueryState } from "@/shared/ui/query-state";
 import { PullRequestActions } from "@/pages/pull-requests/actions";
-import { InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
+
 
 function branchRef(branch: string): string {
   return branch.startsWith("refs/heads/") ? branch : `refs/heads/${branch}`;

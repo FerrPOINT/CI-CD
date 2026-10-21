@@ -2223,6 +2223,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/space-admission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["human_window"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users": {
         parameters: {
             query?: never;
@@ -3021,6 +3037,15 @@ export interface components {
             repository: string;
             /** Format: uuid */
             repository_id?: string | null;
+        };
+        /** @description A display descriptor, never a reusable repository/Git capability. */
+        HumanAdmissionWindowV1: {
+            enforced: boolean;
+            /** Format: int64 */
+            remaining_millis?: number | null;
+            /** Format: int32 */
+            schema_version: number;
+            scope_revision?: string | null;
         };
         IssueServiceAccountToken: {
             /** Format: int32 */
@@ -10007,6 +10032,37 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    human_window: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAdmissionWindowV1"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

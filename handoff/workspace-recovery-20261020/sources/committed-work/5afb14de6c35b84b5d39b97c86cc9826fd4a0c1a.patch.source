@@ -1,0 +1,1573 @@
+diff --git a/.base-revision b/.base-revision
+index e7bc130..3620eda 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-9408802dfa978cba2f67162a49adca6f65851b01
++bff9bfa8b7669ef23bd64dba36e78eb750eb43d4
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index d79dbec..365683e 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -138,6 +138,18 @@ jobs:
+           CI: "true"
+       - run: pnpm openapi:check
+       - run: pnpm test -- --run
++      - name: Install pinned Base UI validators
++        run: pnpm --dir ../../services-base/frontend install --frozen-lockfile
++        env:
++          CI: "true"
++      - name: Accepted image parents and Docker ownership policy
++        run: |
++          python3 ../../services-base/scripts/build_provenance.py --recipe ../backend/Dockerfile.umbrella --recipe Dockerfile.umbrella
++          python3 ../../services-base/scripts/check_docker_invocations.py --repo ..
++      - name: UI route contract and committed browser evidence
++        run: |
++          pnpm ui:check
++          pnpm ui:acceptance
+       - run: pnpm lint
+       - name: OpenAPI compatibility against target branch
+         run: |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 5badc09..a805a2c 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -224,7 +224,7 @@
+ - Protected delivery MVP: migration `0024_environment_approvals` добавляет `environments.protected/required_approvals`, append-only `deployment_approvals`, `deployments.rollback_of_id`, API/UI/CLI approval actions и rollback, который создаёт отдельную traceable deployment запись через pipeline.
+ - OpenAPI compatibility gate: `pnpm openapi:compat` сравнивает bundled contract с base/default branch и блокирует удаление существующих paths/methods/responses/parameters/schema fields, смену типов/format и новые required request параметры в active compatibility surface.
+ - CI actions: workflow переведён на Node 24-compatible `actions/checkout@v7`, `actions/setup-python@v7` и `pnpm/setup@v2` для pnpm v11/Node 22 runtime; target immutable digest pinning остаётся release hardening.
+-- Compose smoke: CI теперь собирает production Docker images, поднимает `docker compose up --build -d`, проверяет backend health/readiness и frontend nginx; frontend Dockerfile использует frozen pnpm lockfile, а secret-scan pruning не заходит в generated dirs.
++- Compose smoke: CI теперь собирает production Docker images, поднимает `docker compose up --build -d`, проверяет cicd-backend health/readiness и cicd-web nginx; cicd-web Dockerfile использует frozen pnpm lockfile, а secret-scan pruning не заходит в generated dirs.
+ - Browser E2E/a11y: добавлен Playwright Chromium gate против собранного Docker Compose stack с deterministic `seed:evidence`; critical journey проверяет Dashboard → project pipelines → pipeline plan/logs/artifacts, repository code browser и mobile drawer Escape/focus contract, а axe smoke падает на `serious`/`critical` violations representative pages. CI сохраняет Playwright report, traces, screenshots и video на failure через `actions/upload-artifact@v7`.
+ - I18n contract: Vitest проверяет parity ключей `ru`/`en`, непустые leaf-значения, runtime language switch и динамические переводы для стабильных API contract values, включая status/action ключи.
+ - Performance smoke: Playwright E2E теперь проверяет seeded API read p95 и Dashboard route ready-time против MVP regression budgets; 30-day SLO, Lighthouse и load reports остаются target.
+diff --git a/backend/Dockerfile.umbrella b/backend/Dockerfile.umbrella
+index 44a8f13..d872444 100644
+--- a/backend/Dockerfile.umbrella
++++ b/backend/Dockerfile.umbrella
+@@ -1,7 +1,7 @@
+ # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
+ # Stages the sibling services-base checkout so the sdlc-auth-core path
+ # dependency (../../../services-base/...) resolves.
+-FROM rust:1.88.0-slim-bookworm AS build
++FROM rust:1.88.0-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS build
+ WORKDIR /app
+ # backend/Cargo.toml: sdlc-auth-core = { path = "../../../services-base/..." }
+ # /app/../../services-base == /services-base (WORKDIR is repo backend/).
+@@ -36,7 +36,7 @@ COPY CI-CD/backend/migrations ./migrations
+ RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
+  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
+ 
+-FROM debian:bookworm-slim
++FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+ # docker-cli only (DooD): embedded runner spawns job containers through the
+ # mounted host docker socket; no daemon runs inside this image. The static
+ # official CLI is pinned because bookworm's docker.io is too old for the
+diff --git a/backend/src/api/authz_mw.rs b/backend/src/api/authz_mw.rs
+index 1889241..ba67253 100644
+--- a/backend/src/api/authz_mw.rs
++++ b/backend/src/api/authz_mw.rs
+@@ -20,17 +20,18 @@ pub(crate) async fn request_id_mw(
+     req: axum::extract::Request,
+     next: axum::middleware::Next,
+ ) -> axum::response::Response {
+-    let id = req
++    let supplied = req
+         .headers()
+         .get("x-request-id")
+-        .and_then(|v| v.to_str().ok())
+-        .and_then(|v| uuid::Uuid::parse_str(v).ok())
+-        .unwrap_or_else(uuid::Uuid::new_v4);
++        .and_then(|value| value.to_str().ok())
++        .filter(|value| value.len() == 36)
++        .and_then(|value| Uuid::parse_str(value).ok().map(|id| (id, value.to_owned())));
++    let (id, value) = supplied.unwrap_or_else(|| {
++        let id = Uuid::new_v4();
++        (id, id.to_string())
++    });
+     REQUEST_ID
+-        .scope(
+-            id,
+-            sdlc_telemetry::run_with_request_id(req, next, id.to_string()),
+-        )
++        .scope(id, sdlc_telemetry::run_with_request_id(req, next, value))
+         .await
+ }
+ 
+diff --git a/backend/src/api/router.rs b/backend/src/api/router.rs
+index e4c44e3..c52f351 100644
+--- a/backend/src/api/router.rs
++++ b/backend/src/api/router.rs
+@@ -264,15 +264,17 @@ pub(crate) fn build_router_with_cors(
+             state.clone(),
+             rate_limit_mw,
+         ))
+-        .layer(axum::middleware::from_fn(request_id_mw))
+         .layer(cors)
++        .layer(axum::middleware::from_fn(request_id_mw))
+         .layer(TraceLayer::new_for_http())
+         .with_state(state)
+ }
+ 
+ pub(crate) fn cors_layer_from_allowed_origins(raw: Option<&str>) -> Result<CorsLayer, String> {
+     let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+-        return Ok(CorsLayer::permissive());
++        return Ok(
++            CorsLayer::permissive().expose_headers([HeaderName::from_static("x-request-id")])
++        );
+     };
+ 
+     let mut origins = Vec::new();
+diff --git a/docker-compose.tls.yml b/docker-compose.tls.yml
+index a30d057..2e3eb49 100644
+--- a/docker-compose.tls.yml
++++ b/docker-compose.tls.yml
+@@ -4,23 +4,29 @@
+ # Forge HTTP ingress; only Caddy publishes the selected loopback HTTPS port.
+ # It uses Caddy's internal CA, so clients must trust the exported root CA.
+ services:
+-  backend:
++  cicd-backend:
++    networks:
++      default:
++        aliases: [backend]
+     ports: !reset []
+     environment:
+       CICD_AUTH_SECRET: ${CICD_AUTH_SECRET:?set a non-empty value in .env}
+       CICD_AUTH_COOKIE_SECURE: "true"
+       CICD_CORS_ALLOWED_ORIGINS: https://${CICD_TLS_HOST:?set in .env}:${CICD_TLS_HTTPS_PORT:-22443}
+ 
+-  frontend:
++  cicd-web:
++    networks:
++      default:
++        aliases: [frontend]
+     ports: !reset []
+ 
+   caddy:
+     image: caddy:2.10.2-alpine@sha256:d8c17a862962def15cde69863a3a463f25a2664942eafd7bdbf050e9c3116b83
+     restart: unless-stopped
+     depends_on:
+-      backend:
++      cicd-backend:
+         condition: service_healthy
+-      frontend:
++      cicd-web:
+         condition: service_started
+     environment:
+       CICD_TLS_HOST: ${CICD_TLS_HOST:?set in .env}
+diff --git a/docker-compose.yml b/docker-compose.yml
+index fcb29d0..f325da8 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -16,7 +16,10 @@ services:
+       timeout: 5s
+       retries: 10
+ 
+-  backend:
++  cicd-backend:
++    networks:
++      default:
++        aliases: [backend]
+     build:
+       context: ..
+       dockerfile: CI-CD/backend/Dockerfile.umbrella
+@@ -64,7 +67,7 @@ services:
+       dockerfile: CI-CD/backend/Dockerfile.umbrella
+     command: ["forge-runner"]
+     environment:
+-      CICD_API_URL: http://backend:22801
++      CICD_API_URL: http://cicd-backend:22801
+       CICD_RUNNER_CREDENTIAL: ${CICD_RUNNER_CREDENTIAL:-}
+       CICD_RUNNER_REGISTRATION_TOKEN: ${CICD_RUNNER_REGISTRATION_TOKEN:-}
+       CICD_RUNNER_NAME: ${CICD_RUNNER_NAME:-forge-runner}
+@@ -78,17 +81,20 @@ services:
+     volumes:
+       - cicd_runner_work:/var/lib/forge/runner-work
+     depends_on:
+-      backend:
++      cicd-backend:
+         condition: service_healthy
+ 
+-  frontend:
++  cicd-web:
++    networks:
++      default:
++        aliases: [frontend]
+     build:
+       context: ..
+       dockerfile: CI-CD/frontend/Dockerfile.umbrella
+     ports:
+       - "${CICD_WEB_PORT:-22802}:80"
+     depends_on:
+-      backend:
++      cicd-backend:
+         condition: service_healthy
+ 
+ volumes:
+diff --git a/docs/CURRENT_STATE.md b/docs/CURRENT_STATE.md
+index e3b3741..0cf8fbb 100644
+--- a/docs/CURRENT_STATE.md
++++ b/docs/CURRENT_STATE.md
+@@ -37,7 +37,7 @@
+ | Pagination | ✅ | limit/offset (cap 200) на проектах/пайплайнах |
+ | Rate limiting / body limits | ✅ MVP | in-process per-client fixed-window: auth, API read/write, Git Smart HTTP, internal hook и artifact upload возвращают `429`; явные body limits покрывают artifact uploads, Git RPC, JUnit upload и log append |
+ | Health/readiness/metrics | ✅ | `/api/v1/health` liveness без БД; `/api/v1/readiness` проверяет PostgreSQL и SQLx migration versions/checksums; `/metrics` Prometheus text |
+-| Compose packaging smoke | ✅ local gate | Локальный disposable Compose gate выполняет `docker compose config -q`, production image build, `docker compose up --build -d`, backend health/readiness и frontend nginx smoke с cleanup; hosted CI его не запускает |
++| Compose packaging smoke | ✅ local gate | Локальный disposable Compose gate выполняет `docker compose config -q`, production image build, `docker compose up --build -d`, cicd-backend health/readiness и cicd-web nginx smoke с cleanup; hosted CI его не запускает |
+ | Browser E2E / accessibility / performance smoke | ✅ local gate | Локальный Playwright Chromium gate на собранном Compose stack использует deterministic `frontend/scripts/seed-evidence.mjs`, проверяет critical journeys, axe smoke и seeded regression budgets. Lighthouse, full keyboard/theme audit, load test и 30-day SLO evidence остаются target; hosted CI browser gate не запускает |
+ | RU/EN i18n contract | ✅ MVP | `frontend/src/shared/i18n/i18n-contract.test.ts` проверяет parity ключей `ru`/`en`, непустые значения, отсутствие raw-key fallback, runtime switch i18next и динамические переводы для стабильных API contract values: pipeline/change/PR/runner/delivery/notification statuses, PR actions и PAT scopes; full locale E2E и полный stable identifier contract suite остаются target |
+ | CLI | ✅ MVP | `cicd-cli` остаётся HTTP-only и покрывает runtime/platform операции: projects/pipelines/jobs/logs/attempts, runners, secrets, artifacts, environments/deployments, schedules, webhooks/outbox, notifications, reports/audit, users, project members и API tokens; поддержаны `CICD_API_TOKEN`/`--token`, `CICD_TIMEOUT_SECONDS`/`--timeout-seconds`, `CICD_OUTPUT`/`--output json|table`, `--limit`/`--offset` для projects/pipelines; real HTTP/API/PostgreSQL smoke покрывает project create/list, idempotent pipeline run, attempts, protected deployment approval, env/flag precedence, bounded timeout, JWT/PAT auth-mode, RBAC denial, project-scoped read-only PAT и token redaction на CLI failure; profiles (`config.toml`), NDJSON, stable exit codes и shell completion реализованы; OS keyring, YAML output, request tracing и расширенные redaction fixtures остаются target |
+diff --git a/docs/DISASTER_RECOVERY.md b/docs/DISASTER_RECOVERY.md
+index e0d5b7a..c55562a 100644
+--- a/docs/DISASTER_RECOVERY.md
++++ b/docs/DISASTER_RECOVERY.md
+@@ -111,7 +111,7 @@ cd /opt/dev/CI-CD
+ set -eu
+ set -a; . ./.env; set +a
+ 
+-docker compose up -d backend frontend
++docker compose up -d cicd-backend cicd-web
+ docker compose ps
+ 
+ docker compose exec -T postgres \
+diff --git a/docs/OPERATIONS.md b/docs/OPERATIONS.md
+index ea7542b..8f0981a 100644
+--- a/docs/OPERATIONS.md
++++ b/docs/OPERATIONS.md
+@@ -4,7 +4,7 @@
+ 
+ ## Статус и граница доверия
+ 
+-- **Current verified:** локальный Docker Compose запускает PostgreSQL, backend и Dashboard; versioned SQLx migrations применяются при старте; embedded runner выполняет jobs на том же узле; health, `/metrics`, structured logs, conditional auth, schedules, outgoing webhook worker и `in_app`/`sse` notification delivery доступны. Отдельный `docker-compose.tls.yml` добавляет loopback-only Caddy TLS termination с internal CA, strict CORS origin и secure cookies.
++- **Current verified:** локальный Docker Compose запускает PostgreSQL, cicd-backend и Dashboard; versioned SQLx migrations применяются при старте; embedded runner выполняет jobs на том же узле; health, `/metrics`, structured logs, conditional auth, schedules, outgoing webhook worker и `in_app`/`sse` notification delivery доступны. Отдельный `docker-compose.tls.yml` добавляет loopback-only Caddy TLS termination с internal CA, strict CORS origin и secure cookies.
+ - **Configuration only:** email/Slack notification adapters и inbound provider webhooks можно описать как target/config, но sender/handlers не исполняют внешнюю доставку.
+ - **Target approved:** tenant isolation/scoped policy, отдельные runner-ы с leases, production scheduler/outbox guarantees, alerting, off-site/PITR backup platform, public ingress policy and production DR.
+ 
+@@ -64,8 +64,8 @@ curl -fsS http://127.0.0.1:22801/api/v1/projects
+ Для просмотра логов используйте:
+ 
+ ```bash
+-docker compose logs --tail=200 backend
+-docker compose logs -f backend
++docker compose logs --tail=200 cicd-backend
++docker compose logs -f cicd-backend
+ docker compose logs --tail=200 postgres
+ ```
+ 
+@@ -172,7 +172,7 @@ docker compose up -d
+ ```bash
+ docker compose exec -T postgres \
+   psql -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME" -c '\dt'
+-docker compose logs --tail=200 backend
++docker compose logs --tail=200 cicd-backend
+ ```
+ 
+ ### Target approved: controlled `cicd-migrate`
+@@ -266,7 +266,7 @@ Target backup включает physical PostgreSQL base backup и continuous WAL
+ 
+ | Проверка | Команда | Значение |
+ |---|---|---|
+-| Compose services | `docker compose ps` | PostgreSQL должен быть `healthy`; backend должен быть running/healthy. |
++| Compose services | `docker compose ps` | PostgreSQL должен быть `healthy`; cicd-backend должен быть running/healthy. |
+ | API liveness | `curl -fsS http://127.0.0.1:22801/api/v1/health` | Процесс backend отвечает; это не DB readiness. |
+ | API readiness | `curl -fsS http://127.0.0.1:22801/api/v1/readiness` | PostgreSQL отвечает, `_sqlx_migrations` совпадает с configured SQLx migrations. |
+ | Metrics | `curl -fsS http://127.0.0.1:22801/metrics` | Prometheus text endpoint; в MVP не защищён отдельно от общей сетевой/auth границы. |
+@@ -322,13 +322,13 @@ Production monitoring добавляет защищённый metrics endpoint,
+ 2. Проверить backend, Docker execution container, host resources и PostgreSQL:
+    ```bash
+    docker compose ps
+-   docker compose logs --tail=200 backend
++   docker compose logs --tail=200 cicd-backend
+    docker ps -a --filter "name=forge-job-<job-id>"
+    docker stats --no-stream
+    df -h
+    ```
+ 3. Если задача не имеет прогресса и владелец подтверждает отмену, отправить pipeline cancel. Если это только одна terminal job с допустимой retry-семантикой, используйте `POST /api/v1/jobs/<job-id>/retry` после расследования.
+-4. Не используйте restart как способ применить новый образ/config; при необходимости пересоздания backend примените `docker compose up -d --build`, затем повторите health и pipeline inspection.
++4. Не используйте restart как способ применить новый образ/config; при необходимости пересоздания cicd-backend примените `docker compose up -d --build`, затем повторите health и pipeline inspection.
+ 
+ В Current MVP есть durable `job_queue`, embedded `job_leases` TTL/reconciliation, reconciliation очереди terminal pipeline (не начатые downstream jobs переходят в `canceled`, а не остаются runnable), external runner protocol ack/renew/control/logs/complete, ack-timeout requeue, configurable queue-timeout diagnostic для dispatch-eligible job без compatible runner-а, basic tag/current executor compatibility и `forge-runner` shell process, но нет full lost-runner auto-dispatch для уже running execution, sandboxed runner или гарантированного auto-retry. Зависшая job требует проверки queue/lease/attempt и ручного решения; не объявляйте её завершённой без API action/evidence.
+ 
+@@ -344,7 +344,7 @@ Registry/heartbeat legacy endpoints остаются inventory; external runner
+ 
+ ```bash
+ curl -fsS http://127.0.0.1:22801/api/v1/runners
+-docker compose logs --tail=200 backend
++docker compose logs --tail=200 cicd-backend
+ ```
+ 
+ Для реально исполняемой embedded job проверяйте доступность backend host и Docker execution container. Не удаляйте runner registry-запись для «восстановления» job: это не перезапускает execution. Отмените/повторите affected pipeline через API после диагностики.
+@@ -366,7 +366,7 @@ curl -fsS "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/outbox-deliveries?
+ docker compose exec -T postgres \
+   psql -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME" \
+   -c "select channel, failed_at is not null as failed, count(*), min(next_attempt_at) from outbox_messages where delivered_at is null group by channel, failed"
+-docker compose logs --tail=200 backend
++docker compose logs --tail=200 cicd-backend
+ ```
+ 
+ **Target approved: процедура**
+@@ -383,7 +383,7 @@ docker compose logs --tail=200 backend
+ 
+ ### Current verified: release candidate
+ 
+-Версия следует Semantic Versioning, тег имеет вид `vMAJOR.MINOR.PATCH`; изменения пользователя фиксируются в `CHANGELOG.md` до tag. Перед публикацией release candidate обязан пройти актуальные CI gates: backend format/clippy/tests/release build, frontend frozen install/tests/build и `docker compose build`.
++Версия следует Semantic Versioning, тег имеет вид `vMAJOR.MINOR.PATCH`; изменения пользователя фиксируются в `CHANGELOG.md` до tag. Перед публикацией release candidate обязан пройти актуальные CI gates: cicd-backend format/clippy/tests/release build, cicd-web frozen install/tests/build и `docker compose build`.
+ 
+ Локальное воспроизведение:
+ 
+diff --git a/docs/TEST_PLAN.md b/docs/TEST_PLAN.md
+index 8cf55d0..cb1de3f 100644
+--- a/docs/TEST_PLAN.md
++++ b/docs/TEST_PLAN.md
+@@ -23,7 +23,7 @@
+ | CLI real API smoke | Настоящий `cicd-cli` против disposable HTTP API/PostgreSQL stack: config precedence, bounded HTTP timeout, JSON output, idempotent pipeline run, attempts, protected deployment approval, JWT/PAT auth-mode, RBAC denial, project-scoped read-only PAT, token redaction на failure и non-zero API error exit | Локально: `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1` с `CICD_TEST_DATABASE_URL` | **Current verified local gate** |
+ | Frontend unit | Компоненты, pure helpers, typed API transport, route smoke всех Dashboard-страниц, i18n contract и доступность UI в Vitest/Testing Library | `cd frontend && pnpm test` | **Current verified** |
+ | Dependency/SBOM security | Rust/Node advisories, dependency graph, committed-secret baseline и drift committed SBOM | Локально: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py`, `scripts/generate_sbom.py --check` | **Current verified local gate** |
+-| Compose smoke | Собранные образы, startup сервисов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | Локально: `docker compose config -q`, `docker compose up --build -d`, API/frontend smoke и `docker compose down -v --remove-orphans` | **Current verified local gate** |
++| Compose smoke | Собранные образы, startup сервисов, `GET /api/v1/health`, `GET /api/v1/readiness` и cicd-web nginx | Локально: `docker compose config -q`, `docker compose up --build -d`, API/frontend smoke и `docker compose down -v --remove-orphans` | **Current verified local gate** |
+ | Real-DB integration | PostgreSQL constraints, migrations/readiness, CRUD, persisted effects, immutable pipeline plan snapshots, auth/PAT и current API boundaries | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db -- --test-threads=1`; local fixture `backend/docker-compose.test.yml` | **Current verified** |
+ | Playwright E2E | Критические пользовательские journeys, all-route desktop accessibility и seeded performance smoke на собранном frontend и real API/PostgreSQL stack | Локально: Docker Compose + `pnpm seed:evidence` + `pnpm e2e`; traces/screenshots/video сохраняются на failure | **Current verified local gate** |
+ | Accessibility | Keyboard journey, accessible names/roles, focus и серьёзные axe-нарушения | Локально: `frontend/e2e/accessibility.spec.ts`; mobile drawer Escape/focus в `critical-flows.spec.ts` | **Current verified local gate; target расширение** |
+diff --git a/docs/TROUBLESHOOTING.md b/docs/TROUBLESHOOTING.md
+index 85fd4a3..d02b3de 100644
+--- a/docs/TROUBLESHOOTING.md
++++ b/docs/TROUBLESHOOTING.md
+@@ -14,7 +14,7 @@
+ - Если cache сломался:
+ 
+ ```bash
+-docker compose build --no-cache backend
++docker compose build --no-cache cicd-backend
+ ```
+ 
+ - Проверить, что `Cargo.lock` не конфликтует с `Cargo.toml`:
+@@ -144,7 +144,7 @@ error: connection refused (os error 111)
+ 
+ - Проверить логи backend:
+   ```bash
+-  docker compose logs backend | grep -i "migrate\|sqlx\|error\|panic"
++  docker compose logs cicd-backend | grep -i "migrate\|sqlx\|error\|panic"
+   ```
+ - Подключиться к БД и проверить таблицы:
+   ```bash
+@@ -153,8 +153,8 @@ error: connection refused (os error 111)
+ - Должны быть как минимум: `projects`, `pipelines`, `stages`, `jobs`, `job_logs`, `user_credentials`, `sessions`, `domain_events`, `outbox_messages`, `outbox_delivery_attempts`.
+ - Если таблиц нет — пересоздать backend-контейнер, чтобы заново пройти startup migrator:
+   ```bash
+-  docker compose up -d --build backend
+-  docker compose logs -f backend
++  docker compose up -d --build cicd-backend
++  docker compose logs -f cicd-backend
+   ```
+ 
+ ### 2.3 Медленные запросы
+@@ -249,7 +249,7 @@ curl -sS http://127.0.0.1:22801/api/v1/health
+ curl -sS http://127.0.0.1:22801/api/v1/readiness
+ 
+ # Проверить внутри контейнера
+-docker compose exec backend wget --quiet --tries=1 --spider http://127.0.0.1:22801/api/v1/health
++docker compose exec cicd-backend wget --quiet --tries=1 --spider http://127.0.0.1:22801/api/v1/health
+ echo $?  # 0 = OK, 1 = fail
+ 
+ # Проверить логи healthcheck
+@@ -271,7 +271,7 @@ HEALTHCHECK CMD curl -f http://127.0.0.1:22801/api/v1/health || exit 1
+ 
+ - Проверить логи:
+   ```bash
+-  docker compose logs backend | grep -i error
++  docker compose logs cicd-backend | grep -i error
+   ```
+ - Частые причины:
+   - БД недоступна (проверить `docker compose ps`).
+@@ -279,7 +279,7 @@ HEALTHCHECK CMD curl -f http://127.0.0.1:22801/api/v1/health || exit 1
+   - Race condition на `job_logs` (duplicate sequence).
+ - Проверить `RUST_LOG`:
+   ```bash
+-  RUST_LOG=debug docker compose up backend
++  RUST_LOG=debug docker compose up cicd-backend
+   ```
+ 
+ ### 5.2 503 Service Unavailable
+@@ -319,7 +319,7 @@ HEALTHCHECK CMD curl -f http://127.0.0.1:22801/api/v1/health || exit 1
+   - API proxy: `location /api/ { proxy_pass http://backend:22801; }`.
+ - Проверить, что `dist/` собран:
+   ```bash
+-  docker compose exec frontend ls /usr/share/nginx/html/
++  docker compose exec cicd-web ls /usr/share/nginx/html/
+   ```
+ 
+ ### 6.2 Tailwind стили не применяются
+@@ -384,8 +384,8 @@ curl -sS http://127.0.0.1:22801/api/v1/health
+ 
+ # Docker
+ docker compose ps
+-docker compose logs --tail=50 backend
+-docker compose logs --tail=50 frontend
++docker compose logs --tail=50 cicd-backend
++docker compose logs --tail=50 cicd-web
+ docker compose logs --tail=50 postgres
+ ```
+ 
+@@ -393,10 +393,10 @@ docker compose logs --tail=50 postgres
+ 
+ ```bash
+ # Backend логи (JSON)
+-docker compose logs -f backend | jq
++docker compose logs -f cicd-backend | jq
+ 
+ # Фильтр по ошибкам
+-docker compose logs backend | jq 'select(.level == "ERROR")'
++docker compose logs cicd-backend | jq 'select(.level == "ERROR")'
+ 
+ # PostgreSQL логи
+ docker compose logs -f postgres
+diff --git a/docs/plans/2026-10-04-unification-completion.md b/docs/plans/2026-10-04-unification-completion.md
+new file mode 100644
+index 0000000..140ca22
+--- /dev/null
++++ b/docs/plans/2026-10-04-unification-completion.md
+@@ -0,0 +1,7 @@
++# План унификации — 4 октября 2026
++
++Работа выполняется в отдельной task ветке. Закрываем Docker/naming, readiness собственной БД и схемы, request correlation, воспроизводимость сборки и UI contract/acceptance без доменных миграций. Существующие маршруты и wire formats совместимы; данные, secrets, snapshots и работающие контейнеры не меняются.
++
++Проверки: обязательные gates репозитория, PostgreSQL 17.6 в собственном временном Compose проекте, отрицательные HTTP/readiness contracts, выбранные workspace profiles, browser evidence после фиксации исходников. Изменения Base потребляются по exact SHA. Merge/deploy выполняются отдельно. Средства проверки не запускают production agents или внешние dispatch.
++
++Приёмка: окончательные task SHA проверены, результаты отражены в PR и обезличенном отчёте Base. Непроверенные пункты не отмечаются завершёнными.
+diff --git a/docs/ui-routes.json b/docs/ui-routes.json
+new file mode 100644
+index 0000000..0ee9ad0
+--- /dev/null
++++ b/docs/ui-routes.json
+@@ -0,0 +1,415 @@
++{
++  "schemaVersion": 1,
++  "product": "CI-CD",
++  "acceptanceStatus": "pending",
++  "routeSource": "frontend/src/app/router.tsx",
++  "shellSource": "frontend/src/widgets/app-shell.tsx",
++  "routes": [
++    {
++      "pattern": "/",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/*",
++      "kind": "redirect"
++    },
++    {
++      "pattern": "/audit-log",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/audit-log",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/forbidden",
++      "kind": "fullscreen"
++    },
++    {
++      "pattern": "/jobs/:jobId/artifacts",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/jobs/:jobId/artifacts",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/login",
++      "kind": "public"
++    },
++    {
++      "pattern": "/pipelines/:pipelineId",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/pipelines/:pipelineId",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/projects",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/projects",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/projects/:projectId/environments",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/projects/:projectId/environments",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/projects/:projectId/members",
++      "kind": "redirect"
++    },
++    {
++      "pattern": "/projects/:projectId/pipelines",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/projects/:projectId/pipelines",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/projects/:projectId/reports",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/projects/:projectId/reports",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/projects/:projectId/schedules",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/projects/:projectId/schedules",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/projects/:projectId/secrets",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/projects/:projectId/secrets",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/projects/:projectId/webhooks",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/projects/:projectId/webhooks",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/repositories",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/repositories",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/repositories/:repo",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/repositories/:repo",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/repositories/:repo/compare",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/repositories/:repo/compare",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/repositories/:repo/pulls",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/repositories/:repo/pulls",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/repositories/:repo/pulls/:number",
++      "kind": "operational",
++      "layout": "detail-with-aside",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/repositories/:repo/pulls/:number",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      },
++      "layoutVariants": [
++        {
++          "query": "view=diff",
++          "layout": "wide"
++        }
++      ]
++    },
++    {
++      "pattern": "/runners",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/runners",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/settings",
++      "kind": "operational",
++      "layout": "reading",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/settings",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    },
++    {
++      "pattern": "/sso/callback",
++      "kind": "public"
++    },
++    {
++      "pattern": "/users",
++      "kind": "operational",
++      "layout": "wide",
++      "roles": [
++        "authenticated",
++        "system-admin"
++      ],
++      "fixture": "synthetic:CI-CD:/users",
++      "states": [
++        "normal",
++        "loading",
++        "empty",
++        "permission-denied",
++        "error"
++      ],
++      "qa": {
++        "status": "not-run"
++      }
++    }
++  ]
++}
+diff --git a/frontend/AGENTS.md b/frontend/AGENTS.md
+new file mode 100644
+index 0000000..0adfc50
+--- /dev/null
++++ b/frontend/AGENTS.md
+@@ -0,0 +1,19 @@
++<!-- BEGIN BASE FRONTEND RULES -->
++## Общий UI-контракт Base
++
++- Использовать общий shell, branding и tokens Base. Контент и доменные решения
++  принадлежат продукту; страницы входа Auth не требуют доступности Admin.
++- Описать маршруты, роли, состояния и layout modes в route contract. Приватный
++  operational route сохраняет SSO; fixtures используют synthetic данные.
++- Перед коммитом выполнить route/acceptance gates и матрицу viewport, тем,
++  direct/reload, keyboard/focus, geometry, console/network.
++- Browser evidence относится к committed source SHA и реальному candidate image.
++  После evidence допускаются документационные коммиты, если runtime fingerprints
++  не изменились. Secrets и реальные пользовательские данные исключить.
++- Изменение публичных контрактов сверять с backend/OpenAPI; SDK сохраняет HTTP
++  status, бизнес-код и correlation id, включая пустые error responses.
++- Compose-кандидаты работают только в собственном временном project; cleanup
++  выполняется при успехе, ошибке и отмене. Runtime workspace не пересоздавать.
++
++Этот блок обновляется `services-base/scripts/sync_frontend_agents.mjs`.
++<!-- END BASE FRONTEND RULES -->
+diff --git a/frontend/Dockerfile.umbrella b/frontend/Dockerfile.umbrella
+index 44fa7d3..d88eb94 100644
+--- a/frontend/Dockerfile.umbrella
++++ b/frontend/Dockerfile.umbrella
+@@ -1,7 +1,7 @@
+ # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
+ # Stages the sibling services-base frontend so the `@sdlc/ui` file dependency
+ # (../../services-base/frontend) resolves.
+-FROM node:22.20.0-bookworm-slim AS build
++FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS build
+ WORKDIR /app
+ COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
+ COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
+@@ -21,7 +21,7 @@ ARG VITE_ADMIN_UI_URL="http://localhost:7772"
+ ENV VITE_ADMIN_UI_URL=${VITE_ADMIN_UI_URL}
+ RUN pnpm build
+ 
+-FROM nginx:1.31.4-alpine
++FROM nginx:1.31.4-alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
+ COPY CI-CD/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+ COPY --from=build /app/dist /usr/share/nginx/html
+ EXPOSE 80
+diff --git a/frontend/nginx.conf b/frontend/nginx.conf
+index b0ab6de..d1d26a9 100644
+--- a/frontend/nginx.conf
++++ b/frontend/nginx.conf
+@@ -4,7 +4,7 @@ server {
+   root /usr/share/nginx/html;
+ 
+   # REST API and Git Smart HTTP share the backend service.
+-  location /api/ { proxy_pass http://backend:22801; }
+-  location /git/ { proxy_pass http://backend:22801; }
++  location /api/ { proxy_pass http://cicd-backend:22801; }
++  location /git/ { proxy_pass http://cicd-backend:22801; }
+   location / { try_files $uri $uri/ /index.html; }
+ }
+diff --git a/frontend/package.json b/frontend/package.json
+index 23ccb39..6750e4a 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -18,7 +18,10 @@
+     "openapi:check": "node node_modules/@sdlc/ui/scripts/sdlc-openapi-check.mjs",
+     "openapi:compat": "node scripts/base-openapi-compat.mjs",
+     "postinstall": "pnpm run openapi:generate",
+-    "theme:check": "node ../../services-base/frontend/scripts/sdlc-effective-theme-check.mjs"
++    "theme:check": "node ../../services-base/frontend/scripts/sdlc-effective-theme-check.mjs",
++    "typecheck": "tsc --noEmit",
++    "ui:check": "node ../../services-base/frontend/scripts/check-ui-contract.mjs --repo .. --require-installed",
++    "ui:acceptance": "node ../../services-base/frontend/scripts/check-ui-contract.mjs --repo .. --acceptance"
+   },
+   "dependencies": {
+     "@radix-ui/react-alert-dialog": "^1.1.13",
+diff --git a/frontend/src/widgets/app-shell.test.tsx b/frontend/src/widgets/app-shell.test.tsx
+index 318872e..51e8557 100644
+--- a/frontend/src/widgets/app-shell.test.tsx
++++ b/frontend/src/widgets/app-shell.test.tsx
+@@ -1,44 +1,56 @@
+-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+-import { MemoryRouter, Route, Routes } from 'react-router'
+-import { ThemeProvider } from '@sdlc/ui/lib'
+-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import {
++  act,
++  cleanup,
++  fireEvent,
++  render,
++  screen,
++  waitFor,
++  within,
++} from "@testing-library/react";
++import { MemoryRouter, Route, Routes } from "react-router";
++import { ThemeProvider } from "@sdlc/ui/lib";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ 
+ const authState = vi.hoisted(() => ({
+   logout: vi.fn(),
+   session: {
+-    access_token: 'access-token',
++    access_token: "access-token",
+     expires_at: 2_000_000_000,
+-    username: 'admin',
++    username: "admin",
+   },
+-}))
++}));
+ 
+-vi.mock('react-i18next', () => ({
+-  useTranslation: () => ({ t: (key: string) => key }),
+-}))
++vi.mock("react-i18next", () => ({
++  useTranslation: () => ({
++    t: (key: string, options?: { defaultValue?: string }) =>
++      options?.defaultValue ?? key,
++  }),
++}));
+ 
+-vi.mock('@/shared/auth/auth-provider', () => ({
++vi.mock("@/shared/auth/auth-provider", () => ({
+   useAuth: () => ({
+-    status: 'authenticated',
++    status: "authenticated",
+     session: authState.session,
+     logout: authState.logout,
+     acceptSso: vi.fn(),
+     invalidate: vi.fn(),
+   }),
+-}))
++}));
+ 
+-vi.mock('@sdlc/ui/ui', async () => {
+-  const actual = await vi.importActual<typeof import('@sdlc/ui/ui')>('@sdlc/ui/ui')
++vi.mock("@sdlc/ui/ui", async () => {
++  const actual =
++    await vi.importActual<typeof import("@sdlc/ui/ui")>("@sdlc/ui/ui");
+   return {
+     ...actual,
+     PlatformMark: () => <span aria-hidden>mark</span>,
+     ServiceSwitcher: () => <button type="button">services</button>,
+     ThemeToggle: () => <button type="button">theme</button>,
+-  }
+-})
++  };
++});
+ 
+-import { AppShell } from './app-shell'
++import { AppShell } from "./app-shell";
+ 
+-function renderShell(path = '/') {
++function renderShell(path = "/") {
+   return render(
+     <ThemeProvider>
+       <MemoryRouter initialEntries={[path]}>
+@@ -49,153 +61,180 @@ function renderShell(path = '/') {
+         </Routes>
+       </MemoryRouter>
+     </ThemeProvider>,
+-  )
++  );
+ }
+ 
+ beforeEach(() => {
+-  authState.logout.mockReset()
+-  authState.logout.mockResolvedValue(undefined)
+-  authState.session.username = 'admin'
+-})
++  authState.logout.mockReset();
++  authState.logout.mockResolvedValue(undefined);
++  authState.session.username = "admin";
++});
+ 
+ afterEach(() => {
+-  cleanup()
+-  vi.unstubAllGlobals()
+-})
+-
+-describe('AppShell navigation', () => {
+-  it('marks the parent section active on a direct nested route', () => {
+-    renderShell('/repositories/platform-core/compare')
+-
+-    expect(screen.getByRole('link', { name: 'navigation.repositories' })).toHaveAttribute(
+-      'aria-current',
+-      'page',
+-    )
+-    expect(screen.getByRole('link', { name: 'navigation.dashboard' })).not.toHaveAttribute(
+-      'aria-current',
+-    )
+-    expect(screen.getByText('outlet').parentElement).toHaveAttribute('data-page-layout', 'wide')
+-  })
+-
+-  it('uses the shared readable work-area mode for settings', () => {
+-    renderShell('/settings')
+-
+-    expect(screen.getByText('outlet').parentElement).toHaveAttribute('data-page-layout', 'reading')
+-  })
++  cleanup();
++  vi.unstubAllGlobals();
++});
++
++describe("AppShell navigation", () => {
++  it("marks the parent section active on a direct nested route", () => {
++    renderShell("/repositories/platform-core/compare");
++
++    expect(
++      screen.getByRole("link", { name: "navigation.repositories" }),
++    ).toHaveAttribute("aria-current", "page");
++    expect(
++      screen.getByRole("link", { name: "navigation.dashboard" }),
++    ).not.toHaveAttribute("aria-current");
++    expect(screen.getByText("outlet").parentElement).toHaveAttribute(
++      "data-page-layout",
++      "wide",
++    );
++  });
++
++  it("uses the shared readable work-area mode for settings", () => {
++    renderShell("/settings");
++
++    expect(screen.getByText("outlet").parentElement).toHaveAttribute(
++      "data-page-layout",
++      "reading",
++    );
++  });
+ 
+   it.each([
+-    ['/pipelines/pipeline-1', 'wide'],
+-    ['/repositories/platform/pulls/1', 'detail-with-aside'],
+-    ['/repositories/platform/pulls/1?view=diff', 'wide'],
+-    ['/repositories/platform/pulls/1?view=summary', 'detail-with-aside'],
+-    ['/repositories/platform/pulls', 'wide'],
+-    ['/projects/project-1/pipelines', 'wide'],
+-  ])('uses the semantic mode %s -> %s', (path, mode) => {
+-    renderShell(path)
+-
+-    expect(screen.getByText('outlet').parentElement).toHaveAttribute('data-page-layout', mode)
+-  })
+-
+-  it('uses an accessible focus-managed mobile drawer', async () => {
+-    renderShell()
+-    const trigger = screen.getByRole('button', {
+-      name: 'navigation.toggleMenu',
+-    })
+-
+-    fireEvent.click(trigger)
+-
+-    const dialog = await screen.findByRole('dialog', {
+-      name: 'navigation.toggleMenu',
+-    })
+-    expect(within(dialog).getByRole('navigation', { name: 'navigation.main' })).toBeInTheDocument()
+-    expect(dialog.contains(document.activeElement)).toBe(true)
+-
+-    fireEvent.keyDown(document, { key: 'Escape' })
++    ["/pipelines/pipeline-1", "wide"],
++    ["/repositories/platform/pulls/1", "detail-with-aside"],
++    ["/repositories/platform/pulls/1?view=diff", "wide"],
++    ["/repositories/platform/pulls/1?view=summary", "detail-with-aside"],
++    ["/repositories/platform/pulls", "wide"],
++    ["/projects/project-1/pipelines", "wide"],
++  ])("uses the semantic mode %s -> %s", (path, mode) => {
++    renderShell(path);
++
++    expect(screen.getByText("outlet").parentElement).toHaveAttribute(
++      "data-page-layout",
++      mode,
++    );
++  });
++
++  it("uses an accessible focus-managed mobile drawer", async () => {
++    renderShell();
++    const trigger = screen.getByRole("button", {
++      name: "Открыть навигацию",
++    });
++
++    fireEvent.click(trigger);
++
++    const dialog = await screen.findByRole("dialog", {
++      name: "Навигация app.name",
++    });
++    expect(
++      within(dialog).getByRole("navigation", { name: "Основная навигация" }),
++    ).toBeInTheDocument();
++    expect(dialog.contains(document.activeElement)).toBe(true);
++
++    fireEvent.keyDown(document, { key: "Escape" });
+ 
+     await waitFor(() =>
+       expect(
+-        screen.queryByRole('dialog', { name: 'navigation.toggleMenu' }),
++        screen.queryByRole("dialog", { name: "Навигация app.name" }),
+       ).not.toBeInTheDocument(),
+-    )
+-    await waitFor(() => expect(trigger).toHaveFocus())
+-  })
+-
+-  it('[REQ-AUTH-001] exposes the current user once in the account menu and signs out', () => {
+-    renderShell()
+-    expect(screen.queryByText('admin')).not.toBeInTheDocument()
+-    fireEvent.keyDown(screen.getByRole('button', { name: 'navigation.account' }), {
+-      key: 'ArrowDown',
+-    })
+-    const menu = screen.getByRole('menu', { hidden: true })
+-    expect(menu).toHaveAttribute('data-state', 'open')
+-    expect(within(menu).getAllByText('admin')).toHaveLength(1)
+-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'navigation.logout' }))
+-    expect(authState.logout).toHaveBeenCalledOnce()
+-  })
+-
+-  it('closes the drawer after following a navigation link', async () => {
+-    renderShell()
+-    const trigger = screen.getByRole('button', { name: 'navigation.toggleMenu' })
+-    fireEvent.click(trigger)
+-    const dialog = await screen.findByRole('dialog')
+-    fireEvent.click(within(dialog).getByRole('link', { name: 'navigation.projects' }))
+-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+-    expect(screen.getByRole('link', { name: 'navigation.projects' })).toHaveAttribute(
+-      'aria-current',
+-      'page',
+-    )
+-    expect(trigger).toHaveFocus()
+-  })
+-
+-  it('closes the drawer on desktop resize and removes its media listener on unmount', async () => {
+-    const media = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }
++    );
++    await waitFor(() => expect(trigger).toHaveFocus());
++  });
++
++  it("[REQ-AUTH-001] exposes the current user once in the account menu and signs out", () => {
++    renderShell();
++    expect(screen.queryByText("admin")).not.toBeInTheDocument();
++    fireEvent.keyDown(screen.getByRole("button", { name: "Аккаунт" }), {
++      key: "ArrowDown",
++    });
++    const menu = screen.getByRole("menu", { hidden: true });
++    expect(menu).toHaveAttribute("data-state", "open");
++    expect(within(menu).getAllByText("admin")).toHaveLength(1);
++    fireEvent.click(within(menu).getByRole("menuitem", { name: "Выйти" }));
++    expect(authState.logout).toHaveBeenCalledOnce();
++  });
++
++  it("closes the drawer after following a navigation link", async () => {
++    renderShell();
++    const trigger = screen.getByRole("button", { name: "Открыть навигацию" });
++    fireEvent.click(trigger);
++    const dialog = await screen.findByRole("dialog");
++    fireEvent.click(
++      within(dialog).getByRole("link", { name: "navigation.projects" }),
++    );
++    await waitFor(() =>
++      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
++    );
++    expect(
++      screen.getByRole("link", { name: "navigation.projects" }),
++    ).toHaveAttribute("aria-current", "page");
++    expect(trigger).toHaveFocus();
++  });
++
++  it("closes the drawer on desktop resize and removes its media listener on unmount", async () => {
++    const media = {
++      matches: false,
++      addEventListener: vi.fn(),
++      removeEventListener: vi.fn(),
++    };
+     vi.stubGlobal(
+-      'matchMedia',
++      "matchMedia",
+       vi.fn(() => media),
+-    )
+-    const { unmount } = renderShell()
+-    fireEvent.click(screen.getByRole('button', { name: 'navigation.toggleMenu' }))
+-    await screen.findByRole('dialog')
+-    const listener = media.addEventListener.mock.calls[0][1] as () => void
+-    media.matches = true
+-    act(() => listener())
+-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+-    expect(document.body).not.toHaveStyle({ pointerEvents: 'none' })
+-    unmount()
+-    expect(media.removeEventListener).toHaveBeenCalledWith('change', listener)
+-  })
+-
+-  it('owns one global header above the offset work area and navigation-only sidebar', () => {
+-    const { container } = renderShell()
+-    const header = screen.getByRole('banner')
+-    expect(container.querySelectorAll('[data-platform-header]')).toHaveLength(1)
++    );
++    const { unmount } = renderShell();
++    fireEvent.click(screen.getByRole("button", { name: "Открыть навигацию" }));
++    await screen.findByRole("dialog");
++    const listener = media.addEventListener.mock.calls[0][1] as () => void;
++    media.matches = true;
++    act(() => listener());
++    await waitFor(() =>
++      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
++    );
++    expect(document.body).not.toHaveStyle({ pointerEvents: "none" });
++    unmount();
++    expect(media.removeEventListener).toHaveBeenCalledWith("change", listener);
++  });
++
++  it("owns one global header above the offset work area and navigation-only sidebar", () => {
++    const { container } = renderShell();
++    const header = screen.getByRole("banner");
++    expect(container.querySelectorAll("[data-platform-header]")).toHaveLength(
++      1,
++    );
+     expect(
+-      [...header.querySelectorAll('[data-platform-header-slot]')].map((slot) =>
+-        slot.getAttribute('data-platform-header-slot'),
++      [...header.querySelectorAll("[data-platform-header-slot]")].map((slot) =>
++        slot.getAttribute("data-platform-header-slot"),
+       ),
+-    ).toEqual(['leading', 'services', 'actions'])
+-    expect(header.parentElement).toBe(container.firstElementChild)
++    ).toEqual(["leading", "services", "actions"]);
++    expect(header.parentElement).toBe(container.firstElementChild);
+     expect(
+-      within(header).getByRole('button', {
+-        name: 'Открыть список сервисов: CI/CD',
++      within(header).getByRole("button", {
++        name: "Открыть список сервисов: CI/CD",
+       }),
+-    ).toBeInTheDocument()
+-    expect(within(header).getByRole('link', { name: 'app.name' })).toHaveAttribute('href', '/')
+-    expect(container.querySelector('aside')).not.toContainElement(header)
+-    expect(container.querySelector('aside')).not.toHaveTextContent('admin')
+-  })
++    ).toBeInTheDocument();
++    expect(
++      within(header).getByRole("link", { name: "app.name" }),
++    ).toHaveAttribute("href", "/");
++    expect(container.querySelector("aside")).not.toContainElement(header);
++    expect(container.querySelector("aside")).not.toHaveTextContent("admin");
++  });
+ 
+-  it('keeps a long identity outside header layout and closes the account menu with Escape', () => {
++  it("keeps a long identity outside header layout and closes the account menu with Escape", () => {
+     authState.session.username =
+-      'long-account-name-that-must-not-expand-the-platform-header@example.test'
+-    renderShell()
+-    fireEvent.keyDown(screen.getByRole('button', { name: 'navigation.account' }), {
+-      key: 'ArrowDown',
+-    })
++      "long-account-name-that-must-not-expand-the-platform-header@example.test";
++    renderShell();
++    fireEvent.keyDown(screen.getByRole("button", { name: "Аккаунт" }), {
++      key: "ArrowDown",
++    });
++    expect(
++      within(screen.getByRole("menu", { hidden: true })).getByText(
++        authState.session.username,
++      ),
++    ).toBeInTheDocument();
++    fireEvent.keyDown(document, { key: "Escape" });
+     expect(
+-      within(screen.getByRole('menu', { hidden: true })).getByText(authState.session.username),
+-    ).toBeInTheDocument()
+-    fireEvent.keyDown(document, { key: 'Escape' })
+-    expect(screen.queryByRole('menu', { hidden: true })).not.toBeInTheDocument()
+-  })
+-})
++      screen.queryByRole("menu", { hidden: true }),
++    ).not.toBeInTheDocument();
++  });
++});
+diff --git a/frontend/src/widgets/app-shell.tsx b/frontend/src/widgets/app-shell.tsx
+index 6c2cc3a..f03ee4f 100644
+--- a/frontend/src/widgets/app-shell.tsx
++++ b/frontend/src/widgets/app-shell.tsx
+@@ -1,201 +1,53 @@
+-import { useEffect, useState } from 'react'
+-import { NavLink, Outlet, useLocation } from 'react-router'
++import { Outlet, useLocation } from "react-router";
+ import {
+-  CircleUserRound,
+   Cpu,
+   FolderGit2,
+   GitFork,
+   History,
+   LayoutDashboard,
+-  LogOut,
+-  Menu,
+   Settings,
+   Users,
+-} from 'lucide-react'
+-import { useTranslation } from 'react-i18next'
+-import {
+-  Button,
+-  Dialog,
+-  DialogContent,
+-  DialogHeader,
+-  DialogTitle,
+-  DialogTrigger,
+-  DropdownMenu,
+-  DropdownMenuContent,
+-  DropdownMenuItem,
+-  DropdownMenuTrigger,
+-  PageFrame,
+-  PlatformHeader,
+-  PlatformMark,
+-  ThemeToggle,
+-} from '@sdlc/ui/ui'
+-import { useAuth } from '@/shared/auth/auth-provider'
+-
+-type NavigationListProps = {
+-  onNavigate?: () => void
+-  responsiveLabels?: boolean
+-}
+-
+-function NavigationList({ onNavigate, responsiveLabels = false }: NavigationListProps) {
+-  const { t } = useTranslation()
+-
+-  const navItems = [
+-    { to: '/', icon: LayoutDashboard, label: t('navigation.dashboard') },
+-    { to: '/projects', icon: FolderGit2, label: t('navigation.projects') },
+-    { to: '/repositories', icon: GitFork, label: t('navigation.repositories') },
+-    { to: '/runners', icon: Cpu, label: t('navigation.runners') },
+-    { to: '/users', icon: Users, label: t('navigation.users') },
+-    { to: '/audit-log', icon: History, label: t('navigation.auditLog') },
+-    { to: '/settings', icon: Settings, label: t('navigation.settings') },
+-  ]
+-
+-  return (
+-    <nav className="flex flex-col gap-1" aria-label={t('navigation.main')}>
+-      {navItems.map(({ to, icon: Icon, label }) => (
+-        <NavLink
+-          key={to}
+-          to={to}
+-          end={to === '/'}
+-          onClick={onNavigate}
+-          title={responsiveLabels ? label : undefined}
+-          className={({ isActive }) =>
+-            `flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus md:min-h-10 ${
+-              responsiveLabels ? 'md:justify-center md:px-2 xl:justify-start xl:px-3' : ''
+-            } ${
+-              isActive
+-                ? 'bg-surface-raised text-text-primary'
+-                : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary'
+-            }`
+-          }
+-        >
+-          <Icon className="h-5 w-5 shrink-0" aria-hidden />
+-          <span
+-            className={
+-              responsiveLabels ? 'md:sr-only xl:not-sr-only xl:break-words' : 'break-words'
+-            }
+-          >
+-            {label}
+-          </span>
+-        </NavLink>
+-      ))}
+-    </nav>
+-  )
+-}
++} from "lucide-react";
++import { useTranslation } from "react-i18next";
++import { AppShell as BaseAppShell } from "@sdlc/ui/ui";
++import { useAuth } from "@/shared/auth/auth-provider";
+ 
+ export function AppShell() {
+-  const { session, logout } = useAuth()
+-  const { t } = useTranslation()
+-  const location = useLocation()
+-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+-  useEffect(() => {
+-    if (!window.matchMedia) return
+-    const media = window.matchMedia('(min-width: 768px)')
+-    const closeOnDesktop = () => {
+-      if (media.matches) setMobileMenuOpen(false)
+-    }
+-    media.addEventListener('change', closeOnDesktop)
+-    return () => media.removeEventListener('change', closeOnDesktop)
+-  }, [])
+-  const username = session?.username ?? t('navigation.profileFallback')
+-  const pageLayout =
+-    location.pathname === '/settings'
+-      ? 'reading'
+-      : /^\/repositories\/[^/]+\/pulls\/[^/]+$/.test(location.pathname) &&
+-          new URLSearchParams(location.search).get('view') !== 'diff'
+-        ? 'detail-with-aside'
+-        : 'wide'
+-
++  const { session, logout } = useAuth();
++  const { t } = useTranslation();
++  const { pathname, search } = useLocation();
++  const navigation = [
++    { to: "/", icon: LayoutDashboard, label: t("navigation.dashboard") },
++    { to: "/projects", icon: FolderGit2, label: t("navigation.projects") },
++    { to: "/repositories", icon: GitFork, label: t("navigation.repositories") },
++    { to: "/runners", icon: Cpu, label: t("navigation.runners") },
++    { to: "/users", icon: Users, label: t("navigation.users") },
++    { to: "/audit-log", icon: History, label: t("navigation.auditLog") },
++    { to: "/settings", icon: Settings, label: t("navigation.settings") },
++  ];
++  const layout =
++    pathname === "/settings"
++      ? "reading"
++      : /^\/repositories\/[^/]+\/pulls\/[^/]+$/.test(pathname) &&
++          new URLSearchParams(search).get("view") !== "diff"
++        ? "detail-with-aside"
++        : "wide";
+   return (
+-    <div className="min-h-screen bg-background text-text-primary">
+-      <PlatformHeader
+-        currentServiceKey="ci-cd"
+-        leading={
+-          <>
+-            <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+-              <DialogTrigger asChild>
+-                <Button
+-                  variant="ghost"
+-                  size="icon"
+-                  aria-label={t('navigation.toggleMenu')}
+-                  title={t('navigation.toggleMenu')}
+-                  className="h-11 w-11 md:hidden"
+-                >
+-                  <Menu className="h-5 w-5" aria-hidden />
+-                </Button>
+-              </DialogTrigger>
+-              <DialogContent
+-                aria-describedby={undefined}
+-                className="!left-0 !top-0 !flex !h-dvh !max-h-dvh !w-[min(320px,calc(100%-2rem))] !max-w-none !translate-x-0 !translate-y-0 !flex-col !gap-0 !rounded-none !border-y-0 !border-l-0 !p-0 [&>button]:h-11 [&>button]:min-h-11 [&>button]:w-11 [&>button]:min-w-11"
+-              >
+-                <DialogHeader className="flex h-[var(--shell-header-height)] shrink-0 justify-center border-b border-border px-4 pr-14 text-left">
+-                  <DialogTitle className="text-base">
+-                    <span className="sr-only">{t('navigation.toggleMenu')}</span>
+-                    <span className="flex items-center gap-3" aria-hidden>
+-                      <PlatformMark size="sm" withName={false} />
+-                      <span>{t('app.name')}</span>
+-                    </span>
+-                  </DialogTitle>
+-                </DialogHeader>
+-                <div className="min-h-0 flex-1 overflow-y-auto p-3" id="mobile-navigation">
+-                  <NavigationList onNavigate={() => setMobileMenuOpen(false)} />
+-                </div>
+-              </DialogContent>
+-            </Dialog>
+-
+-            <NavLink
+-              to="/"
+-              className="flex items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+-              aria-label={t('app.name')}
+-            >
+-              <PlatformMark size="sm" withName={false} />
+-            </NavLink>
+-          </>
+-        }
+-        actions={
+-          <>
+-            <ThemeToggle />
+-            {session && (
+-              <DropdownMenu>
+-                <DropdownMenuTrigger asChild>
+-                  <Button
+-                    type="button"
+-                    variant="ghost"
+-                    size="icon"
+-                    aria-label={t('navigation.account')}
+-                    title={t('navigation.account')}
+-                  >
+-                    <CircleUserRound className="h-5 w-5" aria-hidden />
+-                  </Button>
+-                </DropdownMenuTrigger>
+-                <DropdownMenuContent align="end" className="w-64 max-w-[calc(100vw-2rem)]">
+-                  <div className="break-words px-2 py-2 text-sm font-medium text-text-primary">
+-                    {username}
+-                  </div>
+-                  <DropdownMenuItem
+-                    onSelect={() => void logout()}
+-                    className="min-h-11 gap-2 md:min-h-10"
+-                  >
+-                    <LogOut className="h-4 w-4" aria-hidden />
+-                    {t('navigation.logout')}
+-                  </DropdownMenuItem>
+-                </DropdownMenuContent>
+-              </DropdownMenu>
+-            )}
+-          </>
+-        }
+-      />
+-      <aside className="fixed bottom-0 left-0 top-[var(--shell-header-height)] z-20 hidden w-[var(--shell-sidebar-compact)] flex-col border-r border-border bg-surface md:flex xl:w-[var(--shell-sidebar-expanded)]">
+-        <div className="min-h-0 flex-1 overflow-y-auto p-2 xl:p-3">
+-          <NavigationList responsiveLabels />
+-        </div>
+-      </aside>
+-      <div className="min-w-0 md:pl-[var(--shell-sidebar-compact)] xl:pl-[var(--shell-sidebar-expanded)]">
+-        <main className="shell-main min-h-[calc(100dvh-var(--shell-header-height))]">
+-          <PageFrame mode={pageLayout}>
+-            <Outlet />
+-          </PageFrame>
+-        </main>
+-      </div>
+-    </div>
+-  )
++    <BaseAppShell
++      currentServiceKey="ci-cd"
++      title={t("app.name")}
++      navigation={navigation}
++      layout={layout}
++      account={
++        session
++          ? {
++              label: session.username ?? t("navigation.profileFallback"),
++              onLogout: () => void logout(),
++            }
++          : undefined
++      }
++    >
++      <Outlet />
++    </BaseAppShell>
++  );
+ }

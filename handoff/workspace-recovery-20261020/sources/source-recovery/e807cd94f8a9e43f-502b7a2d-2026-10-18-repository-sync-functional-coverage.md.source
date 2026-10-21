@@ -1,0 +1,128 @@
+# Функциональная проверка синхронизации Forge, 2026-10-18
+
+Проверен реализованный функционал синхронизации, его HTTP-границы и production UI.
+Объект проверки — существующие GitHub/GitLab подключения, код на базе main
+`97214e5893e91148bbd16c6a72e547950904e41e` и установленный интерфейс
+http://localhost:8712. Административное удаление repositories в этот проход
+не входит. Новые внешние repositories не создавались.
+
+Итоговый code tree: `0e8ed98084c17f404a255d993120a19a1e47b3ac`.
+Backend побайтово не изменился относительно квалифицированного tree
+`bfe7eb99ada178dd535976b9ec068b957f559f76`. SDK Base:
+`2ad0834d06d3aa703fa1791a932bfc76650c8e42`; UI Base:
+`e0759e070326c905f365182d0107f8c87a2e67f6`.
+
+## Найденное и исправленное
+
+При настоящем сетевом отказе формы показывали браузерное `Failed to fetch`.
+Добавлено русское сообщение «Не удалось связаться с сервером.» для transport
+ошибок. Идемпотентность, сохранение черновика и действия восстановления сохранены.
+
+Два regression tests до исправления упали на этом сообщении; остальные 13 тестов
+синхронизации прошли. После исправления прошли все 15. Добавлены самостоятельные
+проверки defaults нового подключения, обязательного credential при смене endpoint,
+check несохранённого draft, сохранности draft при background GET failure и сброса
+серверного offset при смене фильтра. Токены и draft не пишутся в browser storage.
+
+Исправление находится в кандидате; установленный web image не заменялся.
+
+## Сводка выполненных gates
+
+| Уровень | Результат | Граница |
+|---|---|---|
+| Backend workspace | 445 passed; fmt/clippy/release PASS | Ранее выполнено для идентичного backend |
+| PostgreSQL | 121 normal + 8 opt-in + 1 physical restart = 130 passed | Отдельные реальные БД и physical SIGKILL, не mocked store |
+| GitHub/GitLab live | 23 самостоятельных сценария завершены | Реальные Git HTTPS, production router, durable worker и независимые refs |
+| Frontend итогового code tree | 251 passed, 44 files; 15 sync tests | Node 22.20.0 / pnpm 10.28.1, frozen lockfile |
+| Frontend lint/typecheck/build | PASS | Собран production artifact без preview entrypoint |
+| OpenAPI drift/compatibility | PASS | База main зафиксирована; API не менялся |
+| Установленный API | 18 smoke checks PASS | Настоящий SSO credential, proxy отдельно от test router |
+| Browser | Flows ниже подтверждены | Настоящая production страница и API, без fixture transport |
+
+Физические fault tests, timer evidence и результаты предыдущих gates:
+[живые проверки](2026-10-18-repository-sync-final-live.md),
+[дополнительные проверки](2026-10-18-repository-sync-additional-acceptance.md),
+[backend regression](2026-10-18-repository-sync-verification.md).
+Число opt-in definitions в normal suite не является числом выполненных live cases.
+
+## Карта покрытия функционала
+
+Идентификаторы соответствуют [плану](2026-10-17-repository-sync-test-plan.md).
+
+| Возможность | Проверки и oracle | Результат |
+|---|---|---|
+| F-01: новое подключение | Настоящий hosted selector и несохранённая форма; default disabled/manual; HTTP creation в live fixture; frontend version-zero save | PASS |
+| F-02: контракт и валидация | Production GET/PUT/check/start/run/refs; invalid provider, missing operation key, empty credential, stale version, disabled start, forbidden origin | PASS |
+| F-03/F-04: CAS, неизвестный ответ, replay | Два настоящих browser editors получили 200/409; draft пережил обновление версии; network retry формы; HTTP/PG readback и operation-key tests | PASS на перечисленных границах |
+| F-05/F-06: смена настроек и активный run | HTTP/PG rotation/endpoint/history snapshots; смена provider требует новый token; disable и stopping в physical worker cases | PASS |
+| G-01–G-07: Git-направления и refs | Все активные направления × manual/automatic; disabled; equal/new/FF/diverged; annotated/tag-object conflict/blob tag; нет prune/HEAD rewrite | PASS на обоих providers |
+| G-08: защита Forge | Защищённая новая/существующая ветка отклонена, свободные refs проходят; реальный partial outcome | PASS |
+| G-09: внешний отказ | GitLab protection и read/write/revoked credentials; GitHub workflow transport и write | PASS с двумя ограничениями GitHub ниже |
+| G-10: гонки | Настоящий external CAS conflict; receive-pack/PR merge guard; concurrent merge regression | PASS |
+| A-01–A-03: запуск и расписание | Manual не создаёт automatic; save не выполняет push; настоящий 300-секундный interval; реальные receive-pack и PR merge сигналы | PASS |
+| A-04/A-05: очередь | Два worker, one active run, coalescing, lease/generation, лимит слотов и продвижение третьего repository при busy guards | PASS в PG/worker tests |
+| A-06: архив | Queue admission, запрет команд, история и возобновление после archive/unarchive | PASS в PG namespace test; отдельный live archive каждого Git-subphase не выполнялся |
+| CI-01–CI-04 | Exact event SHA при более позднем head, общий receipt/dedupe, disabled push policy, blob tag без CI, отсутствие Git feedback loop | PASS |
+| R-02–R-06: неизвестный effect | Падение до push, после принятия, посреди трёх refs; живой orphan child; offline reconciling и восстановление | PASS, отдельные OS processes и оба providers |
+| R-07/R-08 | Отключение до/после effect, fencing и physical PostgreSQL restart | PASS на проверенных фазах |
+| R-09 | Physical API crash во время check; ENOSPC; missing Git; deadline/cancel; stdout/stderr limits; cleanup permission denial; чужой scratch/symlink сохранён | PASS |
+| R-01/R-04/R-10: остальные границы журнала | PG claims/receipts/finalization, CI event replay и duplicate pipeline protection | PASS в интеграционных tests; физическое убийство в каждой отдельной инструкции не утверждается |
+| S-01/S-02 | Полный auth middleware, viewer login, memberships, project-bound machine scopes, expired/revoked/disabled machine principals, namespace admission | PASS; browser SSO проход выполнен как QA admin, viewer — HTTP и UI component |
+| S-03–S-08 | Credential omission/empty/rotation, ciphertext/readback/HMAC, minimal GitLab scopes, URL parser/allowlist/redirects, реальный GitSession TLS/custom CA, CORS, DTO/pagination | PASS кроме отдельного GitHub read-only сценария ниже |
+| U-01 | Большие списки/history/refs в PG; production list limit/offset/total, provider/state/search filters | PASS |
+| U-02/U-03 | Настоящие навигация/вкладки/Back/filters, defaults и обязательные поля; namespaces и read-only commands в component/full HTTP tests | PASS на перечисленных уровнях |
+| U-04 | История snapshot versions сохраняется после editing; реальные 61/68 refs, поздняя страница, terminal refresh без reload; worker state rendering | PASS |
+| U-05 | Ошибка GET отличается от пустого результата; retry восстанавливает список; background failure сохраняет данные/draft; CAS и unknown-save recovery | PASS в настоящем браузере и regression tests |
+| U-06 | 375/768/1026/1440, клавиатура, длинные refs, loading/error/busy | PASS, включая прежние real-page evidence на том же UI коде |
+
+Полная потеря ответа после успешной DB записи и браузерный offline до отправки —
+разные опыты. Browser здесь подтверждает второй путь; первый подтверждается
+серверными idempotency/replay tests. Эти результаты не подменяются друг другом.
+
+## Что именно проверено в браузере
+
+Сравнены все 31 JavaScript module установленного web с квалифицированным frontend
+до изменения текста. После точной замены имён import assets и явных deployment
+настроек (порты сервисов, portal origin, branding/service catalog URLs) байты
+совпадают. Проверена также карта зависимостей между modules. Это доказывает
+применимость browser evidence к общей реализации, а не идентичность разных
+deployment bundles. Новый локализованный transport message проверен тестами
+и build итогового кандидата, установленный UI сохраняет прежний текст.
+
+В двух редакторах своего GitHub QA-подключения один save прошёл, второй получил
+настоящий HTTP 409. После «Обновить сохранённую версию» изменённый repository path
+остался в draft. Исходные настройки затем восстановлены.
+
+При отключении сети неизвестный результат save заблокировал редактирование,
+показал повтор прежней операции; после восстановления сети форма сохранилась.
+Отдельная блокировка только GET списка дала ошибку, а не «Нет записей».
+«Повторить» получил настоящий пустой результат для отсутствующего search.
+Отказ фонового GET сохранил и данные, и несохранённый draft с явным предупреждением.
+Все временные browser network overrides сняты в finally.
+
+Check обоих существующих подключений с несохранённым направлением Both вернул
+«Чтение доступно; предварительная проверка записи пройдена». Независимое чтение
+provider API после checks подтвердило прежние refs и SHA: GitHub 4 refs, GitLab 1.
+Git mutations и новые runs эти проверки не создали. Сохранённые подключения
+остались disabled/automatic, active run отсутствует; GitHub version 12, GitLab 8.
+
+## Внешние ограничения и точность выводов
+
+- Отдельное правило private branch protection GitHub не квалифицировано:
+  создание временного правила вернуло provider 403. Защита Forge и GitLab проверены.
+- Для GitHub не подтверждён самостоятельный случай «чтение этого repository
+  успешно, реальный push этим же read-only credential запрещён». Положительный
+  GitHub обмен и отрицательные ошибки доступа проверены; они не заменяют этот case.
+- Это не 100% line/branch coverage и не физический fault injection после каждой
+  инструкции. Границы evidence указаны в таблице; unsupported LFS/SSH/OAuth/issues
+  из первой версии не объявляются реализованными возможностями.
+
+Журналы текущего прохода: `.local/external-repository-sync/evidence/ui-20261018`
+относительно workspace. Там находятся red/green outputs, production API smoke,
+CAS/network/draft readbacks, screenshots, bundle identity, provider refs oracle,
+итоговый source/frontend artifact и SHA-256 manifest.
+
+Base ComposeHelper v2 завершил собственный проект `sdlc-qa-sync-ui-4c63b2d567`:
+0 containers, 0 networks, 0 disposable volumes и source/build exports.
+Runtime images, shared caches, backups и чужие ресурсы сохранены. Credentials
+передавались только приватно; итоговый exact-secret audit хранится отдельно.
