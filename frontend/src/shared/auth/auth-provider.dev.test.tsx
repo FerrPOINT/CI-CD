@@ -8,6 +8,8 @@ const sso = vi.hoisted(() => ({ restoreSso: vi.fn(), endSso: vi.fn() }))
 vi.mock('@/api/auth', () => ({
   currentSession: () => session.current,
   acceptSso: vi.fn(),
+  clearSession: () => { session.current = null },
+  rotateSessionAccess: () => { session.current = session.current ? { ...session.current } : null; return session.current },
 }))
 vi.mock('@pdlc/ui/sso', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@pdlc/ui/sso')>()),

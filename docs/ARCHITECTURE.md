@@ -1,5 +1,22 @@
 # Архитектура Forge CI/CD
 
+Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
+сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
+transaction и original proof до native publication. GET связанных задач PR
+использует общий repository read. Task-link POST и replay используют тот же
+write permit и исходный proof до SQL commit. [Durable merge recovery](adr/0038-durable-pull-merge-recovery.md) сохраняет intent
+до публикации; повтор восстанавливает только metadata по точным refs, без
+повторного native merge. Добавлена миграция 0098; runtime и исторические
+migrations не изменены. Полный совместимый cohort остаётся отдельным gate.
+
+Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)
+использует decoded owner identity и original proof. Read adapters и PR write
+покрываются scoped native HTTP/Git/SQL fixture; exact inputs и результаты находятся
+в отчёте задачи. Это source candidate, не установленная политика и не готовность
+всего serving cohort.
+
+Admin-owned Space lifecycle использует общий SDK owner v2, необязательное ID-preserving group mapping, прежний Git lease и подтверждённый execution drain. [Границы source candidate](SPACE_LIFECYCLE_V2.md); полного admission/serving cohort этот participant не заменяет.
+
 Opt-in central child для existing task pipeline отделён от legacy SAT identity
 и хранится в прежнем journal с live reauthorization перед effects, без нового
 issuer/controller. [ADR-0030](adr/0030-delegated-task-credential-custody.md).
@@ -38,6 +55,18 @@ HTTP adapter или producer authority: blocked API не подключён, tru
 source binding/live lease проверка остаются prerequisite будущего adapter.
 [Граница primitive](SDLC_DELIVERY_V1.md#source-slice-filesystem-preparation-primitive-2026-10-04),
 [ADR-0019](adr/0019-local-pinned-workspace-preparation.md).
+
+Центральный Git proof хранится в private request custody до завершения native
+owner и body handoff. Lifecycle lease не освобождается по отмене HTTP caller;
+reference-transaction guard сохраняет custom policy перед проверкой исходного
+срока. [Контракт и границы](UNIFIED_SPACE_SURFACES.md#исходный-deadline-native-git-source-candidate).
+Opt-in human Git Space admission реализован отдельно, default OFF:
+[ADR-0034](adr/0034-git-common-space-admission.md). Полный REST/machine/runner/V3
+cohort и установка ещё не завершены. Глобальный repository catalog read
+сохраняет private verified REST context и фильтрует SQL до count/page:
+[ADR0035](adr/0035-repository-catalog-read-admission.md). Detail и group list
+используют тот же proof; typed metadata accessor отделён от HTTP ответа.
+Это не квалификация sync или всего REST.
 
 ## 1. Контекст
 
@@ -292,3 +321,13 @@ Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` prox
 
 [Контракт и текущие gates](HUMAN_APPLICATION_ACCESS.md) описывают feature-исходники.
 До установки полного совместимого cohort политика не активируется.
+Единое пространство: [поверхности доступа](UNIFIED_SPACE_SURFACES.md) и [центральный профиль/роли](CENTRAL_PROFILE_ROLES.md).
+
+## Архивные проекты в рабочей навигации
+
+Боковое меню, выбор проекта и обычные рабочие списки исключают проекты со
+статусом `archived`. Полные owner-каталоги, записи и адресное чтение сохраняются
+для управления архивом через Admin. Отбор выполняется в UI-проекции после
+полной загрузки страниц каталога, по статусу и immutable resource identity;
+имя проекта не влияет на видимость. Неподключённые и локальные проекты
+не считаются архивными по отсутствию связи.

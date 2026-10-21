@@ -147,3 +147,40 @@ async function captureApiError(action: () => Promise<unknown>): Promise<ApiError
   }
   throw new Error('expected ApiError')
 }
+
+describe('response ownership', () => {
+  it('rejects a previous session success instead of returning its private body', async () => {
+    const first = { access_token: 'old', expires_at: Date.now() / 1000 + 300 }
+    const next = { access_token: 'next', expires_at: Date.now() / 1000 + 300 }
+    authMocks.currentSession.mockReturnValue(first)
+    let reply!: (value: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { reply = resolve })))
+    const request = api('/repositories').catch(error => error)
+    authMocks.currentSession.mockReturnValue(next)
+    reply(new Response(JSON.stringify({ private: 'old' })))
+    expect(await request).toMatchObject({ status: 403, code: 'auth_context_changed' })
+  })
+  it('does not dispatch terminal logout from a previous session 401', async () => {
+    const terminal = vi.fn()
+    onTerminalAuthError(terminal)
+    authMocks.currentSession.mockReturnValue({ access_token: 'old', expires_at: Date.now() / 1000 + 300 })
+    let reply!: (value: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { reply = resolve })))
+    const request = api('/repositories').catch(error => error)
+    authMocks.currentSession.mockReturnValue({ access_token: 'next', expires_at: Date.now() / 1000 + 300 })
+    reply(new Response('{}', { status: 401 }))
+    expect(await request).toMatchObject({ status: 403, code: 'auth_context_changed' })
+    expect(terminal).not.toHaveBeenCalled()
+  })
+  it('rejects a body completed after the same user receives a new permission context', async () => {
+    const original = { access_token: 'same', expires_at: Date.now() / 1000 + 300 }
+    authMocks.currentSession.mockReturnValue(original)
+    let source!: ReadableStreamDefaultController<Uint8Array>
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { source = controller } }))))
+    const request = api('/repositories').catch(error => error)
+    await Promise.resolve()
+    authMocks.currentSession.mockReturnValue({ ...original })
+    source.enqueue(new TextEncoder().encode('{"private":"old"}')); source.close()
+    expect(await request).toMatchObject({ status: 403, code: 'auth_context_changed' })
+  })
+})

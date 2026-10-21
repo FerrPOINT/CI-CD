@@ -18,7 +18,61 @@ use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
 
+mod deadline;
 mod receive_hooks;
+
+/// PR native effects share the same fixed-clock owner and reference preparation
+/// guard as receive-pack. The detached PR owner holds its lease/MutationGuard.
+pub(crate) async fn pr_output(
+    state: &AppState,
+    path: &Path,
+    args: &[&str],
+    input: Bytes,
+    proof: Option<&pdlc_auth_core::service_bridge::ConfirmedSpaceRead>,
+    guard: &cicd_infra::sync_git::MutationGuard,
+) -> Result<std::process::Output, ApiError> {
+    let deadline = proof.map(deadline::GitDeadline::admission);
+    let mut command = Command::new("git");
+    guard
+        .inherit(&mut command)
+        .map_err(crate::repository_sync::api_error)?;
+    let hooks = if let Some(deadline) = deadline.filter(|_| args.first() == Some(&"update-ref")) {
+        let hooks = receive_hooks::ReceiveHooks::prepare(
+            state.pool.as_ref().ok_or_else(ApiError::unavailable)?,
+            path,
+            false,
+        )
+        .await?;
+        if let Err(error) = hooks.proof_deadline(deadline) {
+            hooks.cleanup();
+            return Err(error);
+        }
+        command.arg("-c").arg(hooks.config());
+        Some(hooks)
+    } else {
+        None
+    };
+    command.arg("--git-dir").arg(path).args(args);
+    let output = deadline::output(&mut command, input, deadline).await;
+    if let Some(hooks) = hooks {
+        hooks.cleanup();
+    }
+    output
+}
+
+#[derive(Clone, Copy, Default)]
+struct GitAccess {
+    bootstrap: bool,
+    deadline: Option<deadline::GitDeadline>,
+}
+impl GitAccess {
+    fn response(self, response: Response) -> Response {
+        match self.deadline {
+            Some(proof) => proof.response(response),
+            None => response,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct GitConfig {
@@ -310,17 +364,21 @@ pub async fn delete_repository_core(
 }
 
 /// Checks Git Smart HTTP access.
-/// Public repositories allow unauthenticated read only. Legacy
+/// With common admission OFF, public repositories allow unauthenticated read only. Legacy
 /// `CICD_GIT_TOKEN` is still accepted as an operator bypass; otherwise, when
 /// `CICD_AUTH_SECRET` is configured, Git accepts Bearer/JWT/PAT credentials
 /// from an Authorization header or Basic auth password and checks project role.
-/// The returned flag grants only initial empty-repository bootstrap to an admin/operator.
+/// After activation every human path additionally requires owner Space admission;
+/// public/legacy are not fallbacks. Task V1 is fenced by the entry handlers.
+/// Private access retains bootstrap permission and the original central proof deadline.
 async fn check_repo_access(
     state: &std::sync::Arc<AppState>,
     repo: &str,
     headers: &HeaderMap,
     operation: GitOperation,
-) -> Result<bool, ApiError> {
+    admission_active: bool,
+) -> Result<GitAccess, ApiError> {
+    let restrict_legacy = admission_active || crate::central_auth::application_policy_required()?;
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let name = crate::repository_catalog::resolve_storage(pool, repo).await?;
     if operation == GitOperation::Write {
@@ -333,26 +391,39 @@ async fn check_repo_access(
             .await
             .map_err(ApiError::internal)?;
 
-    if operation == GitOperation::Read && visibility.as_deref() == Some("public") {
-        return Ok(false);
+    if !restrict_legacy
+        && operation == GitOperation::Read
+        && visibility.as_deref() == Some("public")
+    {
+        return Ok(GitAccess::default());
     }
 
-    if legacy_git_token_matches(&state.git, headers)? {
+    if !restrict_legacy && legacy_git_token_matches(&state.git, headers)? {
         return if visibility.is_some() {
-            Ok(true)
+            Ok(GitAccess {
+                bootstrap: true,
+                deadline: None,
+            })
         } else {
             Err(ApiError::not_found())
         };
     }
 
     let Some(auth_secret) = state.auth_secret.as_deref() else {
+        if restrict_legacy {
+            return Err(ApiError::service_unavailable(
+                "central_auth_required_for_space_admission",
+            ));
+        }
         if configured_git_token(&state.git).is_none() && visibility.is_none() {
             return Err(ApiError::not_found());
         }
-        return check_git_auth(&state.git, headers).map(|()| false);
+        return check_git_auth(&state.git, headers).map(|()| GitAccess::default());
     };
     let token = bearer_or_basic_password(headers)?.ok_or_else(ApiError::unauthorized)?;
-    let claims = crate::api::identity_for_bearer_token(pool, auth_secret, token.trim()).await?;
+    let identity =
+        crate::api::verified_identity_for_bearer_token(pool, auth_secret, token.trim()).await?;
+    let claims = &identity.claims;
     let method = match operation {
         GitOperation::Read => "GET",
         GitOperation::Write => "POST",
@@ -372,39 +443,67 @@ async fn check_repo_access(
         GitOperation::Read => "git:read",
         GitOperation::Write => "git:write",
     };
-    if !crate::api::bearer_token_has_scope(&claims, required_scope) {
-        return Err(ApiError::forbidden());
+    identity.require_scope(required_scope)?;
+    let common = if admission_active {
+        let actor = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
+        Some(
+            crate::space_admission::repository(
+                pool,
+                &name,
+                actor,
+                operation == GitOperation::Write,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    // A project-token constraint still applies when common visibility grants read.
+    if common.is_some() && operation == GitOperation::Read {
+        if let Some(project) = claims.token_project_id {
+            git_repository_linked_to_project(pool, &name, project).await?;
+        }
+        identity.require_scope(required_scope)?;
+        return Ok(GitAccess {
+            bootstrap: false,
+            deadline: common.as_ref().map(deadline::GitDeadline::admission),
+        });
     }
-    if claims.role == "service_account" {
-        return match claims.token_project_id {
-            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id)
-                .await
-                .map(|()| false),
-            None => Err(ApiError::forbidden()),
-        };
-    }
-    if claims.role != "service_account"
-        && global_role >= min_role
+    let bootstrap = if claims.role == "service_account" {
+        let project_id = claims.token_project_id.ok_or_else(ApiError::forbidden)?;
+        git_repository_linked_to_project(pool, &name, project_id).await?;
+        false
+    } else if global_role >= min_role
         && crate::repository_catalog::shared_human_repository(pool, &name, claims.token_project_id)
             .await?
     {
-        return Ok(global_role == crate::authz::Role::Admin);
-    }
-    if global_role == crate::authz::Role::Admin {
-        return match claims.token_project_id {
-            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id)
-                .await
-                .map(|()| true),
-            None => Ok(true),
-        };
-    }
-
-    if git_project_access_allows(pool, &name, claims.sub, min_role, claims.token_project_id).await?
+        global_role == crate::authz::Role::Admin
+    } else if global_role == crate::authz::Role::Admin {
+        if let Some(project_id) = claims.token_project_id {
+            git_repository_linked_to_project(pool, &name, project_id).await?;
+        }
+        true
+    } else if git_project_access_allows(pool, &name, claims.sub, min_role, claims.token_project_id)
+        .await?
     {
-        Ok(false)
+        false
     } else {
-        Err(ApiError::forbidden())
-    }
+        return Err(ApiError::forbidden());
+    };
+    // A successful asynchronous ACL lookup cannot renew the source token.
+    identity.require_scope(required_scope)?;
+    Ok(GitAccess {
+        bootstrap,
+        deadline: common
+            .as_ref()
+            .map(deadline::GitDeadline::admission)
+            .or_else(|| {
+                identity
+                    .central
+                    .as_ref()
+                    .map(deadline::GitDeadline::identity)
+            }),
+    })
 }
 
 pub fn check_git_auth(config: &GitConfig, headers: &HeaderMap) -> Result<(), ApiError> {
@@ -552,15 +651,31 @@ pub async fn git_info_refs(
             return ApiError::bad_request("service parameter is required").into_response();
         }
     };
-    match crate::task_git::admit(&state, &repo, &headers).await {
+    let admission_active = match state.pool.as_ref() {
+        Some(pool) => match crate::space_admission::active(pool).await {
+            Ok(active) => active,
+            Err(error) => return error.into_response(),
+        },
+        None => return ApiError::unavailable().into_response(),
+    };
+    // Existing task V1 is a different capability; it cannot inherit human admission.
+    let application_active = match crate::central_auth::application_policy_required() {
+        Ok(active) => active,
+        Err(error) => return error.into_response(),
+    };
+    if (admission_active || application_active) && headers.contains_key(crate::task_git::HEADER) {
+        return ApiError::forbidden().into_response();
+    }
+    let access = match crate::task_git::admit(&state, &repo, &headers).await {
         Err(e) => return git_access_error(e),
-        Ok(Some(_)) => {}
+        Ok(Some(_)) => GitAccess::default(),
         Ok(None) => {
-            if let Err(e) = check_repo_access(&state, &repo, &headers, operation).await {
-                return git_access_error(e);
+            match check_repo_access(&state, &repo, &headers, operation, admission_active).await {
+                Ok(access) => access,
+                Err(e) => return git_access_error(e),
             }
         }
-    }
+    };
     let pool = match state.pool.as_ref() {
         Some(pool) => pool,
         None => return ApiError::unavailable().into_response(),
@@ -569,16 +684,26 @@ pub async fn git_info_refs(
         Ok(path) => path,
         Err(e) => return e.into_response(),
     };
-    let output = match Command::new("git")
-        .arg(service)
-        .arg("--stateless-rpc")
-        .arg("--advertise-refs")
-        .arg(&path)
-        .output()
+    let output = tokio::spawn(async move {
+        deadline::output(
+            Command::new("git")
+                .arg(service)
+                .arg("--stateless-rpc")
+                .arg("--advertise-refs")
+                .arg(path),
+            Bytes::new(),
+            access.deadline,
+        )
         .await
-    {
-        Ok(output) => output,
-        Err(e) => return ApiError::internal(sqlx::Error::Io(e)).into_response(),
+    })
+    .await;
+    let output = match output {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => return git_access_error(error),
+        Err(_) => {
+            return ApiError::service_unavailable("Git advertisement waiter unavailable")
+                .into_response();
+        }
     };
     if !output.status.success() {
         return ApiError::internal(sqlx::Error::Io(std::io::Error::other(
@@ -589,15 +714,17 @@ pub async fn git_info_refs(
     let mut body = pkt_line(&format!("# service=git-{service}\n"));
     body.extend_from_slice(b"0000");
     body.extend_from_slice(&output.stdout);
-    (
-        StatusCode::OK,
-        [(
-            header::CONTENT_TYPE,
-            format!("application/x-git-{service}-advertisement"),
-        )],
-        body,
+    access.response(
+        (
+            StatusCode::OK,
+            [(
+                header::CONTENT_TYPE,
+                format!("application/x-git-{service}-advertisement"),
+            )],
+            body,
+        )
+            .into_response(),
     )
-        .into_response()
 }
 
 fn maybe_gunzip(headers: &HeaderMap, body: Bytes) -> Result<Bytes, ApiError> {
@@ -628,7 +755,7 @@ async fn run_git_service(
     service: &str, // "upload-pack" | "receive-pack"
     body: Bytes,
     storage: Option<String>,
-    allow_bootstrap: bool,
+    access: GitAccess,
     task: Option<crate::task_git::Authorization>,
 ) -> Result<Vec<u8>, ApiError> {
     // The owner waiter retains the guard until native Git exits, even if HTTP is cancelled.
@@ -656,12 +783,15 @@ async fn run_git_service(
         } else {
             None
         };
+        if let Some(proof) = access.deadline {
+            proof.require()?;
+        }
         let hooks = if storage.is_some() {
             let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
             let hooks = receive_hooks::ReceiveHooks::prepare(
                 pool,
                 &path,
-                allow_bootstrap && task.is_none(),
+                access.bootstrap && task.is_none(),
             )
             .await?;
             if let Some(task) = &task {
@@ -684,6 +814,12 @@ async fn run_git_service(
                     return Err(error);
                 }
             }
+            if let Some(proof) = access.deadline {
+                if let Err(error) = hooks.proof_deadline(proof) {
+                    hooks.cleanup();
+                    return Err(error);
+                }
+            }
             Some(hooks)
         } else {
             None
@@ -695,6 +831,7 @@ async fn run_git_service(
             hooks,
             task.is_some(),
             mutation_guard.as_ref(),
+            access.deadline,
         )
         .await
     })
@@ -709,6 +846,7 @@ async fn run_git_service_owned(
     hooks: Option<receive_hooks::ReceiveHooks>,
     task_variant: bool,
     guard: Option<&cicd_infra::sync_git::MutationGuard>,
+    proof: Option<deadline::GitDeadline>,
 ) -> Result<Vec<u8>, ApiError> {
     let mut command = Command::new("git");
     command.kill_on_drop(true);
@@ -728,40 +866,12 @@ async fn run_git_service_owned(
         }
         return Err(crate::repository_sync::api_error(error));
     }
-    let spawned = command
-        .arg(service)
-        .arg("--stateless-rpc")
-        .arg(path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-    let mut child = match spawned {
-        Ok(child) => child,
-        Err(error) => {
-            if let Some(hooks) = hooks {
-                hooks.cleanup();
-            }
-            return Err(ApiError::internal(sqlx::Error::Io(error)));
-        }
-    };
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| ApiError::bad_request("failed to open stdin"))?;
-    let payload = body.to_vec();
-    let writer = tokio::spawn(async move {
-        let _ = stdin.write_all(&payload).await;
-        let _ = stdin.shutdown().await;
-    });
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    command.arg(service).arg("--stateless-rpc").arg(path);
+    let output = deadline::output(&mut command, body, proof).await;
     if let Some(hooks) = hooks {
         hooks.cleanup();
     }
-    let _ = writer.await;
+    let output = output?;
     if !output.status.success() {
         if task_variant {
             return Err(ApiError::service_unavailable(
@@ -806,14 +916,29 @@ pub async fn git_service_endpoint(
         "receive-pack" => (service, GitOperation::Write),
         _ => return ApiError::bad_request("unsupported git service").into_response(),
     };
+    let admission_active = match state.pool.as_ref() {
+        Some(pool) => match crate::space_admission::active(pool).await {
+            Ok(active) => active,
+            Err(error) => return error.into_response(),
+        },
+        None => return ApiError::unavailable().into_response(),
+    };
+    // Existing task V1 is a different capability; it cannot inherit human admission.
+    let application_active = match crate::central_auth::application_policy_required() {
+        Ok(active) => active,
+        Err(error) => return error.into_response(),
+    };
+    if (admission_active || application_active) && headers.contains_key(crate::task_git::HEADER) {
+        return ApiError::forbidden().into_response();
+    }
     let task = match crate::task_git::admit(&state, &repo, &headers).await {
         Ok(task) => task,
         Err(e) => return git_access_error(e),
     };
-    let allow_bootstrap = if task.is_some() {
-        false
+    let access = if task.is_some() {
+        GitAccess::default()
     } else {
-        match check_repo_access(&state, &repo, &headers, operation).await {
+        match check_repo_access(&state, &repo, &headers, operation, admission_active).await {
             Ok(allowed) => allowed,
             Err(e) => return git_access_error(e),
         }
@@ -839,27 +964,19 @@ pub async fn git_service_endpoint(
         Ok(body) => body,
         Err(e) => return e.into_response(),
     };
-    match run_git_service(
-        state,
-        path.as_path(),
-        service,
-        body,
-        storage,
-        allow_bootstrap,
-        task,
-    )
-    .await
-    {
-        Ok(out) => (
-            StatusCode::OK,
-            [(
-                header::CONTENT_TYPE,
-                format!("application/x-git-{service}-result"),
-            )],
-            out,
-        )
-            .into_response(),
-        Err(e) => e.into_response(),
+    match run_git_service(state, path.as_path(), service, body, storage, access, task).await {
+        Ok(out) => access.response(
+            (
+                StatusCode::OK,
+                [(
+                    header::CONTENT_TYPE,
+                    format!("application/x-git-{service}-result"),
+                )],
+                out,
+            )
+                .into_response(),
+        ),
+        Err(e) => git_access_error(e),
     }
 }
 

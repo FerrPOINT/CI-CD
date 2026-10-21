@@ -624,7 +624,7 @@ pub(crate) async fn ack_runner_lease(
 
     match row {
         Some(row) => Ok(Json(control_response(row))),
-        None => Err(lease_mutation_error(db, lease_id).await),
+        None => Err(lease_mutation_error(db, lease_id, runner.id).await),
     }
 }
 
@@ -677,7 +677,7 @@ pub(crate) async fn renew_runner_lease(
 
     match row {
         Some(row) => Ok(Json(control_response(row))),
-        None => Err(lease_mutation_error(db, lease_id).await),
+        None => Err(lease_mutation_error(db, lease_id, runner.id).await),
     }
 }
 
@@ -743,7 +743,7 @@ pub(crate) async fn poll_runner_lease_control(
 
     match row {
         Some(row) => Ok(Json(control_response(row))),
-        None => Err(lease_mutation_error(db, lease_id).await),
+        None => Err(lease_mutation_error(db, lease_id, runner.id).await),
     }
 }
 
@@ -798,7 +798,7 @@ pub(crate) async fn resolve_runner_lease_secrets(
     .map_err(ApiError::internal)?;
 
     let Some(row) = row else {
-        return Err(lease_mutation_error(db, lease_id).await);
+        return Err(lease_mutation_error(db, lease_id, runner.id).await);
     };
 
     let allowed: BTreeSet<&str> = row.required_secrets.iter().map(String::as_str).collect();
@@ -922,7 +922,7 @@ pub(crate) async fn upload_runner_lease_artifact(
     .map_err(ApiError::internal)?;
 
     let Some(row) = row else {
-        return Err(lease_mutation_error(db, lease_id).await);
+        return Err(lease_mutation_error(db, lease_id, runner.id).await);
     };
     if !row.artifact_paths.iter().any(|path| path == &artifact_path) {
         return Err(ApiError::forbidden());
@@ -992,7 +992,7 @@ pub(crate) async fn append_runner_lease_logs(
     .map_err(ApiError::internal)?;
 
     let Some(row) = row else {
-        return Err(lease_mutation_error(db, lease_id).await);
+        return Err(lease_mutation_error(db, lease_id, runner.id).await);
     };
 
     let mut accepted = 0;
@@ -1086,7 +1086,7 @@ pub(crate) async fn complete_runner_lease(
 
     let Some(row) = row else {
         drop(tx);
-        return Err(lease_mutation_error(db, lease_id).await);
+        return Err(lease_mutation_error(db, lease_id, runner.id).await);
     };
 
     sqlx::query(
@@ -1479,13 +1479,14 @@ fn control_response(row: LeaseControlRow) -> RunnerLeaseControlResponse {
     }
 }
 
-async fn lease_mutation_error(db: &PgPool, lease_id: Uuid) -> ApiError {
+async fn lease_mutation_error(db: &PgPool, lease_id: Uuid, runner_id: Uuid) -> ApiError {
     match sqlx::query_as::<_, LeaseStateRow>(
         "SELECT lease_status, lease_expires_at <= now() AS expired, \
                 (ack_deadline IS NOT NULL AND acknowledged_at IS NULL AND ack_deadline <= now()) AS ack_expired \
-         FROM job_leases WHERE id = $1",
+         FROM job_leases WHERE id = $1 AND runner_id = $2",
     )
     .bind(lease_id)
+    .bind(runner_id)
     .fetch_optional(db)
     .await
     {

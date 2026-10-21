@@ -127,6 +127,19 @@ pub async fn apply(
         .await
         .map_err(ApiError::internal)?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(format!(
+            "shared-space:{}:{}",
+            command.namespace.registry_instance_id, command.namespace.namespace_id
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    if sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM forge_space_catalog WHERE registry_instance_id=$1 AND space_id=$2)")
+        .bind(command.namespace.registry_instance_id).bind(command.namespace.namespace_id)
+        .fetch_one(&mut *tx).await.map_err(ApiError::internal)? {
+        return Err(ApiError::conflict("shared_space_requires_owner_v2"));
+    }
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
         .bind(id.to_string())
         .execute(&mut *tx)
         .await
@@ -181,9 +194,60 @@ pub async fn apply(
     }
     sqlx::query("INSERT INTO forge_namespace_bindings(resource_id,registry_instance_id,namespace_id,generation,state,command) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(resource_id) DO UPDATE SET generation=EXCLUDED.generation,state=EXCLUDED.state,command=EXCLUDED.command")
         .bind(id).bind(command.namespace.registry_instance_id).bind(command.namespace.namespace_id).bind(command.generation).bind(&command.state).bind(serde_json::to_value(&command).map_err(|_| ApiError::bad_request("invalid_command"))?).execute(&mut *tx).await.map_err(ApiError::internal)?;
-    let running: i64 = sqlx::query_scalar("SELECT count(*) FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines pl ON pl.id=s.pipeline_id JOIN projects p ON p.id=pl.project_id JOIN repository_catalog r ON r.id=p.repository_id WHERE r.group_id=$1 AND (j.status='running' OR EXISTS(SELECT 1 FROM job_leases l WHERE l.job_id=j.id AND l.lease_status='active' AND l.lease_expires_at>now()))").bind(id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+    let drained = confirmed_group_drain_on(&mut *tx, id).await?;
     tx.commit().await.map_err(ApiError::internal)?;
-    Ok(Json(command.readback(running == 0)))
+    Ok(Json(command.readback(drained)))
+}
+/// Quiescence requires accepted execution receipts. Clock expiry and a terminal
+/// status written by reconciliation cannot acknowledge an executed attempt.
+pub async fn confirmed_group_drain_on<'e, E>(executor: E, group: Uuid) -> Result<bool, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query_scalar(
+        r#"SELECT NOT EXISTS (
+          SELECT 1 FROM jobs j
+          JOIN stages s ON s.id=j.stage_id
+          JOIN pipelines pl ON pl.id=s.pipeline_id
+          JOIN projects p ON p.id=pl.project_id
+          JOIN repository_catalog r ON r.id=p.repository_id
+          WHERE r.group_id=$1 AND (
+            j.status='running'
+            OR (j.started_at IS NOT NULL AND NOT EXISTS (
+              SELECT 1 FROM job_leases l WHERE l.job_id=j.id
+                AND l.completion_received_at IS NOT NULL
+                AND l.terminal_status=j.status
+                AND l.lease_status IN ('completed','canceled')
+            ))
+            OR EXISTS (
+              SELECT 1 FROM execution_attempts a WHERE a.job_id=j.id AND (
+                a.status='running'
+                OR (a.started_at IS NOT NULL AND NOT EXISTS (
+                  SELECT 1 FROM job_leases l WHERE l.attempt_id=a.id
+                    AND l.completion_received_at IS NOT NULL
+                    AND l.terminal_status=a.status
+                    AND l.lease_status IN ('completed','canceled')
+                ))
+              )
+            )
+            OR EXISTS (
+              SELECT 1 FROM job_leases l WHERE l.job_id=j.id
+                AND l.completion_received_at IS NULL
+                AND NOT (
+                  l.lease_status='canceled' AND l.acknowledged_at IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM execution_attempts a
+                    WHERE a.id=l.attempt_id AND (a.started_at IS NOT NULL OR a.status='running')
+                  )
+                )
+            )
+          )
+        )"#,
+    )
+    .bind(group)
+    .fetch_one(executor)
+    .await
+    .map_err(ApiError::internal)
 }
 pub fn valid_slug(slug: &str) -> bool {
     !slug.is_empty()
@@ -202,8 +266,8 @@ pub async fn readback(
 ) -> Result<Json<OwnerReadback>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let command = binding(pool, id).await?.ok_or_else(ApiError::not_found)?;
-    let running: i64 = sqlx::query_scalar("SELECT count(*) FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines pl ON pl.id=s.pipeline_id JOIN projects p ON p.id=pl.project_id JOIN repository_catalog r ON r.id=p.repository_id WHERE r.group_id=$1 AND (j.status='running' OR EXISTS(SELECT 1 FROM job_leases l WHERE l.job_id=j.id AND l.lease_status='active' AND l.lease_expires_at>now()))").bind(id).fetch_one(pool).await.map_err(ApiError::internal)?;
-    Ok(Json(command.readback(running == 0)))
+    let drained = confirmed_group_drain_on(pool, id).await?;
+    Ok(Json(command.readback(drained)))
 }
 pub fn routes() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
@@ -212,6 +276,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
             axum::routing::get(readback).put(apply),
         )
         .route_layer(axum::middleware::from_fn(owner_auth))
+        .merge(crate::space_owner::routes())
         .merge(
             axum::Router::new()
                 .route(

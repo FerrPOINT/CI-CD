@@ -1,5 +1,22 @@
 # API v1 Specification — Forge CI/CD
 
+Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
+сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
+transaction и original proof до native publication. GET связанных задач PR
+использует общий repository read. Task-link POST и replay используют тот же
+write permit и исходный proof до SQL commit. [Durable merge recovery](adr/0038-durable-pull-merge-recovery.md) сохраняет intent
+до публикации; повтор восстанавливает только metadata по точным refs, без
+повторного native merge. Добавлена миграция 0098; runtime и исторические
+migrations не изменены. Полный совместимый cohort остаётся отдельным gate.
+
+Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)
+использует decoded owner identity и original proof. Read adapters и PR write
+покрываются scoped native HTTP/Git/SQL fixture; exact inputs и результаты находятся
+в отчёте задачи. Это source candidate, не установленная политика и не готовность
+всего serving cohort.
+
+Source candidate общего Space lifecycle добавляет отдельный owner v2 GET/PUT, без изменения строгих v1 DTO: [протокол и ограничения](SPACE_LIFECYCLE_V2.md). Endpoint не означает готовность полного admission или установленного cohort.
+
 Source candidate task-child delivery использует existing v1 `variablesSha256`
 commitment с closed kind-tagged payload; old/unbound credentials остаются закрытыми.
 Existing exact workspace/candidate/delivery routes и DTO не меняются, SAT не
@@ -75,9 +92,19 @@ Git Smart HTTP source fix: project-bound SAT проверяет существу
 repository/project и отдельные `git:read`/`git:write` scopes. Native pre-receive
 отклоняет весь push, обновляющий configured default/protected branch, до
 изменения refs; ответ сохраняет стандартный Git report-status, не новый JSON DTO.
+Центральный proof сохраняет исходный срок до native IO/ref preparation и body
+handoff. Unknown/expired execution возвращает503 с требованием exact ref readback,
+без автоматического retry; authentication до запуска сохраняет401/403.
+Подробности: [исходный deadline](UNIFIED_SPACE_SURFACES.md#исходный-deadline-native-git-source-candidate).
 Custom hooks и human ACL сохраняются. Ограниченный initial bootstrap для
 admin/operator описан ниже; SAT его не получает. [Git hosting](GIT_HOSTING.md#8-аутентификация).
 Новые routes/credentials/scopes не вводятся; Rust/PG и installed-image qualification pending.
+
+## Общий Space owner v2
+
+| Метод | Путь | Контракт |
+| --- | --- | --- |
+| GET, PUT | `/api/v2/spaces/{registry}/{space}/owner-state` | [Source candidate и ограничения lifecycle](SPACE_LIFECYCLE_V2.md) |
 
 ## Typed Image Build In Task Pipeline
 
@@ -286,6 +313,17 @@ Original workspace receipt остаётся blocked; `dispatchAllowed=false` и
 историческую outbox-схему, но не меняет API, DTO, роли и runner protocol.
 CLI не применяет migrations; несовместимый ledger/checksum остаётся ошибкой.
 
+Opt-in common Space Git authentication и source-only migration0097 описаны
+в [матрице](UNIFIED_SPACE_SURFACES.md#opt-in-human-git-space-admission-source-candidate).
+Публичные DTO/URL не меняются, partial activation запрещена.
+Opt-in GET /api/v1/catalog/repositories применяет тот же допуск до count/page;
+пустой selected даёт items=[]/total=0, включая local admin. Срок SDK proof
+сохраняется после SQL ожиданий. Detail /{id} и GET /api/v1/git-groups/{id}/repositories используют тот же proof.
+Недоступный detail404 и пустой hidden group не раскрывают metadata/count;
+protected404 также private/no-store. Percent-encoded IDs проверяются после
+framework decoding, без raw-URI исключений. Другие поверхности отдельно:
+[ADR0035](adr/0035-repository-catalog-read-admission.md).
+
 REST API первой версии Forge CI/CD. Контрольная плоскость использует JSON; Git Smart HTTP, artifact download, SSE logs и `/metrics` имеют собственные content types. Основные группы: проекты, запуск пайплайнов, переходы статусов задач, append-only логи, platform resources, auth и Git hosting.
 
 > **Source of truth:** актуальная реализация и OpenAPI-аннотации в `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/runner_protocol.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs`; committed contract — `openapi/openapi.yaml`.
@@ -316,6 +354,11 @@ UI применяет draft-фильтры после «Применить»/Ent
 в `/delivery-configs/{id}/environments`; он раскрывает и выделяет конкретную
 запись, не выполняя approval/rollback автоматически. Ни эти ссылки, ни managed
 catalog flags не расширяют права, lifecycle admission или service scopes.
+
+Каталог репозиториев, карточка и список группы читают эффективные Space ID/state:
+подтверждённый owner v2 имеет приоритет над сохранённой v1 binding. Фильтр
+sync_available и его total используют тот же lifecycle до pagination.
+[Контракт и сохранение прежней истории](SPACE_LIFECYCLE_V2.md).
 
 Новые human endpoints используют прежние scopes/roles и trusted-shared policy.
 Machine reader не получает доступа к human routes. Проект Tracker, репозиторий
@@ -1982,7 +2025,7 @@ attempt directory. Wire API не меняется, новый SDLC receipt endpo
 | POST | `/repos/{repo}/pulls` | Создание pull request |
 | GET | `/repos/{repo}/pulls/page?limit=&offset=&status=&search=` | Основной постраничный каталог; `status` принимает `open`, `closed`, `merged`, поиск охватывает номер, заголовок, ветки и автора |
 | GET | `/repos/{repo}/pulls/{number}` | Один pull request по номеру |
-| POST | `/repos/{repo}/pulls/{number}/action` | `{action:"merge"|"close"|"reopen"}` |
+| POST | `/repos/{repo}/pulls/{number}/action` | `{action:"merge"|"close"|"reopen"}`; повтор merge с сохранённым intent выполняет только exact-ref recovery, см. ADR-0038 |
 | GET | `/git/{repo}/info/refs?service=git-upload-pack` | Git Smart HTTP discovery |
 | POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
 | POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |
@@ -2170,3 +2213,31 @@ token сохраняет старый; пустой token ошибочен. Но
 для machine/PAT principals вместе с существующим api scope/project binding.
 Archive admission применяется перед изменениями. Pagination server-side,
 сортировка истории created_at/id DESC, refs — по имени.
+
+Единое пространство: [поверхности доступа](UNIFIED_SPACE_SURFACES.md) и [центральный профиль/роли](CENTRAL_PROFILE_ROLES.md).
+
+
+## Drain и runner identity: source candidate общего пространства
+
+Owner readback drained требует подтверждённого terminal receipt каждой начатой
+попытки. Lease expiry, terminal status без receipt и успех соседней попытки не
+завершают drain. Embedded owner пишет marker после реального process exit и
+durable workspace ACK; исторические receipts не создаются из статусов.
+Чужой аутентифицированный runner получает404 при mutation чужой lease независимо
+от active/expired состояния. Собственный runner сохраняет409 fenced и410 expired.
+[Границы и доказательства](UNIFIED_SPACE_SURFACES.md) не заменяют общий admission,
+полный serving cohort, которые ещё в работе. Owner-v2 lifecycle реализован как
+[source candidate](SPACE_LIFECYCLE_V2.md); это не подтверждение установленного admission.
+
+### Human display authority
+
+Authenticated GET /api/v1/space-admission returns the shared UI freshness
+descriptor (schema_version1, enforced, remaining_millis, scope_revision).
+Activated mode uses the original catalog admission, current product role and
+native project memberships. It is not a Git/API capability.
+
+The browser anchors the original remainder before I/O. An effective scope change
+or expired owner confirmation retires private caches/forms and pending response
+ownership while preserving the central credentials. Late success/401 responses
+cannot affect a newer account. Git, PR, jobs and downloads still require their
+separate resource/native authorization at every actual boundary.

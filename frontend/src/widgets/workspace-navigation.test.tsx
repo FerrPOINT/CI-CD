@@ -72,4 +72,25 @@ describe('project navigation scope and persisted disclosures', () => {
     )
     expect(screen.queryByRole('button', { name: 'Same name · ONE' })).toBeNull()
   })
+  it.each([0, 1])(
+    "excludes archived identity %s while retaining the active neighbor",
+    async (archived) => {
+      const entries = projects.map((project, index) => ({
+        ...project,
+        state: index === archived ? "archived" : "active",
+      }));
+      vi.mocked(api).mockResolvedValue({
+        items: entries,
+        total: entries.length,
+      });
+      mount("/projects?project_scope=all");
+      const activeKey = archived ? "ONE" : "TWO",
+        archivedKey = archived ? "TWO" : "ONE";
+      await screen.findByRole("button", { name: `Same name · ${activeKey}` });
+      expect(
+        screen.queryByRole("button", { name: `Same name · ${archivedKey}` }),
+      ).toBeNull();
+    },
+  );
+
 })
