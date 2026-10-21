@@ -1,0 +1,105 @@
+# ADR-0022: Owner-local PostgreSQL shadow delivery
+
+Статус: Proposed (source implementation); прежняя локальная PostgreSQL suite verified,
+native hardening gate ещё не принят. Дата: 2026-10-08.
+
+## Контекст
+
+[ADR-0021](0021-owner-local-oci-readonly-data.md) подтверждает только read-only
+snapshot. PostgreSQL deployment требует сохранить пользовательские строки,
+sequence values и immutable SQLx history. Возврат старого image после изменения
+schema сам по себе не восстанавливает согласованную application/database пару.
+
+## Решение
+
+Отдельный privileged `forge-delivery --postgres` принимает retained typed artifact,
+а не произвольные SQL/credentials от HTTP caller. Supported target — выделенный
+temporary Compose PostgreSQL, bounded dataset, два непривилегированных application
+roles и owner-controlled host/daemon. Production HTTP dispatch остаётся закрыт.
+
+Полный forward SQLx catalog содержит exact historical bytes и не более одной
+pending additive nullable scalar column migration. Перед effects сравниваются
+actual catalog/history и schema compatibility. Coordinator удерживает свежую Forge
+authorization, target advisory lock, filesystem lock и bounded generation/lease.
+HBA допускает PostgreSQL administrator только с адреса QA coordinator; application
+не получает administrator credential. Drain закрывает writer login/CONNECT,
+останавливает application и завершает writer sessions. Неизвестные writers блокируют
+дальнейшие effects; privileged owner остаётся явной trust boundary.
+
+Hardening8 октября закрывает также reader login/CONNECT всех DB и reader sessions
+на snapshot window. Проверяются relation/column/sequence grants, MAINTAIN и
+schema/database create; новый candidate получает reader CONNECT отдельно от
+закрытого source. Literal `pg_` prefix не скрывает `pgx`; неучтённые application
+schemas, materialized/foreign storage и large objects не принимаются как полный
+снимок. Это explicit unsupported inventory, а не потеря данных при restore.
+Эффективный reader EXECUTE large-object mutation функций и writer column grants
+на SQLx history запрещены. Release/reconcile проверяют exclusive DB CONNECT;
+rollback не открывает прежнюю failed candidate и default template/postgres DB.
+Writer DML выдаётся только ordinary/partitioned application tables, не views или
+SQLx history. Effective view/column grants, non-view rewrite rules и все
+транзитивные history descendants блокируются, иначе owner-owned view/rule или
+inheritance может обойти ACL history. Изменяющие FK actions на history запрещены
+отдельно от non-internal trigger inventory. Historical verified proof
+читается и связывается с intent/manifest/probes до recovery; fresh observation не
+подменяет его bytes. Завершённый release допускает writer pool только текущей DB.
+
+Dump получает hash и database/system/schema/rows/sequences identity. Реальный
+restore drill в fresh DB должен воспроизвести snapshot. Candidate мигрирует новую
+shadow DB; source не изменяется. Exact image/database pair проверяется через
+manifest, actual container и отдельные health/acceptance. Только затем journal
+разрешает writer release. Все dangerous intents записываются до command.
+
+Row evidence использует PostgreSQL record text с фиксированными settings и
+domain-separated `postgres-record-text/v1` hash JSON array строк. Это не
+`to_jsonb(record)` и не Python numeric parsing: counter-review воспроизвёл
+одинаковый fingerprint двух разных high-precision numeric значений; conversion
+в jsonb также скрывает raw-json различия. NULL/empty, порядок и multiplicity
+сохраняются. Старые proofs остаются историческими, без implicit hash upgrade;
+новая source/native приёмка обязательна.
+
+Failed migration/health/acceptance допускает explicit restore verified snapshot
+в ещё одну fresh DB с exact last-confirmed image. После writer release старый
+snapshot restore запрещён: требуется новый snapshot/compatible forward packet или
+отдельное authoritative incident decision. Automatic down SQL нет.
+
+Restart/readback не повторяет migration/restore/release. Частичные эффекты остаются
+Unknown и удерживают target. Observation-only reconcile может подтвердить только
+уже завершённый release при совпадающей фактической паре и всех checks.
+
+## Последствия
+
+RPO=0 относится только к acknowledged writes до подтверждённого drain/snapshot;
+это не production PITR/off-site DR. Application acceptance fixture проверяет rows
+и schema, но не заменяет business acceptance или upstream authorization. Полный
+SDLC blocked до producer contracts writer inventory/fence/drain ACK/LSN, traffic
+switch/incident authorization и Tracker/Fleet/Workflow admission.
+
+Pinned Base `875cac2` используется без изменения: точечные private helpers
+`_write_database_dump`, `_restore_database`, `database_evidence`. Consumer адаптирует
+их transport к bounded subprocess и fixed daemon. Это coupling к внутреннему API;
+обновление Base требует отдельной проверки byte identity и real restore suite.
+Полный platform backup/restore из этого пути не вызывается.
+
+## Verification
+
+Последнее lossless-row hardening требует повторной native PG/OCI приёмки и
+exact-head CI. Current Windows pure cases26/26 и aggregate32/32 PASS; отдельный
+exact-production fingerprint RED repro стал GREEN. Предыдущий epoch d92019b98cb3
+прошёл PG3/3 и OCI1/1, но workspace gate FAILED137/1 на stat-cache regression;
+его error route ещё диагностируется. Он не проверяет последующий row fix.
+Прежние22/28,10/16 и Rust219 ниже относятся к предшествующим source epochs.
+Windows и WSL/Linux pure control-flow regressions10/10 PASS, aggregate docs tests16/16
+PASS. Они не выполняют SQL, Docker locks или restore. Свежий WSL/rootless Rust1.88
+gate прошёл fmt/check/Clippy all-targets/all-features и219 workspace tests,
+включая4 OCI units; hashes/cleanup проверены. Native PG17/OCI suites и hosted
+exact-head CI ещё отдельный gate. Прежние реальные gates ниже относятся
+к предыдущему source.
+
+[Contract](../contracts/MUTABLE_POSTGRES_DELIVERY.md),
+[task packet/ledger](../../plans/2026-10-08-mutable-postgres-delivery.md).
+Real PostgreSQL gate `ec6da7adab7c`:3/3 PASS. Known failures и verified restore,
+пять SIGKILL checkpoints/no dangerous replay, completed-release recovery с
+post-release writes, checksum/schema/PUBLIC/lease и restore negatives проверены.
+258 source hashes unchanged, exact own cleanup и live/final Docker audit PASS.
+Quality/publication evidence — [task verification](../TASK_DELIVERY_VERIFICATION.md).
+Production admission/full business acceptance остаются открытыми.

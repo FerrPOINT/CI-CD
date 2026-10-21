@@ -1,0 +1,98 @@
+# AGENTS.md — Forge CI/CD
+
+## Репозиторий
+
+- **Путь**: `/opt/dev/CI-CD`.
+- **GitHub**: `git@github.com:FerrPOINT/CI-CD.git`.
+- **Назначение**: self-hosted CI/CD control plane. В MVP jobs выполняет embedded runner (Docker/shell) с `job_queue` + `job_leases` ledger/reconciliation; внешний runner protocol MVP покрывает register/heartbeat/poll с bounded `waitSeconds` wakeup через in-process signal + PostgreSQL `LISTEN/NOTIFY`/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic runner tag + executor capability matching, ack-timeout requeue, queue-timeout diagnostic для отсутствующего compatible runner-а, cancel signal delivery и stale-runner offline reconciliation, а `forge-runner` даёт отдельный shell-runner process поверх этого protocol с active-lease heartbeat. Production-grade dispatch policy/fairness, richer log chunks, resumable artifact sessions и sandbox hardening остаются target.
+- **Стек**: Rust 2024, Axum 0.8, SQLx 0.8, PostgreSQL 17; React 19, Vite 6, Tailwind CSS 4, shadcn/ui.
+- **Env prefix**: `CICD_`.
+- **Порты**: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
+
+## Правила работы с репозиторием
+
+1. Работать из `/opt/dev/CI-CD`; перед изменениями читать `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/API.md` и релевантный ADR.
+2. До начала проверять `git status`. Не отменять и не перезаписывать чужие изменения; при неожиданном изменении во время работы остановиться и запросить указания.
+3. Backend сохраняет слои `api -> domain -> store`. `JobStatus::transition_to()` — единственный источник правил перехода статусов. SQL-запросы параметризуются через SQLx.
+4. Frontend использует React, Tailwind и shadcn/ui; новые API-клиенты и DTO остаются типизированными. Vite dev proxy направляет `/api` на `http://localhost:22801`.
+5. Все секреты передаются только через `CICD_` переменные или secret manager. Не коммитить `.env`, токены, пароли и реальные данные.
+
+## Коммиты и документация
+
+- Использовать Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `perf:`.
+- Один коммит — одна логическая единица. Не выполнять amend/squash или push без явного запроса пользователя.
+- При изменении API обновлять `docs/API.md`; при изменении схемы — `docs/DATA_MODEL.md`; архитектурное решение фиксировать новым ADR в `docs/adr/`.
+- Изменения Git Smart HTTP, bare repository storage или post-receive hook синхронизировать с `docs/GIT_HOSTING.md`.
+- Документация проекта и пользовательские строки — на русском; код и комментарии — на английском согласно `docs/CODE_STYLE.md`.
+
+## Docker и команды проверки
+
+```powershell
+# PowerShell 7, из корня подготовленного SDLC workspace.
+./start-local.ps1 -Workspace sdlc1 -Status
+# Запуск стенда только когда это требуется текущей задачей.
+./start-local.ps1 -Workspace sdlc1
+```
+
+```bash
+# Backend: установленный Rust toolchain или подготовленный Compose QA runner.
+cd backend
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --release --workspace
+cd ..
+
+# Frontend.
+cd frontend
+pnpm test
+pnpm build
+cd ..
+```
+
+В SDLC workspace постоянные стенды запускаются только через корневой
+`start-local.ps1` и группы `sdlc1`, `sdlc2`, `sdlc-common`; отдельный запуск
+repository Compose как четвёртого постоянного стенда запрещён.
+Любой контейнерный backend gate выполняется через настоящий Docker Compose
+во временном проекте `sdlc-qa-<task>-<unique>` или `sdlc-build-<task>-<unique>`
+с явными `sdlc.task`/`sdlc.purpose`, отдельными сетями и disposable volumes.
+Прямые `docker run`/`docker create` и поддельные Compose labels запрещены.
+QA specs находятся в `deploy/qa/`, профильные команды — в
+`scripts/task-delivery-qa.sh`; сначала проверить prerequisites и выбранный gate.
+В `finally`/`trap` выполнить `docker compose -p <exact-project> -f <exact-file>
+down --remove-orphans`, затем проверить отсутствие собственных контейнеров и
+сетей. Удалять только точно перечисленные собственные disposable volumes,
+сохраняя shared caches, backups и accepted runtime. Общие правила принадлежат
+Base: `services-base/deploy/LOCAL_GROUPS.md` в корне workspace.
+`justfile` дублирует основные операции, но перед контейнерным запуском его
+команды необходимо сверить с этими правилами.
+
+Не использовать `docker compose restart` для применения нового образа или env.
+В собственном QA задавать явные `-p <exact-project> -f <exact-file>` при
+пересоздании сервиса; accepted runtime/images менять только по защищённой
+процедуре Base с backup/locks, а не в ходе проверки кандидата.
+
+## Checklist перед завершением
+
+- [ ] Изменения соответствуют существующей архитектуре и не затёрли чужую работу.
+- [ ] Backend-проверки проходят: fmt, clippy, test, release build.
+- [ ] Frontend-проверки проходят: `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm test`, `pnpm build`.
+- [ ] `docker compose config` и `docker compose build` успешны при изменении контейнеров.
+- [ ] Для новых endpoint выполнена curl-проверка; для UI-изменений сделаны актуальные screenshots при необходимости.
+- [ ] Документация, `.env.example` и ADR обновлены, если изменились контракт, конфигурация или решение.
+- [ ] В diff отсутствуют credentials, токены, `.env` и другие чувствительные данные.
+
+## References
+
+- `docs/ARCHITECTURE.md`
+- `docs/CODE_STYLE.md`
+- `docs/TESTING.md`
+- `docs/API.md`
+- `docs/DATA_MODEL.md`
+- `docs/CI_CD.md`
+
+## Base и воспроизводимость
+
+См. [BASE_INTEGRATION](docs/BASE_INTEGRATION.md). Обязательны pinned Base SHA,
+locked/frozen зависимости и проверка актуальных checkout до сборки.
+Rust build toolchain 1.88.0, Node 22.20.0, pnpm 10.28.1; MSRV отдельно.

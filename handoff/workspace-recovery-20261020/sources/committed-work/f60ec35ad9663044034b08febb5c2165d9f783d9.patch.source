@@ -1,0 +1,77 @@
+diff --git a/.base-revision b/.base-revision
+index e560de2..9fcf157 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-0ffb99e209bb62031488cbae1b61c9a2e40faec9
++7e27713077f68c84cb5d5a02f720a594abc643df
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 4787a82..54f971c 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,12 @@
+ 
+ ## [Unreleased]
+ 
++- Repository reference search uses the shared Base label without a local font override.
++- Notification target tests retain strict layout minima and tolerate only subpixel
++  transform rounding in rendered bounds; 40/44 px control sizes are unchanged.
++- Base 7e27713 унифицирует подписи полей (12 px) и SSR-значения (14 px).
++  Геометрия shell, API и принятый runtime не меняются.
++
+ - Nginx возвращает 404 для отсутствующих assets; bare `/api` передаётся
+   backend без redirect. SPA и Git Smart HTTP сохраняются; runtime не меняется.
+ 
+diff --git a/frontend/e2e/base-standard-source.spec.ts b/frontend/e2e/base-standard-source.spec.ts
+index 6ca5671..8f59309 100644
+--- a/frontend/e2e/base-standard-source.spec.ts
++++ b/frontend/e2e/base-standard-source.spec.ts
+@@ -197,8 +197,15 @@ for (const theme of ['dark', 'gray', 'light']) {
+       const dismiss = page.getByRole('button', { name: 'Закрыть уведомление', exact: true })
+       const target = (await dismiss.boundingBox())!
+       const minimum = width < 768 ? 44 : 40
+-      expect(target.width).toBeGreaterThanOrEqual(minimum)
+-      expect(target.height).toBeGreaterThanOrEqual(minimum)
++      const layoutSize = await dismiss.evaluate((element) => {
++        const style = getComputedStyle(element)
++        return { width: parseFloat(style.width), height: parseFloat(style.height) }
++      })
++      expect(layoutSize.width).toBeGreaterThanOrEqual(minimum)
++      expect(layoutSize.height).toBeGreaterThanOrEqual(minimum)
++      // Animated transforms can round a 40 px layout box to 39.99994 CSS pixels.
++      expect(target.width).toBeGreaterThanOrEqual(minimum - 0.001)
++      expect(target.height).toBeGreaterThanOrEqual(minimum - 0.001)
+       expect(target.x).toBeGreaterThanOrEqual(0)
+       expect(target.x + target.width).toBeLessThanOrEqual(width)
+       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
+diff --git a/frontend/src/pages/repository-browser/index.tsx b/frontend/src/pages/repository-browser/index.tsx
+index a7c972a..e283c31 100644
+--- a/frontend/src/pages/repository-browser/index.tsx
++++ b/frontend/src/pages/repository-browser/index.tsx
+@@ -314,7 +314,7 @@ function CodeBrowser({ repo, gitRef, dirPath, filePath, treePage, treeSearch, on
+     <div className="space-y-3">
+       <form className="flex min-w-0 flex-wrap items-end gap-2" role="search" aria-label={t('repositoryBrowser.refPicker')} onSubmit={applyRef}>
+         <div className="min-w-0 flex-1 space-y-1.5 sm:max-w-md">
+-        <label htmlFor="repository-ref" className="text-sm font-medium">{t('repositoryBrowser.gitRef')}</label>
++        <Label htmlFor="repository-ref">{t('repositoryBrowser.gitRef')}</Label>
+         <Input
+           id="repository-ref"
+           type="search"
+diff --git a/frontend/src/pages/repository-browser/repository-browser.test.tsx b/frontend/src/pages/repository-browser/repository-browser.test.tsx
+index d79d48e..ecefed8 100644
+--- a/frontend/src/pages/repository-browser/repository-browser.test.tsx
++++ b/frontend/src/pages/repository-browser/repository-browser.test.tsx
+@@ -80,6 +80,13 @@ beforeEach(() => {
+ afterEach(() => vi.clearAllMocks())
+ 
+ describe('RepositoryBrowserPage', () => {
++  it('uses the shared Base label for the Git reference field', () => {
++    setup()
++    const label = screen.getByText('repositoryBrowser.gitRef')
++    expect(label).toHaveClass('base-label')
++    expect(label).not.toHaveClass('text-sm')
++    expect(screen.getByLabelText('repositoryBrowser.gitRef')).toHaveAttribute('id', 'repository-ref')
++  })
+   it('opens code by default and keeps nested directories and files in the URL', () => {
+     mocks.tree.mockImplementation((_repo: string, _ref: string, dir?: string) => result(dir === 'src'
+       ? [{ path: 'src/index.tsx', name: 'index.tsx', kind: 'blob', sha: 'def123456', size: 12 }]

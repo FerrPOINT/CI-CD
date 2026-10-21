@@ -1,0 +1,1607 @@
+# API v1 Specification — Forge CI/CD
+
+## Overview
+
+REST API первой версии Forge CI/CD. Контрольная плоскость использует JSON; Git Smart HTTP, artifact download, SSE logs и `/metrics` имеют собственные content types. Основные группы: проекты, запуск пайплайнов, переходы статусов задач, append-only логи, platform resources, auth и Git hosting.
+
+> **Source of truth:** актуальная реализация и OpenAPI-аннотации в `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/runner_protocol.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs`; committed contract — `openapi/openapi.yaml`.
+
+## Базовая информация
+
+- Base URL: `http://{host}:22801/api/v1`
+- Content-Type: `application/json`
+- Auth: пользовательские routes требуют настроенную авторизацию и `Authorization: Bearer <JWT-or-PAT>`. Без непустого `CICD_AUTH_SECRET` они закрыты с `503`, а не открыты в trusted-network режиме. Public health/readiness/OpenAPI и машинные протоколы используют собственные правила доступа.
+- Версионирование: path-based `/api/v1`.
+- Сериализация: `serde_json`, `snake_case` для enum-значений статусов.
+- Ошибки: `{"error":{"code":"...","message":"...","request_id":"..."}}` с соответствующим HTTP статусом и header `x-request-id`.
+
+## Коды ответов
+
+| Код | Назначение |
+|---|---|
+| 200 OK | Успешный GET, успешный POST с результатом |
+| 400 Bad Request | Невалидный ввод, невалидный transition |
+| 401 Unauthorized | Отсутствует или невалиден Bearer token при включённом `CICD_AUTH_SECRET` |
+| 403 Forbidden | Роль principal не допускает route |
+| 404 Not Found | Ресурс не найден |
+| 409 Conflict | Недопустимое состояние операции |
+| 410 Gone | Lease или protocol resource истёк |
+| 429 Too Many Requests | In-process rate limit по client key |
+| 500 Internal Server Error | Внутренняя ошибка; детали логируются server-side, клиент получает безопасное сообщение |
+| 503 Service Unavailable | БД или авторизация недоступны либо не настроены |
+
+---
+
+## Реализованные эндпоинты
+
+### Health
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/health` | Liveness-check процесса backend |
+| GET | `/readiness` | Readiness-check PostgreSQL и SQLx migrations |
+| GET | `/openapi.json` | OpenAPI JSON document |
+| GET | `/metrics` | Prometheus text exposition, полный путь без `/api/v1` |
+
+#### GET /api/v1/health
+
+Liveness-проверка процесса backend. Не требует БД и не подтверждает готовность PostgreSQL или migrations.
+
+**Response 200:**
+```json
+{
+  "status": "ok",
+  "service": "cicd"
+}
+```
+
+**curl:**
+```bash
+curl -sS http://127.0.0.1:22801/api/v1/health
+```
+
+#### GET /api/v1/readiness
+
+Readiness-проверка backend dependency boundary. Endpoint требует подключённый PostgreSQL pool, выполняет короткий `SELECT 1` и сверяет `_sqlx_migrations` с configured SQLx migrations (`CICD_MIGRATIONS_DIR` или `backend/migrations`) по version/checksum.
+
+**Response 200:**
+```json
+{
+  "status": "ready",
+  "service": "cicd",
+  "database": "ok",
+  "migrations": {
+    "status": "ok",
+    "latest_applied_version": 39,
+    "latest_required_version": 39,
+    "pending_versions": [],
+    "checksum_mismatches": [],
+    "unknown_applied_versions": [],
+    "error": null
+  }
+}
+```
+
+**Response 503:** та же JSON-форма со `status: "not_ready"`; `database` становится `unavailable` при недоступной БД, а `migrations.status` показывает `pending`, `mismatch` или `unknown`.
+
+**curl:**
+```bash
+curl -sS http://127.0.0.1:22801/api/v1/readiness
+```
+
+#### GET /api/v1/openapi.json
+
+Возвращает текущий OpenAPI document в JSON-формате. Не требует БД.
+
+#### GET /metrics
+
+Возвращает Prometheus text exposition. В MVP endpoint не имеет отдельной production-grade protection; используйте общую сетевую/auth boundary.
+
+---
+
+### Auth
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| POST | `/auth/login` | Выдать access token и refresh session |
+| POST | `/auth/refresh` | Обновить пару токенов |
+| POST | `/auth/logout` | Отозвать refresh session |
+
+Auth enforcement требует непустой `CICD_AUTH_SECRET`; без него пользовательские API fail closed с `503`. Access token — JWT HS256 на 15 минут, содержит `sessions.id` и `users.token_version`, а protected API на каждом запросе проверяет активную session, enabled user, текущую роль и token version из БД. Refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. Browser flow получает refresh token в `HttpOnly; SameSite=Lax` cookie `forge_refresh` и CSRF companion cookie `forge_csrf`; `/auth/refresh` и `/auth/logout` с cookie требуют совпадающий `X-CSRF-Token`. Rotation/reuse сериализуются по session family; повторное использование уже заменённого refresh token отзывает всю family и один раз инвалидирует ранее выданные access JWT через `users.token_version`. Body `refresh_token` остаётся совместимым для CLI/API clients и legacy dashboard migration. PAT `cicd_...` принимается как Bearer token при включённом enforcement; новые PAT в auth-mode требуют `project_id`, имеют явные scopes и срок действия.
+
+#### POST /api/v1/auth/login
+
+**Request body:**
+```json
+{"username":"admin","password":"..."}
+```
+
+**Response 200:** backend также выставляет `Set-Cookie: forge_refresh=...; Path=/api/v1/auth; HttpOnly; SameSite=Lax` и `Set-Cookie: forge_csrf=...; Path=/; SameSite=Lax`.
+```json
+{"access_token":"...","expires_at":1787859000,"refresh_token":"..."}
+```
+
+**Errors:** `400` — пустой username/password; `401` — credential invalid или user disabled; `429` — login rate limit.
+
+#### POST /api/v1/auth/refresh
+
+**Request body (CLI/API clients):**
+```json
+{"refresh_token":"..."}
+```
+
+**Browser request:** отправляет cookie `forge_refresh`/`forge_csrf`, body `{"refresh_token":""}` и header `X-CSRF-Token: <forge_csrf>`.
+
+**Response 200:** структура `TokenPair`, как у login; refresh cookie и CSRF cookie rotate-ятся.
+
+#### POST /api/v1/auth/logout
+
+Идемпотентно отзывает refresh session по переданному refresh token или по cookie `forge_refresh` + `X-CSRF-Token`. Session-bound access JWT с тем же `sessions.id` после logout перестаёт проходить protected API сразу; повторное использование уже заменённого refresh token приводит к `401`, отзывает всю `family_id` и один раз повышает `users.token_version`.
+
+**Request body:**
+```json
+{"refresh_token":"..."}
+```
+
+**Response 200:**
+```json
+{"revoked": true}
+```
+
+---
+
+### Rate Limits
+
+In-process fixed-window limiter выполняется до auth/handler и возвращает стандартный error envelope с code `rate_limited`. Client key берётся из первого значения `X-Forwarded-For`, затем `X-Real-IP`, затем `unknown`; вне local development forwarded headers допустимы только за trusted reverse proxy.
+
+| Класс | Routes | Лимит |
+|---|---|---:|
+| `auth-login` | `POST /api/v1/auth/login` | 30/min |
+| `auth-refresh` | `POST /api/v1/auth/refresh` | 120/min |
+| `auth-logout` | `POST /api/v1/auth/logout` | 120/min |
+| `internal-git-push` | `POST /api/v1/internal/git-push` | 120/min |
+| `git-read` / `git-push` | `/git/*` Smart HTTP | 240/min |
+| `artifact-upload` | `POST /api/v1/jobs/{job_id}/artifacts` | 60/min |
+| `api-read` / `api-write` | прочие `/api/*` routes | 1200/min read, 600/min write |
+
+`/api/v1/health`, `/api/v1/readiness`, `/api/v1/openapi.json` и `/metrics` не ограничиваются этим middleware. Distributed limiter, per-account lockout, proxy-level request body/time/concurrency policy остаются target.
+
+---
+
+### Request Body Limits
+
+Axum extractor limit настроен явно для routes, где payload может быть больше общего JSON control-plane профиля. Превышение лимита отклоняется до handler-а с HTTP `413 Payload Too Large`; для Git gzip RPC сервер дополнительно проверяет размер тела после распаковки.
+
+| Route | Content type | Лимит |
+|---|---|---:|
+| `POST /api/v1/jobs/{job_id}/artifacts` | raw artifact body | 50 MiB |
+| `POST /api/v1/runner/leases/{lease_id}/artifacts` | raw declared artifact body | 50 MiB |
+| `POST /git/{repo}/git-upload-pack` | Git Smart HTTP RPC | 100 MiB |
+| `POST /git/{repo}/git-receive-pack` | Git Smart HTTP RPC | 100 MiB |
+| `POST /api/v1/jobs/{job_id}/test-report` | JSON string with JUnit XML | 10 MiB |
+| `POST /api/v1/jobs/{job_id}/logs` | JSON log append | 1 MiB |
+| `POST /api/v1/runner/leases/{lease_id}/logs` | JSON log batch | 1 MiB |
+
+Остальные JSON mutation endpoints остаются в стандартном малом профиле Axum для control-plane команд. Reverse-proxy body/time/concurrency policy и quota-aware artifact reservations остаются target.
+
+---
+
+### Projects
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects` | Список проектов |
+| POST | `/projects` | Создание проекта |
+| GET | `/projects/{project_id}` | Получить проект |
+| PATCH | `/projects/{project_id}` | Частичное обновление проекта |
+| DELETE | `/projects/{project_id}` | Удалить проект (каскадно с пайплайнами) |
+
+#### GET /api/v1/projects
+
+Возвращает список проектов, отсортированных по `created_at DESC`. Query params: `limit` и `offset`, лимит capped до 200.
+
+**Response 200:**
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "my-service",
+    "repository_url": "git@github.com:org/my-service.git",
+    "default_branch": "main",
+    "created_at": "2026-08-26T10:00:00Z"
+  }
+]
+```
+
+**curl:**
+```bash
+curl -sS 'http://127.0.0.1:22801/api/v1/projects?limit=50&offset=0'
+```
+
+#### POST /api/v1/projects
+
+Создаёт новый проект. `id` генерируется сервером (`Uuid::new_v4()`).
+
+**Request body:**
+```json
+{
+  "name": "my-service",
+  "repository_url": "git@github.com:org/my-service.git",
+  "default_branch": "main"
+}
+```
+
+| Поле | Тип | Required | Описание |
+|---|---|---|---|
+| `name` | string | yes | Уникальное имя проекта (non-empty) |
+| `repository_url` | string | yes | URL Git-репозитория (non-empty) |
+| `default_branch` | string | no | Ветка по умолчанию, default `"main"` |
+
+**Response 200:**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "my-service",
+  "repository_url": "git@github.com:org/my-service.git",
+  "default_branch": "main",
+  "created_at": "2026-08-26T10:00:00Z"
+}
+```
+
+**Errors:**
+- `400` — `name` или `repository_url` пустые.
+- `500` — duplicate name (unique constraint violation) или ошибка БД.
+
+**curl:**
+```bash
+curl -sS -X POST http://127.0.0.1:22801/api/v1/projects \
+  -H 'content-type: application/json' \
+  -d '{"name":"my-service","repository_url":"git@github.com:org/my-service.git"}'
+```
+
+#### GET /api/v1/projects/{project_id}
+
+Возвращает один проект по UUID.
+
+**Response 200:** объект проекта (см. POST).
+
+**Errors:** `404` — проект не найден.
+
+**curl:**
+```bash
+curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID
+```
+
+#### PATCH /api/v1/projects/{project_id}
+
+Частичное обновление: достаточно передать только изменяемые поля, остальные сохраняются (`COALESCE`).
+
+**Request body (все поля опциональны, минимум одно):**
+```json
+{
+  "default_branch": "release"
+}
+```
+
+| Поле | Тип | Required | Описание |
+|---|---|---|---|
+| `name` | string | no | Новое имя (non-empty при передаче) |
+| `repository_url` | string | no | Новый URL репозитория |
+| `default_branch` | string | no | Новая ветка по умолчанию |
+| `protected_branches` | string[] | no | Полный список защищённых веток (до 50 уникальных имён Git); прямой push в них запрещён, PR merge требует successful pipeline на текущем head SHA |
+| `max_running_jobs` | integer or null | no | Максимум одновременно active lease для проекта: `1..4096`; `null` снимает cap, отсутствие поля сохраняет текущее значение |
+
+**Response 200:** обновлённый объект проекта.
+
+**Errors:**
+- `400` — тело пустое (`{}`), переданное поле пустое или имя защищённой ветки невалидно.
+- `404` — проект не найден.
+- `500` — duplicate name.
+
+**curl:**
+```bash
+curl -sS -X PATCH http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID \
+  -H 'content-type: application/json' \
+  -d '{"default_branch":"release"}'
+```
+
+#### DELETE /api/v1/projects/{project_id}
+
+Удаляет проект. Все связанные пайплайны, стадии, джобы и логи удаляются каскадно (`ON DELETE CASCADE`).
+
+**Response 200:**
+```json
+{"deleted": "550e8400-e29b-41d4-a716-446655440000"}
+```
+
+**Errors:** `404` — проект не найден.
+
+**curl:**
+```bash
+curl -sS -X DELETE http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID
+```
+
+---
+
+### Pipelines
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/pipelines` | Список пайплайнов проекта |
+| POST | `/projects/{project_id}/pipelines` | Запуск пайплайна |
+| GET | `/pipelines/{pipeline_id}` | Детали пайплайна (stages + jobs) |
+
+#### GET /api/v1/projects/{project_id}/pipelines
+
+Возвращает пайплайны проекта, отсортированные по `created_at DESC`. Query params: `limit` и `offset`, лимит capped до 200.
+
+**Path params:**
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `project_id` | UUID | ID проекта |
+
+**Response 200:**
+```json
+[
+  {
+    "id": "a1b2c3d4-...",
+    "project_id": "550e8400-...",
+    "git_ref": "main",
+    "status": "queued",
+    "created_at": "2026-08-26T10:05:00Z",
+    "started_at": null,
+    "finished_at": null
+  }
+]
+```
+
+**Errors:**
+- `503` — БД недоступна.
+- `500` — ошибка БД.
+
+**curl:**
+```bash
+curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
+```
+
+#### POST /api/v1/projects/{project_id}/pipelines
+
+Запускает новый пайплайн для указанного Git-рефа. Backend пытается разрешить ref в commit SHA, прочитать `.forge-ci.yml` из локального bare repository на этом commit; если файл недоступен, создаёт fallback `legacy_template` build/test/deploy. Все задачи — в статусе `queued`. `PipelineDetail.plan` содержит immutable snapshot с raw config, config/plan SHA-256, parser version, node keys и dependency edges. Поддерживаются два current формата plan: `legacy-linear` для unversioned `stages/jobs` и `v1-dag` для `.forge-ci.yml` с `version: 1`, top-level `jobs`, `commands`, `needs`, defaults `image/timeout` и `allow_failure`; current runner исполняет v1 DAG через топологические стадии `dag-*`.
+
+**Path params:**
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `project_id` | UUID | ID проекта |
+
+**Headers:**
+
+| Header | Required | Описание |
+|---|---|---|
+| `Idempotency-Key` | no | UUID на одно намерение запуска. Повтор с тем же key и тем же body возвращает первоначальный pipeline и header `Idempotency-Replayed: true`; тот же key с другим `git_ref`/`variables` возвращает `409`. |
+
+**Request body:**
+```json
+{
+  "git_ref": "main",
+  "variables": {
+    "deploy_env": "staging"
+  }
+}
+```
+
+| Поле | Тип | Required | Описание |
+|---|---|---|---|
+| `git_ref` | string | no | Git-реф, default `"main"` |
+| `variables` | object<string,string> | no | Переменные ручного запуска; runner экспортирует только `CICD_VAR_<UPPER_SNAKE_KEY>` |
+
+**Response 200** — `PipelineDetail`:
+```json
+{
+  "pipeline": {
+    "id": "a1b2c3d4-...",
+    "project_id": "550e8400-...",
+    "git_ref": "main",
+    "status": "queued",
+    "created_at": "2026-08-26T10:05:00Z",
+    "started_at": null,
+    "finished_at": null
+  },
+  "plan": {
+    "pipeline_id": "a1b2c3d4-...",
+    "config_source": "legacy_template",
+    "parser_version": "forge-legacy-linear/1",
+    "git_ref": "main",
+    "resolved_commit_sha": null,
+    "config_sha256": "64-char-hex-sha256",
+    "plan_sha256": "64-char-hex-sha256",
+    "raw_config": "stages:\n  - name: build\n    jobs:\n      - name: checkout\n        image: alpine/git:latest\n        command: git fetch --all\n",
+    "plan": {
+      "format": "legacy-linear",
+      "parser_version": "forge-legacy-linear/1",
+      "config_source": "legacy_template",
+      "git_ref": "main",
+      "resolved_commit_sha": null,
+      "stages": [
+        {
+          "name": "build",
+          "position": 0,
+          "jobs": [
+            {
+              "key": "stage-0/job-0",
+              "name": "checkout",
+              "stage": "build",
+              "stage_position": 0,
+              "position": 0,
+              "image": "alpine/git:latest",
+              "command": "git fetch --all",
+              "timeout_seconds": null,
+              "allow_failure": false,
+              "manual": false,
+              "needs": []
+            }
+          ]
+        }
+      ],
+      "dependencies": []
+    },
+    "created_at": "2026-09-01T10:05:00Z"
+  },
+  "stages": [
+    {
+      "id": "stage-uuid-1",
+      "pipeline_id": "a1b2c3d4-...",
+      "name": "build",
+      "position": 0,
+      "status": "queued",
+      "jobs": [
+        {
+          "id": "job-uuid-1",
+          "stage_id": "stage-uuid-1",
+          "name": "checkout",
+          "image": "alpine/git:latest",
+          "command": "git fetch --all",
+          "position": 0,
+          "status": "queued",
+          "started_at": null,
+          "finished_at": null
+        }
+      ]
+    },
+    {
+      "id": "stage-uuid-2",
+      "pipeline_id": "a1b2c3d4-...",
+      "name": "test",
+      "position": 1,
+      "status": "queued",
+      "jobs": [
+        {
+          "id": "job-uuid-2",
+          "stage_id": "stage-uuid-2",
+          "name": "unit-tests",
+          "image": "rust:1.86",
+          "command": "cargo test",
+          "position": 0,
+          "status": "queued",
+          "started_at": null,
+          "finished_at": null
+        }
+      ]
+    },
+    {
+      "id": "stage-uuid-3",
+      "pipeline_id": "a1b2c3d4-...",
+      "name": "deploy",
+      "position": 2,
+      "status": "queued",
+      "jobs": [
+        {
+          "id": "job-uuid-3",
+          "stage_id": "stage-uuid-3",
+          "name": "deploy",
+          "image": "alpine:3.21",
+          "command": "echo deploy",
+          "required_tags": [],
+          "required_secrets": [],
+          "artifact_paths": [],
+          "position": 0,
+          "status": "queued",
+          "started_at": null,
+          "finished_at": null
+        }
+      ]
+    }
+  ]
+}
+```
+
+Для v1 `.forge-ci.yml` plan имеет `format: "v1-dag"`, `version: 1`, `parser_version: "forge-dsl/1.0.0"`, массив `jobs[]` с `key`, исходными `commands[]`, runtime `command` (`set -e` script), `needs[]`, `required_tags[]`, `required_secrets[]`, `artifact_paths[]`, resolved runtime stage/position и массив `dependencies[]` вида `{from,to}`. `defaults.tags` наследуется job-ами, `jobs.*.tags` заменяет defaults; tags сохраняются в `jobs.required_tags`/`job_queue.required_tags` и учитываются external runner claim. `jobs.*.secrets` сохраняется в `jobs.required_secrets`, попадает в `LeaseOffer.attempt.secrets` и ограничивает lease-scoped `secrets:resolve`. `jobs.*.artifacts.paths` сохраняется в `jobs.artifact_paths`, попадает в `LeaseOffer.attempt.artifacts`, embedded runner и external `forge-runner` собирают эти relative file paths и сохраняют metadata в `artifacts`. Unsupported v1 ключи (`on`, `retry`, `artifacts.expire_in`) пока отклоняются `400`, а не игнорируются.
+
+**Errors:**
+- `400` — некорректный `Idempotency-Key` или pipeline config.
+- `409` — тот же `Idempotency-Key` использован с другим fingerprint запроса.
+- `404` — проект не найден.
+- `503` — БД недоступна.
+- `500` — ошибка БД.
+
+**curl:**
+```bash
+curl -sS -X POST http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines \
+  -H 'content-type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"git_ref":"main"}'
+```
+
+#### GET /api/v1/pipelines/{pipeline_id}
+
+Возвращает детали пайплайна: метаданные + массив стадий с задачами. Стадии отсортированы по `position`, jobs внутри стадии — по `position`.
+
+**Path params:**
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `pipeline_id` | UUID | ID пайплайна |
+
+**Response 200** — `PipelineDetail` (структура аналогична POST above).
+
+Stage в ответе использует `#[serde(flatten)]`: поля stage (`id`, `pipeline_id`, `name`, `position`, `status`) и `jobs` находятся на одном уровне в каждом элементе массива `stages`.
+
+**Errors:**
+- `404` — пайплайн не найден.
+- `503` — БД недоступна.
+- `500` — ошибка БД.
+
+**curl:**
+```bash
+curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
+```
+
+---
+
+
+### Git-код, теги и релизы
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/repos/{repo}/tree?ref=&path=&limit=&offset=&search=` | Содержимое каталога bare-репозитория; bounded page/search опциональны |
+| GET | `/repos/{repo}/blob?ref=&path=` | Текст файла, до 512 KiB с bounded чтением Git stdout; полный `size` сохраняется, binary возвращает флаг без content |
+| GET | `/repos/{repo}/tags?limit=&offset=&search=` | Git tags, отсортированные по дате; optional bounded page/search |
+| GET/POST | `/repos/{repo}/releases` | Список / создание или обновление release metadata |
+| GET/DELETE | `/repos/{repo}/releases/{tag}` | Один release / удаление metadata (Git tag сохраняется) |
+
+`ref` проходит только в Git через уже валидированный bare repository; пустой `HEAD` автоматически берёт `main`, затем `master`. Для Smart HTTP fetch public repository доступен без credential; private repository и весь `git-receive-pack` требуют credential. При непустом `CICD_AUTH_SECRET` принимается legacy `CICD_GIT_TOKEN` либо JWT/PAT в `Authorization: Bearer`/Basic password с проверкой роли в проекте, связанном через `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`; PAT дополнительно требует `git:read` или `git:write` и соблюдает свой `project_id`.
+
+`GET /repos/{repo}/refs` и `GET /repos/{repo}/tags` сохраняют legacy-форму полного
+array, когда paging/search параметры отсутствуют. Любой `limit`, `offset`,
+непустой `search` или `kind` включает bounded streaming mode: `limit` по
+умолчанию равен 100 и ограничен диапазоном `1..200`, `offset` по умолчанию 0,
+а `search` регистронезависимо проверяет короткое имя. Для `/refs` фильтр `kind`
+принимает `branch`, `tag` или `other`; branch/tag дополнительно ограничивают сам
+`git for-each-ref` соответствующим namespace. Dashboard запрашивает 101 запись,
+показывает 100 и использует лишнюю запись как признак следующей страницы;
+подсказки форм запрашивают максимум 51 запись и показывают 50.
+
+`tree` сохраняет legacy-массив без ограничения, если `limit`, `offset` и `search`
+не переданы. При наличии хотя бы одного параметра stdout `git ls-tree` читается
+потоково, `limit` нормализуется в диапазоне `1..200` (по умолчанию 100),
+`offset` применяется после case-insensitive поиска по имени. Каталоги всегда
+идут перед файлами. Dashboard запрашивает 101 запись и показывает 100, используя
+дополнительную запись только как признак следующей страницы.
+
+### Дополнительные CI-результаты
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/pipelines/{pipeline_id}/badge.svg` | Public read-only SVG status badge |
+| GET | `/pipelines/{pipeline_id}/variables` | Сохранённые variables запуска |
+| GET/POST | `/jobs/{job_id}/test-report` | JUnit suite summaries / загрузка XML JSON-строкой |
+
+`POST /projects/{project_id}/pipelines` дополнительно принимает `{ "variables": { "deploy_env": "staging" } }`. Runner преобразует только в `CICD_VAR_DEPLOY_ENV`; исходные ключи не становятся произвольными process env. JUnit endpoint принимает JSON string с XML и сохраняет только имя suite, счётчики и длительность.
+
+
+### Jobs
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| POST | `/jobs/{job_id}/status` | Смена статуса задачи |
+| POST | `/jobs/{job_id}/start` | Старт manual job |
+| GET | `/jobs/{job_id}/attempts` | История execution attempts задачи |
+| GET | `/jobs/{job_id}/attempts/{attempt_id}/logs` | Логи конкретной attempt |
+| GET | `/jobs/{job_id}/attempts/{attempt_id}/logs/page` | Ограниченная страница логов конкретной attempt |
+| GET | `/jobs/{job_id}/logs` | Логи текущей или последней attempt задачи |
+| GET | `/jobs/{job_id}/logs/page` | Ограниченная страница логов текущей или последней attempt |
+| GET | `/jobs/{job_id}/logs/stream` | SSE stream логов текущей/последней attempt |
+| POST | `/jobs/{job_id}/logs` | Добавление строки лога в текущую/последнюю attempt |
+
+#### POST /api/v1/jobs/{job_id}/status
+
+Переводит задачу в новый статус. Валидирует переход через `JobStatus::transition_to()`. После обновления статуса задачи каскадно пересчитываются статусы stage и pipeline (см. `refresh_statuses`).
+
+**Path params:**
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `job_id` | UUID | ID задачи |
+
+**Request body:**
+```json
+{
+  "status": "running"
+}
+```
+
+| Поле | Тип | Required | Описание |
+|---|---|---|---|
+| `status` | JobStatus | yes | Новый статус: `queued` / `running` / `success` / `failed` / `canceled` |
+
+**Response 200** — обновлённый `Job`:
+```json
+{
+  "id": "job-uuid-1",
+  "stage_id": "stage-uuid-1",
+  "name": "checkout",
+  "image": "alpine/git:latest",
+  "command": "git fetch --all",
+  "position": 0,
+  "status": "running",
+  "started_at": "2026-08-26T10:06:00Z",
+  "finished_at": null
+}
+```
+
+**Side effects:**
+- При `status = "running"`: `started_at = now()` (если ещё не проставлено для stage/pipeline).
+- При терминальном статусе (`success` / `failed` / `canceled`): `finished_at = now()`.
+- Одновременно обновляется open `execution_attempts` запись job; terminal attempt не переиспользуется.
+- Если у job есть active embedded `job_leases`, terminal transition закрывает lease с тем же `terminal_status`.
+- Каскадная агрегация: `refresh_statuses()` обновляет `stages.status` и `pipelines.status` + timestamps.
+
+**Errors:**
+- `400` — невалидный статус (unknown value) или невалидный transition:
+  - `{"error": "terminal status cannot change"}` — попытка изменить терминальный статус.
+  - `{"error": "invalid status transition from Queued to Success"}` — переход невозможен.
+- `404` — задача не найдена.
+- `503` — БД недоступна.
+- `500` — ошибка БД.
+
+**curl:**
+```bash
+# Start job
+curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status \
+  -H 'content-type: application/json' \
+  -d '{"status":"running"}'
+
+# Pass job
+curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status \
+  -H 'content-type: application/json' \
+  -d '{"status":"success"}'
+
+# Fail job
+curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status \
+  -H 'content-type: application/json' \
+  -d '{"status":"failed"}'
+```
+
+#### GET /api/v1/jobs/{job_id}/attempts
+
+Возвращает attempts задачи в порядке `attempt_no DESC`. Каждая попытка хранит собственные timestamps, terminal result и diagnostics.
+
+**Path params:**
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `job_id` | UUID | ID задачи |
+
+**Response 200:**
+```json
+[
+  {
+    "id": "attempt-uuid-2",
+    "job_id": "job-uuid-1",
+    "attempt_no": 2,
+    "status": "queued",
+    "trigger": "job_retry",
+    "exit_code": null,
+    "error_tail": null,
+    "created_at": "2026-08-31T10:00:00Z",
+    "started_at": null,
+    "finished_at": null
+  }
+]
+```
+
+#### GET /api/v1/jobs/{job_id}/attempts/{attempt_id}/logs
+
+Возвращает логи конкретной attempt, отсортированные по `sequence`. Если attempt не принадлежит job, возвращается `404`.
+
+**Response 200:**
+```json
+[
+  {
+    "id": 1,
+    "job_id": "job-uuid-1",
+    "attempt_id": "attempt-uuid-1",
+    "sequence": 1,
+    "message": "Starting checkout...",
+    "created_at": "2026-08-26T10:06:01Z"
+  },
+  {
+    "id": 2,
+    "job_id": "job-uuid-1",
+    "attempt_id": "attempt-uuid-1",
+    "sequence": 2,
+    "message": "Fetching remotes",
+    "created_at": "2026-08-26T10:06:02Z"
+  }
+]
+```
+
+**Errors:**
+- `503` — БД недоступна.
+- `500` — ошибка БД.
+
+**curl:**
+```bash
+curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/attempts
+curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/attempts/$ATTEMPT_ID/logs
+```
+
+#### GET /api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page
+
+Ограниченная страница логов конкретной attempt. Endpoint сохраняет совместимость старого array response и используется UI для длинных логов.
+
+**Query params:**
+
+| Параметр | Тип | Default | Описание |
+|---|---|---:|---|
+| `after` | integer | `0` | Вернуть строки с `sequence > after` |
+| `limit` | integer | `200` | Размер страницы, `1..200` |
+| `q` | string | — | Case-insensitive substring search по `message`, максимум 128 символов |
+
+**Response 200:**
+```json
+{
+  "items": [
+    {
+      "id": 2,
+      "job_id": "job-uuid-1",
+      "attempt_id": "attempt-uuid-1",
+      "sequence": 2,
+      "message": "Fetching remotes",
+      "created_at": "2026-08-26T10:06:02Z"
+    }
+  ],
+  "next_after": null
+}
+```
+
+Если есть следующая страница, `next_after` содержит `sequence` последней строки текущей страницы; следующий запрос передаёт это значение в `after`. Невалидные `after`, `limit` или слишком длинный `q` возвращают `400`.
+
+**curl:**
+```bash
+curl -sS 'http://127.0.0.1:22801/api/v1/jobs/'"$JOB_ID"'/attempts/'"$ATTEMPT_ID"'/logs/page?limit=200&after=0&q=error'
+```
+
+#### GET /api/v1/jobs/{job_id}/logs
+
+Совместимый shortcut: возвращает логи текущей open attempt (`queued`/`running`), а если open attempt нет — последней по `attempt_no`. Для полного retry history используйте endpoint-ы attempts выше.
+
+**curl:**
+```bash
+curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs
+```
+
+#### GET /api/v1/jobs/{job_id}/logs/page
+
+Shortcut для ограниченной страницы логов текущей open attempt или последней attempt. Query/response совпадают с `/attempts/{attempt_id}/logs/page`.
+
+**curl:**
+```bash
+curl -sS 'http://127.0.0.1:22801/api/v1/jobs/'"$JOB_ID"'/logs/page?limit=200&after=0'
+```
+
+#### GET /api/v1/jobs/{job_id}/logs/stream
+
+Возвращает `text/event-stream` для текущей/последней attempt: сначала существующие строки с `sequence > after`, затем новые строки при polling backend. Query param `after` опционален; default `-1`. При terminal status job отправляется event `done`.
+
+**curl:**
+```bash
+curl -N 'http://127.0.0.1:22801/api/v1/jobs/'"$JOB_ID"'/logs/stream?after=0'
+```
+
+#### POST /api/v1/jobs/{job_id}/logs
+
+Добавляет строку лога в текущую open attempt, а если её нет — в последнюю attempt. `sequence` вычисляется сервером внутри attempt под advisory lock, поэтому конкурирующие append-запросы получают монотонные номера.
+
+**Path params:**
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `job_id` | UUID | ID задачи |
+
+**Request body:**
+```json
+{
+  "message": "Build completed successfully"
+}
+```
+
+| Поле | Тип | Required | Описание |
+|---|---|---|---|
+| `message` | string | yes | Текст лога (non-empty, trim) |
+
+**Response 200:**
+```json
+{
+  "id": 3,
+  "job_id": "job-uuid-1",
+  "attempt_id": "attempt-uuid-2",
+  "sequence": 3,
+  "message": "Build completed successfully",
+  "created_at": "2026-08-26T10:06:03Z"
+}
+```
+
+**Errors:**
+- `400` — `message` пустое.
+- `503` — БД недоступна.
+- `500` — ошибка БД.
+
+**curl:**
+```bash
+curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs \
+  -H 'content-type: application/json' \
+  -d '{"message":"Build step completed"}'
+```
+
+#### POST /api/v1/jobs/{job_id}/start
+
+Стартует manual job (`manual = true`) и возвращает:
+
+```json
+{"started": true}
+```
+
+**Errors:** `404` — job не найден; `409` — job не manual или уже стартовал.
+
+---
+
+## DTO Reference
+
+### Project
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `id` | UUID | PK |
+| `name` | string | Уникальное имя |
+| `repository_url` | string | URL репозитория |
+| `default_branch` | string | Ветка по умолчанию |
+| `created_at` | datetime | Время создания (ISO 8601 UTC) |
+
+### Pipeline
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `id` | UUID | PK |
+| `project_id` | UUID | FK → projects |
+| `git_ref` | string | Git-реф |
+| `status` | string | `queued` / `running` / `success` / `failed` / `canceled` |
+| `created_at` | datetime | Время создания |
+| `started_at` | datetime\|null | Время начала |
+| `finished_at` | datetime\|null | Время завершения |
+
+### Stage
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `id` | UUID | PK |
+| `pipeline_id` | UUID | FK → pipelines |
+| `name` | string | Название стадии |
+| `position` | integer | Порядок |
+| `status` | string | Агрегированный статус |
+
+### Job
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `id` | UUID | PK |
+| `stage_id` | UUID | FK → stages |
+| `name` | string | Название задачи |
+| `image` | string | Docker-образ |
+| `command` | string | Команда |
+| `position` | integer | Порядок |
+| `status` | string | Статус |
+| `started_at` | datetime\|null | Время начала |
+| `finished_at` | datetime\|null | Время завершения |
+
+### PipelineDetail
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `pipeline` | Pipeline | Метаданные пайплайна |
+| `stages` | StageDetail[] | Массив стадий с задачами |
+
+### StageDetail
+
+Поля `Stage` (flatten) + `jobs: Job[]`.
+
+### JobLog
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `id` | integer | BIGSERIAL PK |
+| `job_id` | UUID | FK → jobs |
+| `attempt_id` | UUID | FK → execution_attempts |
+| `sequence` | integer | Порядковый номер внутри attempt |
+| `message` | string | Текст лога |
+| `created_at` | datetime | Время записи |
+
+### JobLogPage
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `items` | JobLog[] | Строки страницы в порядке `sequence ASC` |
+| `next_after` | integer\|null | Значение для следующего query `after`; `null`, если следующей страницы нет |
+
+### JobAttempt
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `id` | UUID | PK |
+| `job_id` | UUID | FK → jobs |
+| `attempt_no` | integer | Номер попытки внутри job |
+| `status` | JobStatus | Текущий или terminal status attempt |
+| `trigger` | string | `initial`, `job_retry`, `pipeline_retry`, `runner`, `manual_status`, `compat` |
+| `exit_code` | integer/null | Код процесса embedded runner, если известен |
+| `error_tail` | string/null | Краткая terminal diagnostics |
+| `created_at` / `started_at` / `finished_at` | datetime/null | Timestamps attempt |
+
+---
+
+## CLI
+
+`cicd-cli` — отдельный бинарник, работает через публичный API. Глобальные настройки: `CICD_API_URL`/`--api-url`, `CICD_API_TOKEN`/`--token`, `CICD_TIMEOUT_SECONDS`/`--timeout-seconds`, `CICD_OUTPUT`/`--output json|table`.
+
+```bash
+# Project
+cicd-cli project list
+cicd-cli project list --limit 50 --offset 0
+cicd-cli project create --name "my-service" --repository-url "git@..." --branch main
+
+# Pipeline
+cicd-cli pipeline list --project <uuid> --limit 50 --offset 0
+cicd-cli pipeline run --project <uuid> --git-ref main
+cicd-cli pipeline show --id <uuid>
+
+# Job
+cicd-cli job start --id <uuid>     # POST status=running
+cicd-cli job pass --id <uuid>      # POST status=success
+cicd-cli job fail --id <uuid>      # POST status=failed
+cicd-cli job logs --id <uuid>      # GET logs
+cicd-cli job attempts --id <uuid>  # GET attempts
+cicd-cli job logs --id <uuid> --attempt <attempt-uuid>
+cicd-cli job log --id <uuid> --message "..."  # POST log
+
+# Platform resources
+cicd-cli runner list
+cicd-cli secret list --project <uuid>
+cicd-cli artifact list --job <uuid>
+cicd-cli environment list --project <uuid>
+cicd-cli environment create --project <uuid> --name production --protected --required-approvals 1
+cicd-cli deployment list --environment <uuid>
+cicd-cli deployment approvals --id <deployment-uuid>
+cicd-cli deployment approve --id <deployment-uuid>
+cicd-cli deployment rollback --id <deployment-uuid>
+cicd-cli schedule list --project <uuid>
+cicd-cli webhook list --project <uuid>
+cicd-cli notification events --project <uuid> --limit 50
+cicd-cli outbox list --project <uuid> --limit 50
+cicd-cli report summary --project <uuid>
+cicd-cli audit list
+cicd-cli user list
+cicd-cli member list --project <uuid>
+cicd-cli token list
+```
+
+Полный набор CLI-команд и MVP-ограничения описаны в [CLI](CLI.md).
+
+---
+
+## End-to-end workflow
+
+```bash
+# 1. Create project
+PROJECT=$(curl -sS -X POST http://127.0.0.1:22801/api/v1/projects \
+  -H 'content-type: application/json' \
+  -d '{"name":"my-service","repository_url":"git@github.com:org/my-service.git"}')
+PROJECT_ID=$(printf '%s' "$PROJECT" | jq -r .id)
+
+# 2. Trigger pipeline
+PIPELINE=$(curl -sS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines" \
+  -H 'content-type: application/json' -d '{"git_ref":"main"}')
+
+# 3. Get first job ID
+JOB_ID=$(printf '%s' "$PIPELINE" | jq -r '.stages[0].jobs[0].id')
+
+# 4. Start job
+curl -sS -X POST "http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status" \
+  -H 'content-type: application/json' -d '{"status":"running"}'
+
+# 5. Append log
+curl -sS -X POST "http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs" \
+  -H 'content-type: application/json' -d '{"message":"Starting checkout..."}'
+
+# 6. Complete job
+curl -sS -X POST "http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status" \
+  -H 'content-type: application/json' -d '{"status":"success"}'
+
+# 7. View pipeline status (aggregated)
+curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq -r .pipeline.id)"
+```
+
+---
+
+## Platform endpoints (MVP)
+
+> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, scoped PAT, session-bound access invalidation, refresh cookie + CSRF для browser flow, session-family reuse revocation, route roles и project memberships для project-owned ресурсов. Tenant isolation, service-account tokens и scoped Git credentials ещё target.
+
+### Runners
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/runners` | Список зарегистрированных runner-ов |
+| POST | `/runners` | Ручная инвентарная запись (`name`, `tags[]`); начальный статус offline, heartbeat отсутствует |
+| DELETE | `/runners/{runner_id}` | Удалить runner |
+| POST | `/runners/{runner_id}/heartbeat` | Legacy-маршрут отключён: `410 Gone`; для реального runner-а использовать `/api/v1/runner/heartbeat` |
+
+### Project Secrets
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/secrets` | Метаданные секретов (без значений) |
+| POST | `/projects/{project_id}/secrets` | Создать/обновить секрет (key, value) |
+| DELETE | `/secrets/{secret_id}` | Удалить секрет |
+
+> Секреты шифруются at-rest (AES-256-GCM, `CICD_SECRETS_KEY`). Значения **никогда** не возвращаются через API — только метаданные (id, key, timestamps).
+
+### Project Memberships
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/memberships` | Список участников проекта: user, enabled, role |
+| POST | `/projects/{project_id}/memberships` | Создать/обновить роль участника (`maintainer`, `developer`, `viewer`) |
+| DELETE | `/projects/{project_id}/memberships/{user_id}` | Удалить участника; последнего maintainer удалить нельзя |
+
+> При включённом `CICD_AUTH_SECRET` `admin` видит все проекты; остальные пользователи видят только проекты из `project_memberships`. Эффективный доступ ограничен и глобальной ролью, и project role. Mutation секретов и membership требуют maintainer+.
+
+### Artifacts
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/jobs/{job_id}/artifacts` | Метаданные артефактов задачи |
+| POST | `/jobs/{job_id}/artifacts` | Загрузить артефакт (raw body, `X-Artifact-Name`) |
+| GET | `/artifacts/{artifact_id}/download` | Скачать артефакт |
+
+> Артефакты хранятся в локальной ФС (`CICD_ARTIFACTS_DIR`, default `/var/lib/forge/artifacts`). Лимит — 50 MiB на файл. Метаданные новых uploads содержат `sha256`, `expires_at` и `purged_at`; TTL задаётся `CICD_ARTIFACT_RETENTION_DAYS` (default 30, диапазон `1..3650`). Download перед чтением canonicalize-ит `storage_path` и возвращает `404`, если файл не находится внутри artifact root, истёк или уже очищен retention worker-ом, либо `409`, если bytes не совпадают с сохранённым checksum.
+
+### Environments & Deployments
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/environments` | Список окружений проекта |
+| POST | `/projects/{project_id}/environments` | Создать окружение (name, url, optional `protected`, `required_approvals`) |
+| PATCH | `/environments/{environment_id}` | Обновить окружение |
+| DELETE | `/environments/{environment_id}` | Удалить окружение |
+| GET | `/environments/{environment_id}/deployments` | Список деплоев |
+| POST | `/environments/{environment_id}/deployments` | Создать деплой (`git_ref`: точный SHA защищённого `main`, optional UUID `request_key`) |
+| GET | `/deployments/{deployment_id}/approvals` | Append-only решения по protected deployment |
+| POST | `/deployments/{deployment_id}/approvals` | Записать approval decision (`approved`/`rejected`, optional actor/comment) |
+| POST | `/deployments/{deployment_id}/rollback` | Создать отдельную rollback delivery запись |
+| POST | `/deployments/{deployment_id}/cancel` | Отменить pending/running deployment и связанный pipeline |
+
+`Environment` содержит `protected` и `required_approvals`. Любой новый deployment стартует как `pending`; клиент не может установить terminal status или привязать pipeline. Forge заранее проверяет точный SHA из защищённого `main` Service Pulse. Конфигурация `.forge-deploy.yml` берётся из этого commit; для исторического commit до её появления берётся конфигурация из текущего защищённого `main` и фиксируется вместе с hash в immutable pipeline plan, тогда как код всегда собирается из запрошенного SHA. Для protected environment `POST /deployments/{deployment_id}/approvals` сохраняет immutable decision; после нужного числа approvals запускается отдельный deploy pipeline. Для unprotected environment он запускается сразу. `request_key` идемпотентен внутри environment: повтор тех же параметров возвращает ту же запись, иной SHA или rollback target даёт `409`. Rollback не переписывает исходный deployment, а создаёт новую запись с `rollback_of_id` и optional `request_key`. Статус deployment следует terminal результату связанного deploy pipeline; зелёный push CI не является выпуском.
+
+При обычном push Forge читает только `.forge-ci.yml`, а при явном deployment — только `.forge-deploy.yml`. Последний допускает единственный job с `tags: [deploy]`, командой `service-pulse-deploy`, без `allow_failure`, `manual` и job secrets. Тег `deploy` запрещён в push CI. Выделенный `forge-runner` регистрируется отдельным `CICD_DEPLOY_RUNNER_REGISTRATION_TOKEN`; обычный registration token не может получить этот тег, heartbeat не может изменить его, deploy runner не получает untagged CI jobs. Локальный fixed script и Compose манифест находятся в `deploy/`, вне репозитория Pulse; они проверяют неизменные миграции, собирают образы из SHA с закреплённым Base, ждут API/UI health, сохраняют image ID и восстанавливают предыдущие образы при неуспехе. Тома PostgreSQL не удаляются.
+
+#### POST /api/v1/deployments/{deployment_id}/cancel
+
+Отменяет активный (`pending` или `running`) deployment, включая связанный pipeline. Тело запроса не требуется. Ответ `200` содержит deployment со статусом `failed`; событие audit имеет тип `deployment.canceled`. Для неактивного deployment возвращается `409`, для неизвестного ID -- `404`. Отмена не является откатом работающего приложения: для возврата предыдущего успешного выпуска нужен отдельный rollback.
+
+### Schedules
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/schedules` | Список расписаний |
+| POST | `/projects/{project_id}/schedules` | Создать (cron, git_ref, enabled); ответ содержит `next_fire_at` |
+| PATCH | `/schedules/{schedule_id}` | Обновить и пересчитать `next_fire_at` |
+| DELETE | `/schedules/{schedule_id}` | Удалить |
+
+> Cron — строгая 5-польная UTC-строка (`*/5 * * * *`) с поддержкой `*`, списков, диапазонов, шагов, month/weekday names и стандартной OR-семантики для day-of-month/day-of-week. Scheduler хранит `next_fire_at`, материализует уникальный `schedule_fires` slot и запускает pipeline через idempotency key. Если legacy schedule получает `last_fire_error`, он ждёт явного `PATCH`, который пересчитает `next_fire_at`. IANA timezone, DST/misfire policy и multi-replica lease остаются target.
+
+### Webhooks
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/webhooks` | Список webhook-ов |
+| POST | `/projects/{project_id}/webhooks` | Создать (url, events[], enabled) |
+| DELETE | `/webhooks/{webhook_id}` | Удалить |
+
+> Outgoing webhook delivery реализована для terminal pipeline events через `domain_events`/`outbox_messages`, basic retry/backoff и optional HMAC secret. Bounded delivery history и requeue failed-доставки описаны ниже; production lease/reconciliation и full dead-letter policy остаются target.
+
+### Outbox deliveries
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/outbox-deliveries?limit=&offset=&status=&channel=` | Legacy-массив delivery rows проекта |
+| GET | `/projects/{project_id}/outbox-deliveries/page?limit=&offset=&status=&channel=` | Страница delivery rows с общим количеством |
+| GET | `/outbox-deliveries/{delivery_id}` | Delivery detail + попытки |
+| POST | `/outbox-deliveries/{delivery_id}/requeue` | Явно поставить failed delivery в повтор новой generation |
+
+Оба list endpoint используют `limit` `1..200` (default `50`), `offset >= 0` (default `0`) и stable ordering `created_at DESC, id DESC`. Фильтры allowlisted: `status=pending|retry_scheduled|delivered|failed`, `channel=webhook|notification|sse`. Legacy endpoint сохраняет ответ-массив для обратной совместимости; Dashboard использует `/page`, чтобы показывать точное число совпадений и постраничную навигацию.
+
+**Paged response 200:**
+```json
+{
+  "items": [
+    {
+      "id": "delivery-uuid",
+      "status": "failed",
+      "channel": "webhook",
+      "created_at": "2026-08-31T11:58:00Z"
+    }
+  ],
+  "total": 43,
+  "limit": 20,
+  "offset": 20
+}
+```
+
+**Legacy response 200:**
+```json
+[
+  {
+    "id": "delivery-uuid",
+    "project_id": "project-uuid",
+    "event_id": "event-uuid",
+    "replay_of_id": null,
+    "generation": 0,
+    "subscription_id": "webhook:...",
+    "channel": "webhook",
+    "destination": "https://example.invalid/hook",
+    "event_type": "pipeline.failed",
+    "aggregate_type": "pipeline",
+    "aggregate_id": "pipeline-uuid",
+    "status": "failed",
+    "attempts": 8,
+    "next_attempt_at": "2026-08-31T12:00:00Z",
+    "delivered_at": null,
+    "failed_at": "2026-08-31T12:00:00Z",
+    "last_error": "http status 500",
+    "created_at": "2026-08-31T11:58:00Z"
+  }
+]
+```
+
+`GET /outbox-deliveries/{delivery_id}` возвращает тот же delivery object и attempts в порядке `attempt_number DESC`. Attempts сохраняют номер, timestamps, outcome, optional HTTP status, safe error message и duration. Secret, request headers и response body не возвращаются.
+
+`POST /outbox-deliveries/{delivery_id}/requeue` доступен только для failed delivery (`delivered_at IS NULL`, `failed_at IS NOT NULL`) и требует maintainer-level policy при включённом auth. Backend создаёт новую строку `outbox_messages` с новым `id`, тем же `event_id`/subscription snapshot, `generation + 1`, `replay_of_id = исходный delivery_id` и `next_attempt_at = now()`. Нефейловая delivery возвращает `400`, отсутствующая — `404`.
+
+**Response 200:**
+```json
+{
+  "id": "new-delivery-uuid",
+  "replay_of_id": "failed-delivery-uuid"
+}
+```
+
+### Notifications
+
+### Rules, preferences, templates (stage 4)
+
+- `GET/PUT /api/v1/projects/{project_id}/notification-rules` — правила фильтрации fan-out: `{event_types[], statuses[], channels[], enabled}` (пустой массив = «все»); хотя бы одно правило должно пропустить событие, иначе доставка канала пропускается. Без правил — прежнее поведение (всё фанáутится).
+- `GET/PUT /api/v1/projects/{project_id}/notification-preferences` — per-user предпочтения: `muted_channels[]`, `verbosity` (`all` | `failures_only`); upsert по (user, project).
+- `GET/PUT /api/v1/projects/{project_id}/notification-templates` — каталог шаблонов `{channel, subject_template, body_template, enabled}`; переменные `{{event}} {{pipeline_id}} {{project_id}} {{status}}`, неизвестные плейсхолдеры вырезаются; используется последний обновлённый enabled-шаблон канала (email — subject+body, in_app/sse — body как message), рендеринг чистый → воспроизводим по delivery history.
+- Миграция `0032_notification_rules_templates.sql`
+- Миграция `0033_aggregation_quiet_hours.sql`.
+
+### Aggregation, quiet hours, destination alerts (stage 4 items 3+5)
+
+- `aggregation_window_secs` (0–3600) в notification-config: повторы того же статуса в окне схлопываются в одно pending-сообщение со счётчиком `payload.agg_count` вместо N доставок.
+- Quiet hours per-config: `quiet_start_min`/`quiet_end_min` (минуты от полуночи `0..1439`, оба `-1` = выкл, окно может переходить через полночь), `quiet_action`: `hold` (по умолчанию — доставка откладывается) или `drop` (сообщение отбрасывается при доставке); `quiet_bypass_statuses` (default `['failed']`) — статусы, которые всегда доставляются.
+- Destination alerts: `GET /api/v1/projects/{project_id}/destination-alerts` — открытые/acknowledged алерты по каналам; `POST /api/v1/destination-alerts/{alert_id}/acknowledge` (Developer+). Алерт открывается автоматически при dead-letter (исчерпаны MAX_ATTEMPTS=8), автозакрывается (`resolved`) при следующей успешной доставке того же destination — «muted success не скрывает failed deployment». (таблицы `notification_rules`, `notification_preferences`, `notification_templates`).
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/notifications` | Список каналов уведомлений |
+| PUT | `/projects/{project_id}/notifications` | Предварительно проверить весь массив и атомарно заменить каналы: невалидный элемент даёт 400, при любой ошибке прежняя конфигурация сохраняется |
+| GET | `/projects/{project_id}/notification-events?limit=` | Последние local notification events проекта |
+| GET | `/projects/{project_id}/notifications/stream` | SSE stream новых local notification events |
+
+`in_app` и `sse` каналы — локальные: terminal pipeline events создают durable записи в `outbox_messages`, worker помечает их delivered локально, а Dashboard читает историю через `notification-events`. `limit` принимает `1..200`, default `50`.
+
+`email` канал — SMTP-доставка (lettre, STARTTLS/credentials через `CICD_SMTP_*`; при `CICD_SMTP_ENABLED=false` письма не отправляются, но сообщение помечается delivered — dev/staging режим).
+
+`slack_webhook` и `generic_webhook` каналы (AUTOMATION_ARCHITECTURE §9, этап 4) — внешняя доставка: terminal pipeline events фанаутятся в те же `outbox_messages` (channel `webhook`), доставляются общим delivery subsystem (retry/backoff/dead-letter ledger, `X-Forge-Signature` не подписывается — Slack/generic endpoints не имеют секрета). `slack_webhook` получает Slack incoming-webhook контракт (`{"text": ...}`), `generic_webhook` — сырой envelope события (`event/project_id/pipeline_id/status`). Target обязан быть `https://`-URL; неизвестные каналы отклоняются 400 (fail-closed). Telegram adapter, rules/preferences/templates и quiet hours остаются target.
+
+### Reports
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/reports/summary` | Агрегаты: total/successful/failed, success_rate, avg_duration |
+
+### Audit Log
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/audit-log` | Legacy-массив последних 200 событий аудита |
+| GET | `/audit-log/page` | Полный журнал с серверной пагинацией, поиском и action-фильтром |
+
+`GET /audit-log/page` сортирует события стабильно по `created_at DESC, id DESC`.
+`action` сравнивается точно, а `q` выполняет case-insensitive literal substring
+search по raw-полям `action`, `resource_type`, `actor` и `resource_id`. Символы
+`%`, `_` и `\` в `q` не являются SQL wildcard. Endpoint требует maintainer role
+в текущей route-policy, как и legacy endpoint.
+
+| Параметр | Тип | Default | Ограничение |
+|---|---|---:|---|
+| `limit` | integer | `20` | `1..200` |
+| `offset` | integer | `0` | `0..2147483647` |
+| `action` | string | — | точное значение, не более 128 символов |
+| `q` | string | — | literal substring, не более 128 символов |
+
+**Response 200:**
+```json
+{
+  "items": [
+    {
+      "id": 2401,
+      "action": "auth.login_failed",
+      "resource_type": "user",
+      "resource_id": "550e8400-e29b-41d4-a716-446655440000",
+      "actor": "alice@example.com",
+      "created_at": "2026-09-22T18:00:00Z"
+    }
+  ],
+  "total": 2417,
+  "limit": 20,
+  "offset": 20,
+  "actions": ["auth.login_failed", "auth.login_success"]
+}
+```
+
+`actions` содержит отсортированный набор действий всего журнала и не зависит от
+текущей страницы или фильтров. `400` возвращается для невалидных границ или
+слишком длинных `action`/`q`. Legacy `/audit-log` намеренно сохранён без
+изменения response shape для CLI и внешних клиентов.
+
+### Users & Roles
+
+При настроенном `CICD_AUTH__CENTRAL_JWKS_URI` `/users` возвращает активный
+центральный каталог, а `POST /users` и `PATCH /users/{user_id}` возвращают
+`403`. Локальные профили создаются по immutable `sub`; все активные люди имеют
+одинаковые пользовательские права, а исторические роли сохраняются только для
+legacy-режима. Управление учётками выполняется в Admin Panel.
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/users` | Список пользователей |
+| POST | `/users` | Создать (username, role: admin/maintainer/developer/viewer, enabled, `password?`) |
+| PATCH | `/users/{user_id}` | Обновить username/role/enabled и при необходимости заменить `password` |
+
+> Users, `user_credentials` и sessions используются текущим auth middleware при `CICD_AUTH_SECRET`; глобальная роль задаёт верхнюю границу, project membership задаёт доступ к конкретному проекту.
+
+**Create/update request:**
+```json
+{
+  "username": "alice",
+  "role": "developer",
+  "enabled": true,
+  "password": "change-me"
+}
+```
+
+`password` опционален в trusted-network режиме, но нужен для интерактивного входа через `/login` при включённом `CICD_AUTH_SECRET`. API никогда не возвращает password hash или plaintext.
+
+### API Tokens
+
+В центральном режиме эти legacy endpoints возвращают `403`: личные токены
+`sdlc_pat_...` выпускает Central Auth для scopes `ci-cd:read/write`, показывает
+секрет один раз и проверяет срок/отзыв при каждом запросе. Service-account и
+runner credentials не являются пользовательскими токенами и остаются рабочими.
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/api-tokens` | Список активных токенов (hint only) |
+| POST | `/api-tokens` | Создать scoped PAT (`name`, `project_id`, `scopes`, `expires_in_days`, `user_id?`) → возвращает `value` один раз |
+| DELETE | `/api-tokens/{token_id}` | Отозвать токен (`revoked_at`) |
+
+### Service Accounts
+
+Machine principals для автоматизации (AUTHORIZATION target-step; tenant-модель — отдельный инкремент).
+
+| Метод | Путь | Роль | Назначение |
+|---|---|---|---|
+| GET | `/admin/service-accounts` | admin | Список service accounts |
+| POST | `/admin/service-accounts` | admin | Создать (`name` 1–64 уникальный, `description?`) → 201 |
+| PATCH | `/admin/service-accounts/{account_id}` | admin | Изменить `description`/`enabled` |
+| POST | `/admin/service-accounts/{account_id}/tokens` | admin | Выпустить `forge_sat_…` токен (`name`, `project_id?`, `scopes`, `expires_in_days?`) → 201, `token` показывается один раз |
+
+Токены service account: формат `forge_sat_<random>` (≥256 бит), SHA-256 hash at rest, `principal_type='service_account'`, `user_id=NULL`. Аутентификация Bearer `forge_sat_…`; principal действует как developer-class субъект, ограниченный скопами токена (`api:read`/`api:write`/`git:read`/`git:write`) и `project_id`. Project-scoped токен видит только связанный проект и его ресурсы; токен без `project_id` не получает доступ к проектам. Admin-only маршруты недоступны. `enabled=false` аккаунта мгновенно блокирует его токены.
+
+### Tenants
+
+Первый шаг tenant-модели (AUTHORIZATION): `tenants` + `tenant_memberships`, `projects.tenant_id` (nullable, backfill-фаза). Глобальный `UNIQUE(name)` проектов сохраняется до завершения backfill.
+
+| Метод | Путь | Роль | Назначение |
+|---|---|---|---|
+| GET | `/admin/tenants` | admin | Список tenants |
+| POST | `/admin/tenants` | admin | Создать (`slug` 1–64 `[a-z0-9-]` уникальный, `display_name` 1–200) → 201 |
+| GET | `/admin/tenants/{tenant_id}` | admin | Получить tenant |
+| POST | `/admin/tenants/{tenant_id}/memberships` | admin | Добавить/обновить membership (`user_id`, `role`: `owner`/`member`) |
+| DELETE | `/admin/tenants/{tenant_id}/memberships/{user_id}` | admin | Удалить membership |
+
+`POST /api/v1/projects` принимает опциональный `tenant_id` (tenant должен быть `active`). Активное membership в tenant даёт read-видимость проектов tenant в `GET /api/v1/projects` (bounded шаг target-модели); `status='suspended'` скрывает проекты tenant из списков.
+
+### Auth Principal
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/auth/principal` | Интроспекция текущего Bearer-субъекта: `principal_type` (`user`/`service_account`), `sub`, scopes, для SAT — имя аккаунта |
+
+**Create request (auth-mode):**
+```json
+{
+  "name": "deploy-bot",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "scopes": ["api:read", "api:write", "git:read"],
+  "expires_in_days": 30
+}
+```
+
+`project_id` обязателен при непустом `CICD_AUTH_SECRET`; без auth-mode он может быть опущен только для legacy/trusted-network сценариев. Поддерживаемые scopes: `api:read`, `api:write`, `git:read`, `git:write`. Если scopes не переданы, создаётся project-scoped read/write PAT для API и Git. `expires_in_days` принимает `1..365`; в auth-mode default — 30 дней.
+
+**Response 200:**
+```json
+{
+  "id": "token-uuid",
+  "name": "deploy-bot",
+  "token_hint": "cicd_xxxx...yyyy",
+  "user_id": "user-uuid",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "scopes": ["api:read", "api:write", "git:read"],
+  "expires_at": "2026-09-30T10:00:00Z",
+  "revoked_at": null,
+  "created_at": "2026-08-31T10:00:00Z",
+  "last_used_at": null,
+  "value": "cicd_..."
+}
+```
+
+Токены хранятся как SHA-256 хэш. Полное значение возвращается только при создании; списки показывают hint, project binding, scopes, expiry и last-used. Bearer PAT проверяется только при включённом `CICD_AUTH_SECRET`: `api:*` scopes ограничивают REST методы, `git:*` scopes ограничивают Smart HTTP, `project_id` ограничивает project-owned API и name-based repo API. Pepper/HMAC storage, revoke reason, service-account tokens и rotation policy остаются target.
+
+## Дополнительные реализованные endpoint-ы
+
+### Pipeline и job actions
+
+| Метод | Путь | Body | Результат |
+|---|---|---|---|
+| POST | `/pipelines/{pipeline_id}/cancel` | — | Каскадно отменяет нетерминальные stages/jobs, закрывает открытые execution attempts как `canceled` и возвращает `{"canceled":"<uuid>"}` |
+| POST | `/pipelines/{pipeline_id}/retry` | — | Сбрасывает failed/canceled pipeline в queued, создаёт новые attempts для affected jobs и возвращает `{"retried":"<uuid>"}` |
+| POST | `/jobs/{job_id}/retry` | — | Сбрасывает terminal job в queued и создаёт новую `execution_attempt` без удаления старых логов |
+| POST | `/jobs/{job_id}/start` | — | Стартует manual job и возвращает `{"started":true}` |
+
+История попыток хранится в `execution_attempts`. Логическая запись `jobs` остаётся текущей проекцией для pipeline/stage aggregation, а terminal evidence каждой попытки читается через `/jobs/{job_id}/attempts` и `/jobs/{job_id}/attempts/{attempt_id}/logs`; для длинных логов UI/API используют bounded `/logs/page`.
+
+Ошибки: `404` — ресурс не найден; `400/409` — недопустимая операция/состояние; `503` — БД недоступна.
+
+### Runner registry
+
+| Метод | Путь | Body / результат |
+|---|---|---|
+| GET | `/runners` | Список `{id,name,tags,status,last_seen_at,created_at}` |
+| POST | `/runners` | `{name, tags?}` → инвентарная запись со `status=offline`, `last_seen_at=null` до первого heartbeat |
+| POST | `/runners/{runner_id}/heartbeat` | Всегда `410 Gone`; больше не позволяет вручную выставить online |
+| DELETE | `/runners/{runner_id}` | Удаляет registry-запись |
+
+Legacy registry остаётся operator inventory и совместимым CRUD-слоем. Ручное создание записи не запускает и не подключает процесс runner-а. Legacy heartbeat намеренно отключён: он не проверял identity runner-а. Выполнение внешней работы и heartbeat идут через отдельный credential-authenticated runner protocol ниже.
+
+### Runner protocol MVP
+
+Runner protocol обслуживается на `/api/v1/runner/*` и не использует user JWT/PAT. `POST /api/v1/runner/register` принимает `registrationToken`, который должен совпадать с `CICD_RUNNER_REGISTRATION_TOKEN`; пустая переменная отключает регистрацию. После register сервер возвращает bearer `credential` только один раз и хранит SHA-256 hash + hint. Остальные запросы требуют `Authorization: Bearer <runner-credential>`.
+
+| Метод | Путь | Body / результат |
+|---|---|---|
+| POST | `/api/v1/runner/register` | `{protocolVersion,registrationToken,name,tags?,capabilities?}` → `{protocolVersion,runnerId,credential,credentialExpiresAt,heartbeatIntervalSeconds,pollWaitMaxSeconds}` |
+| POST | `/api/v1/runner/heartbeat` | `{protocolVersion,status,draining,capacity,tags?,capabilities?,activeLeaseIds?}` → `204`; обновляет `last_seen_at`, capacity, capabilities и heartbeat snapshot; если `tags` переданы, заменяет stored tags, если нет — сохраняет текущие; optional `capabilities.executorKinds` валидируется как список executor names; stale online runner без unexpired active lease переводится maintenance loop-ом в `offline` после 120s |
+| POST | `/api/v1/runner/work:poll` | `{protocolVersion,capacity,waitSeconds?,tags?,capabilityDigest?}` → `204` если совместимой работы нет или она временно недоступна из-за конкуренции claim, либо `200 LeaseOffer`; `waitSeconds` optional `0..30`, `0` сохраняет immediate poll, `>0` включает bounded long-poll |
+| POST | `/api/v1/runner/leases/{lease_id}/ack` | `{protocolVersion,leaseToken,fencingToken}` → `{protocolVersion,leaseExpiresAt,renewAfter,cancelRequested}` |
+| POST | `/api/v1/runner/leases/{lease_id}/renew` | `{protocolVersion,leaseToken,fencingToken}` → продлевает active lease и возвращает `{protocolVersion,leaseExpiresAt,renewAfter,cancelRequested}` |
+| GET | `/api/v1/runner/leases/{lease_id}/control` | headers `X-Runner-Protocol-Version`, `X-Lease-Token`, `X-Fencing-Token` → `{protocolVersion,leaseExpiresAt,renewAfter,cancelRequested}` без продления lease |
+| POST | `/api/v1/runner/leases/{lease_id}/secrets:resolve` | `{protocolVersion,leaseToken,fencingToken,secretNames}` → `{protocolVersion,expiresAt,items:[{name,injection,value}]}` только после ack и только для declared job secrets |
+| POST | `/api/v1/runner/leases/{lease_id}/artifacts` | raw body + headers `X-Runner-Protocol-Version`, `X-Lease-Token`, `X-Fencing-Token`, `X-Attempt-Id`, `X-Artifact-Path`, `X-Artifact-Name` → `Artifact`; только после ack, только для owned active lease и только для declared artifact path |
+| POST | `/api/v1/runner/leases/{lease_id}/artifact-sessions:begin` | runner Bearer credential + JSON `{protocolVersion, leaseToken, fencingToken, attemptId, artifactPath, artifactName, contentType?, declaredSize}` → resumable session `{sessionId, receivedBytes, highestChunk}`; idempotent per open `(attempt, artifactPath)` |
+| POST | `/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/chunks` | runner Bearer credential + `X-Runner-Protocol-Version`, `X-Lease-Token`, `X-Fencing-Token`, `X-Attempt-Id`, `X-Chunk-Index`, `X-Chunk-Sha256` and raw body (≤8 MiB) → `{receivedBytes, highestChunk}`; strictly sequential high-water, replay or skip → 409, sha mismatch → 400 |
+| POST | `/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/complete` | runner Bearer credential + JSON `{protocolVersion, leaseToken, fencingToken, attemptId, artifactSha256?}` → assembled `Artifact`; verifies declared byte count and optional whole-file sha256 |
+| POST | `/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/abort` | runner Bearer credential + JSON `{protocolVersion, leaseToken, fencingToken, attemptId}`; validates the active acknowledged lease before marking the open session aborted |
+| POST | `/api/v1/runner/leases/{lease_id}/logs` | `{protocolVersion,leaseToken,fencingToken,attemptId,lines:[{stream,message}]}` → append stdout/stderr/system строк в attempt-owned `job_logs` |
+| POST | `/api/v1/runner/leases/{lease_id}/complete` | `{protocolVersion,leaseToken,fencingToken,attemptId,outcome,finishedAt,exitCode?,diagnostic?}` → terminal result job/attempt/lease |
+
+`work:poll` атомарно выбирает compatible queued `job_queue` row через `SKIP LOCKED`, проверяя `job_queue.required_tags ⊆ runner.tags`; текущий executor offer равен `shell`, поэтому runner с явным `capabilities.executorKinds` должен включать `shell`, а отсутствие `executorKinds` остаётся legacy-compatible. Проектная квота проверяется в сериализуемой PostgreSQL-транзакции; конфликт `40001` повторяется до восьми раз с новым lease token, а затем возвращается `204` без выдачи работы сверх квоты, чтобы runner продолжил polling. Если immediate claim пустой и `waitSeconds > 0`, сервер ждёт wakeup после committed enqueue/разблокировки следующей стадии через process-local signal и PostgreSQL `LISTEN/NOTIFY` channel `runner_work_available`, затем повторяет claim до истечения бюджета. Затем сервер создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит queue row/job/attempt в `leased`/`running` и возвращает `fencingToken = job_leases.generation`. Если lease не acknowledged до `ackDeadline`, reconciler закрывает её как expired delivery, очищает `lease_id`/`leased_at` и возвращает тот же queue row/job/attempt в `queued`, чтобы следующий poll получил новую generation. `ack`, `renew`, `control`, `secrets:resolve`, artifact upload, `logs` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`. `control` не продлевает lease и отдаёт durable `cancelRequested`, который user cancel выставляет через `job_leases.cancel_requested_at` для external leases. `secrets:resolve` дополнительно требует acknowledged lease и возвращает только requested names из `jobs.required_secrets`; лишние имена получают `403`. Artifact upload также требует acknowledged lease, matching `attemptId`, body 1 byte..50 MiB, безопасный `X-Artifact-Name` и `X-Artifact-Path`, входящий в `jobs.artifact_paths`.
+
+`LeaseOffer.attempt.workspace.checkoutUrl` содержит `projects.repository_url`, чтобы внешний `forge-runner` мог выполнить checkout без доступа к БД. `LeaseOffer.attempt.artifacts` содержит только declared relative file paths. Current `forge-runner` — отдельный shell-runner process: он умеет register/heartbeat/poll/ack/scoped secrets resolve/renew/control/artifact upload/logs/complete, checkout по `checkoutUrl`, запуск команд в workspace, передачу declared secrets в env, active-lease heartbeat во время выполнения, polling cancel signal во время команды, отправку stdout/stderr в `job_logs` с best-effort masking, загрузку declared artifact files и terminal completion.
+
+Ограничения MVP: long-poll wakeup уже работает как process-local fast path + PostgreSQL `LISTEN/NOTIFY` для нескольких API-процессов, но это не broker/fairness policy; idempotent chunked log upload, pool/protected-tag policy, advanced capability matching, Kubernetes isolation, full secret rotation/redaction policy и production runner-zone boundary остаются target. Durable `job_queue`, bounded long-poll, ack-timeout requeue, basic tag + current `shell` executor matching, lease-scoped secret delivery, resumable artifact sessions (begin/chunk/complete/abort), active runner heartbeat, project dispatch cap и stale-runner offline reconciliation уже есть как базовый dispatch ledger/execution boundary; Docker job execution ограничен seccomp/resource-class policy. Целевая production runner policy описана в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
+
+### Secrets и artifacts
+
+| Метод | Путь | Body / результат |
+|---|---|---|
+| GET/POST | `/projects/{project_id}/secrets` | Метаданные / `{key,value}`; значение никогда не возвращается |
+| DELETE | `/secrets/{secret_id}` | Удаляет секрет |
+| GET/POST | `/jobs/{job_id}/artifacts` | Метаданные с `sha256`, `expires_at`, `purged_at` / raw body с `X-Artifact-Name` |
+| GET | `/artifacts/{artifact_id}/download` | Файл с сохранённым content type/name, expiry/purge gate и checksum check |
+
+### Git repositories и Smart HTTP
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET/POST | `/repositories` | Список / создание bare repository (`{name}`) |
+| DELETE | `/repositories/{name}` | Удаление repository и bare storage |
+| GET | `/repos/{repo}/refs?limit=&offset=&search=&kind=` | Refs с `name`, `kind` (`branch`, `tag`, `other`), SHA и target; optional bounded page/search/kind filter |
+| GET | `/repos/{repo}/commits?branch=&limit=&offset=` | Commit history; default limit 50, maximum 200; offset defaults to 0 |
+| GET | `/repos/{repo}/compare?from=&to=` | Merge-base для базового `from` и сравниваемого `to`, полные file stats (`status`, `additions`, `deletions`, `binary`) и unified patch от merge-base к `to`; patch ограничен 512 КиБ, усечение отмечает `patch_truncated` |
+| GET | `/repos/{repo}/pulls` | Legacy-список всех pull requests; сохранён для обратной совместимости |
+| POST | `/repos/{repo}/pulls` | Создание pull request |
+| GET | `/repos/{repo}/pulls/page?limit=&offset=&status=&search=` | Основной постраничный каталог; `status` принимает `open`, `closed`, `merged`, поиск охватывает номер, заголовок, ветки и автора |
+| GET | `/repos/{repo}/pulls/{number}` | Один pull request по номеру |
+| POST | `/repos/{repo}/pulls/{number}/action` | `{action:"merge"|"close"|"reopen"}` |
+| GET | `/git/{repo}/info/refs?service=git-upload-pack` | Git Smart HTTP discovery |
+| POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
+| POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |
+
+Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с `project_memberships`: `viewer+` для read, `developer+` для write; PAT также требует `git:read`/`git:write` и проходит только в своём `project_id`. Связанный проект определяется по `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`. Smart HTTP отвергает прямой push и удаление ref из `protected_branches` до `git receive-pack`; обновление такой ветки проходит только через PR merge с зелёным pipeline на актуальном head SHA. Полный lifecycle — `docs/GIT_HOSTING.md`.
+
+`GET /repos/{repo}/pulls/page` использует `limit=20` и `offset=0` по умолчанию;
+`limit` должен находиться в диапазоне `1..100`. Пустые `status` и `search`
+игнорируются, поиск ограничен 200 символами и не зависит от регистра. Ответ
+содержит `items`, `total`, фактические `limit` и `offset`, поэтому UI не должен
+загружать весь каталог для локальной пагинации.
+
+### Internal Git hook
+
+`POST /api/v1/internal/git-push` вызывается generated `post-receive` hook. Заголовок `X-Internal-Token` обязан совпадать с `CICD_GIT_INTERNAL_TOKEN`, когда токен сконфигурирован.
+
+```json
+{
+  "repository": "my-service",
+  "ref_name": "refs/heads/main",
+  "old_rev": "0000000000000000000000000000000000000000",
+  "new_rev": "0123456789abcdef0123456789abcdef01234567"
+}
+```
+
+`old_rev`/`new_rev` необязательны для совместимости со старыми hook, но новый hook всегда отправляет их. Когда `new_rev` похож на Git object id, backend создаёт стабильный idempotency key по `repository/ref_name/new_rev`; повтор того же события возвращает существующий pipeline и `"replayed": true`. Удаление ref (`new_rev` из нулей) не запускает pipeline.
+
+Ответ: `{"triggered":true,"pipeline_id":"...","replayed":false}` либо `{"triggered":false,"pipeline_id":null}`, если project с данным local Git URL не найден или ref удалён. Ошибочная hook-доставка не откатывает Git push.
+
+## Полный route inventory
+
+Этот список синхронизирован с Axum route definitions в `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/git_host.rs` и `backend/src/pulls.rs`. Он нужен как машинно проверяемая карта: `python3 scripts/verify_docs.py --api-doc-routes` падает, если backend route не упомянут в этом документе.
+
+| Route | Группа |
+|---|---|
+| `/api/v1/api-tokens` | Auth / tokens |
+| `/api/v1/api-tokens/{token_id}` | Auth / tokens |
+| `/api/v1/admin/tenants` | Tenants |
+| `/api/v1/admin/tenants/{tenant_id}` | Tenants |
+| `/api/v1/admin/tenants/{tenant_id}/memberships` | Tenants |
+| `/api/v1/admin/tenants/{tenant_id}/memberships/{user_id}` | Tenants |
+| `/api/v1/admin/service-accounts` | Service accounts |
+| `/api/v1/admin/service-accounts/{account_id}` | Service accounts |
+| `/api/v1/admin/service-accounts/{account_id}/tokens` | Service accounts |
+| `/api/v1/auth/principal` | Auth |
+| `/api/v1/artifacts/{artifact_id}/download` | Artifacts |
+| `/api/v1/audit-log` | Audit |
+| `/api/v1/audit-log/page` | Audit |
+| `/api/v1/auth/login` | Auth |
+| `/api/v1/auth/refresh` | Auth |
+| `/api/v1/auth/logout` | Auth |
+| `/api/v1/deployments/{deployment_id}/approvals` | Environments |
+| `/api/v1/deployments/{deployment_id}/rollback` | Environments |
+| `/api/v1/environments/{environment_id}` | Environments |
+| `/api/v1/environments/{environment_id}/deployments` | Environments |
+| `/api/v1/health` | Health |
+| `/api/v1/readiness` | Health |
+| `/api/v1/internal/git-push` | Git hooks |
+| `/api/v1/jobs/{job_id}/artifacts` | Artifacts |
+| `/api/v1/jobs/{job_id}/attempts` | Jobs |
+| `/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs` | Jobs |
+| `/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page` | Jobs |
+| `/api/v1/jobs/{job_id}/logs` | Jobs |
+| `/api/v1/jobs/{job_id}/logs/page` | Jobs |
+| `/api/v1/jobs/{job_id}/logs/stream` | Jobs |
+| `/api/v1/jobs/{job_id}/retry` | Jobs |
+| `/api/v1/jobs/{job_id}/start` | Jobs |
+| `/api/v1/jobs/{job_id}/status` | Jobs |
+| `/api/v1/jobs/{job_id}/test-report` | Jobs |
+| `/api/v1/openapi.json` | Health |
+| `/api/v1/outbox-deliveries/{delivery_id}` | Outbox |
+| `/api/v1/outbox-deliveries/{delivery_id}/requeue` | Outbox |
+| `/api/v1/pipelines/{pipeline_id}` | Pipelines |
+| `/api/v1/pipelines/{pipeline_id}/badge.svg` | Pipelines |
+| `/api/v1/pipelines/{pipeline_id}/cancel` | Pipelines |
+| `/api/v1/pipelines/{pipeline_id}/retry` | Pipelines |
+| `/api/v1/pipelines/{pipeline_id}/variables` | Pipelines |
+| `/api/v1/projects` | Projects |
+| `/api/v1/projects/{project_id}` | Projects |
+| `/api/v1/projects/{project_id}/environments` | Environments |
+| `/api/v1/projects/{project_id}/memberships` | Project memberships |
+| `/api/v1/projects/{project_id}/memberships/{user_id}` | Project memberships |
+| `/api/v1/projects/{project_id}/notification-events` | Notifications |
+| `/api/v1/projects/{project_id}/notifications` | Notifications |
+| `/api/v1/projects/{project_id}/notifications/stream` | Notifications |
+| `/api/v1/projects/{project_id}/outbox-deliveries` | Outbox |
+| `/api/v1/projects/{project_id}/outbox-deliveries/page` | Outbox |
+| `/api/v1/projects/{project_id}/pipelines` | Pipelines |
+| `/api/v1/projects/{project_id}/reports/summary` | Reports |
+| `/api/v1/projects/{project_id}/schedules` | Schedules |
+| `/api/v1/projects/{project_id}/secrets` | Secrets |
+| `/api/v1/projects/{project_id}/webhooks` | Webhooks |
+| `/api/v1/repos/{repo}/blob` | Git repositories |
+| `/api/v1/repos/{repo}/commits` | Git repositories |
+| `/api/v1/repos/{repo}/compare` | Pull requests |
+| `/api/v1/repos/{repo}/pulls` | Pull requests |
+| `/api/v1/repos/{repo}/pulls/page` | Pull requests |
+| `/api/v1/repos/{repo}/pulls/{number}` | Pull requests |
+| `/api/v1/repos/{repo}/pulls/{number}/action` | Pull requests |
+| `/api/v1/repos/{repo}/refs` | Git repositories |
+| `/api/v1/repos/{repo}/releases` | Releases |
+| `/api/v1/repos/{repo}/releases/{tag}` | Releases |
+| `/api/v1/repos/{repo}/tags` | Releases |
+| `/api/v1/repos/{repo}/tree` | Git repositories |
+| `/api/v1/repositories` | Git repositories |
+| `/api/v1/repositories/{name}` | Git repositories |
+| `/api/v1/runner/heartbeat` | Runner protocol |
+| `/api/v1/runner/leases/{lease_id}/ack` | Runner protocol |
+| `/api/v1/runner/leases/{lease_id}/complete` | Runner protocol |
+| `/api/v1/runner/leases/{lease_id}/control` | Runner protocol |
+| `/api/v1/runner/leases/{lease_id}/logs` | Runner protocol |
+| `/api/v1/runner/leases/{lease_id}/renew` | Runner protocol |
+| `/api/v1/runner/register` | Runner protocol |
+| `/api/v1/runner/work:poll` | Runner protocol |
+| `/api/v1/runners` | Runners |
+| `/api/v1/runners/{runner_id}` | Runners |
+| `/api/v1/runners/{runner_id}/heartbeat` | Runners |
+| `/api/v1/schedules/{schedule_id}` | Schedules |
+| `/api/v1/secrets/{secret_id}` | Secrets |
+| `/api/v1/users` | Users |
+| `/api/v1/users/{user_id}` | Users |
+| `/api/v1/webhooks/{webhook_id}` | Webhooks |
+| `/git/{repo}/git-receive-pack` | Git Smart HTTP |
+| `/git/{repo}/git-upload-pack` | Git Smart HTTP |
+| `/git/{repo}/info/refs` | Git Smart HTTP |
+| `/metrics` | Metrics |
+
+## References
+
+- `docs/ARCHITECTURE.md` — архитектура приложения.
+- `docs/DATA_MODEL.md` — схема БД.
+- `docs/GIT_HOSTING.md` — Smart HTTP и hooks.
+- `docs/PULL_REQUESTS.md` — compare и pull requests.
+- `docs/RUNNER_ARCHITECTURE.md` — current runner protocol MVP и target production runner boundary.
+- `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/runner_protocol.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs` — реализация endpoint-ов.
+- `backend/domain/src/lib.rs` — правила переходов статусов.
+- `docs/TESTING.md` — curl-проверки.
+
+## Межсервисная диагностика
+
+См. [межсервисные события CI/CD](PLATFORM_MESSAGING.md): terminal/cancel/retry transaction, SDK publisher, private credentials, диагностика и disposable product smoke.
+
+## Шина: хранение и восстановление (2026-10-03)
+
+Общий профиль SDK: stream/published/feed 90 суток; failed/terminal inbox/quarantine
+180 суток. Pending сохраняется. Cleanup/progress/state принадлежат своей БД.
+Новые миграции: CI/CD `0039`, Admin `0008`; существующие версии не меняются.
+Operator replay не сбрасывает inbox. Additive status/contracts сохраняют старые
+ответы и выделяют неизвестные значения. Подробности: [документация](PLATFORM_MESSAGING.md).

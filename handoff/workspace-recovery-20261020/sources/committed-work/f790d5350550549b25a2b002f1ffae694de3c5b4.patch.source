@@ -1,0 +1,1507 @@
+diff --git a/backend/cli/src/task_git.rs b/backend/cli/src/task_git.rs
+new file mode 100644
+index 0000000..9801115
+--- /dev/null
++++ b/backend/cli/src/task_git.rs
+@@ -0,0 +1,276 @@
++//! One sealed candidate push, or readback only after an unknown outcome. No mint/retry.
++use anyhow::{Context, ensure};
++use serde_json::{Value, json};
++use std::{
++    fs,
++    io::Write,
++    path::{Path, PathBuf},
++    process::Stdio,
++};
++use tokio::process::Command;
++
++fn private_file(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
++    let mut options = fs::OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::OpenOptionsExt;
++        options.mode(0o600);
++    }
++    let mut file = options
++        .open(path)
++        .context("Не удалось создать private Git file")?;
++    file.write_all(contents)?;
++    file.sync_all()?;
++    Ok(())
++}
++
++fn read_private(path: &Path, maximum: u64) -> anyhow::Result<String> {
++    let metadata = fs::symlink_metadata(path).context("Private Git input недоступен")?;
++    ensure!(
++        metadata.is_file() && metadata.len() <= maximum,
++        "Некорректный private Git input"
++    );
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::PermissionsExt;
++        ensure!(
++            metadata.permissions().mode() & 0o077 == 0,
++            "Private Git input доступен другим пользователям"
++        );
++    }
++    fs::read_to_string(path).context("Некорректный private Git input")
++}
++
++fn git() -> Command {
++    let mut git = Command::new("git");
++    // No inherited tracing, config injection, proxies, askpass or bearer environment.
++    git.env_clear();
++    for name in ["PATH", "SystemRoot", "WINDIR", "TMP", "TEMP"] {
++        if let Some(value) = std::env::var_os(name) {
++            git.env(name, value);
++        }
++    }
++    git.env("GIT_CONFIG_NOSYSTEM", "1")
++        .env(
++            "GIT_CONFIG_GLOBAL",
++            if cfg!(windows) { "NUL" } else { "/dev/null" },
++        )
++        .env("GIT_TERMINAL_PROMPT", "0")
++        .env("GIT_NO_REPLACE_OBJECTS", "1")
++        .env("GIT_NO_LAZY_FETCH", "1")
++        .kill_on_drop(true)
++        .stdin(Stdio::null())
++        .stdout(Stdio::piped())
++        .stderr(Stdio::null());
++    git
++}
++
++fn field<'a>(value: &'a Value, key: &str) -> anyhow::Result<&'a str> {
++    value[key].as_str().context("Некорректный Git context")
++}
++
++fn oid(value: &str) -> bool {
++    value.len() == 40
++        && value
++            .bytes()
++            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
++}
++
++fn escaped(value: &str) -> String {
++    value.replace('\\', "\\\\").replace('"', "\\\"")
++}
++
++fn inputs(origin: &str, context: &Value) -> anyhow::Result<(String, String, String, String)> {
++    let mut url = reqwest::Url::parse(origin).context("Некорректный Forge origin")?;
++    ensure!(
++        matches!(url.scheme(), "http" | "https")
++            && url.host_str().is_some()
++            && url.username().is_empty()
++            && url.password().is_none()
++            && url.path() == "/"
++            && url.query().is_none()
++            && url.fragment().is_none(),
++        "Нужен точный Forge origin"
++    );
++    let repository = field(context, "repository")?;
++    let parts: Vec<_> = repository.split('/').collect();
++    ensure!(
++        parts.len() == 2
++            && parts.iter().all(|p| !p.is_empty()
++                && p.len() <= 100
++                && !p.starts_with('.')
++                && !p.contains("..")
++                && !p.ends_with(".git")
++                && p.bytes()
++                    .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))),
++        "Некорректный repository"
++    );
++    let source = &context["source"];
++    let task = uuid::Uuid::parse_str(field(source, "task_id")?)?;
++    ensure!(!task.is_nil(), "Некорректный task");
++    let reference = field(source, "candidate_ref")?;
++    ensure!(
++        reference == format!("refs/heads/sdlc/{task}"),
++        "Некорректный candidate ref"
++    );
++    let old = field(context, "oldOid")?;
++    let new = field(context, "newOid")?;
++    ensure!(
++        oid(old) && oid(new) && new.bytes().any(|c| c != b'0') && old != new,
++        "Некорректный OID CAS"
++    );
++    url.set_path(&format!("/git/{repository}.git"));
++    Ok((url.to_string(), reference.into(), old.into(), new.into()))
++}
++
++pub(crate) async fn run(
++    origin: &str,
++    context_file: PathBuf,
++    token_file: PathBuf,
++    checkout: PathBuf,
++    readback: bool,
++) -> anyhow::Result<Value> {
++    let text = read_private(&context_file, 16_384)?;
++    let context: Value = serde_json::from_str(&text).context("Некорректный Git context")?;
++    let compact = serde_json::to_string(&context)?;
++    ensure!(compact.is_ascii(), "Git context header должен быть ASCII");
++    let (url, reference, old, new) = inputs(origin, &context)?;
++    let token = read_private(&token_file, 128)?;
++    let token = token.trim_end_matches(['\r', '\n']);
++    ensure!(
++        !token.is_empty() && token.bytes().all(|c| c.is_ascii_graphic()),
++        "Нужен private child PAT file"
++    );
++    let temporary = tempfile::tempdir()?;
++    let config = temporary.path().join("private-config");
++    private_file(&config,format!("[http]\n\textraHeader = \"Authorization: Bearer {}\"\n\textraHeader = \"X-Forge-Task-Git-Context: {}\"\n\tfollowRedirects = false\n\tproxy =\n[credential]\n\thelper =\n",escaped(token),escaped(&compact)).as_bytes())?;
++    let bare = temporary.path().join("candidate.git");
++    ensure!(
++        git()
++            .args(["init", "--bare", "--object-format=sha1"])
++            .arg(&bare)
++            .output()
++            .await?
++            .status
++            .success(),
++        "Temporary Git context недоступен"
++    );
++    if !readback {
++        // Only objects are shared; never inherit working repository config, hooks or URL rewrites.
++        let objects = git()
++            .arg("-C")
++            .arg(&checkout)
++            .args([
++                "rev-parse",
++                "--path-format=absolute",
++                "--git-path",
++                "objects",
++            ])
++            .output()
++            .await?;
++        ensure!(objects.status.success(), "Исходные Git objects недоступны");
++        let path = PathBuf::from(String::from_utf8(objects.stdout)?.trim_end_matches(['\r', '\n']))
++            .canonicalize()?;
++        let path = path.to_str().context("Git object path не UTF-8")?;
++        ensure!(!path.contains(['\n', '\r']), "Некорректный Git object path");
++        private_file(
++            &bare.join("objects/info/alternates"),
++            format!("{path}\n").as_bytes(),
++        )?;
++        // Durable single-attempt marker; unknown native outcome never permits automatic resend.
++        let marker = context_file.with_extension("git-push-attempt");
++        private_file(&marker, compact.as_bytes())
++            .context("Push уже отмечен/не может быть записан; только --readback")?;
++    }
++    let mut command = git();
++    command
++        .arg("--git-dir")
++        .arg(&bare)
++        .arg("-c")
++        .arg(format!("include.path={}", config.display()))
++        .arg("-c")
++        .arg(format!(
++            "core.hooksPath={}",
++            temporary.path().join("no-hooks").display()
++        ));
++    if readback {
++        command.args(["ls-remote", "--refs", "--heads", &url, &reference]);
++    } else {
++        // Empty old expectation means absent ref, not all-zero object syntax in force-with-lease.
++        let expected = if old.bytes().all(|c| c == b'0') {
++            ""
++        } else {
++            &old
++        };
++        command
++            .arg("push")
++            .arg("--porcelain")
++            .arg(format!("--force-with-lease={reference}:{expected}"))
++            .arg(&url)
++            .arg(format!("{new}:{reference}"));
++    }
++    let output = tokio::time::timeout(std::time::Duration::from_secs(300), command.output())
++        .await
++        .context("Git transport timeout; STOP, только --readback")?
++        .context("Git transport outcome неизвестен; STOP, только --readback")?;
++    ensure!(
++        output.status.success(),
++        "Git не подтвердил результат; STOP, только --readback без resend/remint"
++    );
++    if readback {
++        let observed = String::from_utf8(output.stdout).context("Некорректный Git readback")?;
++        let expected = format!("{new}\t{reference}\n");
++        Ok(
++            json!({"state":if observed==expected {"candidate_observed"} else {"held"},"business_accepted":false,"deployment_accepted":false}),
++        )
++    } else {
++        Ok(
++            json!({"state":"native_push_reported_success","readback_required":true,"business_accepted":false,"deployment_accepted":false}),
++        )
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn context() -> Value {
++        json!({"repository":"fixture/repo","source":{"task_id":"00000000-0000-0000-0000-000000000001","candidate_ref":"refs/heads/sdlc/00000000-0000-0000-0000-000000000001"},"oldOid":"0".repeat(40),"newOid":"a".repeat(40)})
++    }
++    #[test]
++    fn only_fixed_candidate_and_plain_origin() {
++        let mut c = context();
++        assert!(inputs("https://forge.invalid", &c).is_ok());
++        for url in [
++            "https://user@forge.invalid",
++            "https://forge.invalid/?token=x",
++            "https://forge.invalid/path",
++            "file:///tmp/repo",
++        ] {
++            assert!(inputs(url, &c).is_err());
++        }
++        c["source"]["candidate_ref"] = json!("refs/heads/main");
++        assert!(inputs("https://forge.invalid", &c).is_err());
++    }
++    #[test]
++    fn no_delete_no_replay_oid_no_repository_escape() {
++        let c = context();
++        for (key, value) in [
++            ("newOid", "0".repeat(40)),
++            ("repository", "other/../repo".into()),
++            ("newOid", "HEAD".into()),
++        ] {
++            let mut changed = c.clone();
++            changed[key] = json!(value);
++            assert!(inputs("https://forge.invalid", &changed).is_err());
++        }
++    }
++    #[test]
++    fn durable_attempt_is_create_new_not_overwritten() {
++        let t = tempfile::tempdir().unwrap();
++        let path = t.path().join("attempt");
++        private_file(&path, b"original").unwrap();
++        assert!(private_file(&path, b"changed").is_err());
++        assert_eq!(fs::read(path).unwrap(), b"original");
++    }
++}
+diff --git a/backend/src/task_git.rs b/backend/src/task_git.rs
+new file mode 100644
+index 0000000..7c86599
+--- /dev/null
++++ b/backend/src/task_git.rs
+@@ -0,0 +1,393 @@
++//! Disjoint own-task Git child. No issuer, persistent credential or pipeline trigger.
++use crate::{
++    api::{ApiError, AppState},
++    config::SdlcWorkspaceConfig,
++    delegated_credentials::digest,
++    domain::sdlc_workspace::{TaskWorkspaceIntent, WorkspaceRole},
++};
++use axum::http::{HeaderMap, header};
++use chrono::{DateTime, Utc};
++use pdlc_auth_core::AuthContext;
++use pdlc_shared::resource_context::{NamespaceRef, OwnerCommand};
++use serde::{Deserialize, Serialize};
++use serde_json::{Value, json};
++use sqlx::Row;
++use std::time::Instant;
++use uuid::Uuid;
++
++pub(crate) mod hooks;
++pub const HEADER: &str = "x-forge-task-git-context";
++pub const GRANT_PREFIX: &str = "ci-cd:sdlc:git:v1:";
++
++// Tracker165 wire, not a Forge-authored source selection.
++#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
++#[serde(deny_unknown_fields)]
++pub struct SourceBinding {
++    pub contract_version: u8,
++    pub tracker_instance_id: String,
++    pub project_id: Uuid,
++    pub task_id: Uuid,
++    pub root_task_id: Uuid,
++    pub confirmation_id: Uuid,
++    pub requirement_revision: i64,
++    pub content_hash: String,
++    pub routing_snapshot_id: Uuid,
++    pub namespace: NamespaceRef,
++    pub forge_instance_id: Uuid,
++    pub repository_id: Uuid,
++    pub base_ref: String,
++    pub base_commit: String,
++    pub candidate_ref: String,
++    pub source_revision: i64,
++    pub policy_hash: String,
++    pub source_hash: String,
++    pub owner_subject: String,
++    pub created_at: DateTime<Utc>,
++}
++
++#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct GitContext {
++    pub version: u32,
++    pub project_id: Uuid,
++    pub repository: String,
++    pub source: SourceBinding,
++    pub intent: TaskWorkspaceIntent,
++    pub run_id: Uuid,
++    pub chat_id: Uuid,
++    pub machine_subject: String,
++    pub old_oid: String,
++    pub new_oid: String,
++}
++
++fn hex(value: &str, length: usize) -> bool {
++    value.len() == length
++        && value
++            .bytes()
++            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
++}
++
++impl GitContext {
++    pub fn validate(&self) -> Result<(), ApiError> {
++        self.intent.validate().map_err(ApiError::bad_request)?;
++        let s = &self.source;
++        let b = &self.intent.binding;
++        let mut sealed = serde_json::to_value(s).map_err(|_| ApiError::forbidden())?;
++        sealed
++            .as_object_mut()
++            .ok_or_else(ApiError::forbidden)?
++            .remove("source_hash");
++        let canonical_ref = format!("refs/heads/sdlc/{}", b.task_id);
++        if self.version != 1
++            || s.contract_version != 1
++            || self.intent.role != WorkspaceRole::Developer
++            || [
++                self.project_id,
++                self.run_id,
++                self.chat_id,
++                s.confirmation_id,
++                s.forge_instance_id,
++                s.namespace.registry_instance_id,
++                s.namespace.namespace_id,
++            ]
++            .iter()
++            .any(Uuid::is_nil)
++            || s.tracker_instance_id != b.tracker_instance_id
++            || s.project_id != b.tracker_project_id
++            || s.task_id != b.task_id
++            || s.root_task_id != b.root_task_id
++            || s.repository_id != self.intent.repository_id
++            || s.routing_snapshot_id != b.routing_snapshot_id
++            || s.requirement_revision != b.requirement_revision
++            || s.base_commit != self.intent.source_commit
++            || s.candidate_ref != canonical_ref
++            || s.base_ref == canonical_ref
++            || !s.base_ref.starts_with("refs/heads/")
++            || !(1..=9007199254740991).contains(&s.source_revision)
++            || !hex(&s.policy_hash, 64)
++            || !hex(&s.content_hash, 64)
++            || !hex(&s.source_hash, 64)
++            || digest(&sealed)? != s.source_hash
++            || !hex(&self.old_oid, 40)
++            || !hex(&self.new_oid, 40)
++            || self.new_oid.bytes().all(|b| b == b'0')
++            || self.old_oid == self.new_oid
++            || self.repository.is_empty()
++            || self.repository.len() > 200
++            || self.repository.split('/').count() != 2
++            || self
++                .repository
++                .split('/')
++                .any(|p| crate::git_host::validate_repo_name(p).ok().as_deref() != Some(p))
++            || self.machine_subject.is_empty()
++            || self.machine_subject.len() > 256
++            || self
++                .machine_subject
++                .chars()
++                .any(|c| c.is_whitespace() || c.is_control())
++            || s.owner_subject.is_empty()
++            || self.machine_subject == s.owner_subject
++            || self.machine_subject == self.intent.holder_subject
++        {
++            return Err(ApiError::forbidden());
++        }
++        Ok(())
++    }
++
++    pub fn grant(&self) -> Result<String, ApiError> {
++        self.validate()?;
++        Ok(format!("{GRANT_PREFIX}{}", digest(self)?))
++    }
++
++    fn current(&self, value: &Value) -> Result<std::time::Duration, ApiError> {
++        let source: SourceBinding =
++            serde_json::from_value(value["binding"].clone()).map_err(|_| ApiError::forbidden())?;
++        if value["state"] != "bound" || source != self.source {
++            return Err(ApiError::forbidden());
++        }
++        let current = &value["current"];
++        if current["receipt"]["task"]["owner_subject"] != self.source.owner_subject
++            || current["receipt"]["binding"]["run_id"] != json!(self.run_id)
++            || current["receipt"]["binding"]["chat_id"] != json!(self.chat_id)
++            || current["receipt"]["binding"]["machine_subject"] != self.machine_subject
++        {
++            return Err(ApiError::forbidden());
++        }
++        crate::api::sdlc_workspace::task_pipeline::current(current, &self.intent)
++            .map_err(|_| ApiError::conflict("Текущий Developer assignment/lease изменился"))
++    }
++}
++
++/// Pure input to Base's EXISTING delegate API. No root is accepted or minted here.
++/// Owner must configure the exact subject/service prefix policy and existing root service scopes.
++fn delegation_request(context: &GitContext, key: &str, ttl: u32) -> Result<Value, ApiError> {
++    if !(1..=1800).contains(&ttl)
++        || key.is_empty()
++        || key.len() > 128
++        || !key
++            .bytes()
++            .all(|c| c.is_ascii_alphanumeric() || b"-_.:".contains(&c))
++    {
++        return Err(ApiError::bad_request("Неверный delegation key/TTL"));
++    }
++    Ok(json!({"service":"ci-cd","label":"own-task Git child",
++        "scopes":["ci-cd:read","ci-cd:write",context.grant()?],
++        "idempotency_key":key,"expires_in_seconds":ttl}))
++}
++
++fn identity(
++    ctx: &AuthContext,
++    config: &SdlcWorkspaceConfig,
++    context: &GitContext,
++) -> Result<(), ApiError> {
++    let subject = Uuid::parse_str(&ctx.user_id).map_err(|_| ApiError::forbidden())?;
++    let grant = context.grant()?;
++    if subject.is_nil()
++        || subject.to_string() != ctx.user_id
++        || config.delegated_subject != Some(subject)
++        || config.operation_subject == Some(subject)
++        || crate::namespace::registered_machine(&ctx.user_id)
++        || ctx.session_id.is_some()
++        || ctx.role.is_some()
++        || !pdlc_auth_core::is_personal_token(&ctx.token)
++        || ctx.token.len() > 128
++        || ctx.token.chars().any(char::is_whitespace)
++        || ctx.scopes.len() != 3
++        || !ctx.scopes.contains("ci-cd:read")
++        || !ctx.scopes.contains("ci-cd:write")
++        || !ctx.scopes.contains(grant.as_str())
++    {
++        return Err(ApiError::forbidden());
++    }
++    Ok(())
++}
++
++// Private in-memory request custody. Deliberately no Debug/Serialize.
++pub(crate) struct Authorization {
++    pub context: GitContext,
++    pub token: String,
++}
++
++fn one_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, ApiError> {
++    let values: Vec<_> = headers.get_all(name).iter().collect();
++    match values.as_slice() {
++        [v] => v.to_str().map_err(|_| ApiError::forbidden()),
++        _ => Err(ApiError::forbidden()),
++    }
++}
++
++fn repository_matches(raw: &str, expected: &str) -> bool {
++    raw == expected || raw.strip_suffix(".git") == Some(expected)
++}
++
++pub(crate) async fn admit(
++    state: &AppState,
++    repository: &str,
++    headers: &HeaderMap,
++) -> Result<Option<Authorization>, ApiError> {
++    if !headers.contains_key(HEADER) {
++        return Ok(None);
++    }
++    let text = one_header(headers, HEADER)?;
++    if text.len() > 16_384 {
++        return Err(ApiError::forbidden());
++    }
++    let context: GitContext = serde_json::from_str(text).map_err(|_| ApiError::forbidden())?;
++    if !repository_matches(repository, &context.repository) {
++        return Err(ApiError::forbidden());
++    }
++    let token = one_header(headers, header::AUTHORIZATION.as_str())?
++        .strip_prefix("Bearer ")
++        .ok_or_else(ApiError::forbidden)?
++        .to_owned();
++    verify(state, &context, &token).await?;
++    Ok(Some(Authorization { context, token }))
++}
++
++async fn verify(state: &AppState, context: &GitContext, token: &str) -> Result<(), ApiError> {
++    context.validate()?;
++    let (ctx, child_until) = crate::central_auth::try_central_child(token)
++        .await?
++        .ok_or_else(ApiError::forbidden)?;
++    identity(&ctx, &state.config.sdlc_workspace, context)?;
++    let until = verify_context(state, context).await?;
++    if Instant::now() >= until.min(child_until) {
++        return Err(ApiError::forbidden());
++    }
++    Ok(())
++}
++
++/// Server-only caller supplies its current assignment/run and proposed exact OID CAS.
++/// Fresh registered source readback MUST succeed before the existing Base issuer is called.
++pub async fn prepare_delegation(
++    state: &AppState,
++    context: &GitContext,
++    key: &str,
++    ttl: u32,
++) -> Result<Value, ApiError> {
++    context.validate()?;
++    let subject = state
++        .config
++        .sdlc_workspace
++        .delegated_subject
++        .ok_or_else(ApiError::forbidden)?;
++    if subject.is_nil()
++        || state.config.sdlc_workspace.operation_subject == Some(subject)
++        || crate::namespace::registered_machine(&subject.to_string())
++    {
++        return Err(ApiError::forbidden());
++    }
++    let until = verify_context(state, context).await?;
++    let request = delegation_request(context, key, ttl)?;
++    if Instant::now() >= until {
++        return Err(ApiError::forbidden());
++    }
++    Ok(request)
++}
++
++async fn verify_context(state: &AppState, context: &GitContext) -> Result<Instant, ApiError> {
++    let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
++    let mut conn = pool.acquire().await.map_err(ApiError::internal)?;
++    if !cicd_infra::sdlc_workspace::task_project_matches(
++        &mut conn,
++        context.project_id,
++        &context.intent,
++    )
++    .await
++    .map_err(ApiError::internal)?
++    {
++        return Err(ApiError::forbidden());
++    }
++    let row = sqlx::query("SELECT r.group_id,g.slug||'/'||r.slug AS public_name,b.command,r.storage_name FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE r.id=$1 AND r.kind='hosted' AND r.ready AND b.state='active'")
++        .bind(context.source.repository_id).fetch_optional(&mut *conn).await.map_err(ApiError::internal)?.ok_or_else(ApiError::forbidden)?;
++    let command: OwnerCommand =
++        serde_json::from_value(row.try_get("command").map_err(ApiError::internal)?)
++            .map_err(|_| ApiError::forbidden())?;
++    crate::namespace::validate_projection(&command)?;
++    if command.namespace != context.source.namespace
++        || command.resource.instance_id != context.source.forge_instance_id
++        || command.resource.resource_id
++            != row
++                .try_get::<Uuid, _>("group_id")
++                .map_err(ApiError::internal)?
++        || command.state != "active"
++        || context.repository
++            != row
++                .try_get::<String, _>("public_name")
++                .map_err(ApiError::internal)?
++    {
++        return Err(ApiError::forbidden());
++    }
++    let storage: String = row.try_get("storage_name").map_err(ApiError::internal)?;
++    let protected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE repository_id=$1 AND ($2='refs/heads/'||default_branch OR $2=ANY(SELECT 'refs/heads/'||unnest(protected_branches))))")
++        .bind(context.source.repository_id).bind(&context.source.candidate_ref).fetch_one(&mut *conn).await.map_err(ApiError::internal)?;
++    if protected {
++        return Err(ApiError::forbidden());
++    }
++    drop(conn);
++    crate::repository_catalog::require_storage_writable(pool, &storage).await?;
++    let (start, value) = crate::task_delivery::tracker::read_source_binding(
++        &state.config.sdlc_workspace,
++        context.source.task_id,
++    )
++    .await?;
++    let until = start + context.current(&value)?;
++    if Instant::now() >= until {
++        return Err(ApiError::forbidden());
++    }
++    Ok(until)
++}
++
++#[derive(Deserialize, Serialize, utoipa::ToSchema)]
++#[serde(deny_unknown_fields)]
++pub struct CandidateCheck {
++    pub task_candidate: GitContext,
++}
++
++#[derive(utoipa::ToSchema)]
++#[serde(untagged)]
++pub enum PushRequest {
++    Candidate(CandidateCheck),
++    Legacy(crate::git_host::GitPushEvent),
++}
++
++impl<'de> Deserialize<'de> for PushRequest {
++    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
++        let value = Value::deserialize(deserializer)?;
++        // A malformed/mixed task variant must NEVER fall through to legacy auto-pipeline.
++        if value.get("task_candidate").is_some() {
++            serde_json::from_value(value)
++                .map(Self::Candidate)
++                .map_err(serde::de::Error::custom)
++        } else {
++            serde_json::from_value(value)
++                .map(Self::Legacy)
++                .map_err(serde::de::Error::custom)
++        }
++    }
++}
++
++pub(crate) async fn check_callback(
++    state: &AppState,
++    headers: &HeaderMap,
++    request: CandidateCheck,
++) -> Result<Value, ApiError> {
++    let internal = state
++        .git
++        .internal_token
++        .as_deref()
++        .filter(|s| !s.trim().is_empty())
++        .ok_or_else(ApiError::forbidden)?;
++    if one_header(headers, "x-internal-token")? != internal {
++        return Err(ApiError::forbidden());
++    }
++    let token = one_header(headers, "authorization")?
++        .strip_prefix("Bearer ")
++        .ok_or_else(ApiError::forbidden)?;
++    verify(state, &request.task_candidate, token).await?;
++    // Verification only. NEVER enter the legacy push_decision/create_pipeline branch.
++    Ok(json!({"verified":true,"triggered":false}))
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/backend/src/task_git/hooks.rs b/backend/src/task_git/hooks.rs
+new file mode 100644
+index 0000000..1af2fe2
+--- /dev/null
++++ b/backend/src/task_git/hooks.rs
+@@ -0,0 +1,438 @@
++//! Per-request private hook files, held by the existing detached native owner.
++use super::{Authorization, CandidateCheck};
++use crate::api::ApiError;
++use std::{fs, io::Write, path::Path};
++
++fn error() -> ApiError {
++    ApiError::service_unavailable("Private task Git hook unavailable")
++}
++
++fn quote(path: &Path) -> Result<String, ApiError> {
++    Ok(format!(
++        "'{}'",
++        path.to_str().ok_or_else(error)?.replace('\'', "'\\''")
++    ))
++}
++
++fn write(path: &Path, data: &[u8], executable: bool) -> Result<(), ApiError> {
++    let mut options = fs::OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::OpenOptionsExt;
++        options.mode(if executable { 0o700 } else { 0o600 });
++    }
++    #[cfg(not(unix))]
++    let _ = executable;
++    options
++        .open(path)
++        .and_then(|mut f| {
++            f.write_all(data)?;
++            f.sync_all()
++        })
++        .map_err(|_| error())
++}
++
++// Includes exact-line checking again at reference-transaction/prepared, after custom hooks.
++const CHECK: &str = r#"set -eu
++umask 077
++export GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 GIT_OPTIONAL_LOCKS=0
++cat > "$dir/task-updates"
++cmp -s "$dir/task-updates" "$dir/expected-update" || exit 1
++read -r old new ref < "$dir/expected-update"
++default=$(git symbolic-ref --quiet HEAD) || exit 1
++test "$default" != "$ref" || exit 1
++test "$(git cat-file -t "$new")" = commit || exit 1
++base=$(cat "$dir/base")
++git merge-base --is-ancestor "$base" "$new" || exit 1
++if test "$old" = 0000000000000000000000000000000000000000; then
++    if git show-ref --verify --quiet "$ref"; then exit 1; else test "$?" -eq 1 || exit 1; fi
++else
++    test "$(git rev-parse --verify "$ref")" = "$old" || exit 1
++    git merge-base --is-ancestor "$old" "$new" || exit 1
++fi
++curl --disable --silent --fail --max-time 3 --max-redirs 0 --noproxy '*' --proto '=http' \
++    --header @"$dir/child-headers" --header 'content-type: application/json' \
++    --data-binary @"$dir/context.json" "$callback" >/dev/null 2>&1 || exit 1
++"#;
++
++pub(crate) fn install(
++    directory: &Path,
++    authorization: &Authorization,
++    internal: &str,
++    port: u16,
++) -> Result<(), ApiError> {
++    if internal.is_empty()
++        || !internal.bytes().all(|b| b.is_ascii_graphic())
++        || !authorization.token.bytes().all(|b| b.is_ascii_graphic())
++        || port == 0
++    {
++        return Err(error());
++    }
++    let context = &authorization.context;
++    context.validate()?;
++    let saved_pre = directory.join("protected-pre-receive");
++    fs::rename(directory.join("pre-receive"), &saved_pre).map_err(|_| error())?;
++    let original_transaction = directory.join("reference-transaction");
++    let saved_transaction = directory.join("original-reference-transaction");
++    let has_transaction = original_transaction.exists();
++    if has_transaction {
++        fs::rename(&original_transaction, &saved_transaction).map_err(|_| error())?;
++    }
++    // Never invoke a legacy pipeline notification (or custom post hook) for this variant.
++    let post = directory.join("post-receive");
++    if post.exists() {
++        fs::remove_file(&post).map_err(|_| error())?;
++    }
++    write(&post, b"#!/bin/sh\ncat >/dev/null\nexit 0\n", true)?;
++    write(
++        &directory.join("expected-update"),
++        format!(
++            "{} {} {}\n",
++            context.old_oid, context.new_oid, context.source.candidate_ref
++        )
++        .as_bytes(),
++        false,
++    )?;
++    write(
++        &directory.join("base"),
++        context.source.base_commit.as_bytes(),
++        false,
++    )?;
++    let bytes = serde_json::to_vec(&CandidateCheck {
++        task_candidate: context.clone(),
++    })
++    .map_err(|_| error())?;
++    write(&directory.join("context.json"), &bytes, false)?;
++    write(
++        &directory.join("child-headers"),
++        format!(
++            "Authorization: Bearer {}\nx-internal-token: {}\n",
++            authorization.token, internal
++        )
++        .as_bytes(),
++        false,
++    )?;
++    let pre = format!(
++        "#!/bin/sh\nset -eu\numask 077\ndir={}\ncallback='http://127.0.0.1:{port}/api/v1/internal/git-push'\ncat > \"$dir/input\"\n{} < \"$dir/input\"\n{} < \"$dir/input\"\n",
++        quote(directory)?,
++        quote(&saved_pre)?,
++        quote(&directory.join("task-check"))?
++    );
++    write(&directory.join("pre-receive"), pre.as_bytes(), true)?;
++    let check = format!(
++        "#!/bin/sh\ndir={}\ncallback='http://127.0.0.1:{port}/api/v1/internal/git-push'\n{CHECK}",
++        quote(directory)?
++    );
++    write(&directory.join("task-check"), check.as_bytes(), true)?;
++    let delegate = if has_transaction {
++        format!(
++            "{} \"$@\" < \"$dir/transaction-input\"\n",
++            quote(&saved_transaction)?
++        )
++    } else {
++        String::new()
++    };
++    let transaction = format!(
++        "#!/bin/sh\nset -eu\numask 077\ndir={}\ncat > \"$dir/transaction-input\"\n{delegate}if test \"$1\" = prepared; then\n    {} < \"$dir/transaction-input\"\nfi\n",
++        quote(directory)?,
++        quote(&directory.join("task-check"))?
++    );
++    write(&original_transaction, transaction.as_bytes(), true)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn hook_uses_private_header_file_and_no_pipeline_notification() {
++        assert!(CHECK.contains("--header @\"$dir/child-headers\""));
++        assert!(!CHECK.contains("Bearer"));
++        assert!(!CHECK.contains("export token"));
++        assert!(CHECK.contains("cmp -s"));
++        assert!(CHECK.contains("merge-base --is-ancestor"));
++        assert!(CHECK.contains("symbolic-ref --quiet HEAD"));
++    }
++
++    #[cfg(unix)]
++    mod native {
++        use super::*;
++        use std::{
++            path::PathBuf,
++            process::{Command, Output},
++        };
++        use uuid::Uuid;
++
++        struct Fixture {
++            root: PathBuf,
++            source: PathBuf,
++            bare: PathBuf,
++            hooks: PathBuf,
++            authorization: Authorization,
++        }
++        impl Fixture {
++            fn git(&self, args: &[&str]) -> Output {
++                Command::new("git")
++                    .current_dir(&self.source)
++                    .env("GIT_CONFIG_NOSYSTEM", "1")
++                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
++                    .env(
++                        "PATH",
++                        format!(
++                            "{}:{}",
++                            self.root.join("bin").display(),
++                            std::env::var("PATH").unwrap()
++                        ),
++                    )
++                    .args(args)
++                    .output()
++                    .unwrap()
++            }
++            fn new() -> Self {
++                let root = std::env::temp_dir().join(format!("forge-task-hook-{}", Uuid::new_v4()));
++                let source = root.join("source");
++                let bare = root.join("repo.git");
++                let hooks = root.join("private-hooks");
++                for dir in [&source, &hooks, &root.join("bin")] {
++                    fs::create_dir_all(dir).unwrap();
++                }
++                let (context, _, _, _) = crate::task_git::tests::fixture();
++                let mut f = Self {
++                    root,
++                    source,
++                    bare,
++                    hooks,
++                    authorization: Authorization {
++                        context,
++                        token: "sdlc_pat_fixture_child".into(),
++                    },
++                };
++                for args in [
++                    &["init", "--initial-branch=main"][..],
++                    &["config", "user.email", "fixture@example.invalid"],
++                    &["config", "user.name", "Fixture"],
++                ] {
++                    assert!(f.git(args).status.success());
++                }
++                fs::write(f.source.join("data"), "first").unwrap();
++                assert!(f.git(&["add", "data"]).status.success());
++                assert!(f.git(&["commit", "-m", "first"]).status.success());
++                f.authorization.context.source.base_commit =
++                    String::from_utf8(f.git(&["rev-parse", "HEAD"]).stdout)
++                        .unwrap()
++                        .trim()
++                        .into();
++                f.authorization.context.intent.source_commit =
++                    f.authorization.context.source.base_commit.clone();
++                assert!(
++                    f.git(&["clone", "--bare", ".", f.bare.to_str().unwrap()])
++                        .status
++                        .success()
++                );
++                fs::write(f.source.join("data"), "second").unwrap();
++                assert!(f.git(&["commit", "-am", "second"]).status.success());
++                f.authorization.context.new_oid =
++                    String::from_utf8(f.git(&["rev-parse", "HEAD"]).stdout)
++                        .unwrap()
++                        .trim()
++                        .into();
++                crate::task_git::tests::seal(&mut f.authorization.context.source);
++                write(
++                    &f.hooks.join("pre-receive"),
++                    b"#!/bin/sh\ncat >/dev/null\n",
++                    true,
++                )
++                .unwrap();
++                write(
++                    &f.hooks.join("post-receive"),
++                    format!(
++                        "#!/bin/sh\ntouch {}\n",
++                        quote(&f.root.join("ordinary-pipeline")).unwrap()
++                    )
++                    .as_bytes(),
++                    true,
++                )
++                .unwrap();
++                let curl = format!(
++                    "#!/bin/sh\ntest ! -e {} || exit 1\nprintf 'checked\\n' >> {}\n",
++                    quote(&f.root.join("revoked")).unwrap(),
++                    quote(&f.root.join("checks")).unwrap()
++                );
++                write(&f.root.join("bin/curl"), curl.as_bytes(), true).unwrap();
++                install(&f.hooks, &f.authorization, "fixture-internal", 22801).unwrap();
++                assert!(
++                    f.git(&[
++                        "--git-dir",
++                        f.bare.to_str().unwrap(),
++                        "config",
++                        "core.hooksPath",
++                        f.hooks.to_str().unwrap()
++                    ])
++                    .status
++                    .success()
++                );
++                f
++            }
++            fn push(&self, extra: &[&str]) -> Output {
++                let mut args = vec!["push", self.bare.to_str().unwrap()];
++                args.extend_from_slice(extra);
++                self.git(&args)
++            }
++            fn reference(&self, reference: &str) -> Option<String> {
++                let output = self.git(&[
++                    "--git-dir",
++                    self.bare.to_str().unwrap(),
++                    "rev-parse",
++                    "--verify",
++                    reference,
++                ]);
++                output
++                    .status
++                    .success()
++                    .then(|| String::from_utf8(output.stdout).unwrap().trim().into())
++            }
++            fn candidate(&self) -> String {
++                format!(
++                    "{}:{}",
++                    self.authorization.context.new_oid,
++                    self.authorization.context.source.candidate_ref
++                )
++            }
++        }
++        impl Drop for Fixture {
++            fn drop(&mut self) {
++                let _ = fs::remove_dir_all(&self.root);
++            }
++        }
++
++        #[test]
++        fn native_exact_candidate_rechecks_prepared_and_does_not_enqueue_ordinary_pipeline() {
++            let f = Fixture::new();
++            assert!(f.push(&[&f.candidate()]).status.success());
++            assert_eq!(
++                f.reference(&f.authorization.context.source.candidate_ref)
++                    .as_deref(),
++                Some(f.authorization.context.new_oid.as_str())
++            );
++            assert_eq!(
++                fs::read_to_string(f.root.join("checks"))
++                    .unwrap()
++                    .lines()
++                    .count(),
++                2
++            );
++            assert!(!f.root.join("ordinary-pipeline").exists());
++            let headers = fs::read_to_string(f.hooks.join("child-headers")).unwrap();
++            for script in [
++                "pre-receive",
++                "task-check",
++                "reference-transaction",
++                "post-receive",
++            ] {
++                let text = fs::read_to_string(f.hooks.join(script)).unwrap();
++                assert!(!text.contains(&f.authorization.token));
++                assert!(!text.contains(&headers));
++            }
++        }
++        #[test]
++        fn native_foreign_multiref_delete_and_wrong_cas_cannot_change_refs() {
++            let f = Fixture::new();
++            let candidate = f.candidate();
++            let old_main = f.reference("refs/heads/main").unwrap();
++            for refs in [
++                vec!["HEAD:refs/heads/main"],
++                vec![&candidate, "HEAD:refs/heads/foreign"],
++                vec![":refs/heads/main"],
++            ] {
++                assert!(!f.push(&refs).status.success());
++                assert!(
++                    f.reference(&f.authorization.context.source.candidate_ref)
++                        .is_none()
++                );
++                assert_eq!(
++                    f.reference("refs/heads/main").as_deref(),
++                    Some(old_main.as_str())
++                );
++            }
++            assert!(
++                f.git(&[
++                    "--git-dir",
++                    f.bare.to_str().unwrap(),
++                    "update-ref",
++                    &f.authorization.context.source.candidate_ref,
++                    &old_main
++                ])
++                .status
++                .success()
++            );
++            assert!(!f.push(&[&candidate]).status.success());
++            assert_eq!(
++                f.reference(&f.authorization.context.source.candidate_ref)
++                    .as_deref(),
++                Some(old_main.as_str())
++            );
++        }
++        #[test]
++        fn native_fresh_check_failure_and_original_pre_receive_denial_are_closed() {
++            let f = Fixture::new();
++            fs::write(f.root.join("revoked"), "held").unwrap();
++            assert!(!f.push(&[&f.candidate()]).status.success());
++            assert!(
++                f.reference(&f.authorization.context.source.candidate_ref)
++                    .is_none()
++            );
++            fs::remove_file(f.root.join("revoked")).unwrap();
++            fs::write(f.hooks.join("protected-pre-receive"), "#!/bin/sh\nexit 1\n").unwrap();
++            assert!(!f.push(&[&f.candidate()]).status.success());
++        }
++        #[test]
++        fn native_non_fast_forward_is_denied_even_with_exact_old_cas() {
++            let mut f = Fixture::new();
++            assert!(f.push(&[&f.candidate()]).status.success());
++            let base = f.authorization.context.source.base_commit.clone();
++            let old = f.authorization.context.new_oid.clone();
++            assert!(f.git(&["checkout", "--detach", &base]).status.success());
++            fs::write(f.source.join("data"), "diverged").unwrap();
++            assert!(f.git(&["commit", "-am", "diverged"]).status.success());
++            let new = String::from_utf8(f.git(&["rev-parse", "HEAD"]).stdout)
++                .unwrap()
++                .trim()
++                .to_owned();
++            f.authorization.context.old_oid = old.clone();
++            f.authorization.context.new_oid = new;
++            fs::write(
++                f.hooks.join("expected-update"),
++                format!(
++                    "{} {} {}\n",
++                    old,
++                    f.authorization.context.new_oid,
++                    f.authorization.context.source.candidate_ref
++                ),
++            )
++            .unwrap();
++            let candidate = f.candidate();
++            assert!(!f.push(&["--force", &candidate]).status.success());
++            assert_eq!(
++                f.reference(&f.authorization.context.source.candidate_ref)
++                    .as_deref(),
++                Some(old.as_str())
++            );
++        }
++        #[test]
++        fn native_revocation_after_pre_receive_is_checked_again_before_commit() {
++            let f = Fixture::new();
++            let curl = format!(
++                "#!/bin/sh\ntest ! -e {} || exit 1\ntouch {}\n",
++                quote(&f.root.join("revoked")).unwrap(),
++                quote(&f.root.join("revoked")).unwrap()
++            );
++            fs::write(f.root.join("bin/curl"), curl).unwrap();
++            assert!(!f.push(&[&f.candidate()]).status.success());
++            assert!(
++                f.reference(&f.authorization.context.source.candidate_ref)
++                    .is_none()
++            );
++        }
++    }
++}
+diff --git a/backend/src/task_git/tests.rs b/backend/src/task_git/tests.rs
+new file mode 100644
+index 0000000..9ce50d0
+--- /dev/null
++++ b/backend/src/task_git/tests.rs
+@@ -0,0 +1,273 @@
++use super::*;
++use crate::domain::sdlc_workspace::WorkspaceTaskBinding;
++
++pub(super) fn seal(source: &mut SourceBinding) {
++    let mut value = serde_json::to_value(&*source).unwrap();
++    value.as_object_mut().unwrap().remove("source_hash");
++    source.source_hash = digest(&value).unwrap();
++}
++
++pub(super) fn fixture() -> (GitContext, Value, AuthContext, SdlcWorkspaceConfig) {
++    let now = Utc::now();
++    let task = Uuid::new_v4();
++    let mut intent = TaskWorkspaceIntent {
++        operation_key: "git:fixture".into(),
++        repository_id: Uuid::new_v4(),
++        source_commit: "a".repeat(40),
++        role: WorkspaceRole::Developer,
++        agent_id: Uuid::new_v4(),
++        tracker_lease_id: Uuid::new_v4(),
++        holder_subject: "fixture-scheduler".into(),
++        expected_lease_version: 2,
++        binding: WorkspaceTaskBinding {
++            tracker_instance_id: Uuid::new_v4().to_string(),
++            tracker_project_id: Uuid::new_v4(),
++            task_id: task,
++            root_task_id: task,
++            assignment_id: Uuid::new_v4(),
++            execution_id: Uuid::new_v4(),
++            routing_snapshot_id: Uuid::new_v4(),
++            requirement_revision: 1,
++            fencing_token: 3,
++            assignment_hash: "b".repeat(64),
++            workflow_task_ref: "SDLC-27".into(),
++        },
++    };
++    let routing = json!({"tracker_instance_id":intent.binding.tracker_instance_id,
++        "project_id":intent.binding.tracker_project_id,"task_id":task,"root_task_id":task,
++        "snapshot_id":intent.binding.routing_snapshot_id,"requirement_revision":1,
++        "policy":{"tracker_instance_id":intent.binding.tracker_instance_id,
++        "project_id":intent.binding.tracker_project_id,"routes":{"developer":{"agent_id":intent.agent_id}}}});
++    let mut assignment = json!({"task_id":task,"assignment_id":intent.binding.assignment_id,
++        "execution_id":intent.binding.execution_id,"execution":{"key":"SDLC-27","ordinal":"27"},
++        "agent_id":intent.agent_id,"lease_id":intent.tracker_lease_id,"role":"developer",
++        "stage":"Development","cycle":0,"attempt":1,"owner_subject":"fixture-owner",
++        "fencing_token":3,"routing":routing});
++    intent.binding.assignment_hash = digest(&assignment).unwrap();
++    assignment["assignment_hash"] = json!(intent.binding.assignment_hash);
++    let mut source = SourceBinding {
++        contract_version: 1,
++        tracker_instance_id: intent.binding.tracker_instance_id.clone(),
++        project_id: intent.binding.tracker_project_id,
++        task_id: task,
++        root_task_id: task,
++        confirmation_id: Uuid::new_v4(),
++        requirement_revision: 1,
++        content_hash: "c".repeat(64),
++        routing_snapshot_id: intent.binding.routing_snapshot_id,
++        namespace: NamespaceRef {
++            registry_instance_id: Uuid::new_v4(),
++            namespace_id: Uuid::new_v4(),
++        },
++        forge_instance_id: Uuid::new_v4(),
++        repository_id: intent.repository_id,
++        base_ref: "refs/heads/main".into(),
++        base_commit: intent.source_commit.clone(),
++        candidate_ref: format!("refs/heads/sdlc/{task}"),
++        source_revision: 1,
++        policy_hash: "d".repeat(64),
++        source_hash: String::new(),
++        owner_subject: "fixture-owner".into(),
++        created_at: now,
++    };
++    seal(&mut source);
++    let context = GitContext {
++        version: 1,
++        project_id: Uuid::new_v4(),
++        repository: "fixture/repo".into(),
++        source,
++        intent,
++        run_id: Uuid::new_v4(),
++        chat_id: Uuid::new_v4(),
++        machine_subject: "fixture-native-machine".into(),
++        old_oid: "0".repeat(40),
++        new_oid: "e".repeat(40),
++    };
++    let current = json!({"observed_at":now,"runtime_state":"running","receipt":{
++        "task":{"task_id":task,"stage":"Development","status":"InProgress","runtime":"running",
++            "owner_subject":"fixture-owner","cycle":0,"waiting_reason":null,"routing":routing},
++        "assignment":assignment,"lease":{"lease_id":context.intent.tracker_lease_id,"version":2,
++            "holder_subject":"fixture-scheduler","claimed_at":now,"heartbeat_at":now,
++            "expires_at":now+chrono::Duration::seconds(30)},
++        "binding":{"run_id":context.run_id,"chat_id":context.chat_id,"machine_subject":context.machine_subject}}});
++    let readback = json!({"state":"bound","binding":context.source,"current":current});
++    let subject = Uuid::new_v4();
++    let central = AuthContext {
++        user_id: subject.to_string(),
++        email: None,
++        role: None,
++        session_id: None,
++        token: "sdlc_pat_fixture_child".into(),
++        scopes: [
++            "ci-cd:read".into(),
++            "ci-cd:write".into(),
++            context.grant().unwrap(),
++        ]
++        .into(),
++    };
++    let config = SdlcWorkspaceConfig {
++        delegated_subject: Some(subject),
++        ..Default::default()
++    };
++    (context, readback, central, config)
++}
++
++#[test]
++fn confirmed_source_current_developer_and_exact_child_are_required() {
++    let (c, r, auth, config) = fixture();
++    c.validate().unwrap();
++    assert_eq!(c.current(&r).unwrap(), std::time::Duration::from_secs(30));
++    assert!(identity(&auth, &config, &c).is_ok());
++}
++
++#[test]
++fn grants_are_disjoint_and_no_admin_root_or_pipeline_fallback() {
++    let (c, _, auth, config) = fixture();
++    for scopes in [
++        vec!["ci-cd:read".into(), "ci-cd:write".into()],
++        vec![
++            "ci-cd:read".into(),
++            "ci-cd:write".into(),
++            format!("ci-cd:sdlc:task:v1:{}", "a".repeat(64)),
++        ],
++        vec![
++            "ci-cd:read".into(),
++            "ci-cd:write".into(),
++            c.grant().unwrap(),
++            "git:write".into(),
++        ],
++        vec![
++            "ci-cd:read".into(),
++            "ci-cd:write".into(),
++            c.grant().unwrap(),
++            "ci-cd:admin".into(),
++        ],
++    ] {
++        let mut changed = auth.clone();
++        changed.scopes = scopes.into_iter().collect();
++        assert!(identity(&changed, &config, &c).is_err());
++    }
++    let mut changed = auth.clone();
++    changed.user_id = Uuid::new_v4().to_string();
++    assert!(identity(&changed, &config, &c).is_err());
++    let mut changed = auth.clone();
++    changed.role = Some("admin".into());
++    assert!(identity(&changed, &config, &c).is_err());
++    let mut changed = auth;
++    changed.session_id = Some(Uuid::new_v4().to_string());
++    assert!(identity(&changed, &config, &c).is_err());
++}
++
++#[test]
++fn context_cannot_change_source_ref_cas_fence_run_or_role_under_same_child() {
++    let (c, _, auth, config) = fixture();
++    let original = serde_json::to_value(&c).unwrap();
++    for (path, value) in [
++        ("/newOid", json!("f".repeat(40))),
++        ("/oldOid", json!("a".repeat(40))),
++        ("/runId", json!(Uuid::new_v4())),
++        ("/projectId", json!(Uuid::new_v4())),
++        ("/intent/binding/fencingToken", json!(4)),
++        ("/source/candidate_ref", json!("refs/heads/main")),
++        ("/intent/role", json!("devops")),
++    ] {
++        let mut value_c = original.clone();
++        *value_c.pointer_mut(path).unwrap() = value;
++        let changed: GitContext = serde_json::from_value(value_c).unwrap();
++        assert!(identity(&auth, &config, &changed).is_err(), "{path}");
++    }
++}
++
++#[test]
++fn absent_held_stale_foreign_or_uncertain_tracker_readback_denies() {
++    let (c, r, _, _) = fixture();
++    for (path, value) in [
++        ("/state", json!("blocked")),
++        ("/binding", Value::Null),
++        ("/current/runtime_state", json!("stopped")),
++        (
++            "/current/receipt/task/waiting_reason",
++            json!("awaiting_owner"),
++        ),
++        ("/current/receipt/task/stage", json!("Draft")),
++        ("/current/receipt/assignment/fencing_token", json!(4)),
++        ("/current/receipt/lease/version", json!(1)),
++        (
++            "/current/receipt/lease/expires_at",
++            json!(Utc::now() - chrono::Duration::seconds(1)),
++        ),
++        ("/current/receipt/binding/run_id", json!(Uuid::new_v4())),
++        ("/current/receipt/binding/machine_subject", json!("other")),
++    ] {
++        let mut changed = r.clone();
++        *changed.pointer_mut(path).unwrap() = value;
++        assert!(c.current(&changed).is_err(), "{path}");
++    }
++}
++
++#[test]
++fn native_tuple_and_source_revision_are_separately_pinned() {
++    let (c, mut r, _, _) = fixture();
++    r["current"]["receipt"]["lease"]["version"] = json!(3);
++    assert!(c.current(&r).is_ok());
++    r["binding"]["source_revision"] = json!(2);
++    assert!(c.current(&r).is_err());
++    let mut changed = c;
++    changed.source.source_revision = 2;
++    assert!(changed.validate().is_err());
++}
++
++#[test]
++fn base_request_is_existing_scoped_delegation_not_new_issuer() {
++    let (c, _, _, _) = fixture();
++    let value = delegation_request(&c, "fixture:original", 900).unwrap();
++    assert_eq!(
++        value["scopes"],
++        json!(["ci-cd:read", "ci-cd:write", c.grant().unwrap()])
++    );
++    assert_eq!(value["expires_in_seconds"], 900);
++    assert_eq!(value.as_object().unwrap().len(), 5);
++    for ttl in [0, 1801] {
++        assert!(delegation_request(&c, "fixture", ttl).is_err());
++    }
++}
++
++#[test]
++fn malformed_candidate_never_decodes_as_ordinary_pipeline_event() {
++    let (_, _, _, _) = fixture();
++    let mixed =
++        json!({"task_candidate":{},"repository":"fixture/repo","ref_name":"refs/heads/main"});
++    assert!(serde_json::from_value::<PushRequest>(mixed).is_err());
++    assert!(matches!(
++        serde_json::from_value::<PushRequest>(
++            json!({"repository":"fixture/repo","ref_name":"refs/heads/main"})
++        )
++        .unwrap(),
++        PushRequest::Legacy(_)
++    ));
++}
++
++#[test]
++fn duplicate_credential_or_context_headers_are_rejected() {
++    let mut h = HeaderMap::new();
++    h.append("authorization", "Bearer fixture-one".parse().unwrap());
++    h.append("authorization", "Bearer fixture-two".parse().unwrap());
++    assert!(one_header(&h, "authorization").is_err());
++    assert!(one_header(&h, HEADER).is_err());
++}
++
++#[test]
++fn repository_route_identity_has_only_one_optional_git_suffix() {
++    for raw in ["fixture/repo", "fixture/repo.git"] {
++        assert!(repository_matches(raw, "fixture/repo"));
++    }
++    for raw in [
++        "fixture/repo.git.git",
++        "repo",
++        "other/repo.git",
++        "fixture/repo.git/",
++        " fixture/repo.git",
++    ] {
++        assert!(!repository_matches(raw, "fixture/repo"));
++    }
++}
+diff --git a/docs/OWN_TASK_CANDIDATE_GIT.md b/docs/OWN_TASK_CANDIDATE_GIT.md
+new file mode 100644
+index 0000000..354672a
+--- /dev/null
++++ b/docs/OWN_TASK_CANDIDATE_GIT.md
+@@ -0,0 +1,97 @@
++# Git candidate одной подтвержденной задачи
++
++Source-only opt-in вариант поверх существующих Git Smart HTTP и native hooks.
++Не установлен и не qualified. Новой таблицы, issuer, очереди, controller или
++URL нет. Legacy human/SAT и pipeline-child122 не получают дополнительных прав.
++
++## Producer и authority
++
++Server-only `task_git::prepare_delegation` проверяет полный confirmed
++Tracker165 TaskSourceBinding, его source_hash (canonical SHA256 всех полей,
++кроме source_hash), текущие Developer assignment/run/chat/lease/fence и
++зарегистрированную namespace/repository/project связь Forge. Поле repository
++содержит проверенное public group/slug, не произвольный remote URL.
++
++Контекст содержит version1, Forge project, public repository, полный source,
++TaskWorkspaceIntent с operation_key, native runId/chatId/machineSubject и точные
++oldOid/newOid. GitContext использует camelCase, вложенный Tracker source сохраняет
++snake_case producer wire. Hash всего контекста запечатывает disjoint scope:
++
++```text
++ci-cd:read
++ci-cd:write
++ci-cd:sdlc:git:v1:<64lowerhex-context-sha256>
++```
++
++Функция возвращает request для существующего Base `/auth/tokens/delegate`,
++TTL1..1800, original idempotency key. Она НЕ выпускает credential и не принимает
++parent token. Server publisher использует существующую private parent custody;
++parent никогда не передается агенту/CLI. Необходимы уже разрешенные root scopes
++ci-cd:read/write и policy для EXACT central subject/service ci-cd с единственным
++нужным extra prefix `ci-cd:sdlc:git:v1:`. Наличие policy/прав не предполагается;
++их согласованную настройку выполняет Main через существующий owner setup.
++
++Central child subject проверяется по CICD_SDLC_DELEGATED_SUBJECT, без human role,
++session, namespace-machine identity, effective-admin или SAT fallback. Native
++machineSubject отдельно обязан совпасть с текущим Tracker native binding;
++равенство native subject и central parent subject не придумывается. Оба
++контекста связаны exact child grant hash и fresh authoritative readback.
++
++## Native receive
++
++Child/context передаются через Authorization и X-Forge-Task-Git-Context.
++Admission выполняется до legacy/public fallback. Только exact bound repository
++Git discovery/upload/receive; никаких project API или pipeline grants.
++
++Под существующим namespace write lease private per-request hooks запрещают
++bootstrap, default/protected refs всех связанных проектов и native symbolic HEAD.
++Разрешено ровно одно обновление Tracker candidate_ref, exact old OID CAS (zero
++только для отсутствующей ветки), new nonzero commit, descendant pinned base и
++nonzero old. Нет tag/delete/non-FF/multiref/foreign-ref; префикс не является
++доказательством authority.
++
++После unpack pre-receive и затем reference-transaction/prepared вызывают закрытый
++вариант прежнего `/api/v1/internal/git-push` с `{task_candidate: GitContext}`.
++Он проверяет existing internal header, live Base introspection/expiry, exact
++context, namespace/repository mapping и fresh Tracker source/current Developer
++readback. Malformed/mixed task variant не падает в legacy pipeline branch.
++Проверка только читает authority и не создает pipeline.
++
++Bearer/internal headers находятся в mode0600 файле внутри существующего private
++receive directory; curl использует `--header @file`, без bearer argv/env/log.
++Detached native owner сохраняет lease и private hooks до фактического завершения
++Git даже после HTTP cancellation. Неизвестный native исход не означает no-effect.
++
++**Только для этого варианта post-receive полностью подавлен**, включая custom
++post-receive: обычный unbound auto-pipeline не создается. Исходные repository
++hooks не переписываются. Protected/custom pre-receive, update и transaction hooks
++сохраняются в per-request chain; legacy post-receive поведение не меняется.
++
++## CLI и неизвестный результат
++
++Существующая группа `repository` получает `push-candidate --context-file ...
++--child-token-file ... --checkout ... [--readback]`. Источник origin — обычный
++CLI api-url, без credentials/path/query/fragment; URL repository выводится из
++sealed public group/slug. Нельзя выбрать ref или remote отдельно.
++
++CLI читает private файлы, использует временный bare Git context с object alternate
++рабочего checkout, не его hooks/credential helpers/url.insteadOf. Child header
++читается из mode0600 temporary config; в arguments/environment bearer нет.
++Push содержит только exact newOid:candidate_ref и exact force-with-lease CAS;
++native hook дополнительно требует fast-forward, несмотря на CAS option.
++
++Перед push создается durable create_new `.git-push-attempt` marker рядом с context.
++Timeout/error — STOP и readback-only, без retry/remint/parent fallback. Readback
++делает только ls-remote exact candidate; только exact newOid дает
++candidate_observed. Old/absent/advanced/expired — HOLD, не разрешение повторить.
++Ни success Git, ни candidate_observed не означают pipeline/deployment/business
++acceptance. Новый binding/ref/technical run не создается.
++
++## Qualification
++
++Rust tests добавлены, но не исполнялись: identity/scope/context/current-reader
++negatives; native Git hook tests с synthetic curl verifier; CLI origin/ref/CAS
++и single-attempt tests. Native hook fixtures не являются live Base/Tracker proof.
++Main должен применить отдельный common wiring patch, адаптировать SDK33 imports,
++выполнить typed tests/OpenAPI и необходимые реальные PG/HTTP/cancellation gates
++в существующем owned QA. Новых runner/DB/fixtures-as-live этот пакет не запускает.

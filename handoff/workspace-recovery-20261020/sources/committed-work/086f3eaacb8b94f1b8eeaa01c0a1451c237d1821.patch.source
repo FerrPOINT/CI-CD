@@ -1,0 +1,349 @@
+diff --git a/backend/src/api/authz_mw.rs b/backend/src/api/authz_mw.rs
+index 1e533f8..12b0921 100644
+--- a/backend/src/api/authz_mw.rs
++++ b/backend/src/api/authz_mw.rs
+@@ -425,7 +425,7 @@ pub(crate) async fn list_projects_for_claims(
+             return Ok(Vec::new());
+         };
+         return sqlx::query_as::<_, Project>(
+-            "SELECT id, name, repository_url, default_branch, max_running_jobs, created_at \
++            "SELECT id, name, repository_url, default_branch, protected_branches, max_running_jobs, created_at \
+              FROM projects WHERE id = $3 ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+         )
+         .bind(limit)
+@@ -437,7 +437,7 @@ pub(crate) async fn list_projects_for_claims(
+     }
+     match (role, claims.token_project_id) {
+         (crate::authz::Role::Admin, Some(project_id)) => sqlx::query_as::<_, Project>(
+-            "SELECT id, name, repository_url, default_branch, max_running_jobs, created_at \
++            "SELECT id, name, repository_url, default_branch, protected_branches, max_running_jobs, created_at \
+                  FROM projects WHERE id = $3 ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+         )
+         .bind(limit)
+@@ -447,7 +447,7 @@ pub(crate) async fn list_projects_for_claims(
+         .await
+         .map_err(ApiError::internal),
+         (crate::authz::Role::Admin, None) => sqlx::query_as::<_, Project>(
+-            "SELECT id, name, repository_url, default_branch, max_running_jobs, created_at \
++            "SELECT id, name, repository_url, default_branch, protected_branches, max_running_jobs, created_at \
+                  FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+         )
+         .bind(limit)
+diff --git a/backend/src/api/dto.rs b/backend/src/api/dto.rs
+index d9b3b0d..aaf7bb6 100644
+--- a/backend/src/api/dto.rs
++++ b/backend/src/api/dto.rs
+@@ -11,6 +11,7 @@ pub(crate) struct Project {
+     pub(crate) name: String,
+     pub(crate) repository_url: String,
+     pub(crate) default_branch: String,
++    pub(crate) protected_branches: Vec<String>,
+     /// K4.3 dispatch cap: null = unlimited.
+     pub(crate) max_running_jobs: Option<i32>,
+     pub(crate) created_at: DateTime<Utc>,
+diff --git a/backend/src/api/projects_routes.rs b/backend/src/api/projects_routes.rs
+index b0521b3..8e3e421 100644
+--- a/backend/src/api/projects_routes.rs
++++ b/backend/src/api/projects_routes.rs
+@@ -36,7 +36,7 @@ pub(crate) async fn create_project(
+         }
+     }
+     let project = sqlx::query_as::<_, Project>(
+-        "INSERT INTO projects (id, name, repository_url, default_branch, tenant_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, repository_url, default_branch, max_running_jobs, created_at"
++        "INSERT INTO projects (id, name, repository_url, default_branch, tenant_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, repository_url, default_branch, protected_branches, max_running_jobs, created_at"
+     ).bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.repository_url.trim()).bind(input.default_branch.unwrap_or_else(|| "main".into())).bind(input.tenant_id).fetch_one(db).await.map_err(ApiError::internal)?;
+     if let Some(axum::Extension(claims)) = claims {
+         if let Some(role) = default_project_role(&claims.role) {
+@@ -59,7 +59,7 @@ pub(crate) async fn list_projects(
+         let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
+         list_projects_for_claims(db, &claims, role, limit, offset).await?
+     } else {
+-        sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, max_running_jobs, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
++        sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, protected_branches, max_running_jobs, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+             .bind(limit)
+             .bind(offset)
+             .fetch_all(db)
+@@ -241,7 +241,7 @@ pub(crate) async fn get_project(
+     Path(project_id): Path<Uuid>,
+ ) -> ApiResult<Project> {
+     let project = sqlx::query_as::<_, Project>(
+-        "SELECT id, name, repository_url, default_branch, max_running_jobs, created_at FROM projects WHERE id = $1",
++        "SELECT id, name, repository_url, default_branch, protected_branches, max_running_jobs, created_at FROM projects WHERE id = $1",
+     )
+     .bind(project_id)
+     .fetch_optional(pool(&state)?)
+@@ -265,6 +265,7 @@ pub(crate) struct UpdateProject {
+     pub(crate) name: Option<String>,
+     pub(crate) repository_url: Option<String>,
+     pub(crate) default_branch: Option<String>,
++    pub(crate) protected_branches: Option<Vec<String>>,
+     /// K4.3 dispatch fairness: max concurrently active-leased jobs for this
+     /// project (>=1). Omit to keep; null clears the limit.
+     #[serde(default, deserialize_with = "deserialize_present_nullable_i32")]
+@@ -277,14 +278,15 @@ pub(crate) async fn update_project(
+     Path(project_id): Path<Uuid>,
+     Json(input): Json<UpdateProject>,
+ ) -> ApiResult<Project> {
+-    if let (None, None, None, None) = (
++    if let (None, None, None, None, None) = (
+         &input.name,
+         &input.repository_url,
+         &input.default_branch,
++        &input.protected_branches,
+         &input.max_running_jobs,
+     ) {
+         return Err(ApiError::bad_request(
+-            "at least one of name, repository_url, default_branch, max_running_jobs is required",
++            "at least one of name, repository_url, default_branch, protected_branches, max_running_jobs is required",
+         ));
+     }
+     if let Some(cap) = input.max_running_jobs.flatten()
+@@ -302,8 +304,35 @@ pub(crate) async fn update_project(
+             return Err(ApiError::bad_request("fields cannot be empty"));
+         }
+     }
++    if let Some(branches) = &input.protected_branches {
++        let mut unique = std::collections::HashSet::new();
++        if branches.len() > 50 {
++            return Err(ApiError::bad_request(
++                "protected_branches exceeds 50 entries",
++            ));
++        }
++        for branch in branches {
++            if !unique.insert(branch.as_str()) || branch.len() > 255 {
++                return Err(ApiError::bad_request(
++                    "protected_branches must contain unique valid branch names",
++                ));
++            }
++            let valid = tokio::process::Command::new("git")
++                .args(["check-ref-format", "--branch", branch])
++                .stdout(std::process::Stdio::null())
++                .stderr(std::process::Stdio::null())
++                .status()
++                .await
++                .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
++            if !valid.success() {
++                return Err(ApiError::bad_request(
++                    "protected_branches contains an invalid branch name",
++                ));
++            }
++        }
++    }
+     let project = sqlx::query_as::<_, Project>(
+-        "UPDATE projects SET name = COALESCE($2, name), repository_url = COALESCE($3, repository_url), default_branch = COALESCE($4, default_branch), max_running_jobs = CASE WHEN $5 THEN $6 ELSE max_running_jobs END WHERE id = $1 RETURNING id, name, repository_url, default_branch, max_running_jobs, created_at",
++        "UPDATE projects SET name = COALESCE($2, name), repository_url = COALESCE($3, repository_url), default_branch = COALESCE($4, default_branch), max_running_jobs = CASE WHEN $5 THEN $6 ELSE max_running_jobs END, protected_branches = COALESCE($7, protected_branches) WHERE id = $1 RETURNING id, name, repository_url, default_branch, protected_branches, max_running_jobs, created_at",
+     )
+     .bind(project_id)
+     .bind(input.name.as_deref().map(str::trim))
+@@ -311,6 +340,7 @@ pub(crate) async fn update_project(
+     .bind(input.default_branch.as_deref().map(str::trim))
+     .bind(input.max_running_jobs.is_some())
+     .bind(input.max_running_jobs.flatten())
++    .bind(input.protected_branches)
+     .fetch_optional(pool(&state)?)
+     .await
+     .map_err(ApiError::internal)?
+diff --git a/backend/src/git_host.rs b/backend/src/git_host.rs
+index db739b2..def8a12 100644
+--- a/backend/src/git_host.rs
++++ b/backend/src/git_host.rs
+@@ -543,6 +543,81 @@ fn maybe_gunzip(headers: &HeaderMap, body: Bytes) -> Result<Bytes, ApiError> {
+     Ok(out.into())
+ }
+ 
++fn receive_pack_refs(body: &[u8]) -> Result<Vec<&str>, ApiError> {
++    let mut cursor = 0;
++    let mut refs = Vec::new();
++    loop {
++        let header = body
++            .get(cursor..cursor + 4)
++            .ok_or_else(|| ApiError::bad_request("invalid git receive-pack packet"))?;
++        let length = std::str::from_utf8(header)
++            .ok()
++            .and_then(|value| usize::from_str_radix(value, 16).ok())
++            .ok_or_else(|| ApiError::bad_request("invalid git receive-pack packet length"))?;
++        cursor += 4;
++        if length == 0 {
++            break;
++        }
++        if length < 4 || cursor + length - 4 > body.len() {
++            return Err(ApiError::bad_request(
++                "invalid git receive-pack packet length",
++            ));
++        }
++        let packet = &body[cursor..cursor + length - 4];
++        cursor += length - 4;
++        let command = packet.split(|byte| *byte == 0).next().unwrap_or(packet);
++        let command = std::str::from_utf8(command)
++            .map_err(|_| ApiError::bad_request("invalid git receive-pack command"))?;
++        let mut fields = command.split_ascii_whitespace();
++        let (Some(old), Some(new), Some(reference), None) =
++            (fields.next(), fields.next(), fields.next(), fields.next())
++        else {
++            return Err(ApiError::bad_request("invalid git receive-pack command"));
++        };
++        if !is_probable_object_id(old) || !is_probable_object_id(new) {
++            return Err(ApiError::bad_request("invalid git receive-pack object id"));
++        }
++        refs.push(reference);
++    }
++    if refs.is_empty() {
++        return Err(ApiError::bad_request("empty git receive-pack command list"));
++    }
++    Ok(refs)
++}
++
++async fn reject_protected_push(pool: &PgPool, repo: &str, body: &[u8]) -> Result<(), ApiError> {
++    let refs = receive_pack_refs(body)?;
++    let name = validate_repo_name(repo).map_err(ApiError::bad_request)?;
++    let patterns = repository_url_like_patterns(&name);
++    let protected: Vec<Vec<String>> = sqlx::query_scalar(
++        "SELECT protected_branches FROM projects WHERE repository_url ILIKE $1 ESCAPE '\\' OR repository_url ILIKE $2 ESCAPE '\\' OR repository_url ILIKE $3 ESCAPE '\\'",
++    )
++    .bind(&patterns.path)
++    .bind(&patterns.scp)
++    .bind(&patterns.exact)
++    .fetch_all(pool)
++    .await
++    .map_err(ApiError::internal)?;
++    tracing::debug!(repository = %name, ?refs, ?protected, "checking protected push policy");
++    if refs
++        .iter()
++        .any(|reference| protected_ref_match(reference, &protected))
++    {
++        return Err(ApiError::conflict(
++            "direct push to a protected branch is forbidden; use a pull request",
++        ));
++    }
++    Ok(())
++}
++
++fn protected_ref_match(reference: &str, policies: &[Vec<String>]) -> bool {
++    reference.strip_prefix("refs/heads/").is_some_and(|branch| {
++        policies
++            .iter()
++            .any(|branches| branches.iter().any(|item| item == branch))
++    })
++}
++
+ async fn run_git_service(
+     path: &Path,
+     service: &str, // "upload-pack" | "receive-pack"
+@@ -625,6 +700,11 @@ pub async fn git_service_endpoint(
+         Ok(body) => body,
+         Err(e) => return e.into_response(),
+     };
++    if operation == GitOperation::Write {
++        if let Err(error) = reject_protected_push(pool, &repo, &body).await {
++            return error.into_response();
++        }
++    }
+     match run_git_service(path.as_path(), service, body).await {
+         Ok(out) => (
+             StatusCode::OK,
+@@ -881,6 +961,43 @@ mod tests {
+         assert!(line.ends_with(b"# service=git-upload-pack\n"));
+     }
+ 
++    #[test]
++    fn receive_pack_reads_every_updated_ref() {
++        let old = "0".repeat(40);
++        let new = "a".repeat(40);
++        let first = format!("{old} {new} refs/heads/feature\0report-status\n");
++        let second = format!("{old} {new} refs/heads/main\n");
++        let mut body = pkt_line(&first);
++        body.extend(pkt_line(&second));
++        body.extend(b"0000PACK");
++        assert_eq!(
++            receive_pack_refs(&body).expect("valid commands"),
++            vec!["refs/heads/feature", "refs/heads/main"]
++        );
++    }
++
++    #[test]
++    fn receive_pack_rejects_truncated_commands() {
++        let old = "0".repeat(40);
++        let new = "a".repeat(40);
++        let body = pkt_line(&format!("{old} {new} refs/heads/main\n"));
++        assert!(receive_pack_refs(&body).is_err());
++        assert!(receive_pack_refs(b"0000").is_err());
++    }
++
++    #[test]
++    fn protected_refs_match_exact_branches_only() {
++        let policies = vec![vec!["main".to_string()]];
++        assert!(protected_ref_match("refs/heads/main", &policies));
++        assert!(!protected_ref_match("refs/heads/main-next", &policies));
++        assert!(!protected_ref_match("refs/tags/main", &policies));
++        let name = validate_repo_name("service-pulse-qa.git").expect("valid repository");
++        assert_eq!(
++            repository_url_like_patterns(&name).path,
++            "%/service-pulse-qa.git"
++        );
++    }
++
+     #[test]
+     fn escapes_like_wildcards_in_repository_binding() {
+         assert_eq!(escape_like_pattern("service_api"), "service\\_api");
+diff --git a/docs/API.md b/docs/API.md
+index 891ba25..c6f4397 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -288,12 +288,13 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID
+ | `name` | string | no | Новое имя (non-empty при передаче) |
+ | `repository_url` | string | no | Новый URL репозитория |
+ | `default_branch` | string | no | Новая ветка по умолчанию |
++| `protected_branches` | string[] | no | Полный список защищённых веток (до 50 уникальных имён Git); прямой push в них запрещён, PR merge требует successful pipeline на текущем head SHA |
+ | `max_running_jobs` | integer or null | no | Максимум одновременно active lease для проекта: `1..4096`; `null` снимает cap, отсутствие поля сохраняет текущее значение |
+ 
+ **Response 200:** обновлённый объект проекта.
+ 
+ **Errors:**
+-- `400` — тело пустое (`{}`) или переданное поле пустое.
++- `400` — тело пустое (`{}`), переданное поле пустое или имя защищённой ветки невалидно.
+ - `404` — проект не найден.
+ - `500` — duplicate name.
+ 
+@@ -1452,7 +1453,7 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис
+ | POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
+ | POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |
+ 
+-Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с `project_memberships`: `viewer+` для read, `developer+` для write; PAT также требует `git:read`/`git:write` и проходит только в своём `project_id`. Связанный проект определяется по `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
++Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с `project_memberships`: `viewer+` для read, `developer+` для write; PAT также требует `git:read`/`git:write` и проходит только в своём `project_id`. Связанный проект определяется по `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`. Smart HTTP отвергает прямой push и удаление ref из `protected_branches` до `git receive-pack`; обновление такой ветки проходит только через PR merge с зелёным pipeline на актуальном head SHA. Полный lifecycle — `docs/GIT_HOSTING.md`.
+ 
+ `GET /repos/{repo}/pulls/page` использует `limit=20` и `offset=0` по умолчанию;
+ `limit` должен находиться в диапазоне `1..100`. Пустые `status` и `search`
+diff --git a/docs/DATA_MODEL.md b/docs/DATA_MODEL.md
+index 16d1c37..25331c2 100644
+--- a/docs/DATA_MODEL.md
++++ b/docs/DATA_MODEL.md
+@@ -119,7 +119,7 @@ Referenced by:
+ | `name` | TEXT | NOT NULL | — | Уникальное имя проекта |
+ | `repository_url` | TEXT | NOT NULL | — | URL Git-репозитория |
+ | `default_branch` | TEXT | NOT NULL | `'main'` | Ветка по умолчанию |
+-| `protected_branches` | TEXT[] | NOT NULL | `'{}'` | Ветки, для которых PR merge gate требует successful pipeline на head |
++| `protected_branches` | TEXT[] | NOT NULL | `'{}'` | Ветки с запретом прямого Smart HTTP push; PR merge требует successful pipeline на head |
+ | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время создания |
+ 
+ **Индексы:**
+diff --git a/docs/GIT_HOSTING.md b/docs/GIT_HOSTING.md
+index f70228e..d2fe806 100644
+--- a/docs/GIT_HOSTING.md
++++ b/docs/GIT_HOSTING.md
+@@ -71,6 +71,7 @@ Backend использует системный Git для стандартно
+ | push | `POST /git/{repo}/git-receive-pack` | `git receive-pack --stateless-rpc` |
+ 
+ Nginx frontend контейнера проксирует `/git/` в backend. Внутренний backend также доступен на `:22801` для диагностики.
++Перед `git receive-pack` backend проверяет все ref updates в запросе. Если хотя бы один обновляет или удаляет ветку из `projects.protected_branches`, весь push отклоняется; операторский Git token не обходит это правило.
+ 
+ ## 5. Связь с проектом и auto-trigger
+ 
+@@ -94,6 +95,8 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
+ 
+ ## 6. Pull requests и refs
+ 
++После первоначального импорта репозитория задайте защищённые ветки через `PATCH /api/v1/projects/{project_id}` с `{"protected_branches":["main"]}`. Прямой push в них запрещён; merge PR требует успешного pipeline на текущем head SHA ветки-источника. Пустой массив явно снимает защиту и должен применяться только осознанно.
++
+ Основной каталог pull requests читается страницами через
+ `GET /api/v1/repos/{repo}/pulls/page`. Сервер применяет `limit`, `offset`, фильтр
+ `status` и регистронезависимый `search` до выборки; ответ возвращает `items` и

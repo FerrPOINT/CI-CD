@@ -1,0 +1,707 @@
+# Операции Forge CI/CD
+
+Этот документ описывает безопасную эксплуатацию Forge CI/CD и явно отделяет текущий локальный MVP от целевой production-архитектуры.
+
+## Статус и граница доверия
+
+- **Current verified:** локальный Docker Compose запускает PostgreSQL, backend и Dashboard; versioned SQLx migrations применяются при старте; embedded runner выполняет jobs на том же узле; health, `/metrics`, structured logs, conditional auth, schedules, outgoing webhook worker и `in_app`/`sse` notification delivery доступны. Отдельный `docker-compose.tls.yml` добавляет loopback-only Caddy TLS termination с internal CA, strict CORS origin и secure cookies.
+- **Configuration only:** email/Slack notification adapters и inbound provider webhooks можно описать как target/config, но sender/handlers не исполняют внешнюю доставку.
+- **Target approved:** tenant isolation/scoped policy, отдельные runner-ы с leases, production scheduler/outbox guarantees, alerting, off-site/PITR backup platform, public ingress policy and production DR.
+
+> **Критическое ограничение MVP: только локальная или доверенная сеть.** Если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают open/trusted-network; при непустом секрете включаются JWT/scoped PAT, session-bound access invalidation, browser refresh cookie + CSRF, refresh rotate/logout/revoke, session-family reuse revocation, route roles и project memberships для project-owned ресурсов, но tenant isolation, service-account tokens и scoped Git credentials ещё не завершены. CORS по умолчанию permissive только для isolated dev; shared deployment обязан задать `CICD_CORS_ALLOWED_ORIGINS`, TLS/reverse proxy и `CICD_AUTH_COOKIE_SECURE=true`. PostgreSQL в `docker-compose.yml` привязан к `127.0.0.1`, но API/Dashboard host ports нельзя публиковать в недоверенную сеть и нельзя считать этот Compose production-развёртыванием.
+
+Доступ к Docker daemon, хостовой файловой системе, `.env`, bare Git-томам и backup-файлам считается привилегированным. Не передавайте реальные секреты через командную строку, Git, логи или скриншоты.
+
+## Owner-local PostgreSQL delivery
+
+Source packet: `forge-delivery --postgres`, отдельные protected PG root/policy/
+guard URL/runtime password из [ENV](ENV.md#owner-local-postgresql-delivery).
+Запускается только против выделенного temporary PostgreSQL target с actual enforced
+HBA/role topology. Permanent runtimes и их базы этот путь не принимает. Policy
+operator-controlled; owner/daemon и administrator остаются privileged trust boundary.
+
+Complete retained catalog и exact source/target schema должны пройти preflight.
+После application stop/login fence/session drain создаётся dump; fresh restore drill
+сверяет rows/sequences/schema. Migration меняет только новую shadow DB. Application
+получает отдельные reader/writer credentials; writer release следует после всех
+image/database/health/acceptance checks. Snapshot source остаётся fenced.
+
+Для известной failure до writer release explicit rollback связывает current CAS
+с verified backup и last-confirmed image, восстанавливает в ещё одну fresh DB и
+проверяет все checks. Source/failed DB drift, corrupt backup, unknown sessions или
+history блокируют восстановление. После release старый snapshot restore запрещён.
+RPO=0 только для acknowledged pre-drain writes. Post-release writes требуют нового
+snapshot/forward compatibility либо отдельного authoritative incident decision.
+
+После SIGKILL требуется original-key `--readback`. `--reconcile` наблюдает лишь
+фактически завершённый release при совпадающей serving pair; никаких command retries
+или automatic down migrations. Partial Unknown удерживает target для privileged
+расследования. Не удалять journals и не менять operation key для обхода hold.
+
+Failure-only private `diagnostic.json` содержит class/reason/frames и, если
+отказал owner subprocess, `commandFailure`: returncode (nullable),
+elapsedSeconds и nullable SQLSTATE. SQL-команды используют psql code-only error
+format; код сохраняется только при точном формате и разрешённом значении.
+Сообщения stderr/stdout, SQL, argv, env и connection URLs не сохраняются.
+`sqlstate=null` не доказывает transport error или отсутствие DB effect;
+returncode/elapsed не разрешают повтор команды. Диагностика не является receipt.
+
+### Runbook: неизвестный исход
+
+Эти команды предназначены только для уже зарегистрированного собственного
+isolated target и исходного command file. Machine credential, policy и database
+credentials остаются в защищённом окружении; не печатать их в диагностику.
+
+```bash
+forge-delivery --postgres --project-id "$PROJECT_ID" --command-file "$COMMAND_FILE" --readback
+# Только после проверки исходного intent и существующего release evidence:
+forge-delivery --postgres --project-id "$PROJECT_ID" --command-file "$COMMAND_FILE" --reconcile
+```
+
+1. Сохранить исходные command bytes/key, intent, checkpoints, manifests и
+   historical `verified-checks.json`. Не создавать новый key, не редактировать
+   receipt и не пересоздавать database/application для проверки гипотезы.
+2. Выполнить original-key readback. Exit0 означает historical latest verified,
+   не continuous health или разрешение SDLC; exit2 означает known
+   failed/unavailable/unknown, exit1 — rejection/unavailable command. Недоступный
+   readback не доказывает отсутствие effect; не повторять deploy/migration/restore.
+3. Для `Unknown` проверить исходную serving pair и release checkpoint через
+   guarded reconciliation. Оно не повторяет SQL или Compose up и создаёт отдельную
+   fresh observation, не переписывая historical proof. Несовпадение manifest,
+   native identity, ролей, grants или database сохраняет hold.
+4. Если writer release подтверждён, сохранить post-release rows/sequences и
+   работающий container. Writer pool допустим только на этой конкретной БД;
+   соединения на иной БД или неизвестные роли блокируют reconciliation.
+   Restore старого snapshot после release запрещён, даже при failed health.
+5. Если release не подтверждён, не выводить quiescence из истёкшего lease,
+   остановленного CLI или application health. Reader также может изменять данные
+   при лишних grants; требуется fence LOGIN/CONNECT и подтверждённый drain обеих
+   ролей. Unknown hold снимается только проверенным owner recovery, не ручным
+   LOGIN/GRANT, удалением lock/journal или подменой current/confirmed pointers.
+6. Explicit rollback допускается только для известного pre-release failure,
+   verified backup, exact current CAS и last-confirmed image; recovery неизвестной
+   операции не заменять новым rollback key. Для остальных случаев сохранить
+   evidence и передать privileged owner разбор инцидента без автоматических effects.
+
+QA: tools `deploy/qa/postgres-tools.Dockerfile` добавляет pinned Python/Compose plugin
+к OCI tools; `scripts/verify-task-delivery.ps1 -Gate postgres` использует реальные
+runner/Git/artifact/images/PG application. Тот же явный набор immutable image IDs и
+external cache names, что для общего gate. Generated execution Compose сохраняется
+host-visible; child `sdlc-qa-forge-pg-*` и parent удаляются exact finally down, только
+own disposable PG/publication volumes. Root live/final Docker audit обязателен.
+[ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md),
+[plan/evidence](../plans/2026-10-08-mutable-postgres-delivery.md). Предыдущий source
+прошёл scoped PostgreSQL suite; subsequent reader/history/proof hardening требует
+собственного exact-source gate. Current results и full quality/publication limits —
+[task verification](TASK_DELIVERY_VERIFICATION.md).
+
+## Owner-local manifest delivery
+
+Контейнерный срез: тот же CLI с `--oci`, отдельными `CICD_LOCAL_OCI_ROOT/POLICY`
+и existing project machine token. Typed data preflight rejection выдаёт stdout
+`forge/local-oci-rejection/v1`, status blocked и фиксированный reason, exit1.
+Остальные ошибки возвращают `unknown_or_rejected`: effect мог начаться, поэтому
+проверять original operation key через readback, не создавать новый retry key.
+Поддержан preloaded immutable local image и immutable read-only data snapshot:
+`readonly_snapshot_v1`, exact source/image/data identity, пустой migrations list.
+Mutable DB, down migrations, unknown/incompatible data и drift блокируются;
+automatic restore/backfill/repair отсутствуют. Rollback не пишет snapshot.
+
+Policy фиксирует temporary `sdlc-qa-forge-oci-<unique>`, daemon ID и совпадающие
+owner QA network/volume. Caller не передаёт Compose/commands/mounts. Linux
+parent-death signal ограничивает standalone Compose client; durable child
+identity/exit проверяются перед recovery. Actual container ID/image/mount/network
+и version/compatibility/application acceptance сверяются до и после. Replay и
+recovery не вызывают Compose up. Unknown holds не удалять для retry.
+
+OCI QA: tools image строится из `deploy/qa/oci-tools.Dockerfile`; verify script
+использует `-Gate oci`, explicit socket mount только своего controller и internal
+network. Feature `oci-integration` включает actual daemon/runner/image tests;
+обычный hosted suite не выдаётся за них. Exact own child Compose cleanup — test
+Drop и wrapper finally; parent disposable volume удаляется только после проверки
+отсутствия child containers. Реальные execution specs сохраняются в host-visible
+`composeRoot`; Windows wrapper создаёт temporary owned junction для того же файла
+и удаляет только junction в finally, сохраняя evidence directory. Docker audit
+должен проходить и при работающем child. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
+### Private OCI fixture diagnostics
+
+**Current verified:** fixture-only observation в scoped986, не production admission.
+При non-zero CLI exit fixture до удаления temporary state сохраняет только closed
+projection в `/output/oci-cli-diagnostics/<unique>.json`: schema/scope,
+`acceptanceVerified=false`, nullable bounded exitCode, payloadKind и только для
+валидного rejection допустимые status/reason. JSON limit16KiB; вход читается не
+более16385 bytes. Raw stdout/stderr, SQL, role/DB names, argv/env/URLs и credentials
+не сохраняются. Directory0700, file0600; owner check, no-follow и exclusive create
+не допускают перезапись существующего файла или запись через directory symlink.
+Failure optional diagnostic не заменяет исходный CLI result/assertion и не
+разрешает повтор effect. `other_document` не является rejection reason или receipt.
+
+986 сохранил9 таких records и прошёл Python75/75 + actual OCI1/1. Предыдущий
+full59593 прошёл PG3/3, но остановился на OCI0/1; его утраченный stdout не
+восстанавливается новым success. First-candidate exit1 в986 не воспроизведён,
+historical cause не доказана. Expected exit0, original25/50s fixture deadlines,
+unknown hold, receipt policy и immutable historical proofs остаются прежними.
+Результаты scopes не складывать в full-native/SDLC acceptance:
+[current evidence](TASK_DELIVERY_VERIFICATION.md#текущие-результаты-9-октября).
+
+При тишине или observation timeout ждать тот же live handle до authoritative
+terminal и exact finally cleanup; отсутствие старого PID само по себе не PASS.
+Сохранять captured inputs и старые packets, не запускать stale packet/replay.
+Перед следующим native gate согласовать exclusive heavy slot; own parent/child
+containers/networks/volumes должны быть EMPTY, baseline volumes/cache сохранены.
+986 использовал owned byte-copy cache, не изменял защищённый original cache.
+
+Registered TLS transport проверяется отдельно от Unix native pipeline. По parent
+report после cleanup986 original relay восстановлен с прежними generation/profile/
+state и совпадающим daemon ID; root audit complete:true,35/0/0,violations:[]. Это
+исторический post-cleanup inventory, не live inventory следующего Fleet QA.
+Daemon/certificates/volumes/pins не заменялись. Transport restoration не меняет
+failed59593, не снимает hold и не подтверждает Forge pipeline acceptance:
+[отдельный TLS proof](TASK_DELIVERY_VERIFICATION.md#отдельный-tls-transport-proof).
+Relay/profile recovery принадлежит Base owner; Forge fixture их не чинит.
+
+Это ограниченная privileged техническая capability для одного static artifact
+и отдельного Unix target. Она не установлена на постоянные стенды и не открывает
+SDLC dispatch. Перед effect owner задаёт absolute isolated root, policy JSON
+и existing project machine credential через env (см. [ENV](ENV.md#owner-local-static-delivery)).
+Не используйте Git/artifact/runtime snapshot directories как target.
+
+Command JSON содержит original workspace key/lookup, новый immutable operationKey,
+`action`, exact artifact UUID для deploy и expected-current manifest SHA256.
+Null expected-current разрешён только для действительно пустого target. CLI:
+
+```bash
+forge-delivery --project-id "$PROJECT_ID" --command-file command.json
+forge-delivery --project-id "$PROJECT_ID" --command-file command.json --readback
+forge-delivery --project-id "$PROJECT_ID" --command-file command.json --reconcile
+```
+
+Root хранит `owner.json`, process-lifetime `.lock`, immutable `operations/<key-hash>/`
+intent/active/result и отдельный reconciled result, `manifests/<SHA256>.json`,
+`objects/<SHA256>`, atomic `current.json`/`confirmed.json`. Key replay читает прежний
+результат, не исполняет promotion повторно. Changed command/hash/binding/policy
+закрыты. Token/account/scope fresh проверяются и удерживаются DB locks на время
+операции; credential не хранится в command/manifest/receipt.
+
+Unknown/torn/active operation удерживает target. Expiry/restart не освобождают hold.
+Reconcile получает OS lock (предыдущий local writer уже завершился), сверяет
+current manifest/bytes и новые HTTP checks. Publication не повторяется. Если
+current не соответствует intent, state остаётся unknown; auto-repair/delete нет.
+Исторический unknown сохраняется, terminal readback получает отдельный receipt.
+Readback сам не выполняет probes и показывает latest known history, не fresh health.
+
+Health/acceptance failure сохраняет failed evidence и не двигает last-confirmed.
+Rollback — новый explicit command с `action: rollback`, `artifactId: null` и exact
+current CAS. Target берётся только из last-confirmed manifest, не caller version.
+Artifact/config/plan/source identity и application checks проверяются после
+восстановления. Ошибка rollback не выдаётся за success. CLI exit0 — latest verified,
+exit2 — unavailable/failed/unknown receipt, exit1 — rejected/unavailable command.
+Файлы hold не удалять для продолжения polling: требуется owner reconciliation.
+
+Эти checks не доказывают полный business acceptance, mutable database compatibility,
+production orchestrator stop или native attestation. Owner-local OCI slice выше
+проверяет только read-only snapshot protocol; migration/data restore и реальный
+admission требуют отдельного опубликованного protocol.
+
+Воспроизводимый QA из корня CI-CD: PowerShell7 script
+`scripts/verify-task-delivery.ps1 -BaseRoot <readonly-pinned-Base-checkout>
+-RustImage <cached-sha256-image-ID> -PostgresImage <cached-sha256-image-ID>
+-TargetCache <existing-cache-volume> -CargoCache <existing-cache-volume>
+-RustupCache <existing-cache-volume> -Gate full`. Image IDs и source hashes
+проверяются; `-Gate delivery` выполняет только focused component suite.
+`deploy/qa/task-delivery.compose.yml` требует unique explicit project, owner/purpose
+labels и отдельный disposable volume/network. Script выполняет config/build,
+finally exact Compose down и удаляет только собственный disposable volume;
+cached images/volumes сохраняются. Evidence находится в `.local/task-delivery-qa/`.
+Никаких постоянных services, runtime pins или публичных портов этот QA не создаёт.
+
+## Runner Workspace Recovery
+
+Source capability, не подтверждённая installed runtime приёмка. `forge-runner`
+не удаляет workspace до exact terminal ACK. Перед POST записывает и sync-ит
+immutable outcome с attempt/lease/generation; после потерянного ответа выполняет
+owner GET readback, без повторного POST/команд. Равный durable результат разрешает
+ack record и cleanup. Unknown/different/expired остаётся сохранённым.
+
+После restart наличие неacknowledged attempt-папки прекращает startup **до**
+регистрации, heartbeat/poll и новых команд. Сначала inspect, затем reconcile
+с прежней runner credential, а не с новой registration identity:
+
+```bash
+forge-runner --work-dir "$CICD_RUNNER_WORK_DIR" --inspect-workspaces
+forge-runner --work-dir "$CICD_RUNNER_WORK_DIR" --reconcile-workspaces
+```
+
+Credential задаётся защищённым `CICD_RUNNER_CREDENTIAL`; в metadata/CLI args
+её нет. Inspect не делает HTTP, не исполняет Git/команды и не меняет файлы.
+Reconcile читает authenticated receipt каждого законченного attempt и повторно
+проверяет marker/root перед ACK/cleanup. `--keep-workspace` сохраняет confirmed
+папки; их presence допускает startup только после fresh owner readback. Для
+повторного cleanup также нужен fresh owner GET, не доверие local ACK JSON.
+Несовпадение или недоступность owner
+оставляет папку и возвращает nonzero; успешно подтверждённые независимые папки
+могут быть очищены в том же проходе, это partial progress, не atomic batch.
+
+Inventory ограничен 4096 root entries и 4096 bytes/file; не обходит checkout
+рекурсивно, не следует symlink/junction и не чинит чужие/повреждённые records.
+После readback повторно сверяются исходные attempt/lease/generation, включая
+замену marker между inventory и reopen. Ошибка ожидания/подтверждения остановки
+команды не записывает known completion intent; cleanup и restart остаются blocked.
+Output — owner IDs, generation, terminal outcome и local acknowledged flag;
+это локальная privileged диагностика, не публичный каталог, sandbox или signed
+receipt. Old marker без intent, torn write, неизвестное выполнение или foreign
+ownership требуют отдельной owner/process reconciliation. Expiry/EOF и удаление
+папки вручную не доказывают safe stop. Автоматического purge/force-resume нет.
+
+Embedded runner сохраняет тот же journal после проверки terminal lease/attempt
+в своей БД, включая `keep_workspace`. External runner не reconciles embedded
+directories чужой credential. Общий task/assignment quarantine и подтверждённое
+прекращение process tree остаются target [SDLC delivery](SDLC_DELIVERY_V1.md).
+
+## Локальное развёртывание MVP
+
+### Предварительные условия
+
+Нужны Docker Engine с Docker Compose v2, Git и `curl`. Репозиторий и локальный файл конфигурации:
+
+```bash
+git clone git@github.com:FerrPOINT/CI-CD.git /opt/dev/CI-CD
+cd /opt/dev/CI-CD
+cp .env.example .env
+```
+
+В `.env` до любого совместно используемого развёртывания задайте как минимум уникальные `CICD_DATABASE_PASSWORD` и `CICD_GIT_INTERNAL_TOKEN`; при использовании project secrets задайте уникальный `CICD_SECRETS_KEY`. Пустой `CICD_GIT_INTERNAL_TOKEN` допустим только для isolated local development, а legacy `forge-internal-dev-token` отклоняется при старте backend. Файл `.env` не коммитится. Порты по умолчанию: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
+
+Примеры ниже с `"$CICD_DATABASE_USER"`/`"$CICD_DATABASE_NAME"` предполагают, что значения загружены из `.env` в текущую shell:
+
+```bash
+set -a; . ./.env; set +a
+```
+
+### Запуск и приёмка
+
+```bash
+cd /opt/dev/CI-CD
+docker compose config -q
+docker compose up -d --build
+docker compose ps
+curl -fsS http://127.0.0.1:22801/api/v1/health
+curl -fsS http://127.0.0.1:22801/api/v1/readiness
+curl -fsS http://127.0.0.1:22802/ >/dev/null
+```
+
+The standard Compose file remains an isolated-development stack. For shared/internal access use the TLS profile below; it removes direct API/Dashboard host ports, requires non-empty auth, sets exact CORS and secure cookies, but it does not replace network ingress policy or the remaining production prerequisites.
+
+Ожидаемый liveness-ответ API: `{"status":"ok","service":"cicd"}`. Readiness возвращает `200` только когда PostgreSQL отвечает и все committed SQLx migrations применены без checksum mismatch; иначе endpoint возвращает `503` с `status:"not_ready"`.
+
+PostgreSQL можно дополнительно проверить контейнерным healthcheck:
+
+```bash
+docker compose exec -T postgres \
+  pg_isready -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME"
+```
+
+`/api/v1/health` является liveness-проверкой и не должен использоваться как единственный сигнал готовности. После запуска проверяйте также `docker compose ps`, `/api/v1/readiness` и, при необходимости, безвредный read API, например список проектов:
+
+```bash
+curl -fsS http://127.0.0.1:22801/api/v1/projects
+```
+
+Для просмотра логов используйте:
+
+```bash
+docker compose logs --tail=200 backend
+docker compose logs -f backend
+docker compose logs --tail=200 postgres
+```
+
+`RUST_LOG=info` является нормальным уровнем. Для ограниченной диагностики можно временно установить `RUST_LOG=debug`, но затем вернуть обычный уровень: debug-логи могут быть избыточны. Изменение `.env` применяется только пересозданием контейнеров.
+
+### Остановка
+
+```bash
+# Остановить и удалить контейнеры, сохранив named volumes.
+docker compose down
+
+# Удалить также PostgreSQL, Git и artifact volumes: только для disposable local dev.
+docker compose down -v
+```
+
+Перед `down -v`, `docker volume prune` или `docker system prune --volumes` создайте и проверьте backup. Эти команды могут необратимо удалить `cicd_postgres_data`, `cicd_git_repos` и `cicd_artifacts`.
+
+## TLS reverse-proxy profile (Wave 5 O)
+
+The repository includes a bounded internal TLS profile based on Caddy's internal CA. It is intended for an operator-controlled host and publishes only the HTTPS entry point on loopback; it is not an Internet-facing deployment recipe. The profile removes the direct Forge API and Dashboard host ports, preserves PostgreSQL's localhost-only binding, derives the exact CORS origin, and forces `CICD_AUTH_COOKIE_SECURE=true`.
+
+1. Create `.env` from `.env.example`, set the normal non-empty Forge secrets, then set `CICD_TLS_HOST` and (optionally) `CICD_TLS_HTTPS_PORT`. The default internal name is `forge.localhost:22443`.
+2. Render and start the profile with the existing stack:
+
+```bash
+cd /opt/dev/sdlc/CI-CD
+docker compose -f docker-compose.yml -f docker-compose.tls.yml config -q
+docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.tls.yml ps
+```
+
+3. Export the generated Caddy root CA to an operator-controlled path, then trust that certificate in the client OS/browser trust store. The certificate is trust material, not a Forge secret; do not install it on unmanaged clients:
+
+```bash
+scripts/export-tls-ca.sh --output ./tmp/forge-caddy-root.crt
+# Add --project-name when the stack runs under a non-default Compose project.
+curl --cacert ./tmp/forge-caddy-root.crt https://forge.localhost:22443/api/v1/health
+curl --cacert ./tmp/forge-caddy-root.crt https://forge.localhost:22443/api/v1/readiness
+```
+
+Dashboard, REST API and Git Smart HTTP share this single HTTPS origin. `/metrics` is deliberately not proxied by Caddy; keep monitoring traffic on its private network path. To stop the profile without deleting state, run `docker compose -f docker-compose.yml -f docker-compose.tls.yml down`. Returning to isolated HTTP development requires a deliberate `docker compose -f docker-compose.yml up -d`; do not publish the direct ports to an untrusted network.
+
+## Production prerequisites (Target approved)
+
+Production-развёртывание не должно быть вариантом текущего файла Compose с открытыми портами. До его допуска требуются все следующие свойства:
+
+- enforced auth/RBAC, безопасные сессии или API-токены, audit и `CICD_CORS_ALLOWED_ORIGINS`;
+- TLS на reverse proxy, ограничение ingress по сети; PostgreSQL не имеет опубликованного host port и доступен только runtime/maintenance-сетям;
+- отдельные `forge_owner` и `forge_runtime` credentials; owner используется только мигратором и backup/restore, runtime не имеет DDL-разрешений;
+- образы привязаны к immutable version tag и digest, конфигурация и секреты приходят из secret manager, а не из `.env` в рабочем каталоге;
+- versioned migrations, pre-deploy backup, readiness с проверкой БД, resource limits, централизованные логи, metrics и alerting;
+- private versioned object storage для artifacts, защищённое Git storage, off-site encrypted backup и регулярный isolated restore drill.
+
+Процедуры восстановления и дриллы — [DISASTER_RECOVERY](DISASTER_RECOVERY.md); реакция на инциденты и severity — [INCIDENT_RESPONSE](INCIDENT_RESPONSE.md). Целевые SLO и требования DR определены в [контракте жизненного цикла данных](contracts/DATA_LIFECYCLE.md): PostgreSQL RPO не более 15 минут, Git/artifacts RPO не более 24 часов и single-region RTO не более 4 часов. Эти показатели **не достигнуты Current verified MVP**.
+
+## Обновление
+
+### Current verified: локальный MVP
+
+Сначала сохраните доказательства текущего состояния и проверьте diff/конфигурацию. Для изменения исходного кода, Dockerfile, образа или `.env` всегда пересоздавайте сервисы:
+
+```bash
+cd /opt/dev/CI-CD
+git fetch origin
+git status --short
+git pull --ff-only origin main
+docker compose config -q
+docker compose up -d --build
+docker compose ps
+curl -fsS http://127.0.0.1:22801/api/v1/health
+```
+
+Если image уже собран и изменились только Compose-параметры, допускается:
+
+```bash
+docker compose up -d
+```
+
+> **Не используйте `docker compose restart` для нового образа, Dockerfile, исходного кода или env/config.** `restart` запускает старый контейнер с прежней конфигурацией; для применения изменения нужен `docker compose up -d` или `docker compose up -d --build`.
+
+Перед обновлением с данными создайте verified backup через `scripts/backup.sh` и `scripts/verify-backup.sh` из раздела «Backup и restore». Схема применяется versioned migrations (`backend/migrations/`, ADR-0008): при старте backend и отдельно через `cicd-migrate` (advisory lock, идемпотентно). Rollback не поддерживается — восстановление через backup + forward-only migrations (MIGRATION_CONTRACT).
+
+### Target approved: controlled rollout
+
+Целевой rollout выполняется по immutable release tag/digest, не через `git pull main` на production-хосте:
+
+1. Проверить release evidence, compatibility и approved forward/restore procedure.
+2. Создать verified pre-deploy backup и зафиксировать его ID.
+3. Остановить writers или включить maintenance mode.
+4. Запустить `cicd-migrate up` под `forge_owner`; затем `cicd-migrate verify`.
+5. Пересоздать runtime только после успешной migration/verify и выполнить readiness/application smoke.
+6. Наблюдать error rate, queue age, runner health и deliveries в согласованное окно наблюдения.
+
+Автоматический down migration и ручное удаление строк из `forge._sqlx_migrations` запрещены. Ошибка migration означает остановку rollout; восстановление допускается только следующей безопасной forward migration либо restore до известной compatibility boundary.
+
+## Миграции PostgreSQL
+
+### Current verified
+
+Версионируемые SQLx migration-файлы находятся в `backend/migrations/`, а binary `cicd-migrate` входит в workspace. Backend применяет pending migrations при старте через runtime `sqlx::migrate::Migrator`, загружая каталог из `CICD_MIGRATIONS_DIR` или дефолта `backend/migrations`; это удобно для локального MVP, но ещё не равно production rollout с отдельной owner/runtime ролью и pre-deploy verification gate.
+
+Для проверки текущей базы используйте только read-only диагностику:
+
+```bash
+docker compose exec -T postgres \
+  psql -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME" -c '\dt'
+docker compose logs --tail=200 backend
+```
+
+### Target approved: controlled `cicd-migrate`
+
+Production-путь schema change -- immutable SQL-файлы в `backend/migrations/` и pre-runtime запуск `cicd-migrate`. Целевой server не применяет DDL: при pending migration или checksum mismatch он не становится ready.
+
+Целевая последовательность для owner credential:
+
+```bash
+# Выполняется до запуска новой версии runtime и только после verified backup.
+cicd-migrate up --database-url "$CICD_OWNER_DATABASE_URL"
+cicd-migrate verify --database-url "$CICD_OWNER_DATABASE_URL"
+```
+
+Для исторической bootstrap-базы применяется только процедура `inspect-legacy` -> byte-for-byte сверка fingerprint -> `adopt-legacy --backup-id ...` -> `verify`; не пытайтесь подделать SQLx history вручную. Детали ролей, advisory lock, baseline и recovery приведены в [контракте миграций](contracts/MIGRATION_CONTRACT.md).
+
+## Backup и восстановление
+
+### Current verified MVP: scripted local backup
+
+В MVP есть локальный scripted helper: `scripts/forge_backup.py` и wrappers `scripts/backup.sh`, `scripts/restore.sh`, `scripts/verify-backup.sh`. Он сохраняет **согласованный набор** для Docker Compose: PostgreSQL custom dump, bare Git directory, artifacts directory, `files.txt`, `SHA256SUMS` и `manifest.json` без `.env`/секретов.
+
+**Off-site и retention (K7.1).** `FORGE_BACKUP_OFFSITE_DIR=/mnt/nas/forge-backups` заставляет каждый backup rsync-нуться в под-директорию того же имени (append-only, без `--delete`). `--retention 7` оставляет только 7 свежих timestamp-бэкапов в локальном каталоге, удаляя старшие; явные `--backup-dir` цели не удаляются никогда. Encryption/PITR/immutable storage остаются обязанностью оператора/target.
+
+```bash
+FORGE_BACKUP_OFFSITE_DIR=/mnt/nas/forge-backups scripts/backup.sh --retention 7
+```
+
+**Restore drill (K7.1, проверен 2026-09-06).** Дамп восстановлен в чистый postgres:17: 9 projects / 45k pipelines / 135k jobs / миграции до головы; единственное ожидаемое предупреждение — GRANT роли `forge_runtime` (роль создаётся на стенде перед restore). Регламент: раз в месяц полный drill в изолированной БД + сверка count(*) ключевых таблиц с манифестом.
+
+Локальные named volumes содержат:
+
+- PostgreSQL metadata и job logs: `cicd_postgres_data`;
+- bare Git repositories: `cicd_git_repos`, смонтирован в backend как `/var/lib/forge/git`;
+- artifact bytes: `cicd_artifacts`, смонтирован как `/var/lib/forge/artifacts`.
+
+Для наиболее согласованного backup дождитесь terminal jobs, приостановите новые push/API mutations и позвольте helper-у остановить backend/frontend на время снимка. Current embedded runner может быть прерван остановкой backend, поэтому это maintenance-операция, а не online snapshot.
+
+```bash
+# Base workspace: the umbrella compose file owns the running CI-CD volumes.
+cd /opt/dev/sdlc/CI-CD
+scripts/backup.sh \
+  --project-dir /opt/dev/sdlc \
+  --compose-file /opt/dev/sdlc/docker-compose.local.yml \
+  --env-file /opt/dev/sdlc/.env \
+  --postgres-service cicd-postgres \
+  --backend-service cicd-backend \
+  --frontend-service cicd-frontend \
+  --backup-dir "$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+scripts/verify-backup.sh "$PWD/backups/<backup-id>"
+```
+
+Helper берёт `CICD_DATABASE_USER`/`CICD_DATABASE_NAME` из `.env` или окружения, сохраняет ID backend-контейнера до остановки, делает `pg_dump --format=custom --no-owner`, копирует contents mounted Git/artifact volumes, выполняет `git fsck` для bare repositories через backend image и создаёт checksum manifest. Если один из Git/artifact каталогов пуст, это допустимо. Храните каталог backup вне Docker volumes и вне единственного хоста; шифруйте его внешним средством и ограничивайте доступ. Не помещайте в backup manifest значения из `.env`, plaintext secret или database password.
+
+`pg_dump` и копирование томов не дают crash-consistent distributed snapshot. В частности, копия Git/artifacts без остановки backend не должна считаться восстанавливаемым production backup. После backup сохраняйте дату, commit/release, оператора, checksum manifest и результат restore drill.
+
+### Current verified MVP: scripted restore
+
+Сначала выполните восстановление в изолированном disposable окружении. Восстановление поверх действующего экземпляра допустимо только как осознанная maintenance-операция с подтверждённым backup, остановленными writers и возможной потерей данных после момента снимка.
+
+Ниже `<backup-dir>` -- каталог, созданный предыдущей процедурой. Команды заменяют содержимое базы, Git и artifacts на содержимое backup.
+
+```bash
+cd /opt/dev/sdlc/CI-CD
+scripts/verify-backup.sh "/absolute/path/to/<backup-dir>"
+scripts/restore.sh \
+  --project-dir /opt/dev/sdlc \
+  --compose-file /opt/dev/sdlc/docker-compose.local.yml \
+  --env-file /opt/dev/sdlc/.env \
+  --postgres-service cicd-postgres \
+  --backend-service cicd-backend \
+  --frontend-service cicd-frontend \
+  "/absolute/path/to/<backup-dir>" --confirm-restore
+curl -fsS http://127.0.0.1:7711/api/v1/health
+curl -fsS http://127.0.0.1:7711/api/v1/projects
+```
+
+Restore script требует `--confirm-restore`, перед записью проверяет `SHA256SUMS`/`files.txt`/`manifest.json`, останавливает frontend/backend, запускает `pg_restore --clean --if-exists --no-owner`, заменяет Git/artifact volumes через backend image и выполняет `git fsck`, если не задан `--skip-git-fsck`. После восстановления проверьте чтение нескольких ожидаемых pipeline/job/artifact записей через API. Не запускайте новые pipelines до завершения этой проверки. Если restore не проходит, сохраняйте исходные логи и эскалируйте; не лечите ошибку удалением data volume.
+
+### Target approved: production backup platform и DR
+
+Локальные scripts являются MVP helper-ом. Production target должен создавать encrypted off-site backup с immutable manifest, PITR/WAL, schedule/retention, monitored backup age и публиковать успех только после verification. Скрипты не заменяют production backup platform.
+
+Target backup включает physical PostgreSQL base backup и continuous WAL для PITR, daily portable logical dump, проверенные `git bundle --all`/snapshot после `git fsck`, versioned artifact objects и manifest с LSN, applied migration version/checksum, object versions, SHA-256 и key IDs. Restore выполняется только изолированно: роли/schema, PostgreSQL до manifest boundary, migration verify без DDL, Git/artifact integrity, доступность key versions и read-only smoke. Restore drill обязателен не реже раза в месяц и после изменения migration, storage или key policy.
+
+## Мониторинг и health
+
+### Current verified
+
+Наблюдаемость MVP включает Docker status/healthchecks, `/api/v1/health`, `/api/v1/readiness`, `/metrics` Prometheus text и backend `tracing` logs. Alert routing, queue-age/dead-letter dashboards и production log pipeline отсутствуют.
+
+| Проверка | Команда | Значение |
+|---|---|---|
+| Compose services | `docker compose ps` | PostgreSQL должен быть `healthy`; backend должен быть running/healthy. |
+| API liveness | `curl -fsS http://127.0.0.1:22801/api/v1/health` | Процесс backend отвечает; это не DB readiness. |
+| API readiness | `curl -fsS http://127.0.0.1:22801/api/v1/readiness` | PostgreSQL отвечает, `_sqlx_migrations` совпадает с configured SQLx migrations. |
+| Metrics | `curl -fsS http://127.0.0.1:22801/metrics` | Prometheus text endpoint; в MVP не защищён отдельно от общей сетевой/auth границы. |
+| PostgreSQL | `docker compose exec -T postgres pg_isready -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME"` | База принимает подключения. |
+| Dashboard | `curl -fsS http://127.0.0.1:22802/ >/dev/null` | nginx отвечает статическим приложением. |
+| Логи | `docker compose logs --since 30m backend` | Ошибки запуска, execution и API requests. |
+| Диск | `df -h` и `docker system df` | Риск заполнения volumes/logs/images. |
+
+Health endpoint не должен быть единственным сигналом решения об инциденте: backend может отвечать, когда прикладные запросы не работают из-за PostgreSQL. Проверяйте readiness, PostgreSQL и read API отдельно.
+
+### Target approved
+
+Production monitoring добавляет защищённый metrics endpoint, централизованные structured logs, внешнюю uptime-проверку и alert routing поверх current readiness. Минимальные alert-и: API/DB unavailable, 5xx/error budget, disk pressure, backup age/failure, migration verify failure, runner offline, lease expiry/reconciliation, queue age, outbox retry lag/dead letters, Git/artifact integrity error и KMS/key availability. Labels не содержат tenant/project ID, URL, tokens, event/delivery IDs или secret data.
+
+## Инцидент-ранбуки
+
+Общее правило для каждого инцидента: зафиксируйте UTC-время, release/commit, affected IDs, `docker compose ps`, последние релевантные логи и принятое решение. Не изменяйте статусы jobs или записи базы SQL-командами; используйте API/UI либо target reconciliation. Перед destructive recovery создайте backup.
+
+### Упавший pipeline
+
+**Current verified: диагностика и действия**
+
+1. Получить детали pipeline и определить failed job:
+   ```bash
+   curl -fsS http://127.0.0.1:22801/api/v1/pipelines/<pipeline-id>
+   curl -fsS http://127.0.0.1:22801/api/v1/jobs/<job-id>/logs
+   ```
+2. Сопоставить timestamp с `docker compose logs --since 30m backend` и, для Docker execution, с контейнером `forge-job-<job-id>`:
+   ```bash
+   docker ps -a --filter "name=forge-job-<job-id>"
+   docker logs forge-job-<job-id>
+   ```
+3. Устранить внешнюю причину (недоступный Git/image, ошибка команды, дефицит места), сохранить логи и только затем создать повтор через Dashboard или API:
+   ```bash
+   curl -fsS -X POST \
+     http://127.0.0.1:22801/api/v1/pipelines/<pipeline-id>/retry
+   ```
+4. Если нужно прекратить нетерминальную работу, отменить pipeline через API, а не менять status в PostgreSQL:
+   ```bash
+   curl -fsS -X POST \
+     http://127.0.0.1:22801/api/v1/pipelines/<pipeline-id>/cancel
+   ```
+
+**Target approved: процедура**
+
+Проверить execution attempt, lease/runner, immutable plan, append-only logs и событие завершения. Retry создаёт новый attempt только после классификации причины и проверки идемпотентности command/deploy. Terminal failure порождает audit/event, а operator retry сохраняет correlation. Не повторяйте потенциально side-effecting deployment автоматически.
+
+### Зависший job
+
+**Current verified: диагностика и действия**
+
+1. Получить pipeline/job/logs и проверить время последней строки лога.
+2. Проверить backend, Docker execution container, host resources и PostgreSQL:
+   ```bash
+   docker compose ps
+   docker compose logs --tail=200 backend
+   docker ps -a --filter "name=forge-job-<job-id>"
+   docker stats --no-stream
+   df -h
+   ```
+3. Если задача не имеет прогресса и владелец подтверждает отмену, отправить pipeline cancel. Если это только одна terminal job с допустимой retry-семантикой, используйте `POST /api/v1/jobs/<job-id>/retry` после расследования.
+4. Не используйте restart как способ применить новый образ/config; при необходимости пересоздания backend примените `docker compose up -d --build`, затем повторите health и pipeline inspection.
+
+В Current MVP есть durable `job_queue`, embedded `job_leases` TTL/reconciliation, reconciliation очереди terminal pipeline (не начатые downstream jobs переходят в `canceled`, а не остаются runnable), external runner protocol ack/renew/control/logs/complete, ack-timeout requeue, configurable queue-timeout diagnostic для dispatch-eligible job без compatible runner-а, basic tag/current executor compatibility и `forge-runner` shell process, но нет full lost-runner auto-dispatch для уже running execution, sandboxed runner или гарантированного auto-retry. Зависшая job требует проверки queue/lease/attempt и ручного решения; не объявляйте её завершённой без API action/evidence.
+
+**Target approved: процедура**
+
+Сверить `job_leases`, `execution_attempts`, heartbeat и срок lease. После expiry прежний owner fencing-ится; reconciler останавливает stale execution, фиксирует причину и создаёт новый attempt только в соответствии с retry policy. Timeout job отменяет процесс, сохраняет diagnostic и переводит job в `failed` либо `canceled`. Manual completion/status rewrite запрещены.
+
+Это target auto-recovery, не доказанная current остановка remote процесса.
+Expiry сам по себе не подтверждает safe-stop или completion. До readback
+прекращения прежнего выполнения новый conflicting attempt не разрешается;
+unknown workspace сохраняется, cleanup требует exact owner terminal ACK.
+
+### Потерянный runner
+
+**Current verified: диагностика и действия**
+
+Registry/heartbeat legacy endpoints остаются inventory; external runner protocol MVP уже поддерживает `/api/v1/runner/register`, heartbeat, work poll и leases, а `forge-runner` запускает shell-MVP отдельным процессом; production sandbox/dispatch ещё не реализован. Проверить запись runner и backend logs:
+
+```bash
+curl -fsS http://127.0.0.1:22801/api/v1/runners
+docker compose logs --tail=200 backend
+```
+
+Для реально исполняемой embedded job проверяйте доступность backend host и Docker execution container. Не удаляйте runner registry-запись для «восстановления» job: это не перезапускает execution. Отмените/повторите affected pipeline через API после диагностики.
+
+**Target approved: процедура**
+
+Runner считается unhealthy после отсутствия heartbeat более 45 секунд и offline после 120 секунд. Current queue timeout завершает только dispatch-eligible queued work, если нет compatible embedded/protocol runner path; он не создаёт retry новой attempt. Перевести runner в draining/disabled, запретить новые leases, сохранить evidence последнего heartbeat/capability и ждать lease expiry. Reconciler fencing-ит старого owner, очищает workspace/ресурсы по policy и передаёт безопасно повторяемую работу другому compatible runner. Credential rotate/revoke и повторная registration аудируются.
+
+Указанная cleanup/redispatch policy остаётся target и обязана проверять safe-stop
+и точный owner receipt. Потеря heartbeat, terminal row после expiry и отсутствие
+процесса в локальном inventory не заменяют accepted completion. Current external
+runner оставляет unknown папку и требует owner/process reconciliation.
+
+### Outbox backlog
+
+**Current verified: диагностика и действия**
+
+Transactional outbox MVP реализован через `domain_events`, `outbox_messages` и `outbox_delivery_attempts`: terminal pipeline event создаёт сообщения для enabled outgoing webhooks и local `in_app`/`sse` notifications; worker доставляет webhook-и с basic retry/backoff, помечает local notifications delivered, фиксирует attempts/outcome и останавливает exhausted delivery через `failed_at`. Failed delivery можно явно requeue через API; `outbox_deliveries` snapshots/leases, full dead-letter workflow, external notification adapters и точные crash-safe delivery guarantees ещё target.
+
+Для диагностики текущего backlog используйте API history, read-only запросы к `outbox_messages`/`outbox_delivery_attempts` и backend logs; не редактируйте payload/attempts вручную:
+
+```bash
+curl -fsS "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/outbox-deliveries?status=failed&limit=50"
+docker compose exec -T postgres \
+  psql -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME" \
+  -c "select channel, failed_at is not null as failed, count(*), min(next_attempt_at) from outbox_messages where delivered_at is null group by channel, failed"
+docker compose logs --tail=200 backend
+```
+
+**Target approved: процедура**
+
+1. Alert содержит queue age, pending/leased/failed counts, retry lag и worker version; зафиксировать их до изменений.
+2. Проверить worker health, PostgreSQL capacity/locks, oldest `outbox_messages`, `next_attempt_at`/`failed_at` и safe failure classes в `outbox_delivery_attempts`; target-инциденты дополнительно проверяют lease expiry в `outbox_deliveries`.
+3. Восстановить worker или зависимость, не меняя immutable payload и не удаляя pending rows вручную.
+4. Просроченные lease должны быть reclaimed idempotently; delivery retry следует backoff policy. В current MVP terminal failed row повторяется только явным `POST /api/v1/outbox-deliveries/{delivery_id}/requeue`, который создаёт новую generation; target dead letter дополнительно требует alert и full audited operator workflow.
+5. После восстановления подтвердить уменьшение queue age, отсутствие duplicate side effects у consumer и отсутствие secret в logs/history.
+
+Целевые гарантии и retry classification определены в [контракте событий и доставок](contracts/EVENT_CONTRACT.md).
+
+## Релизный процесс
+
+### Current verified: release candidate
+
+Версия следует Semantic Versioning, тег имеет вид `vMAJOR.MINOR.PATCH`; изменения пользователя фиксируются в `CHANGELOG.md` до tag. Перед публикацией release candidate обязан пройти актуальные CI gates: backend format/clippy/tests/release build, frontend frozen install/tests/build и `docker compose build`.
+
+Локальное воспроизведение:
+
+```bash
+cd /opt/dev/CI-CD
+
+docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" \
+  -w /workspace rust:1.88-bookworm \
+  -lc '/usr/local/cargo/bin/cargo fmt --all -- --check && /usr/local/cargo/bin/cargo clippy --workspace --all-targets -- -D warnings && /usr/local/cargo/bin/cargo test --workspace && /usr/local/cargo/bin/cargo build --release --workspace'
+
+cd frontend
+pnpm install --frozen-lockfile
+pnpm test
+pnpm build
+cd ..
+
+docker compose config -q
+docker compose build
+```
+
+После review и успешного CI создайте неизменяемый annotated tag из release commit:
+
+```bash
+git tag -a v<version> -m "Release v<version>"
+git push origin v<version>
+```
+
+Не перезаписывайте опубликованный tag или version-tagged image. При регрессии выпускайте patch release либо документируйте возврат на предыдущий known-good tag. Для локального развёртывания release применяйте раздел «Обновление», включая backup и `docker compose up -d --build`.
+
+### Target approved: production release
+
+Production release добавляет migration test job, clean/prior-schema upgrade evidence, pre-deploy backup ID, signed immutable image digests, approved deployment window, canary/controlled rollout, readiness and domain smoke, мониторинг после релиза и formal release decision. Любая destructive/contract migration требует expand/backfill/compatibility периода и tested forward/restore runbook. Release notes указывают breaking changes, migration requirement, rollback/restore boundary, image digest и known limitations.
+
+## Runner attempt recovery: source contract
+
+Новая попытка получает fresh directory, old job/attempt directory не очищается
+перед запуском. `CICD_RUNNER_KEEP_WORKSPACE` и external `--keep-workspace` сохраняют
+папки даже после ACK. Ошибка checkout, unknown completion или drift marker также
+сохраняют папку независимо от keep setting. Не запускать команды повторно из неё
+и не удалять её общим volume prune/`git clean`.
+
+Если остановка дочернего процесса не подтверждена, внешний runner не отправляет
+`failed` completion, не объявляет idle capacity и прекращает polling. Папка
+сохраняется без terminal intent. Требуется проверка прежнего процесса оператором;
+истечение lease само по себе не подтверждает остановку. GET receipt разрешает
+cleanup только после принятого completion (`completion_received_at`); отмена,
+закрытая expiry reconciler, этого признака не получает.
+
+До явной owner cleanup проверить attempt ID, lease ID/generation, terminal state
+и прекращение прежнего процесса. Marker должен совпасть с ожидаемой identity;
+path не должен проходить symlink/junction. При утрате ACK сверять серверный ledger,
+а не повторять неизвестный effect. Automatic recovery/формальный quarantine API
+и trusted SDLC receipt ещё не реализованы; физическая retention не объявляет их.
+Shell/embedded runner не становятся sandbox этим механизмом (ADR-0007).
+
+## Связанные документы
+
+- [CURRENT_STATE.md](CURRENT_STATE.md) -- единственный снимок фактически реализованных возможностей.
+- [Контракт миграций](contracts/MIGRATION_CONTRACT.md) -- нормативные target rules для `cicd-migrate`.
+- [Контракт жизненного цикла данных](contracts/DATA_LIFECYCLE.md) -- target backup, retention и DR.
+- [Контракт runner protocol](contracts/RUNNER_PROTOCOL.md) -- target leases, heartbeats и fencing.
+- [Контракт событий и доставок](contracts/EVENT_CONTRACT.md) -- target outbox, deliveries и replay.
+- [GIT_HOSTING.md](GIT_HOSTING.md) -- storage и Smart HTTP Git.
+- [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) -- текущие CI gates.

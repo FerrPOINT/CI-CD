@@ -1,0 +1,481 @@
+diff --git a/backend/src/api/sdlc_workspace/task_pipeline.rs b/backend/src/api/sdlc_workspace/task_pipeline.rs
+index b573090..f51e3e9 100644
+--- a/backend/src/api/sdlc_workspace/task_pipeline.rs
++++ b/backend/src/api/sdlc_workspace/task_pipeline.rs
+@@ -222,7 +222,7 @@ async fn authorize_child(
+     intent: &TaskWorkspaceIntent,
+     stored: &StoredCredential,
+ ) -> Result<Instant, ApiError> {
+-    stored.verify(config, secrets, project, intent).await?;
++    let child_until = stored.verify(config, secrets, project, intent).await?;
+     if !ledger::task_project_matches(conn, project, intent)
+         .await
+         .map_err(ApiError::internal)?
+@@ -231,7 +231,25 @@ async fn authorize_child(
+             "Task project/repository mapping changed",
+         ));
+     }
+-    tracker_bound(config, intent, Some(&stored.context)).await
++    bound_child_authority(
++        child_until,
++        tracker_bound(config, intent, Some(&stored.context)),
++    )
++    .await
++}
++
++async fn bound_child_authority<F>(child_until: Instant, tracker: F) -> Result<Instant, ApiError>
++where
++    F: std::future::Future<Output = Result<Instant, ApiError>>,
++{
++    if Instant::now() >= child_until {
++        return Err(ApiError::forbidden());
++    }
++    let until = child_until.min(tracker.await?);
++    if Instant::now() >= until {
++        return Err(ApiError::forbidden());
++    }
++    Ok(until)
+ }
+ 
+ pub(crate) async fn admit_delegated(
+@@ -436,12 +454,12 @@ pub(crate) async fn before_delegated_effect(
+         ));
+     }
+     let until = authorize_saved(&mut tx, &config.sdlc_workspace, &record, &config.secrets).await?;
++    tx.commit().await.map_err(ApiError::internal)?;
+     if Instant::now() >= until {
+         return Err(ApiError::conflict(
+-            "Tracker lease expired before publication",
++            "Task authority expired before publication",
+         ));
+     }
+-    tx.commit().await.map_err(ApiError::internal)?;
+     Ok(())
+ }
+ 
+diff --git a/backend/src/api/sdlc_workspace/task_pipeline/tests.rs b/backend/src/api/sdlc_workspace/task_pipeline/tests.rs
+index 0d6295b..dcb6f50 100644
+--- a/backend/src/api/sdlc_workspace/task_pipeline/tests.rs
++++ b/backend/src/api/sdlc_workspace/task_pipeline/tests.rs
+@@ -1,5 +1,43 @@
+ use super::*;
+ 
++#[tokio::test]
++async fn delegated_child_expiring_during_tracker_await_has_zero_effects() {
++    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
++    let effects = AtomicUsize::new(0);
++    let tracker_entered = AtomicBool::new(false);
++    let child_until = Instant::now() + Duration::from_millis(100);
++    let result = bound_child_authority(child_until, async {
++        tracker_entered.store(true, Ordering::SeqCst);
++        tokio::time::sleep_until(tokio::time::Instant::from_std(child_until)).await;
++        Ok(Instant::now() + Duration::from_secs(30))
++    })
++    .await;
++    if result.is_ok() {
++        effects.fetch_add(1, Ordering::SeqCst);
++    }
++    assert!(result.is_err());
++    assert!(tracker_entered.load(Ordering::SeqCst));
++    assert_eq!(effects.load(Ordering::SeqCst), 0);
++}
++
++#[tokio::test]
++async fn delegated_authority_deadline_is_minimum_of_child_and_tracker() {
++    let soon = Instant::now() + Duration::from_secs(1);
++    let later = soon + Duration::from_secs(29);
++    assert_eq!(
++        bound_child_authority(soon, async { Ok(later) })
++            .await
++            .unwrap(),
++        soon
++    );
++    assert_eq!(
++        bound_child_authority(later, async { Ok(soon) })
++            .await
++            .unwrap(),
++        soon
++    );
++}
++
+ #[tokio::test]
+ async fn delegated_tracker_readback_requires_exact_native_tuple_and_current_assignment() {
+     use axum::{Router, routing::get};
+diff --git a/backend/src/central_auth.rs b/backend/src/central_auth.rs
+index 457fe73..a46e802 100644
+--- a/backend/src/central_auth.rs
++++ b/backend/src/central_auth.rs
+@@ -30,6 +30,126 @@ pub async fn try_central(token: &str) -> Result<Option<AuthContext>, crate::api:
+     }
+ }
+ 
++/// Same configured PAT endpoint, with authoritative expiry for delegated effects.
++/// The pinned SDK intentionally ignores additive introspection metadata.
++pub(crate) async fn try_central_child(
++    token: &str,
++) -> Result<Option<(AuthContext, std::time::Instant)>, crate::api::ApiError> {
++    use crate::api::ApiError;
++    let unavailable = || ApiError::service_unavailable("Central child expiry unavailable");
++    if !pdlc_auth_core::is_personal_token(token) {
++        return Err(ApiError::forbidden());
++    }
++    let uri = std::env::var("CICD_AUTH__CENTRAL_JWKS_URI").map_err(|_| unavailable())?;
++    let mut url = reqwest::Url::parse(&uri).map_err(|_| unavailable())?;
++    if !matches!(url.scheme(), "http" | "https")
++        || url.host_str().is_none()
++        || !url.username().is_empty()
++        || url.password().is_some()
++    {
++        return Err(unavailable());
++    }
++    url.set_path("/auth/tokens/introspect");
++    url.set_query(None);
++    url.set_fragment(None);
++    let timeout = std::env::var("CICD_AUTH__CENTRAL_TIMEOUT_SECS")
++        .ok()
++        .and_then(|v| v.parse().ok())
++        .unwrap_or(5u64);
++    let client = reqwest::Client::builder()
++        .timeout(std::time::Duration::from_secs(timeout))
++        .redirect(reqwest::redirect::Policy::none())
++        .build()
++        .map_err(|_| unavailable())?;
++    introspect_child(&client, url, token).await
++}
++
++#[derive(serde::Deserialize)]
++struct ChildIntrospection {
++    sub: String,
++    email: String,
++    scopes: Vec<String>,
++    expires_at: chrono::DateTime<chrono::Utc>,
++    observed_at: chrono::DateTime<chrono::Utc>,
++}
++
++fn child_deadline(
++    started: std::time::Instant,
++    metadata: &ChildIntrospection,
++) -> Result<std::time::Instant, crate::api::ApiError> {
++    let remaining = metadata
++        .expires_at
++        .signed_duration_since(metadata.observed_at);
++    if metadata.sub.is_empty()
++        || metadata.email.is_empty()
++        || remaining <= chrono::Duration::zero()
++        || remaining > chrono::Duration::seconds(1800)
++    {
++        return Err(crate::api::ApiError::forbidden());
++    }
++    let deadline = started
++        .checked_add(
++            remaining
++                .to_std()
++                .map_err(|_| crate::api::ApiError::forbidden())?,
++        )
++        .ok_or_else(crate::api::ApiError::forbidden)?;
++    if std::time::Instant::now() >= deadline {
++        return Err(crate::api::ApiError::forbidden());
++    }
++    Ok(deadline)
++}
++
++async fn introspect_child(
++    client: &reqwest::Client,
++    url: reqwest::Url,
++    token: &str,
++) -> Result<Option<(AuthContext, std::time::Instant)>, crate::api::ApiError> {
++    use crate::api::ApiError;
++    let unavailable = || ApiError::service_unavailable("Central child expiry unavailable");
++    let started = std::time::Instant::now();
++    let mut response = client
++        .get(url)
++        .bearer_auth(token)
++        .header("accept-encoding", "identity")
++        .header("cache-control", "no-store")
++        .send()
++        .await
++        .map_err(|_| unavailable())?;
++    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
++        return Err(ApiError::unauthorized());
++    }
++    if response.status() != reqwest::StatusCode::OK
++        || response.content_length().is_some_and(|size| size > 16_384)
++        || response
++            .headers()
++            .get("content-encoding")
++            .is_some_and(|v| v != "identity")
++    {
++        return Err(unavailable());
++    }
++    let mut bytes = Vec::new();
++    while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
++        if bytes.len().saturating_add(chunk.len()) > 16_384 {
++            return Err(unavailable());
++        }
++        bytes.extend_from_slice(&chunk);
++    }
++    let metadata: ChildIntrospection = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
++    let until = child_deadline(started, &metadata)?;
++    Ok(Some((
++        AuthContext {
++            user_id: metadata.sub,
++            email: Some(metadata.email),
++            scopes: metadata.scopes.into_iter().collect(),
++            role: None,
++            session_id: None,
++            token: token.into(),
++        },
++        until,
++    )))
++}
++
+ /// Resolves only by the immutable central subject; historical usernames stay
+ /// untouched even when they match a newly created central account.
+ pub async fn link_central_user(
+@@ -112,3 +232,91 @@ pub async fn try_login(
+         }
+     }
+ }
++
++#[cfg(test)]
++mod child_expiry_tests {
++    use super::*;
++    use serde_json::json;
++    use std::time::{Duration, Instant};
++
++    fn metadata() -> ChildIntrospection {
++        let observed = chrono::Utc::now();
++        serde_json::from_value(
++            json!({"sub":Uuid::new_v4(),"email":"fixture@example.invalid",
++            "scopes":["ci-cd:read"],"display_name":"Fixture",
++            "observed_at":observed,"expires_at":observed+chrono::Duration::seconds(30)}),
++        )
++        .unwrap()
++    }
++
++    #[test]
++    fn child_expiry_wire_is_required_and_bounded_without_using_client_wall_clock() {
++        let started = Instant::now();
++        let mut value = metadata();
++        assert_eq!(
++            child_deadline(started, &value).unwrap(),
++            started + Duration::from_secs(30)
++        );
++        value.expires_at = value.observed_at;
++        assert!(child_deadline(started, &value).is_err());
++        value.expires_at = value.observed_at + chrono::Duration::seconds(1801);
++        assert!(child_deadline(started, &value).is_err());
++        for missing in ["observed_at", "expires_at"] {
++            let mut raw = json!({"sub":Uuid::new_v4(),"email":"fixture@example.invalid",
++                "scopes":["ci-cd:read"],"observed_at":value.observed_at,"expires_at":value.expires_at});
++            raw.as_object_mut().unwrap().remove(missing);
++            assert!(serde_json::from_value::<ChildIntrospection>(raw).is_err());
++        }
++    }
++
++    #[test]
++    fn child_deadline_subtracts_elapsed_transport_and_decode_time() {
++        let mut value = metadata();
++        value.expires_at = value.observed_at + chrono::Duration::seconds(1);
++        assert!(child_deadline(Instant::now() - Duration::from_secs(2), &value).is_err());
++    }
++
++    #[tokio::test]
++    async fn child_introspection_http_requires_authoritative_expiry_on_same_identity_response() {
++        use axum::{Json, Router, routing::get};
++        for with_expiry in [true, false] {
++            let observed = chrono::Utc::now();
++            let subject = Uuid::new_v4().to_string();
++            let mut wire = json!({"sub":subject,"email":"fixture@example.invalid",
++                "scopes":["ci-cd:read"],"display_name":"Fixture",
++                "expires_at":observed+chrono::Duration::seconds(30),"observed_at":observed});
++            if !with_expiry {
++                wire.as_object_mut().unwrap().remove("expires_at");
++                wire.as_object_mut().unwrap().remove("observed_at");
++            }
++            let router = Router::new().route(
++                "/auth/tokens/introspect",
++                get(move || {
++                    let wire = wire.clone();
++                    async move { Json(wire) }
++                }),
++            );
++            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++            let url = format!(
++                "http://{}/auth/tokens/introspect",
++                listener.local_addr().unwrap()
++            );
++            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
++            let client = reqwest::Client::builder()
++                .timeout(Duration::from_secs(5))
++                .redirect(reqwest::redirect::Policy::none())
++                .build()
++                .unwrap();
++            let result = introspect_child(&client, url.parse().unwrap(), "fixture-child").await;
++            server.abort();
++            if with_expiry {
++                let (identity, until) = result.unwrap().unwrap();
++                assert_eq!(identity.user_id, subject);
++                assert_eq!(identity.token, "fixture-child");
++                assert!(until > Instant::now());
++            } else {
++                assert!(result.is_err());
++            }
++        }
++    }
++}
+diff --git a/backend/src/delegated_credentials.rs b/backend/src/delegated_credentials.rs
+index 1abf000..4a063db 100644
+--- a/backend/src/delegated_credentials.rs
++++ b/backend/src/delegated_credentials.rs
+@@ -272,9 +272,9 @@ impl StoredCredential {
+         secrets: &SecretsConfig,
+         project: Uuid,
+         intent: &TaskWorkspaceIntent,
+-    ) -> Result<(), ApiError> {
++    ) -> Result<std::time::Instant, ApiError> {
+         self.verify_with(config, secrets, project, intent, |token| async move {
+-            crate::central_auth::try_central(&token).await
++            crate::central_auth::try_central_child(&token).await
+         })
+         .await
+     }
+@@ -286,20 +286,26 @@ impl StoredCredential {
+         project: Uuid,
+         intent: &TaskWorkspaceIntent,
+         introspect: F,
+-    ) -> Result<(), ApiError>
++    ) -> Result<std::time::Instant, ApiError>
+     where
+         F: FnOnce(String) -> Fut,
+-        Fut: std::future::Future<Output = Result<Option<AuthContext>, ApiError>>,
++        Fut: std::future::Future<
++                Output = Result<Option<(AuthContext, std::time::Instant)>, ApiError>,
++            >,
+     {
+         let token = self.open(secrets)?;
+-        let central = introspect(token).await?.ok_or_else(ApiError::forbidden)?;
++        let (central, until) = introspect(token).await?.ok_or_else(ApiError::forbidden)?;
+         let identity = Identity::verified(&central, config)?;
+         if identity.subject != self.subject
+             || crate::auth::hash_token(&identity.token) != self.fingerprint
+         {
+             return Err(ApiError::forbidden());
+         }
+-        identity.bind(&self.context, project, intent)
++        identity.bind(&self.context, project, intent)?;
++        if std::time::Instant::now() >= until {
++            return Err(ApiError::forbidden());
++        }
++        Ok(until)
+     }
+ 
+     fn open(&self, secrets: &SecretsConfig) -> Result<String, ApiError> {
+diff --git a/backend/src/delegated_credentials/tests.rs b/backend/src/delegated_credentials/tests.rs
+index daf0f14..13fdcaf 100644
+--- a/backend/src/delegated_credentials/tests.rs
++++ b/backend/src/delegated_credentials/tests.rs
+@@ -2,6 +2,13 @@ use super::*;
+ use crate::domain::sdlc_workspace::{WorkspaceRole, WorkspaceTaskBinding};
+ use std::collections::HashSet;
+ 
++fn live_child(central: AuthContext) -> (AuthContext, std::time::Instant) {
++    (
++        central,
++        std::time::Instant::now() + std::time::Duration::from_secs(30),
++    )
++}
++
+ fn fixture() -> (
+     TaskCredentialContext,
+     AuthContext,
+@@ -303,7 +310,7 @@ async fn async_verifier_reintrospects_same_child_each_time_and_never_uses_cached
+                 move |token| async move {
+                     calls.fetch_add(1, Ordering::SeqCst);
+                     assert_eq!(token, central.token);
+-                    Ok(Some(central))
++                    Ok(Some(live_child(central)))
+                 },
+             )
+             .await
+@@ -339,7 +346,7 @@ async fn async_verifier_reintrospects_same_child_each_time_and_never_uses_cached
+                 &secrets,
+                 context.project_id,
+                 &context.intent,
+-                move |_| async move { Ok(Some(changed)) }
++                move |_| async move { Ok(Some(live_child(changed))) }
+             )
+             .await
+             .is_err()
+@@ -490,10 +497,32 @@ async fn expired_revoked_or_replaced_child_cannot_refresh_saved_command_authorit
+                 &secrets,
+                 context.project_id,
+                 &context.intent,
+-                move |_| async { Ok(Some(replacement)) }
++                move |_| async { Ok(Some(live_child(replacement))) }
+             )
+             .await
+             .is_err()
+     );
+     assert!(stored.context == context);
+ }
++
++#[tokio::test]
++async fn valid_identity_with_elapsed_child_deadline_cannot_authorize_effects() {
++    let (context, central, config, secrets) = fixture();
++    let stored = Identity::verified(&central, &config)
++        .unwrap()
++        .store(context.clone(), &secrets)
++        .unwrap();
++    let expired = std::time::Instant::now();
++    assert!(
++        stored
++            .verify_with(
++                &config,
++                &secrets,
++                context.project_id,
++                &context.intent,
++                move |_| async move { Ok(Some((central, expired))) }
++            )
++            .await
++            .is_err()
++    );
++}
+diff --git a/docs/API.md b/docs/API.md
+index d113c25..eeb2985 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -5,6 +5,9 @@ Source-only opt-in delegated task credential добавляет optional
+ task-trigger/task-workspace readback. Legacy SAT и default auth не меняются;
+ Git/delivery/admin права child закрыты. Exact scope/wire и private async custody:
+ [delegated task credential](FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).
++Async effect permit ограничен минимумом authoritative child expiry из additive
++Base introspection metadata и current Tracker lease; отсутствие metadata закрывает
++delegated effects без изменения SDK/SAT или продления исходного child.
+ Rust/PG qualification и installation этого slice не заявлены.
+ 
+ PR `action=merge` использует только branch refs и фиксированные SHA для pipeline
+diff --git a/docs/FORGE_DELEGATED_CREDENTIAL_CONTRACT.md b/docs/FORGE_DELEGATED_CREDENTIAL_CONTRACT.md
+index a3fb8d2..818ef14 100644
+--- a/docs/FORGE_DELEGATED_CREDENTIAL_CONTRACT.md
++++ b/docs/FORGE_DELEGATED_CREDENTIAL_CONTRACT.md
+@@ -82,6 +82,19 @@ deny/hold; cached grant/server token не подставляется.
+ 
+ ### Lifetime: явная граница
+ 
++Delegated effect требует additive `expires_at` и `observed_at` из существующего
++Base `/auth/tokens/introspect`. Последнее поле — свежие PostgreSQL-часы issuer.
++Pinned SDK не меняется: metadata читает existing Forge central-auth adapter;
++старый Base без этих полей закрывает delegated effect, а не выдаёт бесконечный
++permit. Legacy SAT/human authentication остаются прежними.
++
++Child deadline вычисляется от начала HTTP-запроса плюс `expires_at - observed_at`;
++transport/decode/DB/Tracker ожидания не продлевают его. Async prepare, spawn и
++publication получают минимум child deadline и прежнего Tracker deadline.
++После Tracker await и commit перед ordinary publication выполняется повторная
++проверка. Идентичность, original fingerprint/context и live revoke проверки
++сохраняются; metadata не разрешает подменить child или assignment.
++
+ Base replay не продлевает expiry. Credential file refresh у caller НЕ заменяет
+ child в immutable async journal. Renewal для той же сохранённой command в этом
+ slice НЕ поддержан: другой live child, даже с тем же assignment/run/fence/context,

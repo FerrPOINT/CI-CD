@@ -1,0 +1,147 @@
+diff --git a/.base-revision b/.base-revision
+index b3c61dc..6236baf 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-a24c995990f5031c1ba96c17e331821e8686c61d
++27b93e11cf327148e8f1f9bbc819007ece114a72
+diff --git a/backend/src/runner_docker.rs b/backend/src/runner_docker.rs
+index cfca336..b880147 100644
+--- a/backend/src/runner_docker.rs
++++ b/backend/src/runner_docker.rs
+@@ -107,6 +107,29 @@ impl Client {
+         self.run(&["image", "inspect", image, "--format", "{{.Id}}"])
+             .await
+     }
++    async fn immutable_sources(&self) -> io::Result<String> {
++        let source = std::env::var("CICD_RUNNER_SHARED_SOURCES_VOLUME").unwrap_or_default();
++        if !source
++            .bytes()
++            .next()
++            .is_some_and(|byte| byte.is_ascii_alphanumeric())
++            || source
++                .bytes()
++                .any(|byte| !(byte.is_ascii_alphanumeric() || b"_.-".contains(&byte)))
++        {
++            return Err(invalid("explicit immutable source volume name is required"));
++        }
++        let volume: Value =
++            serde_json::from_str(&self.run(&["volume", "inspect", &source]).await?)?;
++        source_provenance(
++            &volume,
++            &source,
++            &std::env::var("CICD_RUNNER_BASE_REVISION").unwrap_or_default(),
++            &std::env::var("CICD_RUNNER_WORKSPACE_PROJECT").unwrap_or_default(),
++        )?;
++        Ok(source)
++    }
++
+     async fn verify_project(&self, project: &str, manifest: &Value, file: &Path) -> io::Result<()> {
+         let filter = format!("label=com.docker.compose.project={project}");
+         let ids = self.run(&["ps", "-aq", "--filter", &filter]).await?;
+@@ -136,6 +159,29 @@ impl Client {
+     }
+ }
+ 
++fn source_provenance(
++    volume: &Value,
++    source: &str,
++    revision: &str,
++    workspace: &str,
++) -> io::Result<()> {
++    if revision.len() != 40
++        || revision
++            .bytes()
++            .any(|byte| !(byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
++        || !matches!(workspace, "sdlc1" | "sdlc2")
++        || volume.as_array().is_none_or(|items| items.len() != 1)
++        || volume[0]["Name"] != source
++        || volume[0]["Labels"]["sdlc.base-revision"] != revision
++        || volume[0]["Labels"]["sdlc.workspace"] != workspace
++    {
++        return Err(invalid(
++            "source volume provenance differs from registered Base revision/workspace",
++        ));
++    }
++    Ok(())
++}
++
+ fn verify_resource_labels(
+     project: &str,
+     section: &str,
+@@ -288,6 +334,7 @@ impl RemoteJob {
+     pub(crate) async fn prepare(id: Uuid, attempt: Uuid, workspace: &Path) -> io::Result<Self> {
+         let client = Client::from_env()?;
+         client.verify().await?;
++        client.immutable_sources().await?;
+         let root = PathBuf::from(
+             std::env::var("CICD_RUNNER_WORKSPACE_ROOT").unwrap_or_else(|_| "/workspaces".into()),
+         )
+@@ -390,23 +437,9 @@ impl RemoteJob {
+         args: &[String],
+         envs: &[(String, String)],
+     ) -> io::Result<Command> {
+-        let source = std::env::var("CICD_RUNNER_SHARED_SOURCES_VOLUME").unwrap_or_default();
+-        if source.is_empty() {
+-            return Err(invalid("immutable source volume is required"));
+-        }
+-        let volume: Value =
+-            serde_json::from_str(&self.client.run(&["volume", "inspect", &source]).await?)?;
+-        let revision = std::env::var("CICD_RUNNER_BASE_REVISION").unwrap_or_default();
+-        let workspace = std::env::var("CICD_RUNNER_WORKSPACE_PROJECT").unwrap_or_default();
+-        if revision.len() != 40
+-            || !matches!(workspace.as_str(), "sdlc1" | "sdlc2")
+-            || volume[0]["Labels"]["sdlc.base-revision"] != revision
+-            || volume[0]["Labels"]["sdlc.workspace"] != workspace
+-        {
+-            return Err(invalid(
+-                "source volume provenance differs from registered Base revision/workspace",
+-            ));
+-        }
++        // Revalidate immediately before execution as well as before allocating
++        // helpers: registration/storage can change while checkout is prepared.
++        let source = self.client.immutable_sources().await?;
+         let mut service = compose_job(args, envs)?;
+         service["image"] = json!(
+             self.client
+@@ -740,6 +773,26 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value>
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    #[test]
++    fn immutable_source_provenance_rejects_missing_or_foreign_storage() {
++        let revision = "a".repeat(40);
++        let volume = json!([{"Name":"owned-sources","Labels":{
++            "sdlc.base-revision":revision,"sdlc.workspace":"sdlc1"}}]);
++        assert!(source_provenance(&volume, "owned-sources", &revision, "sdlc1").is_ok());
++        for (source, revision, workspace) in [
++            ("other-sources", revision.as_str(), "sdlc1"),
++            ("owned-sources", "invalid-revision", "sdlc1"),
++            ("owned-sources", revision.as_str(), "sdlc2"),
++            ("owned-sources", revision.as_str(), "other"),
++        ] {
++            assert!(source_provenance(&volume, source, revision, workspace).is_err());
++        }
++        assert!(source_provenance(&json!([]), "owned-sources", &revision, "sdlc1").is_err());
++        let mut missing_label = volume.clone();
++        missing_label[0]["Labels"]["sdlc.base-revision"] = Value::Null;
++        assert!(source_provenance(&missing_label, "owned-sources", &revision, "sdlc1").is_err());
++    }
++
+     #[test]
+     fn cleanup_refuses_undeclared_services_and_foreign_resource_owners() {
+         let owner = json!({"sdlc.task":"job-example", "sdlc.job":"example", "sdlc.attempt":"attempt", "sdlc.purpose":"cicd-job"});
+diff --git a/docs/COMPOSE_RUNNER.md b/docs/COMPOSE_RUNNER.md
+index ac81135..0b55b96 100644
+--- a/docs/COMPOSE_RUNNER.md
++++ b/docs/COMPOSE_RUNNER.md
+@@ -11,6 +11,9 @@ daemon ID, immutable source volume, Base SHA и имя workspace. Перемен
+ `CICD_RUNNER_BASE_REVISION`, `CICD_RUNNER_WORKSPACE_PROJECT`.
+ Несовпадение daemon ID, отсутствие plugin или source provenance блокирует job.
+ Fallback на другой Docker context запрещён.
++Source volume и его Name/Base SHA/workspace проверяются до выделения transfer
++helper и повторно непосредственно перед исполнением. Потерянное хранилище
++не создаётся заново; незакреплённый или неверный SHA блокирует запуск.
+ 
+ Каждый attempt получает собственные workspace/cache volumes и сеть. Sources
+ подключаются readonly. Transfer выполняется Compose-сервисом того же attempt.

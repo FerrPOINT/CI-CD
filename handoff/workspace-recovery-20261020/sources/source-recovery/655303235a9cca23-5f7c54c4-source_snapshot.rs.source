@@ -1,0 +1,79 @@
+//! Source scope joins do not require an environment or a pre-existing Bug task.
+use sqlx::{PgConnection, Row};
+use uuid::Uuid;
+
+#[derive(PartialEq, Eq)]
+pub struct SourceBinding {
+    pub command: serde_json::Value,
+    pub storage_name: String,
+    pub public_name: String,
+}
+
+/// A source reader is a machine principal, never a human project membership.
+/// Require both scopes from the current token row in the same short transaction.
+pub async fn authorize_git_reader(
+    conn: &mut PgConnection,
+    token_id: Option<Uuid>,
+    subject: Uuid,
+    configuration: Uuid,
+) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, Uuid>(
+        "SELECT t.id FROM api_tokens t JOIN service_accounts sa ON sa.id=t.service_account_id \
+         WHERE t.id=$1 AND sa.id=$2 AND t.project_id=$3 AND t.principal_type='service_account' \
+         AND sa.enabled AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) \
+         AND 'api:read'=ANY(t.scopes) AND 'git:read'=ANY(t.scopes) FOR SHARE OF t,sa",
+    ).bind(token_id).bind(subject).bind(configuration).fetch_optional(conn).await?.is_some())
+}
+
+pub async fn lock_git_binding(
+    conn: &mut PgConnection,
+    configuration: Uuid,
+    storage: &str,
+) -> Result<Option<SourceBinding>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT nb.command,r.storage_name,g.slug||'/'||r.slug AS public_name FROM projects p \
+         JOIN repository_catalog r ON r.id=p.repository_id \
+         JOIN git_groups g ON g.id=r.group_id \
+         JOIN forge_namespace_bindings nb ON nb.resource_id=g.id \
+         JOIN forge_workspace_projects w ON w.registry_instance_id=nb.registry_instance_id AND w.namespace_id=nb.namespace_id \
+         WHERE p.id=$1 AND r.storage_name=$2 \
+         AND r.ready AND r.kind='hosted' AND g.namespace_managed AND nb.state='active' AND w.state='active' \
+         FOR SHARE OF p,r,g,nb,w",
+    ).bind(configuration).bind(storage).fetch_optional(conn).await?;
+    row.map(|row| {
+        Ok(SourceBinding {
+            command: row.try_get("command")?,
+            storage_name: row.try_get("storage_name")?,
+            public_name: row.try_get("public_name")?,
+        })
+    })
+    .transpose()
+}
+
+pub async fn lock_binding(
+    conn: &mut PgConnection,
+    configuration: Uuid,
+    repository: Uuid,
+    tracker_instance: Uuid,
+    tracker_project: Uuid,
+) -> Result<Option<SourceBinding>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT nb.command,r.storage_name,g.slug||'/'||r.slug AS public_name FROM projects p \
+         JOIN repository_catalog r ON r.id=p.repository_id \
+         JOIN git_groups g ON g.id=r.group_id \
+         JOIN forge_namespace_bindings nb ON nb.resource_id=g.id \
+         JOIN forge_workspace_projects w ON w.registry_instance_id=nb.registry_instance_id AND w.namespace_id=nb.namespace_id \
+         WHERE p.id=$1 AND r.id=$2 AND w.tracker_instance_id=$3 AND w.tracker_project_id=$4 \
+         AND r.ready AND r.kind='hosted' AND g.namespace_managed AND nb.state='active' AND w.state='active' \
+         FOR SHARE OF p,r,g,nb,w",
+    ).bind(configuration).bind(repository).bind(tracker_instance).bind(tracker_project)
+        .fetch_optional(conn).await?;
+    row.map(|row| {
+        Ok(SourceBinding {
+            command: row.try_get("command")?,
+            storage_name: row.try_get("storage_name")?,
+            public_name: row.try_get("public_name")?,
+        })
+    })
+    .transpose()
+}

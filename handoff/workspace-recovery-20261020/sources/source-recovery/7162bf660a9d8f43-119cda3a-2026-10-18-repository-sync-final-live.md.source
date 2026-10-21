@@ -1,0 +1,110 @@
+# Завершение живых проверок синхронизации, 2026-10-18
+
+Продолжение [дополнительной приёмки](2026-10-18-repository-sync-additional-acceptance.md)
+после разрешения пользователя продолжить тесты в существующих repositories
+и затем убрать собственные QA refs. Новые repositories не создавались.
+
+Code tree: `bfe7eb99ada178dd535976b9ec068b957f559f76`.
+SDK Base: `2ad0834d06d3aa703fa1791a932bfc76650c8e42`.
+Production-код не менялся. Квалифицированные integration binaries восстановлены
+из сохранённого архива после проверки SHA-256 в новом disposable Compose-проекте.
+Новый runtime не устанавливался; commit/push не выполнялись.
+
+## Результаты
+
+| Самостоятельный живой сценарий | GitHub.com | GitLab gt.wmtgroup.ru |
+|---|---|---|
+| Все направления, режимы, FF/no-op, ветки/теги, конфликты, CI SHA/dedupe и расписание | PASS | PASS |
+| Падение после первого подтверждённого ref, второго принятого без подтверждения и до третьего | PASS | PASS |
+| Падение worker после принятого push, живой Git child, offline reconciliation | PASS | PASS |
+| Падение до push и повтор после наблюдения прежнего SHA | PASS | PASS |
+| Отключение до отправки: внешнего эффекта нет | PASS | PASS |
+| Отключение после принятого push: фактический результат сохранён | PASS | PASS |
+| Настоящий receive-pack и PR merge вызывают автоматическую синхронизацию | PASS | PASS |
+| Конкурентное изменение внешнего ref не перезаписано | PASS | PASS |
+| Минимальные Git-only scopes, отказ записи read-only credential, отозванный токен | Не квалифицировано отдельно, см. ограничения | PASS |
+
+Завершены 17 сценариев: 8 для GitHub и 9 для GitLab. Каждый subprocess завершился
+с exit 0 и проверяемым test result. Физические падения затрагивали только свои
+QA-процессы. Generation/guard, receipts, точные SHA и отсутствие повторного
+Git effect проверялись assertions. Планировщик не ускорялся:
+
+- GitHub: очередь через 301,216449 секунды при интервале 300 секунд.
+- GitLab: очередь через 301,142978 секунды при интервале 300 секунд.
+
+С учётом шести ранее завершённых сценариев этого же code tree (empty initial
+sync, физическое падение API во время check, viewer login — для обоих providers)
+получено 23 завершённых live cases. Прерванные предыдущие повторные matrix
+не считаются успешными; их заменяют полные результаты этого продолжения.
+
+Созданные scope-тестом GitLab project credentials 185 и 186 отозваны.
+Независимый GET каждого token ID вернул 404. Основной credential сохранён.
+
+Регрессионные gates этого code tree документированы в предыдущем отчёте:
+445 Rust tests, 130 PostgreSQL checks, 246 frontend tests, fmt/clippy,
+release, frontend lint/typecheck/build, OpenAPI drift/compatibility — PASS.
+Они не выдаются за повторно выполненные в этом продолжении.
+
+## Очистка внешних данных
+
+Удаление ограничено refs с собственным `qa/<UUID>/...`, доказанным строками
+LIVE_FIXTURE в журналах. Перед каждым push сверялся актуальный SHA;
+удаление выполнялось с per-ref expected-SHA lease. Использовался Git HTTPS
+с credential helper через stdin/FD, без токенов в URL, argv или Git config.
+После каждой группы удалений выполнялось независимое чтение refs.
+Ветки с кавычками также удалены; аргументы экранируются через shlex.
+
+| Исходный repository | Удалено своих refs | Сохранено |
+|---|---:|---|
+| FerrPOINT/forge-sync-qa-20261017-01a14808 | 87 | main, external-feature, forge-feature, tag v-sync-qa |
+| pdlc/forge-sync-qa-20261017-01a14808 | 99 | main |
+
+Оба main SHA совпадают с исходным snapshot:
+
+- GitHub: `bb97b2c271944bccc484ba0445852e6904990d39`.
+- GitLab: `45233068d2acff2e8cfe023d47c5fd5633df4ecf`.
+
+В дополнительных empty fixtures теги удалены, но удаление последних default
+branches провайдеры отклонили. Пользователь отдельно разрешил удалить оба
+дополнительных repositories. Перед DELETE сверены repository ID, имя,
+единственная ветка, её SHA и отсутствие тегов:
+
+- GitLab `pdlc/forge-sync-qa-empty-20261018-410b7517`, project 230:
+  DELETE 202, независимый GET 404.
+- GitHub `FerrPOINT/forge-sync-qa-empty-20261018-410b7517`, ID 1423950215:
+  DELETE 403; настроенный gh credential имеет repo/workflow, но не delete_repo.
+  Отдельный предоставленный credential получает 404 на чтение этого fixture.
+  В доступном браузере GitHub-сессии нет; открыта вкладка входа и запрошен вход
+  пользователя для завершения уже разрешённого удаления. Этот repository пока
+  остаётся с одной default branch; удалённым он не объявляется.
+
+Исходные repositories сохранены. Свои QA-подключения установленного Forge
+по readback отключены, active run отсутствует; их настройки и история сохраняются.
+
+## Ограничения и доказательства
+
+GitHub private protection API снова вернул 403 при создании временного правила.
+Matrix фиксирует этот provider limit отдельно: внешний GitHub protection не
+объявляется проверенным. Защита Forge и внешний GitLab protection проверены.
+Видимость repositories, тариф и account permissions не менялись.
+
+Отдельный fine-grained GitHub credential повторно проверен: identity 200,
+целевой private repository 404, чистый Git HTTPS access denied. Поэтому именно
+случай «этому credential разрешено чтение этого repository, но запрещена запись»
+не квалифицирован; его не подменяет неверный credential. Запрошено не было
+новых токенов или расширения их permissions.
+
+Новая browser E2E установка кандидата и отдельный viewer SSO browser login
+не проводились; серверный viewer login и предыдущие UI/component evidence
+остаются описаны в дополнительных проверках. Это не 100% line/branch coverage.
+
+Безопасные evidence расположены вне Git:
+`.local/external-repository-sync/evidence/resume-20261018` относительно workspace.
+Там находятся live logs/results, actual-schedule-timing, token revocation readback,
+точные cleanup manifests с SHA и independent readbacks, результаты удаления
+empty fixtures и final-results. Base ComposeHelper v2 завершил собственный
+проект `sdlc-qa-sync-resume-b78cf1611a` в phase cleaned. Независимый readback:
+0 containers, 0 networks, 0 disposable volumes; source/build exports удалены.
+Runtime, shared caches и evidence сохранены. Exact-secret audit предоставленных
+credentials, Git objects, исходников, logs и содержимого архивов сохраняется
+отдельно в `credential-audit-*.json`. Source export с отчётом имеет SHA-256 manifest.

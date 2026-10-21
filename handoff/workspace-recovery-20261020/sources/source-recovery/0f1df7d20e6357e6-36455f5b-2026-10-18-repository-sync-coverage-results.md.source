@@ -1,0 +1,68 @@
+# Дополнительная квалификация синхронизации Forge
+
+Завершены **57 Rust live-прогонов на настоящих провайдерах: 28 GitHub и 29 GitLab**. В этом этапе добавлены два прогона восстановления unknown push при третьем SHA назначения, пять точных PostgreSQL проверок, усиленный native TLS redirect oracle и frontend assertions состояний. Все новые функциональные проверки прошли.
+
+Полная приёмка всех требований по каждому провайдеру не объявляется: четыре внешних или исторических ограничения перечислены ниже. Матрица сохраняет 50 ID и 108 подкейсов; её 104 `pass_scoped` и четыре `blocked` описывают указанный объём доказательств. Собственные QA-ресурсы очищены; исходные provider baselines восстановлены точно. Итоговая проверка credentials и хэши приведены в отдельном отчёте и closing seal. Кандидат этой задачей в принятый runtime не устанавливался.
+
+## Исходники и связь с предыдущей квалификацией
+
+Production backend остаётся `6be6622a7d8f5f19ae7cf807b2b2c1948c5c528e`. Новые проверки собраны из `d3b21efedfa41e7efa68ccf191fcca9ebd0f3135`; frontend tests — `13eb78a95121ddd6b3a555cbb6dc73f53a1efe38`. Изменены тесты и wiring; TLS helper находится в отдельном cfg(test) файле. Production paths не изменились. [Состав исходников](../../../../evidence/coverage-20261018/qualified-source.json).
+
+Rust 1.88.0, Base SDK `2ad0834d06d3aa703fa1791a932bfc76650c8e42`; UI Base `e0759e070326c905f365182d0107f8c87a2e67f6`. Итоговый integration binary `integration_db-fb05b5d05abb57ff`, SHA-256 `bd569ebaf738947308e730f8001eeed94f841c9d404c3f3035174a6684d454a6`; gzip SHA-256 `14f1e0c913093be885a7513471c788e2f5e92f5f76fbc65e71764d5cc0553b21`. Оба хэша независимо сверены с сохранённым gzip и его распакованным содержимым. [Идентичность бинаря](../../../../evidence/coverage-20261018/new-tests-source.json).
+
+Прежний [acceptance report](2026-10-18-repository-sync-acceptance-results.md) и [immutable seal](../../../../evidence/continuation-20261018/continuation-final-seal.json) не переписываются. Их 55 provider invocations, release smoke и браузерная цепочка сохраняют свой исходный scope. Этот документ добавляет точные доказательства найденных пробелов assertions, не заменяет историю новым общим PASS.
+
+## Завершённые проверки
+
+| Уровень | Подтверждённый результат | Граница доказательства |
+|---|---|---|
+| Прежний production backend 6be | 447 workspace tests, fmt, Clippy, release build | Полный прежний gate; эти 447 тестов заново в текущем этапе не объявляются исполненными |
+| Прежний PostgreSQL | 121 normal и восемь обязательных opt-ins | 129 прежних scopes; ignored определения не равны выполненным тестам |
+| Новый backend d3b | Закреплённые fmt/Clippy/compile; пять PostgreSQL selectors и один native TLS selector, каждый ровно один passed | Итоговый gate exit 0, 686,14 секунды; [JSON](../../../../evidence/coverage-20261018/backend-qualified-gates.json), [лог](../../../../evidence/coverage-20261018/backend-qualified-gates.log) |
+| Frontend | 257 тестов в 44 файлах, включая 21 тест синхронизации; lint, typecheck, build, OpenAPI drift/compatibility | Все 34 production-файла побайтно идентичны прежнему артефакту; [результат и identity](../../../../evidence/coverage-20261018/frontend-production-identity.json) |
+| Новые реальные провайдеры | GitHub и GitLab: unknown push → третий destination SHA → конфликт | Каждый exact selector завершился одним passed; два новых Rust invocations доводят общий счёт до 57 |
+| Прежний extracted release | Два provider smoke по шесть стадий | Тот же production 6be, retained ELF; не новый release runtime install |
+| Прежняя release browser chain | Два фактических Save/check/Run/history запуска | Независимые Git/DB SHA и HEAD proof сохранены в предыдущем seal |
+| Новый браузер | Клавиатура, Back/Forward, 37 запросов GET, настоящий SSO | Через принятый API; идентичность последнего release backend этим прогоном не утверждается |
+
+В новом backend gate все selectors проверены по точному имени и последующей строке `test result: ok. 1 passed; 0 failed`. Первые fmt попытки остановились до проверяемых эффектов и сохранены как tooling failure; итог относится к d3b. Нулевое число тестов или похожий selector не засчитывались.
+
+## Точные новые oracle
+
+| Требование | Фактическое доказательство | Строка итогового лога |
+|---|---|---|
+| U-01 | Реальный `sync_available` catalog: 45 hosted, страницы 20/20/5, две namespace с одинаковыми slug; connected/external/not-ready/archive исключены. PUT выбранного UUID даёт total 44; соседний одноимённый UUID остаётся | 488 |
+| F-04 | Save и start: прежняя команда повторяется идемпотентно; другой уже авторизованный actor или repository с тем же ключом получает 409 | 496 |
+| F-05, S-08 | Пустой/отсутствующий token, смена provider/origin и malformed HTTP команды проверены с независимым readback сохранённой версии и credential | 504 |
+| F-06 | При queued/running/reconciling настоящий PUT разрешает только disable; история и cancel/stopping сохраняются | 512 |
+| CI-01 | Реальные Git A/B содержат разные config/jobs; HEAD=B до доставки A. Production event delivery создаёт raw_config A, job A и обе resolved SHA=A; повтор сохраняет один pipeline/trigger | 521 |
+| S-05 | Настоящий same-origin HTTP 302 под доверенным CA: initial=1, flushed response=1, target=0; точная ошибка Git, handler завершён | Marker 478, selector 479 |
+
+Все перечисленные строки относятся к [backend-qualified-gates.log](../../../../evidence/coverage-20261018/backend-qualified-gates.log). Точные selectors, source lines, хэши файлов и line mapping сохранены в [матрице](../../../../evidence/coverage-20261018/requirements-matrix-coverage-final.json). CI checkout A при более позднем HEAD B уже отдельно проверялся фактическим HostShell исполнением; новый CI-01 закрывает именно выбор config и скомпилированных jobs.
+
+R-06 теперь проверяет восстановление уже неизвестного принятого эффекта, а не только конкурентное изменение до первой записи. Оба live-лога подтверждают unknown/generation 1, три различных SHA, нового owner/generation 2, conflict с `destination_changed`, локальный и внешний refs сохранены, `push_count=1`, `accepted_effects=1`, `pipelines=0`. Итоговые marker находятся в строке 12 каждого лога. GitHub test занял 31,06 секунды, весь вызов — 40,33; GitLab test — 19,57, вызов — 31,66. [GitHub JSON](../../../../evidence/coverage-20261018/live-github-unknown-third-sha-final1.json), [GitHub log](../../../../evidence/coverage-20261018/live-github-unknown-third-sha-final1.log), [GitLab JSON](../../../../evidence/coverage-20261018/live-gitlab-unknown-third-sha-final1.json), [GitLab log](../../../../evidence/coverage-20261018/live-gitlab-unknown-third-sha-final1.log).
+
+U-04 component tests отдельно проверяют queued/stopping/running-cancel/reconciling-cancel, историю и допустимость только disable. Planned/unknown refs не названы переданными. Archive/storage pause сохраняет выбранные both/automatic и историю, запрещая команды. Это типизированный component proof, не новый browser backend effect. [Frontend log](../../../../evidence/coverage-20261018/frontend-ui-states.log), строка 91 — 21 sync tests, строки 216–217 — итог 44 файлов и 257 тестов.
+
+В браузере реально пройден путь provider filter → подключение → history → refs клавиатурой. Back убирает refs, Forward возвращает тот же URL и refs. CentralAuth SSO настоящий, auth injection отсутствует; все 37 запросов — GET. [Browser proof](../../../../evidence/coverage-20261018/browser-keyboard-forward.json), [скриншот](../../../../evidence/coverage-20261018/browser-keyboard-forward.jpg). Принятый API и новый frontend artifact указаны явно; этот проход не подменяет прежнюю независимую проверку release ELF.
+
+## Открытые внешние и исторические ограничения
+
+1. GitHub private branch protection возвращает 403. Реальный protected push отказ на этом репозитории не квалифицирован.
+2. Для GitHub не получена положительная пара «успешное Git чтение → отказ Git записи» одним read-only credential: предоставленный credential получает 403 уже на чтении. Альтернативный Actions fixture не стартовал из-за account billing/spending limit. Ошибочный token не считается заменой read-only oracle.
+3. Естественное истечение GitHub credential не квалифицировано: Actions job token не был выпущен. Реальное естественное истечение GitLab доказано только для GitLab.
+4. Действительно пустой внешний репозиторий текущего кандидата подтверждён только историческим BFE. Сохранённые разрешённые внешние QA-репозитории непустые. Первый pull в пустой Forge — отдельный подтверждённый сценарий и не заменяет пустой внешний repository.
+
+Четыре blocked записи 108-подкейсовой матрицы относятся к двум уникальным GitHub oracle, повторённым в требованиях. GitHub expiry и current-empty-external отражены отдельными scope limits, без искусственного увеличения числа подкейсов. Поэтому 104 `pass_scoped` не означают, что каждый provider facet прошёл.
+
+## Очистка, credential audit и поставка
+
+Собственные browser helper контейнеры, сети, volumes и exports уже удалены; родительская QA сеть сохранена. [Browser cleanup](../../../../evidence/coverage-20261018/browser-cleanup.json).
+
+Backend helper завершился с exit 0 и фазой cleaned. Собственных контейнеров, сетей, volumes и exports не осталось; внешний Cargo cache сохранён. У каждого провайдера удалён ровно один принадлежащий этому этапу ref. GitHub сохранил исходные четыре refs и SHA, GitLab — один; baseline восстановлен точно. [Итог очистки](../../../../evidence/coverage-20261018/cleanup-final.json), [GitHub readback](../../../../evidence/coverage-20261018/cleanup-github-apply.json), [GitLab readback](../../../../evidence/coverage-20261018/cleanup-gitlab-apply.json).
+
+Глобальный Docker audit проверил три endpoints и завершился с exit 1: восемь нарушений принадлежат чужим ресурсам, собственных нарушений нет. Чужие ресурсы не менялись. Глобальный audit не объявляется PASS. [Область Docker audit](../../../../evidence/coverage-20261018/docker-groups-audit-scope.json).
+
+Точные архивы d3 source, harness и integration binary сохранены в [inventory](../../../../evidence/coverage-20261018/qualified-artifact-inventory.json); source/harness SHA и размеры независимо сверены. Итоговая проверка credentials, first-party scanner и closing-хэши приведены отдельно: [credential audit](../../../../evidence/coverage-20261018/credential-audit-final.json), [first-party scan](../../../../evidence/coverage-20261018/first-party-secret-scan-final.json), [closing seal](../../../../evidence/coverage-20261018/coverage-final-seal.json). Этот документ не подменяет результаты этих отдельных отчётов заранее объявленным PASS. Предыдущий credential audit остаётся в прежнем immutable seal со своей исходной областью.
+
+Новые внешние репозитории, изменения default branch, видимости, тарифа или auth scopes для закрытия внешних ограничений не выполнялись. Установка кандидата в принятый runtime относится к отдельному этапу `O-RUNTIME` и не объявляется выполненной. Отдельный closing seal связывает этот отчёт с cleanup, baseline readback, inventory и credential audit; все четыре ограничения остаются открытыми.

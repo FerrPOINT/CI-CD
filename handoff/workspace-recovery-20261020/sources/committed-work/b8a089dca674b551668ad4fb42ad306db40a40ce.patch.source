@@ -1,0 +1,50 @@
+diff --git a/.base-revision b/.base-revision
+index bdec66c..5cd7882 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-6f63595a891f78b96b665889f80e6eb5cf34381a
++cc52d3121335c616415bc8675e229a22f775931a
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 074b4e7..e2f7ce4 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,10 @@
+ 
+ ## [Unreleased]
+ 
++- Base закреплён на `cc52d3121335c616415bc8675e229a22f775931a`: общий
++  cross-platform fingerprint и согласованная локальная UI/UX-поставка.
++  Source/dependency checkpoint не заменяет приёмку фактических images и SSO.
++
+ - Rate limiter использует IP реального TCP peer вместо недоверенных forwarding
+   headers: подмена `X-Forwarded-For`/`X-Real-IP` не сбрасывает бюджет запросов.
+   За reverse proxy применяется общий бюджет его IP; правила доступа не менялись.
+diff --git a/docs/UI_UX_MAP.md b/docs/UI_UX_MAP.md
+index 535fc11..9da116e 100644
+--- a/docs/UI_UX_MAP.md
++++ b/docs/UI_UX_MAP.md
+@@ -38,6 +38,9 @@ Cached repeatable failures показывают readonly записи; 403/404 
+ 
+ ## Проверки И Ограничения
+ 
++Предыдущий [source checkpoint](uiux-source-evidence-2026-10-02.md) сохраняет
++исходные SHA и ограничения; обновление Base pin не делает его выпускной приёмкой.
++
+ `pnpm --dir frontend ui:check` проверяет route coverage, Base shell consumption,
+ CSS overrides и фактическое installed Base содержимое.
+ `pnpm --dir frontend exec playwright test --config playwright.source-ui.config.ts`
+diff --git a/plans/2026-10-02-base-ui-default-reconciliation.md b/plans/2026-10-02-base-ui-default-reconciliation.md
+index bf446f6..35bd759 100644
+--- a/plans/2026-10-02-base-ui-default-reconciliation.md
++++ b/plans/2026-10-02-base-ui-default-reconciliation.md
+@@ -1,5 +1,9 @@
+ # Сохранение Default Fixes В Base UI-Кандидате
+ 
++**Статус 2026-10-02:** source reconciliation выполнен; результаты сохранены в
++[source evidence](../docs/uiux-source-evidence-2026-10-02.md). Это исторический
++checkpoint `d2dfbb5`, не приёмка последующих Base pins или актуальных images.
++
+ Продолжение утверждённой стандартизации всех семи продуктов. Исходный owned
+ CI/CD: `07f6665aee1d0940a84f898b2f7153ae8228be59`, clean, ahead 6 / behind 35
+ сохранённого `origin/main=365afd2ba5b414d01a9fd4053d6afc2f2cf5a53d`.

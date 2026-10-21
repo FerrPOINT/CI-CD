@@ -1,0 +1,17 @@
+# ADR-0017: отдельная граница выпуска Service Pulse
+
+## Контекст
+
+Push CI выполняется на общих Docker runners. Его зелёный результат не доказывает, что приложение развернуто и отвечает. Прямой доступ таких jobs к Docker host недопустим.
+
+## Решение
+
+- `.forge-ci.yml` читается только для push/API CI. Запрос deployment по точному SHA из защищённого `main` читает `.forge-deploy.yml` из этого commit, а для исторического commit без файла — из текущего защищённого `main`, фиксируя её hash в плане. Fallback template запрещён.
+- Deployment создаётся в `pending`, approval сохраняется в существующем журнале. `success` выставляется только после terminal success выделенного pipeline, чей фиксированный job выполняется runner с защищённым тегом `deploy`.
+- Для deploy runner используется отдельный registration token; обычный runner не может добавить тег через heartbeat. Deploy runner не получает untagged jobs.
+- Команда job фиксирована как `service-pulse-deploy`; скрипт и Compose живут у runner, а не в изменяемом продуктовом checkout. Скрипт собирает и применяет immutable image ID, проверяет health, сохраняет release manifest; при ошибке применяет прошлые ID, не трогая том PostgreSQL.
+- Forge хранит UUID `request_key` для безопасного повтора deployment/rollback после рестарта Fleet. Fleet отдельно проверяет работающие API и UI перед `completed`.
+
+## Ограничение
+
+Это локальный доверенный `demo` стенд. Новые миграции блокируются до отдельного backup/restore и проверки совместимости отката. Production runner pools и release tags не входят в этот проход.

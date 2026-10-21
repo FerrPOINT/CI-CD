@@ -1,0 +1,473 @@
+//! Existing-Issue import/pipeline admission. Accepted is never delivered.
+use super::{ApiError, ApiResult, AppState, pool};
+use crate::{
+    auth::AccessClaims,
+    domain::bug_work_publication::*,
+    store,
+    task_delivery::{bug_work_authority as owner, bug_work_source as source},
+};
+use axum::{
+    Extension, Json, Router,
+    body::Body,
+    extract::{DefaultBodyLimit, Path, Query, State},
+    routing::{get, post, put},
+};
+use serde::Deserialize;
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
+use tokio::sync::Semaphore;
+use uuid::Uuid;
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OriginalQuery {
+    pub(super) request_sha256: String,
+    pub(super) assignment_id: Uuid,
+    pub(super) assignment_sha256: String,
+    pub(super) expected_fence: i64,
+    pub(super) candidate_commit_sha: String,
+}
+pub(super) fn matches(
+    original: &BugWorkOperationIntent,
+    query: &OriginalQuery,
+) -> Result<(), ApiError> {
+    let b = &original.request.bug_work;
+    if original.request_sha256 != query.request_sha256
+        || b.assignment_id != query.assignment_id
+        || b.assignment_sha256 != query.assignment_sha256
+        || b.fence != query.expected_fence
+        || b.candidate_commit_sha != query.candidate_commit_sha
+    {
+        return Err(ApiError::conflict(
+            "Исходная операция относится к другому исправлению",
+        ));
+    }
+    Ok(())
+}
+pub(crate) fn routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/v1/projects/{project_id}/bug-work-operations/{operation_key}/delivery-proof/{target_ref}", get(super::bug_work_proofs::read))
+        .route(
+            "/api/v1/projects/{project_id}/bug-work-operations",
+            post(prepare).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bug-work-operations/{operation_key}",
+            get(read),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/bug-work-operations/{operation_key}/source-bundle",
+            put(import).layer(DefaultBodyLimit::max(MAX_BUNDLE_BYTES as usize)),
+        )
+        .layer(axum::middleware::map_response(
+            |mut response: axum::response::Response| async move {
+                response.headers_mut().insert(
+                    "cache-control",
+                    axum::http::HeaderValue::from_static("no-store"),
+                );
+                response
+            },
+        ))
+}
+pub(crate) async fn authorize(
+    conn: &mut sqlx::PgConnection,
+    state: &AppState,
+    claims: &AccessClaims,
+    configuration: Uuid,
+    write: bool,
+) -> Result<(), ApiError> {
+    let subject = state
+        .config
+        .sdlc_workspace
+        .bug_work
+        .producer_subject
+        .ok_or_else(|| ApiError::service_unavailable("Производитель исправлений не настроен"))?;
+    if subject != claims.sub
+        || configuration.is_nil()
+        || claims.role != "service_account"
+        || claims.service_account_name.is_none()
+        || claims.sid.is_some()
+        || claims.token_project_id != Some(configuration)
+    {
+        return Err(ApiError::forbidden());
+    }
+    let valid=sqlx::query_scalar::<_,Uuid>("SELECT t.id FROM api_tokens t JOIN service_accounts sa ON sa.id=t.service_account_id WHERE t.id=$1 AND sa.id=$2 AND t.project_id=$3 AND t.principal_type='service_account' AND sa.enabled AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND 'api:read'=ANY(t.scopes) AND (NOT $4 OR 'api:write'=ANY(t.scopes)) FOR SHARE OF t,sa")
+        .bind(claims.token_id).bind(subject).bind(configuration).bind(write).fetch_optional(conn).await.map_err(ApiError::internal)?;
+    if valid.is_none() {
+        return Err(ApiError::forbidden());
+    }
+    Ok(())
+}
+async fn local_binding(
+    conn: &mut sqlx::PgConnection,
+    configuration: Uuid,
+    r: &BugWorkOperationRequest,
+) -> Result<store::source_snapshot::SourceBinding, ApiError> {
+    let binding = store::source_snapshot::lock_binding(
+        conn,
+        configuration,
+        r.repository_id,
+        r.project.tracker_instance_id,
+        r.project.project_id,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::forbidden)?;
+    let command: sdlc_shared::resource_context::OwnerCommand =
+        serde_json::from_value(binding.command.clone()).map_err(|_| {
+            ApiError::service_unavailable("Проекция пространства исходников некорректна")
+        })?;
+    crate::namespace::validate_projection(&command)?;
+    Ok(binding)
+}
+fn storage(
+    state: &AppState,
+    binding: &store::source_snapshot::SourceBinding,
+    authority: &owner::FreshAuthority,
+) -> Result<PathBuf, ApiError> {
+    let (group, slug) = binding
+        .public_name
+        .split_once('/')
+        .ok_or_else(ApiError::forbidden)?;
+    let url = crate::repository_catalog::public_git_url(group, slug)?;
+    use sha2::{Digest, Sha256};
+    if format!("{:x}", Sha256::digest(url.as_bytes())) != authority.clone_url_sha256
+        || !crate::domain::source_snapshot::valid_branch_ref(&authority.branch_ref)
+        || crate::git_host::validate_repo_name(&binding.storage_name).as_deref()
+            != Ok(binding.storage_name.as_str())
+    {
+        return Err(ApiError::conflict(
+            "Исходный репозиторий или адрес изменился",
+        ));
+    }
+    let path = state.git.root.join(format!("{}.git", binding.storage_name));
+    // Helpers repeat no-link checks for the full ancestor chain before Git I/O.
+    let canonical = std::fs::canonicalize(&path)
+        .map_err(|_| ApiError::service_unavailable("Хранилище исходников недоступно"))?;
+    let root = std::fs::canonicalize(&state.git.root)
+        .map_err(|_| ApiError::service_unavailable("Корень исходников недоступен"))?;
+    if canonical != root.join(format!("{}.git", binding.storage_name)) {
+        return Err(ApiError::forbidden());
+    }
+    source::canonical_repository(&path).map_err(|_| ApiError::forbidden())
+}
+fn enabled(state: &AppState) -> Result<(), ApiError> {
+    if !state.config.sdlc_workspace.bug_work.enabled {
+        return Err(ApiError::service_unavailable(
+            "Приём новых исправлений выключен",
+        ));
+    }
+    Ok(())
+}
+async fn retained(
+    state: &AppState,
+    claims: &AccessClaims,
+    configuration: Uuid,
+    key: &str,
+) -> Result<BugWorkOperationReadback, ApiError> {
+    if !operation_key(key) {
+        return Err(ApiError::bad_request("Некорректный ключ операции"));
+    }
+    let mut tx = pool(state)?.begin().await.map_err(ApiError::internal)?;
+    authorize(&mut tx, state, claims, configuration, false).await?;
+    let (subject, intent) = store::bug_work_publication::intent(&mut tx, configuration, key)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found_named("операция исправления"))?;
+    if subject != claims.sub {
+        return Err(ApiError::forbidden());
+    }
+    let accepted = store::bug_work_publication::accepted(&mut tx, configuration, key)
+        .await
+        .map_err(ApiError::internal)?;
+    if accepted
+        .as_ref()
+        .is_some_and(|(subject, _)| *subject != claims.sub)
+    {
+        return Err(ApiError::forbidden());
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(BugWorkOperationReadback {
+        intent,
+        accepted: accepted.map(|(_, r)| r),
+    })
+}
+
+#[utoipa::path(get,path="/api/v1/projects/{project_id}/bug-work-operations/{operation_key}",tag="Bug work publications",params(("project_id"=Uuid,Path),("operation_key"=String,Path),OriginalQuery),responses((status=200,body=BugWorkOperationReadback),(status=401),(status=403),(status=404),(status=409)))]
+pub(crate) async fn read(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<AccessClaims>,
+    Path((configuration, key)): Path<(Uuid, String)>,
+    Query(query): Query<OriginalQuery>,
+) -> ApiResult<BugWorkOperationReadback> {
+    let r = retained(&state, &claims, configuration, &key).await?;
+    matches(&r.intent, &query)?;
+    Ok(Json(r))
+}
+#[utoipa::path(post,path="/api/v1/projects/{project_id}/bug-work-operations",tag="Bug work publications",params(("project_id"=Uuid,Path)),request_body=BugWorkOperationRequest,responses((status=200,body=BugWorkOperationReadback),(status=400),(status=401),(status=403),(status=409),(status=413),(status=422),(status=503)))]
+pub(crate) async fn prepare(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<AccessClaims>,
+    Path(configuration): Path<Uuid>,
+    Json(request): Json<BugWorkOperationRequest>,
+) -> ApiResult<BugWorkOperationReadback> {
+    request.validate().map_err(ApiError::bad_request)?;
+    let hash = owner::canonical_hash(
+        &serde_json::to_value(&request)
+            .map_err(|_| ApiError::bad_request("Некорректная заявка"))?,
+    )
+    .map_err(|_| ApiError::bad_request("Некорректная заявка"))?;
+    // Protective exact original replay precedes new-effect gates and remote grants.
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+    authorize(&mut tx, &state, &claims, configuration, false).await?;
+    let original =
+        store::bug_work_publication::intent(&mut tx, configuration, &request.operation_key)
+            .await
+            .map_err(ApiError::internal)?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    if let Some((subject, old)) = original {
+        if subject != claims.sub {
+            return Err(ApiError::forbidden());
+        }
+        if old.request != request || old.request_sha256 != hash {
+            return Err(ApiError::conflict("Ключ уже связан с другой заявкой"));
+        }
+        return Ok(Json(
+            retained(&state, &claims, configuration, &request.operation_key).await?,
+        ));
+    }
+    enabled(&state)?;
+    let authority = owner::read_current(
+        &state.config.sdlc_workspace.bug_work,
+        configuration,
+        &request,
+    )
+    .await
+    .map_err(|_| {
+        ApiError::service_unavailable("Tracker не подтвердил действующую привязку исправления")
+    })?;
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+    authorize(&mut tx, &state, &claims, configuration, true).await?;
+    store::bug_work_publication::lock_operation(&mut tx, configuration, &request.operation_key)
+        .await
+        .map_err(ApiError::internal)?;
+    if let Some((subject, old)) =
+        store::bug_work_publication::intent(&mut tx, configuration, &request.operation_key)
+            .await
+            .map_err(ApiError::internal)?
+    {
+        if subject != claims.sub {
+            return Err(ApiError::forbidden());
+        }
+        if old.request != request || old.request_sha256 != hash {
+            return Err(ApiError::conflict("Ключ уже связан с другой заявкой"));
+        }
+        tx.commit().await.map_err(ApiError::internal)?;
+        return Ok(Json(
+            retained(&state, &claims, configuration, &request.operation_key).await?,
+        ));
+    }
+    if store::bug_work_publication::logical_key_exists(
+        &mut tx,
+        configuration,
+        &request.operation_key,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::conflict("Ключ занят другой операцией"));
+    }
+    let binding = local_binding(&mut tx, configuration, &request).await?;
+    storage(&state, &binding, &authority)?;
+    authority
+        .require_current(configuration, &request)
+        .map_err(|_| ApiError::conflict("Срок проверки прав истёк"))?;
+    let intent = BugWorkOperationIntent {
+        schema: "forge/bug-work-operation-intent/v1".into(),
+        operation_id: Uuid::new_v4(),
+        configuration_id: configuration,
+        request_sha256: hash,
+        request,
+        recorded_at: chrono::Utc::now(),
+    };
+    store::bug_work_publication::append_intent(&mut tx, claims.sub, &intent)
+        .await
+        .map_err(ApiError::internal)?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(Json(BugWorkOperationReadback {
+        intent,
+        accepted: None,
+    }))
+}
+
+#[utoipa::path(put,path="/api/v1/projects/{project_id}/bug-work-operations/{operation_key}/source-bundle",tag="Bug work publications",params(("project_id"=Uuid,Path),("operation_key"=String,Path),OriginalQuery),request_body(content=String,content_type="application/octet-stream"),responses((status=200,body=BugWorkOperationReadback),(status=400),(status=401),(status=403),(status=409),(status=413),(status=422),(status=503)))]
+pub(crate) async fn import(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<AccessClaims>,
+    Path((configuration, key)): Path<(Uuid, String)>,
+    Query(query): Query<OriginalQuery>,
+    body: Body,
+) -> ApiResult<BugWorkOperationReadback> {
+    let original = retained(&state, &claims, configuration, &key).await?;
+    matches(&original.intent, &query)?;
+    static IMPORTS: OnceLock<Semaphore> = OnceLock::new();
+    let _permit = IMPORTS
+        .get_or_init(|| Semaphore::new(2))
+        .try_acquire()
+        .map_err(|_| ApiError::service_unavailable("Лимит импорта исходников занят"))?;
+    let body = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        axum::body::to_bytes(body, MAX_BUNDLE_BYTES as usize),
+    )
+    .await
+    .map_err(|_| ApiError {
+        status: axum::http::StatusCode::REQUEST_TIMEOUT,
+        message: "Срок загрузки пакета истёк".into(),
+    })?
+    .map_err(|_| ApiError {
+        status: axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+        message: "Пакет превышает допустимый размер или недоступен".into(),
+    })?;
+    let request = &original.intent.request;
+    use sha2::{Digest, Sha256};
+    if body.len() as u64 != request.bundle_size_bytes
+        || format!("{:x}", Sha256::digest(&body)) != request.bundle_sha256
+    {
+        return Err(ApiError::conflict(
+            "Git-пакет отличается от исходной заявки",
+        ));
+    }
+    // Exact accepted replay is custody only, even after new effects are disabled.
+    if original.accepted.is_some() {
+        return Ok(Json(original));
+    }
+    enabled(&state)?;
+
+    let authority = owner::read_current(
+        &state.config.sdlc_workspace.bug_work,
+        configuration,
+        request,
+    )
+    .await
+    .map_err(|_| ApiError::service_unavailable("Tracker не подтвердил права на импорт"))?;
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+    authorize(&mut tx, &state, &claims, configuration, true).await?;
+    let binding = local_binding(&mut tx, configuration, request).await?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    let repository = storage(&state, &binding, &authority)?;
+    let controller = state
+        .config
+        .sdlc_workspace
+        .bug_work
+        .controller_root
+        .as_ref()
+        .ok_or_else(ApiError::forbidden)?;
+    let controller = std::fs::canonicalize(controller)
+        .map_err(|_| ApiError::service_unavailable("Защищённое хранилище импорта недоступно"))?;
+    for root in [&state.git.root, &state.config.artifacts.root] {
+        let root = std::fs::canonicalize(root)
+            .map_err(|_| ApiError::service_unavailable("Корень хранилища недоступен"))?;
+        if controller.starts_with(&root) || root.starts_with(&controller) {
+            return Err(ApiError::forbidden());
+        }
+    }
+    let prepared = source::prepare(
+        &controller,
+        &repository,
+        &original.intent,
+        &body,
+        &authority,
+    )
+    .await
+    .map_err(|_| {
+        ApiError::conflict("Git-пакет отклонён или импорт занят; проверьте исходную операцию")
+    })?;
+    // Quarantine validation may take time: refresh BOTH authorities before exposing a ref.
+    let authority = owner::read_current(
+        &state.config.sdlc_workspace.bug_work,
+        configuration,
+        request,
+    )
+    .await
+    .map_err(|_| {
+        ApiError::service_unavailable("Tracker не подтвердил права на публикацию исходников")
+    })?;
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+    authorize(&mut tx, &state, &claims, configuration, true).await?;
+    let current = local_binding(&mut tx, configuration, request).await?;
+    if current != binding {
+        return Err(ApiError::conflict("Пространство исходников изменилось"));
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    prepared
+        .publish_ref(request, &authority)
+        .await
+        .map_err(|_| ApiError::conflict("Публикация исходной ссылки не подтверждена"))?;
+    let pipeline =
+        super::pipelines_routes::PreparedBugWorkPipeline::read(&repository, request).await?;
+    let authority = owner::read_current(
+        &state.config.sdlc_workspace.bug_work,
+        configuration,
+        request,
+    )
+    .await
+    .map_err(|_| ApiError::service_unavailable("Tracker не подтвердил права на запуск сборки"))?;
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+    authorize(&mut tx, &state, &claims, configuration, true).await?;
+    store::bug_work_publication::lock_operation(&mut tx, configuration, &key)
+        .await
+        .map_err(ApiError::internal)?;
+    if let Some((subject, accepted)) =
+        store::bug_work_publication::accepted(&mut tx, configuration, &key)
+            .await
+            .map_err(ApiError::internal)?
+    {
+        if subject != claims.sub || accepted.request != *request {
+            return Err(ApiError::conflict("Исходная операция изменилась"));
+        }
+        tx.commit().await.map_err(ApiError::internal)?;
+        return Ok(Json(BugWorkOperationReadback {
+            intent: original.intent,
+            accepted: Some(accepted),
+        }));
+    }
+    let current = local_binding(&mut tx, configuration, request).await?;
+    if current != binding {
+        return Err(ApiError::conflict("Пространство исходников изменилось"));
+    }
+    authority
+        .require_current(configuration, request)
+        .map_err(|_| ApiError::conflict("Срок проверки прав истёк"))?;
+    let identity = super::pipelines_routes::insert_bug_work_pipeline(
+        &mut tx,
+        configuration,
+        original.intent.operation_id,
+        &pipeline,
+    )
+    .await?;
+    let accepted = BugWorkOperationAccepted {
+        schema: "forge/bug-work-operation-accepted/v1".into(),
+        operation: BugWorkOperationIdentity {
+            operation_id: Uuid::new_v4(),
+            operation_key: key,
+            request_sha256: original.intent.request_sha256.clone(),
+        },
+        intent_operation_id: original.intent.operation_id,
+        configuration_id: configuration,
+        request: request.clone(),
+        candidate_ref: request.candidate_ref(),
+        pipeline: identity,
+        accepted_at: chrono::Utc::now(),
+    };
+    store::bug_work_publication::append_accepted(&mut tx, claims.sub, &accepted)
+        .await
+        .map_err(ApiError::internal)?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    crate::dispatch_signal::notify_runner_work_available();
+    Ok(Json(BugWorkOperationReadback {
+        intent: original.intent,
+        accepted: Some(accepted),
+    }))
+}

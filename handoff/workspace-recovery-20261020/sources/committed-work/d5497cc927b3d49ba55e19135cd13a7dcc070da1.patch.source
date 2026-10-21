@@ -1,0 +1,172 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 30cfe89..03a5f62 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,11 @@
+ 
+ ## [Unreleased]
+ 
++- Оба frontend Dockerfile используют существующий Base recorder: product/Base
++  SHA, fingerprints и asset digests в `/ui-build.json`, OCI labels и pinned
++  Node/nginx digests без смены версий. Runtime/SSO/README приёмка остаётся отдельной
++  обязательной проверкой; workspace candidate собирается через umbrella recipe.
++
+ - Base закреплён на `193ad1e8fd6260f001640943a5ec07ff04f527d1`: общий
+   cross-platform fingerprint и согласованная локальная UI/UX-поставка.
+   Source/dependency checkpoint не заменяет приёмку фактических images и SSO.
+diff --git a/docs/BASE_INTEGRATION.md b/docs/BASE_INTEGRATION.md
+index 1d2b1d5..9dc560b 100644
+--- a/docs/BASE_INTEGRATION.md
++++ b/docs/BASE_INTEGRATION.md
+@@ -28,7 +28,24 @@ Base содержит технические механизмы; продукт
+ 
+ Кнопка входа вызывает `beginSso(..., { interactive: true })`; автоматический
+ guard сохраняет неинтерактивный вызов. `isSsoNavigationInterruption` из Base
+-различает pending logout/отмену навигации и настоящий отказ Auth. Task Tracker
+-снимает блокировку кнопки при завершении или отмене promise. Identity, PKCE,
++различает pending logout/отмену навигации и настоящий отказ Auth. CI/CD
++сохраняет явный повторный вход и не отображает отмену как отказ Auth. Identity, PKCE,
+ state, nonce, API и машинная авторизация не меняются. Source-регрессии покрыты
+ login-тестами; локальные fixture-проверки не заменяют живую SSO-приёмку.
++
++## Происхождение Web Image
++
++Оба frontend Dockerfile сохраняют sibling layout и frozen installs Base/consumer.
++Base `write-ui-build.mjs` формирует `/ui-build.json`: product/Base SHA,
++source/installed fingerprints и SHA256 всех React assets. `VCS_REF` и
++`BASE_VCS_REF` передаются из clean delivery candidate и повторяются в OCI labels.
++Node/nginx закреплены digest без смены версий. Manifest объявляет
++`reactAssets=frontend/dist` и runtime sources UI/proxy/backend.
++
++Штатный workspace и standalone Compose используют `Dockerfile.umbrella`;
++приёмка image должна проверять именно этот вход сборки. Обычный Dockerfile
++сохраняет идентичный recipe для существующих прямых сборок. Перед runtime
++приёмкой сверить record, OCI labels и packaged/HTTP asset digests с delivery
++manifest. Public login smoke не заменяет authenticated operational/role/state/
++SSO gate. README evidence формируется после проверки реального runtime.
++Pins, данные, CORS, identity и Git/API proxies этим build-контрактом не меняются.
+diff --git a/docs/ui-routes.json b/docs/ui-routes.json
+index 2615ec9..0670999 100644
+--- a/docs/ui-routes.json
++++ b/docs/ui-routes.json
+@@ -3,6 +3,8 @@
+   "product": "CI/CD",
+   "routeSource": "frontend/src/app/router.tsx",
+   "shellSource": "frontend/src/widgets/app-shell.tsx",
++  "reactAssets": "frontend/dist",
++  "runtimeSources": ["frontend/src", "frontend/nginx.conf", "backend"],
+   "acceptanceStatus": "pending",
+   "routes": [
+     {
+diff --git a/frontend/Dockerfile b/frontend/Dockerfile
+index 44fa7d3..0a4b283 100644
+--- a/frontend/Dockerfile
++++ b/frontend/Dockerfile
+@@ -1,16 +1,23 @@
+ # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
+ # Stages the sibling services-base frontend so the `@sdlc/ui` file dependency
+ # (../../services-base/frontend) resolves.
+-FROM node:22.20.0-bookworm-slim AS build
+-WORKDIR /app
+-COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
+-COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
++FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS build
++RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
++ENV CI=true COREPACK_ENABLE_DOWNLOAD_PROMPT=0
++COPY services-base/frontend /workspace/services-base/frontend
++WORKDIR /workspace/services-base/frontend
++RUN pnpm install --frozen-lockfile
++
++WORKDIR /workspace/CI-CD/frontend
++COPY CI-CD/openapi/openapi.yaml /workspace/CI-CD/openapi/openapi.yaml
++COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml CI-CD/frontend/pnpm-workspace.yaml ./
+ COPY CI-CD/frontend/scripts/generate-openapi.mjs scripts/generate-openapi.mjs
+-COPY services-base/frontend /services-base/frontend
+-ENV CI=true
+-ENV SPEC=/workspace/openapi/openapi.yaml
+-RUN corepack enable && corepack prepare pnpm@10.28.1 --activate && pnpm install --frozen-lockfile
++ENV SPEC=/workspace/CI-CD/openapi/openapi.yaml
++RUN pnpm install --frozen-lockfile
+ COPY CI-CD/frontend/ ./
++COPY CI-CD/.base-revision /workspace/CI-CD/.base-revision
++COPY CI-CD/docs/ui-routes.json /workspace/CI-CD/docs/ui-routes.json
++COPY CI-CD/backend /workspace/CI-CD/backend
+ ARG VITE_PLATFORM_BRANDING_URL=""
+ ENV VITE_PLATFORM_BRANDING_URL=${VITE_PLATFORM_BRANDING_URL}
+ ARG VITE_PLATFORM_SERVICES_URL=""
+@@ -20,8 +27,17 @@ ENV VITE_AUTH_ISSUER=${VITE_AUTH_ISSUER}
+ ARG VITE_ADMIN_UI_URL="http://localhost:7772"
+ ENV VITE_ADMIN_UI_URL=${VITE_ADMIN_UI_URL}
+ RUN pnpm build
++ARG VCS_REF=unknown
++ARG BASE_VCS_REF=unknown
++RUN node ../../services-base/frontend/scripts/write-ui-build.mjs --repo .. \
++    --out /workspace/ui-build.json --product-sha "$VCS_REF" --base-sha "$BASE_VCS_REF"
+ 
+-FROM nginx:1.31.4-alpine
++FROM nginx:1.31.4-alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
++ARG VCS_REF=unknown
++ARG BASE_VCS_REF=unknown
++LABEL org.opencontainers.image.revision=$VCS_REF \
++      org.sdlc.ui.base.revision=$BASE_VCS_REF
+ COPY CI-CD/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+-COPY --from=build /app/dist /usr/share/nginx/html
++COPY --from=build /workspace/CI-CD/frontend/dist /usr/share/nginx/html
++COPY --from=build /workspace/ui-build.json /usr/share/nginx/html/ui-build.json
+ EXPOSE 80
+diff --git a/frontend/Dockerfile.umbrella b/frontend/Dockerfile.umbrella
+index 44fa7d3..0a4b283 100644
+--- a/frontend/Dockerfile.umbrella
++++ b/frontend/Dockerfile.umbrella
+@@ -1,16 +1,23 @@
+ # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
+ # Stages the sibling services-base frontend so the `@sdlc/ui` file dependency
+ # (../../services-base/frontend) resolves.
+-FROM node:22.20.0-bookworm-slim AS build
+-WORKDIR /app
+-COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
+-COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
++FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS build
++RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
++ENV CI=true COREPACK_ENABLE_DOWNLOAD_PROMPT=0
++COPY services-base/frontend /workspace/services-base/frontend
++WORKDIR /workspace/services-base/frontend
++RUN pnpm install --frozen-lockfile
++
++WORKDIR /workspace/CI-CD/frontend
++COPY CI-CD/openapi/openapi.yaml /workspace/CI-CD/openapi/openapi.yaml
++COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml CI-CD/frontend/pnpm-workspace.yaml ./
+ COPY CI-CD/frontend/scripts/generate-openapi.mjs scripts/generate-openapi.mjs
+-COPY services-base/frontend /services-base/frontend
+-ENV CI=true
+-ENV SPEC=/workspace/openapi/openapi.yaml
+-RUN corepack enable && corepack prepare pnpm@10.28.1 --activate && pnpm install --frozen-lockfile
++ENV SPEC=/workspace/CI-CD/openapi/openapi.yaml
++RUN pnpm install --frozen-lockfile
+ COPY CI-CD/frontend/ ./
++COPY CI-CD/.base-revision /workspace/CI-CD/.base-revision
++COPY CI-CD/docs/ui-routes.json /workspace/CI-CD/docs/ui-routes.json
++COPY CI-CD/backend /workspace/CI-CD/backend
+ ARG VITE_PLATFORM_BRANDING_URL=""
+ ENV VITE_PLATFORM_BRANDING_URL=${VITE_PLATFORM_BRANDING_URL}
+ ARG VITE_PLATFORM_SERVICES_URL=""
+@@ -20,8 +27,17 @@ ENV VITE_AUTH_ISSUER=${VITE_AUTH_ISSUER}
+ ARG VITE_ADMIN_UI_URL="http://localhost:7772"
+ ENV VITE_ADMIN_UI_URL=${VITE_ADMIN_UI_URL}
+ RUN pnpm build
++ARG VCS_REF=unknown
++ARG BASE_VCS_REF=unknown
++RUN node ../../services-base/frontend/scripts/write-ui-build.mjs --repo .. \
++    --out /workspace/ui-build.json --product-sha "$VCS_REF" --base-sha "$BASE_VCS_REF"
+ 
+-FROM nginx:1.31.4-alpine
++FROM nginx:1.31.4-alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
++ARG VCS_REF=unknown
++ARG BASE_VCS_REF=unknown
++LABEL org.opencontainers.image.revision=$VCS_REF \
++      org.sdlc.ui.base.revision=$BASE_VCS_REF
+ COPY CI-CD/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+-COPY --from=build /app/dist /usr/share/nginx/html
++COPY --from=build /workspace/CI-CD/frontend/dist /usr/share/nginx/html
++COPY --from=build /workspace/ui-build.json /usr/share/nginx/html/ui-build.json
+ EXPOSE 80

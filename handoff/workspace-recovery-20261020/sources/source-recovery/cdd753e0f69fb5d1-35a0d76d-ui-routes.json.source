@@ -1,0 +1,421 @@
+{
+  "schemaVersion": 1,
+  "product": "ci-cd",
+  "routeSource": "frontend/src/app/router.tsx",
+  "shellSource": "frontend/src/widgets/app-shell.tsx",
+  "acceptanceStatus": "pending",
+  "routes": [
+    {
+      "pattern": "/",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/*",
+      "kind": "redirect"
+    },
+    {
+      "pattern": "/audit-log",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/audit-log",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/forbidden",
+      "kind": "fullscreen"
+    },
+    {
+      "pattern": "/jobs/:jobId/artifacts",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/jobs/:jobId/artifacts",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/login",
+      "kind": "public"
+    },
+    {
+      "pattern": "/pipelines/:pipelineId",
+      "kind": "operational",
+      "layout": "detail-with-aside",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/pipelines/:pipelineId",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/projects",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/projects",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/projects/:projectId/environments",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/projects/:projectId/environments",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/projects/:projectId/members",
+      "kind": "redirect"
+    },
+    {
+      "pattern": "/projects/:projectId/pipelines",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/projects/:projectId/pipelines",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/projects/:projectId/reports",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/projects/:projectId/reports",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/projects/:projectId/schedules",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/projects/:projectId/schedules",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/projects/:projectId/secrets",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/projects/:projectId/secrets",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/projects/:projectId/webhooks",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/projects/:projectId/webhooks",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/repositories",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/repositories",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/repositories/:repo",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/repositories/:repo",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/repositories/:repo/compare",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/repositories/:repo/compare",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/repositories/:repo/pulls",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/repositories/:repo/pulls",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/repositories/:repo/pulls/:number",
+      "kind": "operational",
+      "layout": "detail-with-aside",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/repositories/:repo/pulls/:number",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error",
+        "not-found"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/runners",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/runners",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/settings",
+      "kind": "operational",
+      "layout": "reading",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/settings",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    },
+    {
+      "pattern": "/sso/callback",
+      "kind": "public"
+    },
+    {
+      "pattern": "/users",
+      "kind": "operational",
+      "layout": "wide",
+      "roles": [
+        "authenticated"
+      ],
+      "fixture": "isolated:/users",
+      "states": [
+        "normal",
+        "loading",
+        "empty",
+        "permission-denied",
+        "error",
+        "partial-error"
+      ],
+      "qa": {
+        "status": "not-run"
+      }
+    }
+  ]
+}

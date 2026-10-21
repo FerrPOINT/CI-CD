@@ -1,0 +1,74 @@
+//! Exact project/namespace/configuration authority for read-only serving observations.
+use cicd_domain::task_delivery::DeliveryManifest;
+use sqlx::PgConnection;
+use uuid::Uuid;
+
+pub async fn matches_manifest_source(
+    conn: &mut PgConnection,
+    manifest: &DeliveryManifest,
+) -> Result<bool, sqlx::Error> {
+    let original = &manifest.operation_receipt;
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM sdlc_workspace_operations o \
+         JOIN job_leases l ON l.id=o.lease_id \
+         JOIN jobs original_job ON original_job.id=l.job_id \
+         JOIN stages original_stage ON original_stage.id=original_job.stage_id \
+         JOIN pipelines p ON p.id=original_stage.pipeline_id AND p.project_id=o.project_id \
+         JOIN pipeline_plans pp ON pp.pipeline_id=p.id \
+         JOIN stages s ON s.pipeline_id=p.id JOIN jobs j ON j.stage_id=s.id \
+         JOIN artifacts a ON a.job_id=j.id \
+         WHERE o.id=$1 AND o.receipt=$2 AND p.id=$3 AND p.commit_sha=$4 \
+         AND pp.config_sha256=$5 AND pp.plan_sha256=$6 \
+         AND a.id=$7 AND a.attempt_id=$8 AND a.sha256=$9 AND a.size_bytes=$10)",
+    )
+    .bind(original.operation_id)
+    .bind(sqlx::types::Json(original))
+    .bind(manifest.pipeline_id)
+    .bind(&original.request.source_commit)
+    .bind(&manifest.config_sha256)
+    .bind(&manifest.plan_sha256)
+    .bind(manifest.artifact_id)
+    .bind(manifest.artifact_attempt_id)
+    .bind(&manifest.artifact_sha256)
+    .bind(manifest.artifact_size_bytes)
+    .fetch_one(conn)
+    .await
+}
+
+pub async fn authorize_reader(
+    conn: &mut PgConnection,
+    token_id: Option<Uuid>,
+    subject: Uuid,
+    configuration: Uuid,
+) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, Uuid>(
+        "SELECT t.id FROM api_tokens t JOIN service_accounts sa ON sa.id=t.service_account_id \
+         WHERE t.id=$1 AND sa.id=$2 AND t.project_id=$3 AND t.principal_type='service_account' \
+         AND sa.enabled AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) \
+         AND 'api:read'=ANY(t.scopes) FOR SHARE OF t,sa",
+    ).bind(token_id).bind(subject).bind(configuration).fetch_optional(conn).await?.is_some())
+}
+
+/// Presentation catalog names are never authorization. All immutable identifiers
+/// must join through the current active namespace binding and exact environment.
+pub async fn lock_binding(
+    conn: &mut PgConnection,
+    configuration: Uuid,
+    repository: Uuid,
+    environment: Uuid,
+    tracker_instance: Uuid,
+    tracker_project: Uuid,
+) -> Result<Option<serde_json::Value>, sqlx::Error> {
+    sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT nb.command FROM projects p \
+         JOIN repository_catalog r ON r.id=p.repository_id \
+         JOIN git_groups g ON g.id=r.group_id \
+         JOIN forge_namespace_bindings nb ON nb.resource_id=g.id \
+         JOIN forge_workspace_projects w ON w.registry_instance_id=nb.registry_instance_id AND w.namespace_id=nb.namespace_id \
+         JOIN environments e ON e.project_id=p.id \
+         WHERE p.id=$1 AND r.id=$2 AND e.id=$3 AND w.tracker_instance_id=$4 AND w.tracker_project_id=$5 \
+         AND r.ready AND g.namespace_managed AND nb.state='active' AND w.state='active' \
+         FOR SHARE OF p,r,g,nb,w,e",
+    ).bind(configuration).bind(repository).bind(environment).bind(tracker_instance).bind(tracker_project)
+        .fetch_optional(conn).await
+}

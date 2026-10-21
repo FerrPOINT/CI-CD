@@ -1,0 +1,97 @@
+# Межсервисные события CI/CD
+
+CI/CD публикует `platform.cicd.pipeline.finished.v1` через Base SDK
+`sdlc-messaging` напрямую в единую NATS JetStream шину окружения.
+Admin Panel — независимый consumer, не шлюз и не владелец БД CI/CD.
+
+Миграция `0038_platform_messaging.sql` добавляет pipelines.terminal_event_seq
+и отдельную SDK таблицу messaging_outbox. Status, finished_at, sequence,
+domain event, старый webhook/email/SSE fanout и NATS envelope фиксируются
+одной транзакцией под pipeline row lock. В ней нет сетевого вызова NATS.
+Повторный refresh не меняет terminal pipeline. Retry pipeline/job явно
+открывает новый запуск; новое завершение получает следующий sequence и UUID.
+Cancel сохраняет сигнал external runner и закрытие embedded lease.
+
+Контракт содержит только UUID проекта/пайплайна, positive completion_seq,
+success/failed/canceled и finished_at. Логи, команды, имена, credentials и
+git metadata не отправляются. Correlation по умолчанию равен event UUID.
+
+Reconciler каждые 5 секунд восстанавливает active pipelines из committed jobs
+при сбое между job commit и refresh. Терминальные исторические pipelines не
+импортируются. SDK publisher использует lease/fencing, publish receipt и
+backoff; unavailable broker оставляет факты pending. HTTP/SMTP dispatcher
+работает с прежним outbox_messages и не claim-ит messaging_outbox.
+
+## Конфигурация
+
+См. `.env.example`. CICD_MESSAGING_ENABLED=false по умолчанию. Включение
+требует URLs, username и mounted password file. TLS обязателен по умолчанию;
+false допустимо только в private Docker network. Worker role `messaging`
+запускает reconciler/publisher без runner и legacy outbox worker. Роль worker
+и запуск без явных ролей тоже запускают их. Отдельная роль api не публикует;
+она всё равно записывает факты при feature true в общей БД CI/CD.
+Feature должен иметь одинаковое значение во всех процессах одного продукта.
+
+`GET /internal/messaging/status` закрыт отдельным Bearer credential из
+CICD_MESSAGING_STATUS_TOKEN_FILE, comparison constant-time. Нет настроенного
+файла/БД — 503; отсутствующий или неверный Bearer — 401. Ответ содержит
+enabled, observed_at, connection и только агрегаты outbox. Этот endpoint
+доступен независимо от central human auth, но требует свой service token.
+Admin должен опрашивать именно процесс publisher: api-only показывает
+pending, а состояние другой реплики не известно. SIGINT/SIGTERM запускают drain.
+
+## Rollout и проверки
+
+Backup своей БД, additive migration, сборка образа и feature off, legacy
+regression, provisioning брокера и ACL, consumer Admin on, producer CI/CD on,
+реальный pipeline smoke. Миграции и новые таблицы сохраняются при rollback;
+выключение publisher не удаляет pending facts. Нет автоматического backfill.
+Publisher backlog требует контроля возраста/ошибок/размера БД и места брокера.
+
+Из sibling `services-base`:
+`python scripts/test_messaging_products.py`. Проверяются реальные handlers
+cancel/retry pipeline/retry job, concurrent completion, rollback, reconciler,
+старые webhook payloads, pending при outage и догон, Admin product projection
+и redelivery без второго эффекта. `--cicd-only` позволяет отдельно выполнить
+CI/CD real-DB gates; полный transport/Admin gate остаётся обязательным.
+Это не деплой в рабочее окружение.
+
+Финальные release images можно проверить явно: runner принимает
+`--cicd-image` и `--admin-image`, закрепляет их image IDs для всех реплик
+и пишет эти IDs в evidence. Пример из Base:
+
+```powershell
+python scripts/test_messaging_product_deployment.py --cicd-image sdlc2-cicd-messaging-hardening-qa:20261003 --admin-image sdlc2-admin-messaging-hardening-qa:20261003
+```
+
+Проверки используют временные собственные ресурсы. Основной workspace,
+его данные и rollout исключены из поручения на завершение кода 2026-10-03.
+
+`python scripts/test_messaging_product_deployment.py` проверяет release
+images с двумя publisher/consumer репликами, outage/restart, нагрузкой 1000
+terminal transitions, согласованным DB/broker restore в новые volumes и
+feature rollback. `--fault-only` выделяет точные process crash boundaries
+с тестовыми PG gates только в disposable БД. Рабочий split rollout доступен
+через `scripts/rollout_workspace_messaging.py`: applied migration versions
+и checksums проверяются до остановки сервисов. В текущем workspace
+deployment migrations 36/37 принадлежат прежнему live image; миграция шины
+получила номер 38. Совместимый backend baseline восстановлен из Git
+`6e5c557`; deployment status обновляется в той же транзакции, что terminal
+fact. Повторные legacy gates и image build предшествуют rollout. Ledger
+не редактируется.
+
+## Управляемое хранение и recovery
+
+Миграция `0039_messaging_maintenance_replay.sql` добавляет retention indexes,
+maintenance state и replay jobs/items, не изменяя `0038`. Общий SDK cleanup
+работает в worker/messaging/default даже при feature off: published 90 суток
+от первого ACK, failed 180 от failed_at; pending/live lease не удаляются.
+Progress хранится в своей БД, не в памяти реплики. Domain terminal_event_seq
+остаётся защитой от повторного факта после очистки outbox.
+
+CLI `cicd-messaging plan/apply/resume/status` доставляет retained published
+после потери broker state обычными producer credentials. Исходный UUID,
+payload и ACK timestamp сохраняются, inbox предотвращает повторный эффект.
+[Полные команды и правила](../../services-base/docs/platform/MESSAGING_OPERATIONS.md).
+Новые поля internal status: retention, shared maintenance, storage_bytes;
+отсутствующие значения неизвестны. Future update: Admin, затем CI/CD.
