@@ -353,6 +353,13 @@ async fn check_repo_access(
     };
     let token = bearer_or_basic_password(headers)?.ok_or_else(ApiError::unauthorized)?;
     let claims = crate::api::identity_for_bearer_token(pool, auth_secret, token.trim()).await?;
+    let method = match operation {
+        GitOperation::Read => "GET",
+        GitOperation::Write => "POST",
+    };
+    if !crate::central_auth::personal_scope_allows(token.trim(), &claims.token_scopes, method) {
+        return Err(ApiError::forbidden());
+    }
     let global_role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
     if visibility.is_none() {
         return Err(ApiError::not_found());

@@ -185,8 +185,9 @@ pub(crate) async fn require_auth(
         .and_then(|v| v.to_str().ok())
         .and_then(pdlc_auth_core::bearer_from_header);
     let mut checked_central = None;
-    if let Some(token) = bearer.filter(|token| pdlc_auth_core::is_personal_token(token))
-        && let Some(central) = crate::central_auth::try_central(token).await?
+    let mut central_request = None;
+    if let Some(token) = bearer
+        && let Some((central, proof)) = crate::central_auth::try_central_with_policy(token).await?
     {
         if crate::delegated_credentials::has_grant(&central)
             || state
@@ -204,7 +205,8 @@ pub(crate) async fn require_auth(
             req.extensions_mut().insert(identity);
             return Ok(next.run(req).await);
         }
-        checked_central = Some(central_identity(pool, &central).await?);
+        checked_central = Some(central_identity(pool, &central, proof.as_ref()).await?);
+        central_request = Some((central, proof));
     }
     let is_platform_token = req
         .headers()
@@ -218,12 +220,11 @@ pub(crate) async fn require_auth(
         None => bearer_identity(pool, auth_secret, req.headers()).await?,
     };
     if is_platform_token {
-        let required = if matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
-            "ci-cd:read"
-        } else {
-            "ci-cd:write"
-        };
-        if !claims.token_scopes.iter().any(|scope| scope == required) {
+        if !crate::central_auth::personal_scope_allows(
+            bearer.unwrap_or_default(),
+            &claims.token_scopes,
+            &method,
+        ) {
             return Err(ApiError::forbidden());
         }
     }
@@ -238,6 +239,12 @@ pub(crate) async fn require_auth(
             || path.starts_with("/api/v1/namespace-contexts")
             || path.starts_with("/api/v1/workspace-")
             || path.starts_with("/api/v1/delivery-configurations"))
+    {
+        return Err(ApiError::forbidden());
+    }
+    if matches!(claims.role.as_str(), "user" | "admin")
+        && claims.service_account_name.is_none()
+        && !crate::authz::human_allows(claims.role == "admin", &method, &path)
     {
         return Err(ApiError::forbidden());
     }
@@ -259,6 +266,22 @@ pub(crate) async fn require_auth(
             .await;
         }
         return Err(ApiError::forbidden());
+    }
+    if let Some((central, proof)) = central_request {
+        return pdlc_auth_core::human_request::with_human_request(
+            claims.sub,
+            &central,
+            proof,
+            async {
+                let response = next.run(req).await;
+                pdlc_auth_core::human_request::current_role().map_err(|_| {
+                    ApiError::service_unavailable("Current human authority expired")
+                })?;
+                Ok(response)
+            },
+        )
+        .await
+        .map_err(|_| ApiError::forbidden())?;
     }
     Ok(next.run(req).await)
 }
@@ -708,6 +731,7 @@ pub(crate) async fn bearer_identity(
 async fn central_identity(
     pool: &PgPool,
     central: &pdlc_auth_core::AuthContext,
+    proof: Option<&pdlc_auth_core::application_access::VerifiedApplicationAccess>,
 ) -> Result<crate::auth::AccessClaims, ApiError> {
     if crate::namespace::registered_machine(&central.user_id)
         || central.role.as_deref() == Some("service_account")
@@ -716,7 +740,14 @@ async fn central_identity(
     {
         return Err(ApiError::forbidden());
     }
-    crate::central_auth::link_central_user(pool, central).await
+    let mut claims = crate::central_auth::link_central_user(pool, central).await?;
+    if let Some(proof) = proof {
+        if !proof.is_current() {
+            return Err(ApiError::forbidden());
+        }
+        claims.exp = claims.exp.min(proof.decision.expires_at.timestamp());
+    }
+    Ok(claims)
 }
 
 pub(crate) async fn identity_for_bearer_token(
@@ -726,8 +757,8 @@ pub(crate) async fn identity_for_bearer_token(
 ) -> Result<crate::auth::AccessClaims, ApiError> {
     // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
     // and cicd_ PATs remain valid during the migration window.
-    if let Some(central) = crate::central_auth::try_central(token).await? {
-        return central_identity(pool, &central).await;
+    if let Some((central, proof)) = crate::central_auth::try_central_with_policy(token).await? {
+        return central_identity(pool, &central, proof.as_ref()).await;
     }
     if token.starts_with("forge_sat_") {
         let hash = crate::auth::hash_token(token);

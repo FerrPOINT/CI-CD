@@ -2555,7 +2555,7 @@ async fn list_users(
             .ok_or_else(ApiError::unauthorized)?;
         let mut url = reqwest::Url::parse(&jwks)
             .map_err(|_| ApiError::service_unavailable("Central Auth URL is invalid"))?;
-        url.set_path("/auth/users");
+        url.set_path("/auth/directory");
         let client = reqwest::Client::builder()
             .timeout(StdDuration::from_secs(5))
             .build()

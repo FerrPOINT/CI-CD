@@ -11,13 +11,29 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Env prefix: CICD_AUTH__CENTRAL_{JWKS_URI,ISSUER,LOGIN_URL,TIMEOUT_SECS}.
-pub static BRIDGE: ServiceBridge = ServiceBridge::new("CICD_AUTH__CENTRAL");
+pub static BRIDGE: ServiceBridge = ServiceBridge::for_application("CICD_AUTH__CENTRAL", "ci-cd");
 
 /// Central-first bearer check. `None` means the token is explicitly outside
 /// the central namespace; configured consumers still reject legacy human JWTs.
 pub async fn try_central(token: &str) -> Result<Option<AuthContext>, crate::api::ApiError> {
-    match BRIDGE.try_token(token).await {
-        BridgeOutcome::Validated(ctx) => Ok(Some(ctx)),
+    Ok(try_central_with_policy(token)
+        .await?
+        .map(|(context, _)| context))
+}
+
+pub async fn try_central_with_policy(
+    token: &str,
+) -> Result<
+    Option<(
+        AuthContext,
+        Option<pdlc_auth_core::application_access::VerifiedApplicationAccess>,
+    )>,
+    crate::api::ApiError,
+> {
+    let (outcome, _, proof) = BRIDGE.try_token_with_policy(token).await;
+    match outcome {
+        BridgeOutcome::Validated(ctx) => Ok(Some((ctx, proof))),
+        BridgeOutcome::Forbidden => Err(crate::api::ApiError::forbidden()),
         BridgeOutcome::Expired => Err(crate::api::ApiError::unauthorized()),
         BridgeOutcome::NotOurs | BridgeOutcome::NotConfigured => Ok(None),
         BridgeOutcome::Invalid(reason) => {
@@ -28,6 +44,19 @@ pub async fn try_central(token: &str) -> Result<Option<AuthContext>, crate::api:
             "Central Auth is temporarily unavailable",
         )),
     }
+}
+
+/// Token kind remains explicit even when synthetic local claims have no local token id.
+pub(crate) fn personal_scope_allows(token: &str, scopes: &[String], method: &str) -> bool {
+    !pdlc_auth_core::is_personal_token(token)
+        || scopes.iter().any(|scope| {
+            scope
+                == if matches!(method, "GET" | "HEAD" | "OPTIONS") {
+                    "ci-cd:read"
+                } else {
+                    "ci-cd:write"
+                }
+        })
 }
 
 /// Same configured PAT endpoint, with authoritative expiry for delegated effects.
@@ -200,10 +229,10 @@ pub async fn link_central_user(
         token_id: None,
         token_project_id: None,
         token_scopes: ctx.scopes.iter().cloned().collect(),
-        role: "admin".to_string(),
+        role: if ctx.is_admin() { "admin" } else { "user" }.to_string(),
         ver: 0,
         iat: now.timestamp(),
-        exp: now.timestamp() + 900,
+        exp: now.timestamp() + 60,
     })
 }
 
@@ -393,5 +422,34 @@ mod child_expiry_tests {
         );
         assert_eq!(legacy_calls.load(Ordering::SeqCst), 1);
         assert_eq!(child_calls.load(Ordering::SeqCst), 7);
+    }
+}
+
+#[cfg(test)]
+mod personal_scope_tests {
+    use super::*;
+    #[test]
+    fn synthetic_central_pat_claims_do_not_turn_missing_local_token_id_into_git_write() {
+        for token in ["sdlc_pat_synthetic", "pdlc_pat_synthetic"] {
+            assert!(personal_scope_allows(token, &["ci-cd:read".into()], "GET"));
+            assert!(!personal_scope_allows(
+                token,
+                &["ci-cd:read".into()],
+                "POST"
+            ));
+            assert!(personal_scope_allows(
+                token,
+                &["ci-cd:write".into()],
+                "POST"
+            ));
+            assert!(!personal_scope_allows(
+                token,
+                &["ci-cd:write".into()],
+                "GET"
+            ));
+            assert!(!personal_scope_allows(token, &[], "POST"));
+            assert!(!personal_scope_allows(token, &["api:write".into()], "POST"));
+        }
+        assert!(personal_scope_allows("browser-session", &[], "POST"));
     }
 }
