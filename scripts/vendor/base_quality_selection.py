@@ -320,11 +320,14 @@ def validate_native_execution(manifest):
                 raise ValueError('Native Admin runtime requires an explicit download owner and resource limits')
             validate_resource_limits(runtime['limits'])
         return
-    if (not isinstance(value, dict) or set(value) != {'adapter', 'host_platforms', 'gates'}
+    if (not isinstance(value, dict) or set(value) not in (
+            {'adapter', 'host_platforms', 'gates'}, {'adapter', 'host_platforms', 'gates', 'cli_max_workers'})
             or manifest.get('product') != 'java-agent'
             or value['adapter'] != 'java-compose-v1' or value['host_platforms'] != ['win32']
             or not isinstance(value['gates'], dict) or not value['gates']):
         raise ValueError('Unsupported native execution declaration')
+    if 'cli_max_workers' in value and (type(value['cli_max_workers']) is not int or value['cli_max_workers'] != 3):
+        raise ValueError('Native Java CLI workers require the explicit measured profile3')
     gates = {gate['id']: gate for gate in manifest['gates']}
     for identifier, request in value['gates'].items():
         if not isinstance(request, dict) or set(request) != {'component', 'role'}:
@@ -340,7 +343,12 @@ def validate_native_execution(manifest):
         expected = (['bash', 'scripts/quality-gradle.sh', '--backend', ':' + task, *flags]
                     if component == 'backend' else
                     ['bash', 'scripts/quality-gradle.sh', *flags, ':' + JAVA_NATIVE_MODULES[component] + ':' + task])
-        if (gate is None or gate.get('component') != component or gate['argv'] != expected
+        commands = [expected]
+        if component != 'backend':
+            # The explicit clients graph excludes backend configuration. Keep
+            # its literal placement closed; this grants no cache qualification.
+            commands.append([*expected[:2], '--quality-root', *expected[2:]])
+        if (gate is None or gate.get('component') != component or gate['argv'] not in commands
                 or set(gate['profiles']) - {'fast', 'unit', 'build'}
                 or gate.get('platforms') != ['linux'] or gate.get('cwd', '.') != '.'
                 or gate.get('execution_slot') not in (None, 'host') or type(gate.get('cacheable')) is not bool
@@ -427,7 +435,8 @@ def native_execution_plan(manifest, gates, execution_platform, docker_context=No
     return {'adapter': value['adapter'], 'host_platform': execution_platform,
             'docker_context': docker_context, 'profile': 'build' if artifacts else 'unit',
             'components': components, 'artifact_components': artifacts,
-            'gates': requests}
+            'gates': requests,
+            **({'cli_max_workers': 3} if components == ['cli'] and value.get('cli_max_workers') == 3 else {})}
 
 
 def inside(root, relative):
@@ -575,13 +584,19 @@ def load(root):
                     and (tier in ("integration", "slow") or gate.get("external_state"))):
                 raise ValueError("Automatic build profiles cannot run boundary or slow tests")
     validate_affected_checks(manifest)
-    gradle_unit_groups(manifest["gates"])
-    covered_unit_owners(manifest["gates"])
     validate_native_execution(manifest)
+    gradle_unit_groups(manifest["gates"], native_gates=native_gradle_gate_ids(manifest))
+    covered_unit_owners(manifest["gates"])
     return manifest
 
 
-def gradle_unit_groups(gates):
+def native_gradle_gate_ids(manifest):
+    """Only closed Java declarations may consent to individual native reuse."""
+    value = manifest.get('native_execution')
+    return frozenset(value['gates']) if isinstance(value, dict) and value.get('adapter') == 'java-compose-v1' else frozenset()
+
+
+def gradle_unit_groups(gates, *, native_gates=()):
     """Join selected trailing Gradle tasks, preserving the complete unit contract."""
     identifiers = {gate["id"] for gate in gates}
     groups = {}
@@ -592,7 +607,8 @@ def gradle_unit_groups(gates):
         if (not isinstance(group, str) or not re.fullmatch(r"[a-zA-Z0-9:_-]+", group)
                 or group in identifiers
                 or gate.get("test_tier") != "unit" or gate.get("kind") == "artifact"
-                or gate.get("cacheable") or gate.get("external_state") or gate.get("requires_env")
+                or (gate.get("cacheable") and gate["id"] not in native_gates)
+                or gate.get("external_state") or gate.get("requires_env")
                 or gate.get("outputs") or gate.get("artifact_outputs") or gate.get("prepare_frontend")
                 or gate.get("execution_slot") == "command"
                 or len(gate["argv"]) < 2
@@ -603,12 +619,15 @@ def gradle_unit_groups(gates):
     merged = {}
     for group, members in groups.items():
         first = members[0]
-        contract = {key: value for key, value in first.items() if key not in ("id", "component", "argv")}
-        if any({key: value for key, value in member.items() if key not in ("id", "component", "argv")} != contract
+        # Individual native consent is not consent to reuse a portable grouped
+        # receipt. All command, input, environment and tool contracts stay equal.
+        ignored = ("id", "component", "argv", "cacheable")
+        contract = {key: value for key, value in first.items() if key not in ignored}
+        if any({key: value for key, value in member.items() if key not in ignored} != contract
                or member["argv"][:-1] != first["argv"][:-1] for member in members[1:]):
             raise ValueError("Gradle unit group has incompatible commands or execution contracts: " + group)
         merged[group] = {
-            **first, "id": group if len(members) > 1 else first["id"],
+            **first, "id": group if len(members) > 1 else first["id"], "cacheable": False,
             "argv": first["argv"][:-1] + list(dict.fromkeys(member["argv"][-1] for member in members)),
             "member_gates": [member["id"] for member in members],
         }
@@ -670,6 +689,13 @@ def order_unit_coverage(gates):
         visited.add(gate["id"])
         ordered.append(gate)
 
+    # An explicit producer may own its unit prerequisite (for example bootJar),
+    # but independent checks must finish before any producer can spend work or
+    # publish a candidate. Product manifest insertion order is not this policy.
+    for gate in gates:
+        if (gate['id'] not in owners and gate.get('kind') != 'artifact'
+                and gate.get('test_tier') != 'artifact'):
+            visit(gate)
     for gate in gates:
         visit(gate)
     return ordered
@@ -830,7 +856,8 @@ def plan(
                                    native_admin_inputs=native_admin_inputs)
     if native:
         # Native adapters retain the ordinary gate identities for certification.
-        ordinary = gradle_unit_groups([gate for gate in gates if gate['id'] not in native['gates']])
+        ordinary = gradle_unit_groups([gate for gate in gates if gate['id'] not in native['gates']],
+                                      native_gates=native_gradle_gate_ids(manifest))
         replacements = {name: gate for gate in ordinary for name in gate.get('member_gates', [gate['id']])}
         projected, seen = [], set()
         for gate in gates:
@@ -840,7 +867,7 @@ def plan(
                 seen.add(replacement['id'])
         ordered = order_unit_coverage(projected)
     else:
-        ordered = order_unit_coverage(gradle_unit_groups(gates))
+        ordered = order_unit_coverage(gradle_unit_groups(gates, native_gates=native_gradle_gate_ids(manifest)))
     result = {
         "schema": "base-quality-plan/v1",
         "product": manifest["product"],
