@@ -1,0 +1,787 @@
+//! Fresh fixed-owner103/104 authority. No caller URLs, grant flags, or typed rehashing.
+use super::files;
+use crate::{config::BugWorkPublicationConfig, domain::bug_work_publication::*};
+use anyhow::{Context, ensure};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
+use uuid::Uuid;
+
+/// Only this module can construct freshness. The original immutable request still
+/// has to be checked against local namespace/repository/token state in the effect TX.
+pub(crate) struct FreshAuthority {
+    checked_at: Instant,
+    configuration_id: Uuid,
+    request_sha256: String,
+    pub(crate) branch_ref: String,
+    pub(crate) clone_url_sha256: String,
+}
+impl FreshAuthority {
+    #[cfg(test)]
+    pub(super) fn for_request(configuration_id: Uuid, request: &BugWorkOperationRequest) -> Self {
+        Self {
+            checked_at: Instant::now(),
+            configuration_id,
+            request_sha256: canonical_hash(&serde_json::to_value(request).unwrap()).unwrap(),
+            branch_ref: "refs/heads/main".into(),
+            clone_url_sha256: "f".repeat(64),
+        }
+    }
+
+    pub(crate) fn require_current(
+        &self,
+        configuration_id: Uuid,
+        request: &BugWorkOperationRequest,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            self.configuration_id == configuration_id
+                && self.checked_at.elapsed() <= Duration::from_secs(5)
+                && self.request_sha256 == canonical_hash(&serde_json::to_value(request)?)?,
+            "Bug work authority expired or request changed"
+        );
+        Ok(())
+    }
+}
+
+pub(crate) fn canonical_hash(v: &Value) -> anyhow::Result<String> {
+    fn sorted(v: &Value) -> anyhow::Result<Value> {
+        Ok(match v {
+            Value::Object(m) => {
+                let mut keys: Vec<_> = m.keys().collect();
+                keys.sort();
+                let mut result = serde_json::Map::new();
+                for key in keys {
+                    result.insert(key.clone(), sorted(&m[key])?);
+                }
+                Value::Object(result)
+            }
+            Value::Array(a) => Value::Array(a.iter().map(sorted).collect::<anyhow::Result<_>>()?),
+            Value::Number(n) => {
+                ensure!(n.is_i64() || n.is_u64(), "floating owner value denied");
+                v.clone()
+            }
+            _ => v.clone(),
+        })
+    }
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&sorted(v)?)?)
+    ))
+}
+fn closed<'a>(
+    v: &'a Value,
+    required: &[&str],
+    optional: &[&str],
+) -> anyhow::Result<&'a serde_json::Map<String, Value>> {
+    let m = v.as_object().context("owner object required")?;
+    ensure!(
+        required.iter().all(|k| m.contains_key(*k))
+            && m.keys()
+                .all(|k| required.contains(&k.as_str()) || optional.contains(&k.as_str())),
+        "closed owner shape differs"
+    );
+    Ok(m)
+}
+fn string(v: &Value) -> anyhow::Result<&str> {
+    v.as_str().context("owner string required")
+}
+fn id(v: &Value) -> anyhow::Result<Uuid> {
+    let id = Uuid::parse_str(string(v)?)?;
+    ensure!(!id.is_nil(), "nil owner identity");
+    Ok(id)
+}
+fn revision(v: &Value) -> anyhow::Result<i64> {
+    let n = v.as_i64().context("owner integer required")?;
+    ensure!(
+        (1..=MAX_SAFE_REVISION).contains(&n),
+        "owner revision invalid"
+    );
+    Ok(n)
+}
+fn text(v: &Value, max: usize) -> anyhow::Result<&str> {
+    let s = string(v)?;
+    ensure!(
+        !s.trim().is_empty() && s.len() <= max && !s.chars().any(char::is_control),
+        "owner text invalid"
+    );
+    Ok(s)
+}
+fn opaque(v: &Value, max: usize) -> anyhow::Result<&str> {
+    let s = string(v)?;
+    ensure!(
+        !s.trim().is_empty() && s.len() <= max && !s.contains('\0'),
+        "owner opaque text invalid"
+    );
+    Ok(s)
+}
+fn strings(v: &Value, max: usize, limit: usize) -> anyhow::Result<()> {
+    let a = v.as_array().context("owner array required")?;
+    ensure!(a.len() <= limit, "owner array exceeds bound");
+    for s in a {
+        text(s, max)?;
+    }
+    Ok(())
+}
+
+/// Exact raw objects are hashed BEFORE any timestamp/type normalization. This
+/// reader never claims that an assignment, source snapshot or binding is verified
+/// merely because the producer supplied a boolean.
+fn validate_current(
+    configuration: Uuid,
+    request: &BugWorkOperationRequest,
+    state: &Value,
+    origin: &Value,
+) -> anyhow::Result<(String, String)> {
+    request.validate().map_err(anyhow::Error::msg)?;
+    let b = &request.bug_work;
+    closed(
+        state,
+        &[
+            "assignment",
+            "assignment_sha256",
+            "binding",
+            "closure",
+            "capacity_held",
+            "can_take_bugs",
+            "blocked_reasons",
+        ],
+        &[],
+    )?;
+    ensure!(
+        state["closure"].is_null()
+            && state["capacity_held"] == true
+            && state["can_take_bugs"].is_boolean(),
+        "assignment does not hold capacity"
+    );
+    strings(&state["blocked_reasons"], 512, 64)?;
+    let a = &state["assignment"];
+    closed(
+        a,
+        &[
+            "contract_version",
+            "assignment_id",
+            "tracker_instance_id",
+            "tracker_instance_uuid",
+            "project_id",
+            "bug_id",
+            "owner_subject",
+            "machine_subject",
+            "worker_runtime",
+            "fleet_journal_ref",
+            "preference_revision",
+            "fence",
+            "purpose",
+            "role",
+            "mode",
+            "source_identity",
+            "source_sha256",
+            "verification_basis",
+            "verification_basis_sha256",
+            "canonical_basis_sha256",
+            "created_at",
+        ],
+        &["origin"],
+    )?;
+    ensure!(
+        a["contract_version"] == 1
+            && id(&a["assignment_id"])? == b.assignment_id
+            && id(&a["bug_id"])? == b.bug_id
+            && id(&a["project_id"])? == request.project.project_id
+            && id(&a["tracker_instance_uuid"])? == request.project.tracker_instance_id
+            && string(&a["owner_subject"])? == b.owner_subject
+            && revision(&a["fence"])? == b.fence
+            && a["purpose"] == "bug_fix"
+            && a["role"] == "developer"
+            && a["mode"] == "initial"
+            && state["assignment_sha256"] == b.assignment_sha256
+            && canonical_hash(a)? == b.assignment_sha256,
+        "assignment differs from original candidate"
+    );
+    opaque(&a["tracker_instance_id"], 128)?;
+    text(&a["machine_subject"], 512)?;
+    ensure!(
+        a["machine_subject"] != a["owner_subject"],
+        "machine cannot be owner"
+    );
+    text(&a["fleet_journal_ref"], 512)?;
+    revision(&a["preference_revision"])?;
+    chrono::DateTime::parse_from_rfc3339(string(&a["created_at"])?)?;
+    let w = &a["worker_runtime"];
+    closed(
+        w,
+        &["fleet_instance_id", "agent_id", "agent_config_revision"],
+        &[],
+    )?;
+    id(&w["fleet_instance_id"])?;
+    id(&w["agent_id"])?;
+    revision(&w["agent_config_revision"])?;
+    let binding = &state["binding"];
+    closed(
+        binding,
+        &[
+            "runtime_context_id",
+            "runtime_generation",
+            "session_id",
+            "session_run_id",
+            "hermes_run_ref",
+            "workflow_task_id",
+            "workflow_assignment_revision",
+            "workflow_operation_key",
+            "workflow_binding_ref",
+        ],
+        &[],
+    )?;
+    for k in [
+        "runtime_context_id",
+        "runtime_generation",
+        "session_id",
+        "session_run_id",
+    ] {
+        id(&binding[k])?;
+    }
+    for k in [
+        "hermes_run_ref",
+        "workflow_operation_key",
+        "workflow_binding_ref",
+    ] {
+        text(&binding[k], 512)?;
+    }
+    revision(&binding["workflow_task_id"])?;
+    revision(&binding["workflow_assignment_revision"])?;
+    ensure!(
+        canonical_hash(binding)? == b.runtime_binding_sha256,
+        "actual runtime binding differs"
+    );
+    let source = &a["source_identity"];
+    closed(
+        source,
+        &[
+            "schema_version",
+            "producer",
+            "rule_key",
+            "stable_defect_key",
+        ],
+        &["repository_id"],
+    )?;
+    ensure!(
+        source["schema_version"] == 1
+            && id(&source["repository_id"])? == request.repository_id
+            && a["source_sha256"] == canonical_hash(source)?,
+        "source repository differs"
+    );
+    text(&source["producer"], 128)?;
+    text(&source["rule_key"], 256)?;
+    text(&source["stable_defect_key"], 512)?;
+    let report = &a["verification_basis"];
+    closed(
+        report,
+        &[
+            "title",
+            "basis",
+            "expected",
+            "actual",
+            "reproducer",
+            "checked_version",
+            "evidence_refs",
+        ],
+        &[],
+    )?;
+    for (k, max) in [
+        ("title", 500),
+        ("basis", 8192),
+        ("expected", 8192),
+        ("actual", 8192),
+        ("reproducer", 16384),
+        ("checked_version", 512),
+    ] {
+        opaque(&report[k], max)?;
+    }
+    let evidence = report["evidence_refs"]
+        .as_array()
+        .context("owner evidence array required")?;
+    ensure!(evidence.len() <= 32, "owner evidence exceeds bound");
+    for item in evidence {
+        opaque(item, 1024)?;
+    }
+    ensure!(
+        serde_json::to_vec_pretty(report)?.len() <= 65536,
+        "owner report exceeds bound"
+    );
+    ensure!(
+        report["checked_version"] == b.base_commit_sha
+            && a["verification_basis_sha256"] == b.verification_basis_sha256
+            && canonical_hash(report)? == b.verification_basis_sha256
+            && a["canonical_basis_sha256"] == b.canonical_basis_sha256,
+        "verification basis differs"
+    );
+    let origin_ref = &a["origin"];
+    closed(
+        origin_ref,
+        &[
+            "contract_version",
+            "execution_id",
+            "finding_id",
+            "snapshot_sha256",
+            "source_context_sha256",
+        ],
+        &[],
+    )?;
+    id(&origin_ref["execution_id"])?;
+    id(&origin_ref["finding_id"])?;
+    ensure!(
+        origin_ref["contract_version"] == 1
+            && sha256(string(&origin_ref["snapshot_sha256"])?)
+            && origin_ref["source_context_sha256"] == b.source_context_sha256,
+        "source origin missing"
+    );
+    closed(
+        origin,
+        &[
+            "contract_version",
+            "assignment_id",
+            "assignment_sha256",
+            "origin",
+            "source_context",
+        ],
+        &[],
+    )?;
+    ensure!(
+        origin["contract_version"] == 1
+            && id(&origin["assignment_id"])? == b.assignment_id
+            && origin["assignment_sha256"] == b.assignment_sha256
+            && origin["origin"] == *origin_ref,
+        "origin readback differs"
+    );
+    let context = &origin["source_context"];
+    closed(
+        context,
+        &[
+            "contract_version",
+            "project",
+            "mode",
+            "targets",
+            "scope",
+            "excluded_paths",
+        ],
+        &[],
+    )?;
+    closed(
+        &context["project"],
+        &["tracker_instance_id", "project_id"],
+        &[],
+    )?;
+    ensure!(
+        context["contract_version"] == 1
+            && context["project"]["tracker_instance_id"] == a["tracker_instance_id"]
+            && id(&context["project"]["project_id"])? == request.project.project_id
+            && canonical_hash(context)? == b.source_context_sha256
+            && matches!(string(&context["mode"])?, "source_only" | "qa"),
+        "source context differs"
+    );
+    for paths in [&context["scope"], &context["excluded_paths"]] {
+        strings(paths, 512, 128)?;
+        for item in paths.as_array().unwrap() {
+            let s = string(item)?;
+            ensure!(
+                !s.starts_with('/')
+                    && !s.contains(['\\', ':'])
+                    && !s.split('/').any(|part| part == ".."),
+                "source path invalid"
+            );
+        }
+    }
+    let targets = context["targets"]
+        .as_array()
+        .context("source targets missing")?;
+    ensure!(
+        !targets.is_empty() && targets.len() <= 16,
+        "source targets exceed bound"
+    );
+    let mut matched = None;
+    let mut matched_identity: Option<Value> = None;
+    for target in targets {
+        closed(
+            target,
+            &[
+                "repository_ref",
+                "commit_sha",
+                "target_ref",
+                "deployment_ref",
+            ],
+            &["source"],
+        )?;
+        text(&target["repository_ref"], 512)?;
+        ensure!(
+            commit(string(&target["commit_sha"])?),
+            "source target commit invalid"
+        );
+        for key in ["target_ref", "deployment_ref"] {
+            if !target[key].is_null() {
+                text(&target[key], 512)?;
+            }
+        }
+        if context["mode"] == "qa" {
+            ensure!(
+                !target["target_ref"].is_null() && !target["deployment_ref"].is_null(),
+                "QA target unresolved"
+            );
+        }
+        if target["source"].is_null() {
+            continue;
+        }
+        let pin = &target["source"];
+        closed(
+            pin,
+            &[
+                "contract_version",
+                "schema",
+                "producer_version",
+                "project",
+                "configuration_id",
+                "repository_id",
+                "branch_ref",
+                "observed_head_sha",
+                "clone_url_sha256",
+            ],
+            &[],
+        )?;
+        closed(&pin["project"], &["tracker_instance_id", "project_id"], &[])?;
+        ensure!(
+            pin["contract_version"] == 1
+                && pin["schema"] == "forge/source-snapshot/v1"
+                && id(&pin["project"]["tracker_instance_id"])?
+                    == request.project.tracker_instance_id
+                && id(&pin["project"]["project_id"])? == request.project.project_id
+                && crate::domain::source_snapshot::valid_branch_ref(string(&pin["branch_ref"])?)
+                && commit(string(&pin["observed_head_sha"])?)
+                && sha256(string(&pin["clone_url_sha256"])?),
+            "source provenance invalid"
+        );
+        text(&pin["producer_version"], 128)?;
+        if context["mode"] == "source_only" {
+            ensure!(
+                pin["observed_head_sha"] == target["commit_sha"],
+                "original source-only commit differs"
+            );
+        }
+        if id(&pin["repository_id"])? == request.repository_id
+            && target["commit_sha"] == b.base_commit_sha
+        {
+            let identity = serde_json::json!({
+                "repository_ref":target["repository_ref"], "commit_sha":target["commit_sha"], "source":pin,
+            });
+            ensure!(
+                id(&pin["configuration_id"])? == configuration
+                    && matched_identity
+                        .as_ref()
+                        .is_none_or(|original| original == &identity),
+                "candidate configuration ambiguous"
+            );
+            matched_identity = Some(identity);
+            matched = Some((
+                string(&pin["branch_ref"])?.to_owned(),
+                string(&pin["clone_url_sha256"])?.to_owned(),
+            ));
+        }
+    }
+    matched.context("original repository/base source not found")
+}
+
+// Duplicate keys would make the raw hash ambiguous across owner languages.
+// The recursive visitor also excludes JSON floats before retaining any authority.
+fn parse_owner(bytes: &[u8]) -> anyhow::Result<Value> {
+    struct Exact(Value);
+    impl<'de> serde::Deserialize<'de> for Exact {
+        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Exact;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("closed integer JSON")
+                }
+                fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Exact, E> {
+                    Ok(Exact(v.into()))
+                }
+                fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Exact, E> {
+                    Ok(Exact(v.into()))
+                }
+                fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Exact, E> {
+                    Ok(Exact(v.into()))
+                }
+                fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Exact, E> {
+                    Ok(Exact(v.into()))
+                }
+                fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Exact, E> {
+                    Ok(Exact(v.into()))
+                }
+                fn visit_unit<E: serde::de::Error>(self) -> Result<Exact, E> {
+                    Ok(Exact(Value::Null))
+                }
+                fn visit_none<E: serde::de::Error>(self) -> Result<Exact, E> {
+                    Ok(Exact(Value::Null))
+                }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut a: A,
+                ) -> Result<Exact, A::Error> {
+                    let mut out = Vec::new();
+                    while let Some(Exact(v)) = a.next_element()? {
+                        out.push(v);
+                    }
+                    Ok(Exact(Value::Array(out)))
+                }
+                fn visit_map<A: serde::de::MapAccess<'de>>(
+                    self,
+                    mut a: A,
+                ) -> Result<Exact, A::Error> {
+                    let mut out = serde_json::Map::new();
+                    while let Some((k, Exact(v))) = a.next_entry::<String, Exact>()? {
+                        if out.insert(k, v).is_some() {
+                            return Err(serde::de::Error::custom("duplicate owner key"));
+                        }
+                    }
+                    Ok(Exact(Value::Object(out)))
+                }
+            }
+            d.deserialize_any(Visitor)
+        }
+    }
+    Ok(serde_json::from_slice::<Exact>(bytes)?.0)
+}
+
+pub(crate) async fn read_current(
+    config: &BugWorkPublicationConfig,
+    configuration: Uuid,
+    request: &BugWorkOperationRequest,
+) -> anyhow::Result<FreshAuthority> {
+    static READERS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    let _permit = READERS
+        .get_or_init(|| tokio::sync::Semaphore::new(2))
+        .try_acquire()
+        .map_err(|_| anyhow::anyhow!("owner read capacity unavailable"))?;
+    let root = config
+        .tracker_origin
+        .as_deref()
+        .context("Tracker reader not configured")?;
+    let token_path = config
+        .tracker_reader_token_file
+        .as_ref()
+        .context("Tracker credential not configured")?
+        .clone();
+    let bytes = tokio::task::spawn_blocking(move || files::read_bytes(&token_path, 8192)).await??;
+    let token = std::str::from_utf8(&bytes)?.trim();
+    ensure!(
+        !token.is_empty() && !token.chars().any(char::is_whitespace),
+        "invalid owner credential file"
+    );
+    let mut auth = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
+    auth.set_sensitive(true);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let prefix = format!(
+        "{}/api/v1/projects/{}/sdlc/bug-intake/assignments/{}",
+        root.trim_end_matches('/'),
+        request.project.project_id,
+        request.bug_work.assignment_id
+    );
+    async fn get(
+        client: &reqwest::Client,
+        url: String,
+        auth: &reqwest::header::HeaderValue,
+        limit: usize,
+    ) -> anyhow::Result<Value> {
+        let mut r = client
+            .get(url)
+            .header(reqwest::header::AUTHORIZATION, auth)
+            .header(reqwest::header::ACCEPT_ENCODING, "identity")
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("Tracker owner unavailable"))?;
+        ensure!(
+            r.status() == reqwest::StatusCode::OK,
+            "Tracker owner authority denied"
+        );
+        ensure!(
+            r.headers()
+                .get(reqwest::header::CONTENT_ENCODING)
+                .is_none_or(|v| v == "identity")
+                && r.content_length().is_none_or(|n| n <= limit as u64),
+            "owner encoding/size denied"
+        );
+        let mut body = Vec::new();
+        while let Some(chunk) = r
+            .chunk()
+            .await
+            .map_err(|_| anyhow::anyhow!("Tracker owner read unavailable"))?
+        {
+            ensure!(
+                body.len() + chunk.len() <= limit,
+                "owner response exceeds bound"
+            );
+            body.extend_from_slice(&chunk);
+        }
+        parse_owner(&body)
+    }
+    let checked_at = Instant::now();
+    let (state, origin) = tokio::time::timeout(Duration::from_secs(5), async {
+        let state = get(&client, format!("{prefix}/grant"), &auth, 128 * 1024).await?;
+        let origin = get(&client, format!("{prefix}/origin"), &auth, 64 * 1024).await?;
+        Ok::<_, anyhow::Error>((state, origin))
+    })
+    .await
+    .context("Tracker owner deadline exceeded")??;
+    let (branch_ref, clone_url_sha256) = validate_current(configuration, request, &state, &origin)?;
+    Ok(FreshAuthority {
+        checked_at,
+        configuration_id: configuration,
+        request_sha256: canonical_hash(&serde_json::to_value(request)?)?,
+        branch_ref,
+        clone_url_sha256,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fixture() -> (Value, Value, BugWorkOperationRequest, Uuid) {
+        let v: Value = serde_json::from_str(include_str!(
+            "../domain/tests/fixtures/bug-work-delivery-v1.json"
+        ))
+        .unwrap();
+        let proof = &v["proof"];
+        let r = BugWorkOperationRequest {
+            contract_version: 1,
+            operation_key: "fix:1".into(),
+            project: serde_json::from_value(proof["project"].clone()).unwrap(),
+            bug_work: serde_json::from_value(proof["bugWork"].clone()).unwrap(),
+            repository_id: id(&proof["repositoryId"]).unwrap(),
+            candidate_tree_id: "c".repeat(40),
+            bundle_sha256: "d".repeat(64),
+            bundle_size_bytes: 123,
+        };
+        let origin = serde_json::json!({"contract_version":1,"assignment_id":r.bug_work.assignment_id,"assignment_sha256":r.bug_work.assignment_sha256,"origin":v["state"]["assignment"]["origin"],"source_context":v["source"]});
+        (
+            v["state"].clone(),
+            origin,
+            r,
+            id(&proof["configurationId"]).unwrap(),
+        )
+    }
+    #[test]
+    fn raw_golden_owner_binding_rejects_foreign_source_revoke_and_fabricated_flags() {
+        let (state, origin, request, configuration) = fixture();
+        validate_current(configuration, &request, &state, &origin).unwrap();
+        for n in 0..12 {
+            let (mut s, mut o, mut r) = (state.clone(), origin.clone(), request.clone());
+            match n {
+                0 => s["capacity_held"] = false.into(),
+                1 => s["closure"] = serde_json::json!({"kind":"actual_terminal"}),
+                2 => r.bug_work.runtime_binding_sha256 = "0".repeat(64),
+                3 => r.project.project_id = Uuid::new_v4(),
+                4 => r.repository_id = Uuid::new_v4(),
+                5 => r.bug_work.base_commit_sha = "f".repeat(40),
+                6 => s["verified"] = true.into(),
+                7 => o["source_context"]["verified"] = true.into(),
+                8 => {
+                    o["source_context"]["targets"][0]["source"]["repository_id"] =
+                        Uuid::new_v4().to_string().into()
+                }
+                9 => r.bug_work.assignment_sha256 = "a".repeat(64),
+                10 => r.bug_work.fence += 1,
+                _ => r.bug_work.source_context_sha256 = "1".repeat(64),
+            }
+            assert!(
+                validate_current(configuration, &r, &s, &o).is_err(),
+                "mutation {n}"
+            );
+        }
+        let authority = FreshAuthority {
+            checked_at: Instant::now() - Duration::from_secs(6),
+            configuration_id: configuration,
+            request_sha256: canonical_hash(&serde_json::to_value(&request).unwrap()).unwrap(),
+            branch_ref: "refs/heads/main".into(),
+            clone_url_sha256: "f".repeat(64),
+        };
+        assert!(authority.require_current(configuration, &request).is_err());
+    }
+    #[test]
+    fn owner_multiline_report_and_opaque_alias_are_hashed_without_sanitizing() {
+        let (mut state, mut origin, mut request, configuration) = fixture();
+        state["assignment"]["tracker_instance_id"] = "исходный Tracker\r\nopaque".into();
+        origin["source_context"]["project"]["tracker_instance_id"] =
+            state["assignment"]["tracker_instance_id"].clone();
+        state["assignment"]["verification_basis"]["reproducer"] =
+            "1. Open\n2. Check\tresult".into();
+        state["assignment"]["verification_basis"]["basis"] = "code:\n\treturn false;".into();
+        request.bug_work.verification_basis_sha256 =
+            canonical_hash(&state["assignment"]["verification_basis"]).unwrap();
+        state["assignment"]["verification_basis_sha256"] =
+            request.bug_work.verification_basis_sha256.clone().into();
+        request.bug_work.source_context_sha256 = canonical_hash(&origin["source_context"]).unwrap();
+        state["assignment"]["origin"]["source_context_sha256"] =
+            request.bug_work.source_context_sha256.clone().into();
+        origin["origin"] = state["assignment"]["origin"].clone();
+        request.bug_work.assignment_sha256 = canonical_hash(&state["assignment"]).unwrap();
+        state["assignment_sha256"] = request.bug_work.assignment_sha256.clone().into();
+        origin["assignment_sha256"] = request.bug_work.assignment_sha256.clone().into();
+        validate_current(configuration, &request, &state, &origin).unwrap();
+        assert_eq!(
+            origin["source_context"]["project"]["tracker_instance_id"],
+            state["assignment"]["tracker_instance_id"]
+        );
+    }
+    #[test]
+    fn repeated_exact_source_across_qa_targets_coalesces_but_changed_original_source_does_not() {
+        let (mut state, mut origin, mut request, configuration) = fixture();
+        origin["source_context"]["mode"] = "qa".into();
+        origin["source_context"]["targets"][0]["target_ref"] = "qa:first".into();
+        origin["source_context"]["targets"][0]["deployment_ref"] = "delivery:first".into();
+        let mut second = origin["source_context"]["targets"][0].clone();
+        second["target_ref"] = "qa:second".into();
+        second["deployment_ref"] = "delivery:second".into();
+        origin["source_context"]["targets"]
+            .as_array_mut()
+            .unwrap()
+            .push(second);
+        let rehash = |s: &mut Value, o: &mut Value, r: &mut BugWorkOperationRequest| {
+            r.bug_work.source_context_sha256 = canonical_hash(&o["source_context"]).unwrap();
+            s["assignment"]["origin"]["source_context_sha256"] =
+                r.bug_work.source_context_sha256.clone().into();
+            o["origin"] = s["assignment"]["origin"].clone();
+            r.bug_work.assignment_sha256 = canonical_hash(&s["assignment"]).unwrap();
+            s["assignment_sha256"] = r.bug_work.assignment_sha256.clone().into();
+            o["assignment_sha256"] = r.bug_work.assignment_sha256.clone().into();
+        };
+        rehash(&mut state, &mut origin, &mut request);
+        validate_current(configuration, &request, &state, &origin).unwrap();
+        for field in [
+            "repository_ref",
+            "branch_ref",
+            "configuration_id",
+            "clone_url_sha256",
+        ] {
+            let (mut s, mut o, mut r) = (state.clone(), origin.clone(), request.clone());
+            let second = &mut o["source_context"]["targets"][1];
+            match field {
+                "repository_ref" => second[field] = "catalog:foreign-ref".into(),
+                "branch_ref" => second["source"][field] = "refs/heads/foreign".into(),
+                "configuration_id" => second["source"][field] = Uuid::new_v4().to_string().into(),
+                _ => second["source"][field] = "f".repeat(64).into(),
+            }
+            rehash(&mut s, &mut o, &mut r);
+            assert!(
+                validate_current(configuration, &r, &s, &o).is_err(),
+                "{field}"
+            );
+        }
+    }
+    #[test]
+    fn raw_owner_parser_rejects_nested_duplicate_fields_and_floats() {
+        assert!(parse_owner(br#"{"assignment":{"fence":1,"fence":2}}"#).is_err());
+        assert!(parse_owner(br#"{"fence":1.0}"#).is_err());
+        assert!(parse_owner(br#"{"fence":1,"origin":{"fence":2}}"#).is_ok());
+    }
+}

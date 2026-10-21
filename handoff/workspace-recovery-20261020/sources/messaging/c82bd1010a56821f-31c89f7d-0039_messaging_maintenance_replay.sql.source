@@ -1,0 +1,36 @@
+-- Additive messaging maintenance/replay; 0038 remains immutable.
+CREATE TABLE messaging_maintenance_state (
+    scope TEXT PRIMARY KEY,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_attempt_at TIMESTAMPTZ NOT NULL,
+    last_success_at TIMESTAMPTZ,
+    last_result JSONB,
+    last_error_code TEXT CHECK (last_error_code IS NULL OR last_error_code IN ('storage_unavailable','operation_timeout'))
+);
+CREATE TABLE messaging_replay_jobs (
+    id UUID PRIMARY KEY,
+    subject TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('building','planned','running','paused','completed','failed','expired')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now()+interval '1 hour',
+    finished_at TIMESTAMPTZ,
+    lease_token UUID,
+    lease_until TIMESTAMPTZ,
+    last_error_code TEXT,
+    event_count BIGINT NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX messaging_replay_one_running ON messaging_replay_jobs(subject) WHERE state='running';
+CREATE INDEX messaging_replay_history ON messaging_replay_jobs(finished_at) WHERE finished_at IS NOT NULL;
+CREATE TABLE messaging_replay_items (
+    job_id UUID NOT NULL REFERENCES messaging_replay_jobs(id) ON DELETE CASCADE,
+    row_id UUID NOT NULL,
+    event_id UUID NOT NULL,
+    fingerprint BYTEA NOT NULL CHECK (octet_length(fingerprint)=32),
+    payload_digest BYTEA NOT NULL CHECK (octet_length(payload_digest)=32),
+    published_at TIMESTAMPTZ NOT NULL,
+    acknowledged_at TIMESTAMPTZ,
+    PRIMARY KEY(job_id,row_id)
+);
+CREATE INDEX messaging_replay_source ON messaging_replay_items(row_id,job_id);
+CREATE INDEX messaging_outbox_published_retention ON messaging_outbox(subject,published_at,id) WHERE published_at IS NOT NULL;
+CREATE INDEX messaging_outbox_failed_retention ON messaging_outbox(subject,failed_at,id) WHERE failed_at IS NOT NULL;

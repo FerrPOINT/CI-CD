@@ -1,0 +1,2345 @@
+diff --cc .base-revision
+index 0293b79,e7bc130..efc48e2
+--- a/.base-revision
++++ b/.base-revision
+@@@ -1,1 -1,1 +1,1 @@@
+- 44e48f3a88a0985f97d5c0bd137572f52c7737ac
+ -9408802dfa978cba2f67162a49adca6f65851b01
+++6e6d653c128df8091f6016f7966bef694faf4e82
+diff --cc CHANGELOG.md
+index a74e5ff,5badc09..6412daf
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@@ -9,69 -9,6 +9,88 @@@
+  
+  ## [Unreleased]
+  
+++- Формы создания и редактирования проектов используют Base PendingForm и
+++  FormField: required/label semantics общие, pending блокирует все поля и
+++  отмену, rejected write сохраняет введённые значения. Draft navigation и
+++  сверка неизвестного исхода записи остаются отдельными доработками.
+++
+++- Поиск и страница каталога проектов хранятся в URL через Base codecs/helpers:
+++  reload и Back/Forward восстанавливают выбор, filter reset сохраняет context/hash.
+++  Некорректная pagination исправляется только по успешно загруженному каталогу.
+++  Меню строки использует общий Base icon target вместо локальной 40 px кнопки.
+++
+++- Каталог проектов использует Base ListPage и общую политику resource states:
+++  loading не предлагает создание, denied/not-found и неповторяемые ошибки
+++  скрывают cached rows и действия. Повторяемый failed refresh сохраняет
+++  каталог с отдельным partial-error и retry. API и введённые данные не меняются.
+++
+++- Shared Base snapshot 6e6d653 reconciles the accepted UI/UX source with locally
+++  available repository URL security fixes; the canonical shell and page states
+++  remain product-independent.
+++
+ +- Общий Base snapshot обновлён до 44e48f3: SSR drawer учитывает summary
+ +  и фактическую видимость controls при Tab/Shift+Tab. React shell, API,
+ +  данные и принятый runtime не меняются.
+ +
+ +- Общий Base snapshot обновлён до a434ee2 с исправлением SSR states.
+ +  Геометрия shell, доменные API и принятый runtime не меняются.
+ +
+ +
+ +- ADR-0002 и индекс отделяют исторический выбор React/Vite от текущего Base
+ +  ownership: локальные копии общих UI-компонентов не являются действующей
+ +  политикой. Исходные alternatives и decision сохранены; runtime не меняется.
+ +
+ +- Repository reference search uses the shared Base label without a local font override.
+ +- Notification target tests retain strict layout minima and tolerate only subpixel
+ +  transform rounding in rendered bounds; 40/44 px control sizes are unchanged.
+ +- Base 7e27713 унифицирует подписи полей (12 px) и SSR-значения (14 px).
+ +  Геометрия shell, API и принятый runtime не меняются.
+ +
+ +- Nginx возвращает 404 для отсутствующих assets; bare `/api` передаётся
+ +  backend без redirect. SPA и Git Smart HTTP сохраняются; runtime не меняется.
+ +
+ +- Общий Base snapshot обновлён до 0ffb99e: verified profile/directory contracts
+ +  и UI dependency graph без замены shell. Принятый runtime не переключается.
+ +
+ +- Локальная default-ветка согласована с Base UI/UX-веткой: восстановлены
+ +  исторические SQLx migrations 36–38 и тесты fresh/upgrade/replay/checksum,
+ +  без замены shell, Base pin и frontend locks. Проверка кандидата отделена
+ +  от принятого runtime; рабочие базы и pinned images не изменяются.
+ +
+ +- ARCHITECTURE описывает фактический Base AppShell и продуктовые адаптеры,
+ +  ссылается на единый UI/UX-контракт и owned workspace launcher вместо второго
+ +  UI-kit и standalone Compose. Исторический Header plan остаётся историческим;
+ +  code/API/locks/runner/runtime и local default этим docs-only изменением не меняются.
+ +
+ +- AGENTS/DEVELOPMENT_GUIDE согласованы с Base UI/UX и owned Compose QA:
+ +  удалены standalone/direct launch и массовое удаление volumes, toolchain
+ +  соответствует pinned metadata. Приёмка локальная; legacy helper migration
+ +  не объявлена выполненной. API, runner protocol, locks и runtime не менялись.
+ +
+ +- Base notification ownership gate закреплён единым snapshot. OpenAPI alias
+ +  передаёт явные параметры в Base; без параметров сравнивает с origin/main.
+ +
+ +- Единственный notification host подключён из `@sdlc/ui/notifications`
+ +  на Base `d22ca2205f5068eba976745ed5fad93c6daacfa1`. Удалены локальные
+ +  AppToaster/theme и Sonner CSS overrides; продуктовые callbacks используют
+ +  один peer Sonner2.0.8. Добавлены bootstrap/browser regressions; actual
+ +  images, live SSO и release acceptance остаются отдельными проверками.
+ +
+ +- Отчёты проекта используют общую композицию DashboardLayout и controls Base.
+ +  Loading/403/404 больше не предлагают недоступный переход к запускам;
+ +  повторяемый сбой обновления сохраняет прочитанные данные с retry, а terminal
+ +  и неповторяемые ошибки скрывают cached данные и действия. Empty не дублирует
+ +  действия и не показывает ложные нулевые метрики при сбое обновления.
+ +  Добавлены unit и browser regressions; приёмка actual images остаётся отдельной.
+ +
+ +- Оба frontend Dockerfile используют существующий Base recorder: product/Base
+ +  SHA, fingerprints и asset digests в `/ui-build.json`, OCI labels и pinned
+ +  Node/nginx digests без смены версий. Runtime/SSO/README приёмка остаётся отдельной
+ +  обязательной проверкой; workspace candidate собирается через umbrella recipe.
+ +
+ +- Base закреплён на `193ad1e8fd6260f001640943a5ec07ff04f527d1`: общий
+ +  cross-platform fingerprint и согласованная локальная UI/UX-поставка.
+ +  Source/dependency checkpoint не заменяет приёмку фактических images и SSO.
+  - Документирована принятая поставка трёх CLI на sdlc1: backup/restore/rollback, live-проверки, Linux/WSL установка и сохранённые ограничения.
+  
+  - Каталог SQLx сохраняет точную уже применённую migration 38 `platform messaging`
+diff --cc docs/UI_UX_MAP.md
+index 88bd937,0000000..e85ce9e
+mode 100644,000000..100644
+--- a/docs/UI_UX_MAP.md
++++ b/docs/UI_UX_MAP.md
+@@@ -1,79 -1,0 +1,96 @@@
+ +# UI/UX Map: CI/CD
+ +
+ +## Источник Контракта
+ +
+ +Общие правила и реализации принадлежат
+ +[Base UI/UX Standard](../../services-base/docs/platform/UI_UX_STANDARD.md).
+ +CI/CD задаёт navigation, identity, доменные действия и данные. Product shell
+ +использует Base AppShell, не поддерживает отдельный drawer, account menu или
+ +систему размеров. Старый [UI_SHELL.md](UI_SHELL.md) сохраняет историческую evidence.
+ +
+ +## Маршрутная Карта
+ +
+ +Полный inventory: [ui-routes.json](ui-routes.json). Все 24 patterns извлекаются из
+ +React router общим AST gate; маршрутная классификация не является browser приёмкой.
+ +
+ +| Маршруты | Mode | Причина |
+ +|---|---|---|
+ +| `/settings` | `reading` | Настройки |
+ +| `/repositories/:repo/pulls/:number` | `detail-with-aside` | Обзор PR и contextual actions |
+ +| Тот же PR с `?view=diff` | `wide` | Рабочая область сравнения без пустого aside |
+ +| Остальные operational patterns, включая pipeline detail/audit | `wide` | Каталоги, стадии и логи |
+ +
+ +`/login` и `/sso/callback` являются public auth routes. `/forbidden` и неизвестный
+ +адрес используют Base terminal states внутри защищённого shell; неизвестный URL
+ +не перенаправляется молча на dashboard. Legacy `/projects/:projectId/members`
+ +перенаправляет на `/projects`: membership CRUD не поддерживается Central Auth mode.
+ +
+++## Каталог Проектов
+++
+++`/projects` использует Base ListPage и resource state policy. Confirmed empty
+++оставляет создание доступным; cold loading скрывает действия. Cached 403/404
+++и неповторяемые ошибки скрывают каталог, поиск, edit/delete и create. Повторяемый
+++failed refresh сохраняет данные с partial-error и retry. Технический error
+++envelope не выводится пользователю. UI hiding не заменяет backend authZ.
+++
+++Search/page используют Base URL codecs/helpers, сохраняют unknown parameters
+++и hash, восстанавливаются при direct/reload/Back/Forward. Поиск сбрасывает page;
+++page correction выполняется только по успешно загруженному каталогу, не по
+++denied cache. Меню строки использует Base icon button. Create/edit используют
+++Base PendingForm/FormField, pending блокирует поля и отмену; rejected write
+++сохраняет draft. Защита при переходе/скрытии и сверка unknown write ещё не
+++мигрированы; source/state tests не являются полной browser или actual-image
+++приёмкой.
+++
+ +## Контроллер Audit
+ +
+ +`/audit-log` использует AuditLogView, Base controls, state policy и URL codecs.
+ +Сервер отвечает за total, actions, filtering и paging. Offset ограничен существующим
+ +API диапазоном int32; page correction выполняется только после успешного settled read.
+ +Поиск/action reset pagination; неизвестные параметры и hash сохраняются, изменение
+ +фильтра создаёт отдельную history entry. Reload и SSO сохраняют полный deep link.
+ +Previous-filter placeholder rows не выдаются за результаты нового запроса.
+ +Cached repeatable failures показывают readonly записи; 403/404 и неповторяемые
+ +ошибки скрывают данные. Диагностические envelopes не отображаются пользователю.
+ +
+ +## Композиция Отчётов
+ +
+ +`/projects/:projectId/reports` использует Base DashboardLayout, PageHeader,
+ +Button и общую state policy. Расчёты и DTO остаются продуктовыми.
+ +Cold loading не предлагает переход к запускам; 403/404 и неповторяемые ошибки
+ +скрывают cached metrics и действия. Повторяемая ошибка обновления сохраняет
+ +ранее загруженный отчёт с безопасным partial-error и retry. Empty показывает
+ +одно действие; cached empty не превращается в нулевые метрики при сбое.
+ +
+ +Source checkpoint 2026-10-03: 237 unit tests/35 files, TypeScript, ESLint,
+ +semantic classes, installed 24-pattern UI gate и OpenAPI checks прошли.
+ +Playwright source suite: 17 сценариев, отчёты в 3 themes на 10 widths,
+ +direct/reload, targets, keyboard focus, cached states и axe проверки.
+ +HTTP/OIDC fixtures этого suite не являются no-mock image/SSO evidence.
+ +
+ +## Уведомления
+ +
+ +Единственный host подключён из Base notification entry внутри ThemeProvider.
+ +Локальные host/theme/style overrides удалены. Продуктовые `toast` callbacks,
+ +API, query invalidation и auth сохраняются; Sonner2.0.8 является общим peer.
+ +Scope и приёмка: [план](plans/2026-10-05-base-notifications.md).
+ +Source/component/browser fixtures не доказывают persistence или live SSO;
+ +route/state matrix и выпуск фактических images остаются обязательными.
+ +
+ +## Проверки И Ограничения
+ +
+ +Предыдущий [source checkpoint](uiux-source-evidence-2026-10-02.md) сохраняет
+ +исходные SHA и ограничения; обновление Base pin не делает его выпускной приёмкой.
+ +
+ +`pnpm --dir frontend ui:check` проверяет route coverage, Base shell consumption,
+ +CSS overrides и фактическое installed Base содержимое.
+ +`pnpm --dir frontend exec playwright test --config playwright.source-ui.config.ts`
+ +проверяет source shell/audit/reports с изолированными HTTP/OIDC fixtures на временном
+ +preview. Предварительно требуется `pnpm --dir frontend build`; процесс preview
+ +управляется тестом, постоянный Docker workspace не используется.
+ +
+ +Это не release acceptance. Остальные page compositions, все роли/маршруты/состояния,
+ +backend gates, no-mock immutable images/live SSO, актуальная README галерея,
+ +локальная интеграция и mirror остаются обязательными. Manifest status остаётся pending.
+ +Существующие live specs имеют прежние selectors shell и требуют согласования
+ +с Base ownership до выпускного прогона; старые captures не подтверждают новый source.
+diff --cc frontend/e2e/base-standard-source.spec.ts
+index 8f59309,0000000..849e0c7
+mode 100644,000000..100644
+--- a/frontend/e2e/base-standard-source.spec.ts
++++ b/frontend/e2e/base-standard-source.spec.ts
+@@@ -1,653 -1,0 +1,802 @@@
+ +import { generateKeyPairSync, sign } from 'node:crypto'
+ +import { mkdirSync, writeFileSync } from 'node:fs'
+ +import { fileURLToPath } from 'node:url'
+ +import AxeBuilder from '@axe-core/playwright'
+ +import { expect, test, type Page, type Route } from '@playwright/test'
+ +import type { Project } from '../src/api/types'
+ +
+ +const evidence =
+ +  process.env.SDLC_CICD_SOURCE_EVIDENCE_DIR ??
+ +  fileURLToPath(new URL('../test-results/source-ui/evidence/', import.meta.url))
+ +const widths = [375, 767, 768, 1023, 1024, 1279, 1280, 1440, 1920, 2560]
+ +const actor = 'Участник-аудита-длинное-безопасное-имя-для-проверки-переносов@example.test'
+ +function json(route: Route, body: unknown, status = 200) {
+ +  return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+ +}
+ +
+ +async function mocks(page: Page) {
+ +  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+ +  const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'source-qa', alg: 'ES256', use: 'sig' }
+ +  let issuer = 'http://localhost:7701'
+ +  let nonce = ''
+ +  await page.route('**/oidc/authorize**', async (route) => {
+ +    const url = new URL(route.request().url())
+ +    issuer = url.origin
+ +    nonce = url.searchParams.get('nonce') ?? ''
+ +    const callback = new URL(url.searchParams.get('redirect_uri')!)
+ +    callback.searchParams.set('code', 'source-qa-code')
+ +    callback.searchParams.set('state', url.searchParams.get('state') ?? '')
+ +    await route.fulfill({ status: 302, headers: { location: callback.toString() }, body: '' })
+ +  })
+ +  await page.route('**/oidc/token', async (route) => {
+ +    const header = Buffer.from(
+ +      JSON.stringify({ alg: 'ES256', typ: 'JWT', kid: 'source-qa' }),
+ +    ).toString('base64url')
+ +    const payload = Buffer.from(
+ +      JSON.stringify({
+ +        iss: issuer,
+ +        aud: 'ci-cd',
+ +        sub: '00000000-0000-0000-0000-000000000001',
+ +        name: actor,
+ +        email: 'safe-source-qa@example.test',
+ +        nonce,
+ +        iat: Math.floor(Date.now() / 1000),
+ +        exp: Math.floor(Date.now() / 1000) + 3600,
+ +      }),
+ +    ).toString('base64url')
+ +    const content = `${header}.${payload}`
+ +    const signature = sign('sha256', Buffer.from(content), {
+ +      key: privateKey,
+ +      dsaEncoding: 'ieee-p1363',
+ +    }).toString('base64url')
+ +    return json(route, {
+ +      access_token: 'source-qa-token',
+ +      id_token: `${content}.${signature}`,
+ +      expires_in: 3600,
+ +    })
+ +  })
+ +  await page.route('**/oidc/jwks', (route) => json(route, { keys: [jwk] }))
+ +  const audit = {
+ +    status: 200,
+ +    empty: false,
+ +    wait: undefined as Promise<void> | undefined,
+ +    offsets: [] as number[],
+ +    unexpected: [] as string[],
+ +    reportStatus: 200,
+ +    reportEmpty: false,
+ +    reportWait: undefined as Promise<void> | undefined,
+ +    project: null as Project | null,
+++    projectList: undefined as Project[] | undefined,
+++    projectStatus: 200,
+++    projectReadWait: undefined as Promise<void> | undefined,
+ +    projectWait: undefined as Promise<void> | undefined,
+ +    projectWrites: 0,
+ +  }
+ +  await page.route('**/api/v1/**', async (route) => {
+ +    const url = new URL(route.request().url())
+ +    if (url.pathname === '/api/v1/runners') return json(route, [])
+-     if (url.pathname === '/api/v1/projects' && route.request().method() === 'GET')
+-       return json(route, audit.project ? [audit.project] : [])
+++    if (url.pathname === '/api/v1/projects' && route.request().method() === 'GET') {
+++      if (audit.projectReadWait) await audit.projectReadWait
+++      if (audit.projectStatus !== 200) return json(route, { error: { code: 'controlled', message: 'PRIVATE DIAGNOSTIC' } }, audit.projectStatus)
+++      return json(route, audit.projectList ?? (audit.project ? [audit.project] : []))
+++    }
+ +    if (url.pathname === '/api/v1/projects' && route.request().method() === 'POST') {
+ +      audit.projectWrites++
+ +      if (audit.projectWait) await audit.projectWait
+ +      const input = route.request().postDataJSON() as Pick<Project, 'name' | 'repository_url' | 'default_branch'>
+ +      audit.project = {
+ +        ...input,
+ +        id: '00000000-0000-0000-0000-000000000099',
+ +        created_at: '2026-10-05T00:00:00Z',
+ +      }
+ +      return json(route, audit.project, 201)
+ +    }
+ +    if (/^\/api\/v1\/projects\/[^/]+\/reports\/summary$/.test(url.pathname)) {
+ +      if (audit.reportWait) await audit.reportWait
+ +      if (audit.reportStatus === 0) return route.abort('failed')
+ +      if (audit.reportStatus !== 200)
+ +        return json(
+ +          route,
+ +          { error: { code: 'controlled', message: 'PRIVATE DIAGNOSTIC' } },
+ +          audit.reportStatus,
+ +        )
+ +      return json(
+ +        route,
+ +        audit.reportEmpty
+ +          ? {
+ +              total_pipelines: 0,
+ +              successful_pipelines: 0,
+ +              failed_pipelines: 0,
+ +              success_rate: 0,
+ +              average_duration_seconds: 0,
+ +            }
+ +          : {
+ +              total_pipelines: 6,
+ +              successful_pipelines: 3,
+ +              failed_pipelines: 1,
+ +              success_rate: 0.6,
+ +              average_duration_seconds: 90,
+ +            },
+ +      )
+ +    }
+ +    if (url.pathname !== '/api/v1/audit-log/page') {
+ +      audit.unexpected.push(`${route.request().method()} ${url.pathname}`)
+ +      return json(route, { error: { message: 'Unexpected source fixture endpoint' } }, 500)
+ +    }
+ +    if (audit.wait) await audit.wait
+ +    if (audit.status === 0) return route.abort('failed')
+ +    if (audit.status !== 200)
+ +      return json(
+ +        route,
+ +        { error: { code: 'controlled', message: 'PRIVATE DIAGNOSTIC ENVELOPE' } },
+ +        audit.status,
+ +      )
+ +    const offset = Number(url.searchParams.get('offset') ?? 0)
+ +    audit.offsets.push(offset)
+ +    const q = url.searchParams.get('q') ?? ''
+ +    const total = audit.empty || q === 'missing' ? 0 : 45
+ +    const items = Array.from({ length: Math.min(20, Math.max(0, total - offset)) }, (_, index) => ({
+ +      id: offset + index + 1,
+ +      action: url.searchParams.get('action') || 'auth.login_success',
+ +      actor,
+ +      resource_type: 'user',
+ +      resource_id: '00000000-0000-0000-0000-000000000001',
+ +      created_at: '2026-10-01T12:00:00Z',
+ +    }))
+ +    return json(route, {
+ +      items,
+ +      total,
+ +      limit: 20,
+ +      offset,
+ +      actions: ['auth.login_success', 'auth.login_failed'],
+ +    })
+ +  })
+ +  return audit
+ +}
+ +
+ +async function ready(page: Page, path = '/audit-log') {
+ +  await page.goto(path)
+ +  await expect(page.locator('[data-base-shell]')).toBeVisible()
+ +  await expect(
+ +    page.getByRole('heading', { level: 1, name: 'Журнал аудита', exact: true }),
+ +  ).toBeVisible()
+ +}
+ +
+++for (const theme of ['dark', 'gray', 'light']) {
+++  test(`project URL and controls ${theme} across shell boundaries`, async ({ page }, testInfo) => {
+++    test.setTimeout(180_000)
+++    await page.addInitScript((value) => localStorage.setItem('theme', value), theme)
+++    const fixture = await mocks(page)
+++    fixture.projectList = Array.from({ length: 25 }, (_, index) => ({
+++      id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+++      name: `QA Project ${String(index + 1).padStart(2, '0')}`,
+++      repository_url: `https://git.example.test/qa/project-${index + 1}.git`, default_branch: 'main', created_at: '2026-10-07T00:00:00Z',
+++    }))
+++    const errors: string[] = []
+++    page.on('pageerror', (error) => errors.push(error.message))
+++    page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
+++    const main = page.locator('main')
+++    for (const width of widths) {
+++      await page.setViewportSize({ width, height: 1080 })
+++      await page.goto('/projects?page=2&context=keep#catalog')
+++      await expect(main.locator('h1.base-page-title')).toHaveText('Проекты')
+++      await expect(main.getByRole('link', { name: 'Открыть пайплайны проекта QA Project 13', exact: true })).toBeVisible()
+++      const search = main.getByRole('searchbox')
+++      await search.fill('project-25.git')
+++      await expect(page).toHaveURL(/\/projects\?context=keep&q=project-25\.git#catalog$/)
+++      await expect(main.getByRole('link', { name: 'Открыть пайплайны проекта QA Project 25', exact: true })).toBeVisible()
+++      await page.reload()
+++      await expect(search).toHaveValue('project-25.git')
+++      await expect(main.getByRole('link', { name: /Открыть пайплайны проекта/ })).toHaveCount(1)
+++      await page.goBack()
+++      await expect(search).toHaveValue('')
+++      await expect(main.getByRole('link', { name: 'Открыть пайплайны проекта QA Project 13', exact: true })).toBeVisible()
+++      await page.goForward()
+++      await expect(search).toHaveValue('project-25.git')
+++      await expect(main.getByRole('link', { name: /Открыть пайплайны проекта/ })).toHaveCount(1)
+++      const geometry = await main.evaluate((element) => ({
+++        h1Count: element.querySelectorAll('h1').length,
+++        overflow: document.documentElement.scrollWidth - innerWidth,
+++        controls: Array.from(element.querySelectorAll<HTMLElement>('button,input'), (control) => {
+++          const rect = control.getBoundingClientRect()
+++          return { x: rect.x, right: rect.right, width: rect.width, height: rect.height, visible: control.getClientRects().length > 0 }
+++        }).filter((control) => control.visible),
+++      }))
+++      expect(geometry.h1Count).toBe(1)
+++      expect(geometry.overflow).toBeLessThanOrEqual(1)
+++      for (const control of geometry.controls) {
+++        expect(control.width).toBeGreaterThanOrEqual(width < 768 ? 44 : 40)
+++        expect(control.height).toBeGreaterThanOrEqual(width < 768 ? 44 : 40)
+++        expect(control.x).toBeGreaterThanOrEqual(0)
+++        expect(control.right).toBeLessThanOrEqual(width + 1)
+++      }
+++      if ([375, 1920].includes(width)) await page.screenshot({ path: testInfo.outputPath(`project-url-${theme}-${width}.png`), fullPage: true, animations: 'disabled' })
+++    }
+++    expect(errors).toEqual([])
+++    expect(fixture.projectWrites).toBe(0)
+++    expect(fixture.unexpected).toEqual([])
+++  })
+++
+++  for (const cached of [false, true]) {
+++    for (const status of [403, 404, 422, 503]) {
+++      test(`project resource policy ${theme} ${cached ? 'cached' : 'cold'} ${status}`, async ({ page }, testInfo) => {
+++        await page.addInitScript((value) => localStorage.setItem('theme', value), theme)
+++        const fixture = await mocks(page)
+++        fixture.project = {
+++          id: '00000000-0000-4000-8000-000000000099', name: 'Безопасный проект',
+++          repository_url: 'https://git.example.test/qa/very-long-safe-repository-name.git',
+++          default_branch: 'main', created_at: '2026-10-07T00:00:00Z',
+++        }
+++        const errors: string[] = []
+++        page.on('pageerror', (error) => errors.push(error.message))
+++        page.on('console', (message) => {
+++          if (message.type() === 'error' && !message.text().includes(`server responded with a status of ${status}`)) errors.push(message.text())
+++        })
+++        const path = '/projects?context=keep#resource-state'
+++        const main = page.locator('main')
+++        const row = main.getByRole('link', { name: 'Открыть пайплайны проекта Безопасный проект', exact: true })
+++        const create = main.getByRole('button', { name: 'Создать проект', exact: true })
+++        if (cached) {
+++          await page.goto(path)
+++          await expect(row).toBeVisible()
+++          await page.getByRole('link', { name: 'Раннеры', exact: true }).click()
+++          await expect(main.getByRole('heading', { level: 1, name: 'Раннеры', exact: true })).toBeVisible()
+++          fixture.projectStatus = status
+++          await page.goBack()
+++        } else {
+++          fixture.projectStatus = status
+++          await page.goto(path)
+++        }
+++        await expect(main.locator('h1.base-page-title')).toHaveText('Проекты')
+++        const retained = cached && status === 503
+++        const state = status === 403 ? main.locator('[data-page-state="permission-denied"]')
+++          : status === 404 ? main.locator('[data-page-state="not-found"]')
+++            : retained ? main.locator('[data-page-state="partial-error"]') : main.getByRole('alert')
+++        await expect(state).toBeVisible()
+++        for (const width of [375, 1920]) {
+++          await page.setViewportSize({ width, height: 1080 })
+++          await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+++          await expect(row).toHaveCount(retained ? 1 : 0)
+++          await expect(create).toHaveCount(retained ? 1 : 0)
+++          await expect(main.getByRole('searchbox')).toHaveCount(retained ? 1 : 0)
+++          await expect(main.getByRole('button', { name: 'Действия с проектом Безопасный проект', exact: true })).toHaveCount(retained ? 1 : 0)
+++          await expect(main.getByRole('button', { name: 'Повторить', exact: true })).toHaveCount(status === 503 ? 1 : 0)
+++          await expect(main).not.toContainText('Нет проектов. Создайте первый.')
+++          await expect(main).not.toContainText('PRIVATE DIAGNOSTIC')
+++          expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
+++          await expect(page).toHaveURL((url) => `${url.pathname}${url.search}${url.hash}` === path)
+++          if (cached && [403, 503].includes(status)) await page.screenshot({
+++            path: testInfo.outputPath(`project-state-${theme}-${status}-${width}.png`), fullPage: true, animations: 'disabled',
+++          })
+++          const axe = await new AxeBuilder({ page }).include('main').analyze()
+++          expect(axe.violations.filter((item) => ['serious', 'critical'].includes(item.impact!))).toEqual([])
+++        }
+++        if (status === 503) {
+++          fixture.projectStatus = 200
+++          await main.getByRole('button', { name: 'Повторить', exact: true }).click()
+++          await expect(row).toBeVisible()
+++          await expect(main.locator('[data-page-state="partial-error"]')).toHaveCount(0)
+++        }
+++        await page.reload()
+++        await expect(main.locator('h1.base-page-title')).toHaveText('Проекты')
+++        if (status === 503) await expect(row).toBeVisible()
+++        else {
+++          await expect(state).toBeVisible()
+++          await expect(row).toHaveCount(0)
+++          await expect(create).toHaveCount(0)
+++        }
+++        await expect(page).toHaveURL((url) => `${url.pathname}${url.search}${url.hash}` === path)
+++        expect(fixture.projectWrites).toBe(0)
+++        expect(fixture.unexpected).toEqual([])
+++        expect(errors).toEqual([])
+++      })
+++    }
+++  }
+++}
+++
+ +for (const theme of ['dark', 'gray', 'light']) {
+ +  for (const width of [375, 1440, 1920, 2560]) {
+ +    test(`Base notifications: confirmed project create in ${theme} at ${width}`, async ({ page }, testInfo) => {
+ +      await page.setViewportSize({ width, height: 1080 })
+ +      await page.addInitScript((value) => localStorage.setItem('theme', value), theme)
+ +      const fixture = await mocks(page)
+ +      const errors: string[] = []
+ +      page.on('pageerror', (error) => errors.push(error.message))
+ +      page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
+ +      await page.goto('/projects?context=keep#notifications')
+ +      await expect(page.getByRole('heading', { level: 1, name: 'Проекты', exact: true })).toBeVisible()
+ +      await page.getByRole('button', { name: 'Создать проект', exact: true }).click()
+ +      const form = page.getByRole('form', { name: 'Создать проект', exact: true })
+-       await form.getByLabel('Название', { exact: true }).fill('Безопасный QA проект')
+-       await form.getByLabel('URL репозитория', { exact: true }).fill('https://git.example.test/qa/project.git')
+++      await form.getByRole('textbox', { name: 'Название', exact: true }).fill('Безопасный QA проект')
+++      await form.getByRole('textbox', { name: 'URL репозитория', exact: true }).fill('https://git.example.test/qa/project.git')
+ +      let release!: () => void
+ +      fixture.projectWait = new Promise<void>((done) => { release = done })
+ +      const main = page.locator('main')
+ +      try {
+ +        await form.getByRole('button', { name: 'Создать проект', exact: true }).click()
+ +        await expect.poll(() => fixture.projectWrites).toBe(1)
+ +        await expect(form.getByRole('button', { name: 'Создать проект', exact: true })).toBeDisabled()
+++        await expect(form).toHaveAttribute('aria-busy', 'true')
+++        for (const field of await form.getByRole('textbox').all()) {
+++          await expect(field).toBeDisabled()
+++          await expect(field).toHaveAttribute('required', '')
+++        }
+++        await expect(form.getByRole('button', { name: 'Отменить', exact: true })).toBeDisabled()
+++        await form.evaluate((element) => element.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+++        expect(fixture.projectWrites).toBe(1)
+ +        await expect(page.getByText('Проект создан', { exact: true })).toHaveCount(0)
+ +        await main.focus()
+ +        await expect(main).toBeFocused()
+++        if (width === 375 || width === 1920) {
+++          await page.screenshot({ path: testInfo.outputPath(`project-pending-${theme}-${width}.png`), fullPage: true, animations: 'disabled' })
+++        }
+ +      } finally {
+ +        fixture.projectWait = undefined
+ +        release()
+ +      }
+ +      const host = page.locator('[data-sonner-toaster]')
+ +      await expect(page.getByText('Проект создан', { exact: true })).toBeVisible()
+ +      await expect(main).toBeFocused()
+ +      await expect(host).toHaveCount(1)
+ +      await expect(host).toHaveClass(/base-toaster/)
+ +      await expect(host).toHaveAttribute('data-x-position', 'right')
+ +      await expect(host).toHaveAttribute('data-y-position', 'bottom')
+ +      await expect(host).toHaveAttribute('data-sonner-theme', theme === 'light' ? 'light' : 'dark')
+ +      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+ +      const dismiss = page.getByRole('button', { name: 'Закрыть уведомление', exact: true })
+ +      const target = (await dismiss.boundingBox())!
+ +      const minimum = width < 768 ? 44 : 40
+ +      const layoutSize = await dismiss.evaluate((element) => {
+ +        const style = getComputedStyle(element)
+ +        return { width: parseFloat(style.width), height: parseFloat(style.height) }
+ +      })
+ +      expect(layoutSize.width).toBeGreaterThanOrEqual(minimum)
+ +      expect(layoutSize.height).toBeGreaterThanOrEqual(minimum)
+ +      // Animated transforms can round a 40 px layout box to 39.99994 CSS pixels.
+ +      expect(target.width).toBeGreaterThanOrEqual(minimum - 0.001)
+ +      expect(target.height).toBeGreaterThanOrEqual(minimum - 0.001)
+ +      expect(target.x).toBeGreaterThanOrEqual(0)
+ +      expect(target.x + target.width).toBeLessThanOrEqual(width)
+ +      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
+ +      const capture = testInfo.outputPath('base-notification.png')
+ +      await page.screenshot({ path: capture, fullPage: true, animations: 'disabled' })
+ +      const axe = await new AxeBuilder({ page }).include('[data-base-shell]').include('.base-toaster').analyze()
+ +      expect(axe.violations.filter((item) => item.impact === 'serious' || item.impact === 'critical')).toEqual([])
+ +      await dismiss.focus()
+ +      await page.keyboard.press('Enter')
+ +      await expect(page.getByText('Проект создан', { exact: true })).toHaveCount(0)
+ +      await expect(page.getByRole('link', { name: 'Открыть пайплайны проекта Безопасный QA проект', exact: true })).toBeVisible()
+ +      await expect(page).toHaveURL(/\/projects\?context=keep#notifications$/)
+ +      expect(fixture.projectWrites).toBe(1)
+ +      expect(fixture.unexpected).toEqual([])
+ +      expect(errors).toEqual([])
+ +      await testInfo.attach('base-notification-scope.json', {
+ +        contentType: 'application/json',
+ +        body: Buffer.from(JSON.stringify({
+ +          theme, viewport: { width, height: 1080 }, route: '/projects?context=keep#notifications',
+ +          writes: fixture.projectWrites, prematureSuccess: false, focusRemainsInPage: true,
+ +          keyboardDismiss: true, target, fixtureOnly: true, actualImages: false, releaseAcceptance: false,
+ +        })),
+ +      })
+ +    })
+ +  }
+ +}
+ +
+ +test('shared shell and audit geometry across themes and breakpoint boundaries', async ({
+ +  page,
+ +}) => {
+ +  test.setTimeout(240_000)
+ +  mkdirSync(evidence, { recursive: true })
+ +  const audit = await mocks(page)
+ +  const failures: string[] = []
+ +  page.on('pageerror', (error) => failures.push(error.message))
+ +  page.on('console', (message) => {
+ +    if (message.type() === 'error') failures.push(message.text())
+ +  })
+ +  page.on('requestfailed', (request) => {
+ +    if (!request.failure()?.errorText.includes('ERR_ABORTED')) failures.push(request.url())
+ +  })
+ +  page.on('response', (response) => {
+ +    if (response.status() >= 400) failures.push(`${response.status()} ${response.url()}`)
+ +  })
+ +  const observations: unknown[] = []
+ +  for (const theme of ['light', 'gray', 'dark']) {
+ +    await page.addInitScript((value) => localStorage.setItem('theme', value), theme)
+ +    await ready(page)
+ +    await expect(page.getByRole('searchbox')).toBeEnabled()
+ +    for (const width of widths) {
+ +      await page.setViewportSize({ width, height: width >= 1440 ? 1080 : 812 })
+ +      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+ +      const geometry = await page.evaluate(() => {
+ +        const header = document.querySelector('[data-platform-header]')!.getBoundingClientRect()
+ +        const sidebar = document.querySelector('.base-shell-sidebar')!.getBoundingClientRect()
+ +        const frame = document.querySelector('[data-page-layout]')!.getBoundingClientRect()
+ +        const title = document.querySelector('h1')!.getBoundingClientRect()
+ +        const controls = [
+ +          ...document.querySelectorAll<HTMLElement>(
+ +            'main button,main input,main select,[data-platform-header] button,[data-platform-header] a',
+ +          ),
+ +        ]
+ +          .filter(
+ +            (element) =>
+ +              element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden',
+ +          )
+ +          .map((element) => {
+ +            const rect = element.getBoundingClientRect()
+ +            return { width: rect.width, height: rect.height, x: rect.x, right: rect.right }
+ +          })
+ +        return {
+ +          header: { x: header.x, right: header.right, height: header.height },
+ +          sidebar: { width: sidebar.width, y: sidebar.y },
+ +          frame: { x: frame.x, right: frame.right },
+ +          title: { x: title.x, right: title.right },
+ +          controls,
+ +          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+ +        }
+ +      })
+ +      expect(geometry.overflow).toBeLessThanOrEqual(1)
+ +      expect(geometry.header).toEqual({ x: 0, right: width, height: 60 })
+ +      const sidebarWidth = width < 768 ? 0 : width < 1280 ? 72 : 264
+ +      if (sidebarWidth) expect(geometry.sidebar).toEqual({ width: sidebarWidth, y: 60 })
+ +      const gutter = Math.min(32, Math.max(16, width * 0.02))
+ +      expect(geometry.frame.x).toBeCloseTo(sidebarWidth + gutter, 0)
+ +      expect(geometry.frame.right).toBeCloseTo(width - gutter, 0)
+ +      expect(geometry.title.x).toBeGreaterThanOrEqual(geometry.frame.x)
+ +      expect(geometry.title.right).toBeLessThanOrEqual(geometry.frame.right)
+ +      for (const control of geometry.controls) {
+ +        expect(control.height).toBeGreaterThanOrEqual(width < 768 ? 44 : 40)
+ +        expect(control.width).toBeGreaterThanOrEqual(width < 768 ? 44 : 40)
+ +        expect(control.x).toBeGreaterThanOrEqual(0)
+ +        expect(control.right).toBeLessThanOrEqual(width)
+ +      }
+ +      if ([375, 1920].includes(width)) {
+ +        const axe = await new AxeBuilder({ page }).include('[data-base-shell]').analyze()
+ +        expect(
+ +          axe.violations.filter((item) => item.impact === 'serious' || item.impact === 'critical'),
+ +        ).toEqual([])
+ +      }
+ +      await page.screenshot({
+ +        path: `${evidence}/audit-${theme}-${width}.png`,
+ +        fullPage: true,
+ +        animations: 'disabled',
+ +      })
+ +      observations.push({ theme, width, geometry })
+ +    }
+ +  }
+ +  expect(audit.unexpected).toEqual([])
+ +  expect(failures).toEqual([])
+ +  writeFileSync(
+ +    `${evidence}/geometry.json`,
+ +    JSON.stringify(
+ +      { scope: 'mocked HTTP/OIDC source QA, not actual-image acceptance', observations },
+ +      null,
+ +      2,
+ +    ),
+ +  )
+ +})
+ +
+ +test('URL context survives SSO, filters, paging, reload and Back/Forward', async ({ page }) => {
+ +  await mocks(page)
+ +  await ready(page, '/audit-log?page=2&context=keep#history')
+ +  await expect(page.getByRole('searchbox')).toBeEnabled()
+ +  await expect(page).toHaveURL(/page=2&context=keep#history$/)
+ +  await page.getByRole('searchbox').fill('participant')
+ +  await page.getByRole('button', { name: 'Найти', exact: true }).click()
+ +  await expect(page).toHaveURL(/context=keep&q=participant#history$/)
+ +  await expect(page.getByRole('searchbox')).toBeEnabled()
+ +  await page.getByRole('combobox').selectOption('auth.login_failed')
+ +  await expect(page).toHaveURL(/q=participant&action=auth.login_failed#history$/)
+ +  await expect(page.getByRole('button', { name: 'Далее', exact: true })).toBeEnabled()
+ +  await page.getByRole('button', { name: 'Далее', exact: true }).click()
+ +  await expect(page).toHaveURL(/action=auth.login_failed&page=2#history$/)
+ +  await page.reload()
+ +  await expect(page.getByRole('searchbox')).toHaveValue('participant')
+ +  await expect(page.getByRole('combobox')).toHaveValue('auth.login_failed')
+ +  await expect(page.getByRole('searchbox')).toBeEnabled()
+ +  await page.getByRole('button', { name: 'Очистить поиск', exact: true }).click()
+ +  await expect(page).toHaveURL(/context=keep&action=auth.login_failed#history$/)
+ +  await page.goBack()
+ +  await expect(page.getByRole('searchbox')).toHaveValue('participant')
+ +  await page.goForward()
+ +  await expect(page.getByRole('searchbox')).toHaveValue('')
+ +})
+ +
+ +test('mobile drawer traps keyboard focus, closes on Escape and resize, and returns focus safely', async ({
+ +  page,
+ +}) => {
+ +  await mocks(page)
+ +  await page.setViewportSize({ width: 375, height: 812 })
+ +  await ready(page)
+ +  const trigger = page.getByRole('button', { name: 'Открыть навигацию', exact: true })
+ +  await trigger.focus()
+ +  await page.keyboard.press('Enter')
+ +  const dialog = page.getByRole('dialog')
+ +  await expect(dialog).toBeVisible()
+ +  await page.keyboard.press('Tab')
+ +  expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true)
+ +  await page.keyboard.press('Escape')
+ +  await expect(dialog).toBeHidden()
+ +  await expect(trigger).toBeFocused()
+ +  await trigger.click()
+ +  await page.setViewportSize({ width: 1280, height: 812 })
+ +  await expect(dialog).toBeHidden()
+ +  await expect(page.locator('main')).toBeFocused()
+ +  expect(
+ +    await page.locator('body').evaluate((element) => getComputedStyle(element).pointerEvents),
+ +  ).not.toBe('none')
+ +})
+ +
+ +for (const status of [0, 403, 404, 422, 503])
+ +  test(`cached HTTP ${status} uses the correct shared state and retry policy`, async ({ page }) => {
+ +    mkdirSync(evidence, { recursive: true })
+ +    const audit = await mocks(page)
+ +    await ready(page)
+ +    await expect(page.getByRole('searchbox')).toBeEnabled()
+ +    await page.getByRole('link', { name: 'Раннеры', exact: true }).click()
+ +    await expect(
+ +      page.getByRole('heading', { level: 1, name: 'Раннеры', exact: true }),
+ +    ).toBeVisible()
+ +    audit.status = status
+ +    await page.goBack()
+ +    const main = page.locator('main')
+ +    if (status === 0 || status === 503) {
+ +      await expect(main.locator('[data-page-state="partial-error"]')).toBeVisible()
+ +      await expect(main.getByRole('cell').filter({ hasText: actor }).first()).toBeVisible()
+ +      await expect(main.getByRole('searchbox')).toBeDisabled()
+ +      for (const width of [375, 1920]) {
+ +        await page.setViewportSize({ width, height: width === 1920 ? 1080 : 812 })
+ +        expect(
+ +          await page.evaluate(
+ +            () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+ +          ),
+ +        ).toBeLessThanOrEqual(1)
+ +        const axe = await new AxeBuilder({ page }).include('main').analyze()
+ +        expect(
+ +          axe.violations.filter((item) => item.impact === 'serious' || item.impact === 'critical'),
+ +        ).toEqual([])
+ +        await page.screenshot({
+ +          path: `${evidence}/audit-cached-${status}-${width}.png`,
+ +          fullPage: true,
+ +        })
+ +      }
+ +      audit.status = 200
+ +      await main.getByRole('button', { name: 'Повторить', exact: true }).click()
+ +      await expect(main.locator('[data-page-state="partial-error"]')).toHaveCount(0)
+ +      await expect(main.getByRole('searchbox')).toBeEnabled()
+ +    } else {
+ +      const marker = status === 403 ? 'permission-denied' : status === 404 ? 'not-found' : undefined
+ +      if (marker) await expect(main.locator(`[data-page-state="${marker}"]`)).toBeVisible()
+ +      else await expect(main.getByRole('alert')).toBeVisible()
+ +      await expect(main.getByText(actor, { exact: true })).toHaveCount(0)
+ +      await expect(main.getByRole('button', { name: 'Повторить', exact: true })).toHaveCount(0)
+ +      if (marker) await expect(main.getByRole('searchbox')).toHaveCount(0)
+ +      await expect(main).not.toContainText('Показаны ранее загруженные данные.')
+ +    }
+ +    await expect(main).not.toContainText('PRIVATE DIAGNOSTIC')
+ +    if (status !== 0 && status !== 503)
+ +      await page.screenshot({ path: `${evidence}/audit-cached-${status}.png`, fullPage: true })
+ +  })
+ +
+ +test('loading and empty states are not interchangeable and empty search remains recoverable', async ({
+ +  page,
+ +}) => {
+ +  mkdirSync(evidence, { recursive: true })
+ +  const audit = await mocks(page)
+ +  let release!: () => void
+ +  audit.wait = new Promise<void>((resolve) => {
+ +    release = resolve
+ +  })
+ +  try {
+ +    await ready(page)
+ +    await expect(page.locator('main').getByRole('status', { name: 'Загрузка' })).toBeVisible()
+ +    await expect(page.locator('main')).not.toContainText('События аудита отсутствуют.')
+ +    await page.screenshot({ path: `${evidence}/audit-loading.png`, fullPage: true })
+ +  } finally {
+ +    audit.wait = undefined
+ +    release()
+ +  }
+ +  await expect(page.getByRole('searchbox')).toBeEnabled()
+ +  await page.getByRole('searchbox').fill('missing')
+ +  await page.getByRole('button', { name: 'Найти', exact: true }).click()
+ +  await expect(page.locator('main').getByRole('status')).toHaveText(
+ +    'По заданным условиям события не найдены.',
+ +  )
+ +  await expect(page.getByRole('searchbox')).toBeEnabled()
+ +  await page.getByRole('button', { name: 'Очистить поиск', exact: true }).click()
+ +  await expect(page.getByRole('button', { name: 'Далее', exact: true })).toBeEnabled()
+ +})
+ +
+ +test('unknown addresses keep the shell and URL instead of silently redirecting to dashboard', async ({
+ +  page,
+ +}) => {
+ +  mkdirSync(evidence, { recursive: true })
+ +  await mocks(page)
+ +  await page.goto('/missing-section?context=keep#history')
+ +  await expect(page.locator('[data-base-shell]')).toBeVisible()
+ +  await expect(page.locator('main [data-page-state="not-found"]')).toBeVisible()
+ +  await expect(page).toHaveURL(/missing-section\?context=keep#history$/)
+ +  await expect(
+ +    page.locator('main').getByRole('button', { name: 'Повторить', exact: true }),
+ +  ).toHaveCount(0)
+ +  await page.screenshot({ path: `${evidence}/unknown-route.png`, fullPage: true })
+ +})
+ +
+ +const reportPath = '/projects/22222222-2222-4222-8222-222222222222/reports?context=keep#scope'
+ +async function readyReport(page: Page) {
+ +  await page.goto(reportPath)
+ +  await expect(page.locator('[data-base-shell]')).toBeVisible()
+ +  await expect(page.locator('main h1.base-page-title')).toHaveText('Отчёты')
+ +}
+ +
+ +test('report uses Base composition, targets and geometry across all themes and shell boundaries', async ({
+ +  page,
+ +}) => {
+ +  test.setTimeout(240_000)
+ +  mkdirSync(evidence, { recursive: true })
+ +  const fixture = await mocks(page)
+ +  const failures: string[] = []
+ +  page.on('pageerror', (error) => failures.push(error.message))
+ +  page.on('console', (message) => {
+ +    if (message.type() === 'error') failures.push(message.text())
+ +  })
+ +  page.on('requestfailed', (request) => {
+ +    if (!request.failure()?.errorText.includes('ERR_ABORTED')) failures.push(request.url())
+ +  })
+ +  page.on('response', (response) => {
+ +    if (response.status() >= 400) failures.push(`${response.status()} ${response.url()}`)
+ +  })
+ +  const observations: unknown[] = []
+ +  for (const theme of ['light', 'gray', 'dark']) {
+ +    await page.addInitScript((value) => localStorage.setItem('theme', value), theme)
+ +    for (const width of widths) {
+ +      await page.setViewportSize({ width, height: 1080 })
+ +      await readyReport(page)
+ +      const main = page.locator('main')
+ +      const action = main.getByRole('link', { name: 'Открыть запуски', exact: true })
+ +      await expect(main.getByRole('img')).toBeVisible()
+ +      await expect(action).toHaveCount(1)
+ +      await expect(action).toHaveClass(/base-control/)
+ +      await expect(page).toHaveURL(
+ +        (url) => `${url.pathname}${url.search}${url.hash}` === reportPath,
+ +      )
+ +      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+ +      const geometry = await page.evaluate(() => {
+ +        const box = (selector: string) => {
+ +          const rect = document.querySelector(selector)!.getBoundingClientRect()
+ +          return { x: rect.x, right: rect.right, width: rect.width, height: rect.height }
+ +        }
+ +        return {
+ +          frame: box('[data-page-layout]'),
+ +          header: box('[data-platform-header]'),
+ +          title: box('main h1'),
+ +          action: box('main .base-control'),
+ +          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+ +          headingCount: document.querySelectorAll('main h1').length,
+ +        }
+ +      })
+ +      expect(geometry.headingCount).toBe(1)
+ +      expect(geometry.overflow).toBe(false)
+ +      expect(geometry.header).toEqual({ x: 0, right: width, width, height: 60 })
+ +      const sidebar = width >= 1280 ? 264 : width >= 768 ? 72 : 0
+ +      const gutter = Math.min(32, Math.max(16, width * 0.02))
+ +      expect(geometry.frame.x).toBeCloseTo(sidebar + gutter, 0)
+ +      expect(geometry.frame.right).toBeCloseTo(width - gutter, 0)
+ +      expect(geometry.title.x).toBeGreaterThanOrEqual(geometry.frame.x)
+ +      expect(geometry.title.right).toBeLessThanOrEqual(geometry.frame.right)
+ +      expect(geometry.action.height).toBeGreaterThanOrEqual(width < 768 ? 44 : 40)
+ +      expect(geometry.action.width).toBeGreaterThanOrEqual(width < 768 ? 44 : 40)
+ +      expect(geometry.action.right).toBeLessThanOrEqual(geometry.frame.right)
+ +      await page.keyboard.press('Tab')
+ +      await action.focus()
+ +      await expect(action).toBeFocused()
+ +      expect(
+ +        await action.evaluate(
+ +          (node) => node.matches(':focus-visible') && getComputedStyle(node).boxShadow !== 'none',
+ +        ),
+ +      ).toBe(true)
+ +      await page.reload()
+ +      await expect(main.getByRole('img')).toBeVisible()
+ +      await expect(page).toHaveURL(/context=keep#scope$/)
+ +      if ([375, 1920].includes(width)) {
+ +        const axe = await new AxeBuilder({ page }).include('[data-base-shell]').analyze()
+ +        expect(
+ +          axe.violations.filter((item) => ['serious', 'critical'].includes(item.impact!)),
+ +        ).toEqual([])
+ +      }
+ +      await page.screenshot({
+ +        path: `${evidence}/report-${theme}-${width}.png`,
+ +        fullPage: true,
+ +        animations: 'disabled',
+ +      })
+ +      observations.push({ theme, width, geometry, directOpen: true, reload: true })
+ +    }
+ +  }
+ +  expect(fixture.unexpected).toEqual([])
+ +  expect(failures).toEqual([])
+ +  writeFileSync(
+ +    `${evidence}/report-geometry.json`,
+ +    JSON.stringify(
+ +      { scope: 'mocked HTTP/OIDC source QA, not actual-image acceptance', observations },
+ +      null,
+ +      2,
+ +    ),
+ +  )
+ +})
+ +
+ +for (const status of [0, 403, 404, 422, 503])
+ +  test(`report cached ${status} follows Base data and action policy`, async ({ page }) => {
+ +    mkdirSync(evidence, { recursive: true })
+ +    const fixture = await mocks(page)
+ +    await readyReport(page)
+ +    await expect(page.locator('main').getByRole('img')).toBeVisible()
+ +    await page.getByRole('link', { name: 'Раннеры', exact: true }).click()
+ +    await expect(
+ +      page.getByRole('heading', { level: 1, name: 'Раннеры', exact: true }),
+ +    ).toBeVisible()
+ +    fixture.reportStatus = status
+ +    await page.goBack()
+ +    const main = page.locator('main')
+ +    if (status === 0 || status === 503) {
+ +      await expect(main.locator('[data-page-state="partial-error"]')).toBeVisible()
+ +      await expect(main.getByRole('img')).toBeVisible()
+ +      await expect(main.getByRole('link', { name: 'Открыть запуски', exact: true })).toHaveCount(1)
+ +    } else {
+ +      const marker = status === 403 ? 'permission-denied' : status === 404 ? 'not-found' : undefined
+ +      if (marker) await expect(main.locator(`[data-page-state="${marker}"]`)).toBeVisible()
+ +      else await expect(main.getByRole('alert')).toBeVisible()
+ +      await expect(main.getByRole('img')).toHaveCount(0)
+ +      await expect(main.getByRole('link', { name: 'Открыть запуски', exact: true })).toHaveCount(0)
+ +      await expect(main.getByRole('button', { name: 'Повторить', exact: true })).toHaveCount(0)
+ +    }
+ +    await expect(main).not.toContainText('PRIVATE DIAGNOSTIC')
+ +    for (const width of [375, 1920]) {
+ +      await page.setViewportSize({ width, height: 1080 })
+ +      expect(
+ +        await page.evaluate(
+ +          () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+ +        ),
+ +      ).toBe(true)
+ +      const axe = await new AxeBuilder({ page }).include('main').analyze()
+ +      expect(
+ +        axe.violations.filter((item) => ['serious', 'critical'].includes(item.impact!)),
+ +      ).toEqual([])
+ +      await page.screenshot({
+ +        path: `${evidence}/report-cached-${status}-${width}.png`,
+ +        fullPage: true,
+ +      })
+ +    }
+ +    if (status === 0 || status === 503) {
+ +      fixture.reportStatus = 200
+ +      await main.getByRole('button', { name: 'Повторить', exact: true }).click()
+ +      await expect(main.locator('[data-page-state="partial-error"]')).toHaveCount(0)
+ +    }
+ +    expect(fixture.unexpected).toEqual([])
+ +  })
+ +
+ +test('report loading and empty states never offer duplicate or unavailable actions', async ({
+ +  page,
+ +}) => {
+ +  const fixture = await mocks(page)
+ +  let release!: () => void
+ +  fixture.reportWait = new Promise<void>((done) => {
+ +    release = done
+ +  })
+ +  try {
+ +    await readyReport(page)
+ +    await expect(page.locator('main').getByRole('status', { name: 'Загрузка' })).toBeVisible()
+ +    await expect(
+ +      page.locator('main').getByRole('link', { name: 'Открыть запуски', exact: true }),
+ +    ).toHaveCount(0)
+ +    await expect(page.locator('main')).not.toContainText('Запусков пока нет.')
+ +  } finally {
+ +    fixture.reportWait = undefined
+ +    fixture.reportEmpty = true
+ +    release()
+ +  }
+ +  await expect(page.locator('main').getByRole('status')).toContainText('Запусков пока нет.')
+ +  await expect(
+ +    page.locator('main').getByRole('link', { name: 'Открыть запуски', exact: true }),
+ +  ).toHaveCount(1)
+ +  await expect(page.locator('main').getByRole('img')).toHaveCount(0)
+ +  expect(fixture.unexpected).toEqual([])
+ +})
+diff --cc frontend/src/pages/projects/index.tsx
+index 89deb3d,89deb3d..d0d7590
+--- a/frontend/src/pages/projects/index.tsx
++++ b/frontend/src/pages/projects/index.tsx
+@@@ -1,4 -1,4 +1,4 @@@
+--import { useState, type FormEvent } from "react";
+++import { useEffect, useState, type FormEvent } from "react";
+  import { useTranslation } from "react-i18next";
+  import { Link } from "react-router";
+  import {
+@@@ -17,6 -17,6 +17,12 @@@
+    Webhook,
+  } from "lucide-react";
+  import { toast } from "sonner";
+++import {
+++  positiveIntegerQuery,
+++  textQuery,
+++  updateQuery,
+++  useUrlSearchParams,
+++} from "@sdlc/ui/lib";
+  import {
+    useCreateProject,
+    useDeleteProject,
+@@@ -32,13 -32,13 +38,19 @@@ import 
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+    Input,
+--  Label,
+++  FormField,
+++  ListPage,
+++  PendingForm,
+++  ResourceStateView,
+++  resourceErrorState,
+++  type ResourceState,
+  } from "@sdlc/ui/ui";
+  import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+--import { QueryState } from "@/shared/ui/query-state";
+  
+  const pageSize = 12;
+  const emptyForm = { name: "", repository_url: "", default_branch: "main" };
+++const pageCodec = positiveIntegerQuery();
+++const searchCodec = textQuery();
+  
+  export function ProjectsPage() {
+    const { t } = useTranslation();
+@@@ -50,6 -50,6 +62,28 @@@
+    } = useProjects();
+    const projects = projectsData ?? [];
+    const hasProjectData = projectsData !== undefined;
+++  const failure = listError
+++    ? resourceErrorState(listError, () => void refetch(), {
+++        hasData: hasProjectData,
+++      })
+++    : null;
+++  const state: ResourceState = failure
+++    ? failure.kind === "error" || failure.kind === "partial-error"
+++      ? {
+++          ...failure,
+++          message: t(
+++            failure.kind === "partial-error"
+++              ? "projects.refreshError"
+++              : "projects.loadError",
+++          ),
+++        }
+++      : failure
+++    : !hasProjectData
+++      ? isLoading
+++        ? { kind: "loading" }
+++        : { kind: "error", message: t("projects.loadError") }
+++      : { kind: "ready" };
+++  const readable = state.kind === "ready" || state.kind === "partial-error";
+    const createProject = useCreateProject();
+    const updateProject = useUpdateProject();
+    const deleteProject = useDeleteProject();
+@@@ -57,8 -57,8 +91,10 @@@
+    const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
+    const [form, setForm] = useState(emptyForm);
+    const [editing, setEditing] = useState<Project | null>(null);
+--  const [search, setSearch] = useState("");
+--  const [page, setPage] = useState(1);
+++  const [params, setParams] = useUrlSearchParams();
+++  const search = searchCodec.parse(params.get("q"));
+++  const pageParam = params.get("page");
+++  const page = pageCodec.parse(pageParam);
+  
+    const normalizedSearch = search.trim().toLocaleLowerCase();
+    const filteredProjects = projects
+@@@ -74,9 -74,9 +110,31 @@@
+      (currentPage - 1) * pageSize,
+      currentPage * pageSize,
+    );
+++  useEffect(() => {
+++    if (
+++      !hasProjectData ||
+++      isLoading ||
+++      listError ||
+++      pageParam === null ||
+++      pageParam === pageCodec.format(currentPage)
+++    )
+++      return;
+++    setParams(
+++      (current) =>
+++        updateQuery(current, { page: pageCodec.format(currentPage) }),
+++      { replace: true },
+++    );
+++  }, [hasProjectData, isLoading, listError, pageParam, currentPage, setParams]);
+++
+++  function changePage(next: number) {
+++    setParams((current) =>
+++      updateQuery(current, { page: pageCodec.format(next) }),
+++    );
+++  }
+  
+    function handleCreate(event: FormEvent<HTMLFormElement>) {
+      event.preventDefault();
+++    if (!readable || createProject.isPending) return;
+      createProject.mutate(form, {
+        onSuccess: () => {
+          setShowForm(false);
+@@@ -89,7 -89,7 +147,7 @@@
+  
+    function handleUpdate(event: FormEvent<HTMLFormElement>) {
+      event.preventDefault();
+--    if (!editing) return;
+++    if (!editing || !readable || updateProject.isPending) return;
+      updateProject.mutate(
+        {
+          id: editing.id,
+@@@ -108,339 -108,339 +166,331 @@@
+    }
+  
+    return (
+--    <div className="space-y-5">
+--      <header className="flex flex-wrap items-center justify-between gap-3">
+--        <h1 className="text-2xl font-bold">{t("projects.title")}</h1>
+--        <Button
+--          size="sm"
+--          className="min-h-10 sm:min-h-10"
+--          aria-expanded={showForm}
+--          disabled={createProject.isPending}
+--          onClick={() => {
+--            setEditing(null);
+--            setShowForm((value) => !value);
+--          }}
+--        >
+--          <Plus className="h-4 w-4" aria-hidden />
+--          {t("projects.create")}
+--        </Button>
+--      </header>
+--
+++    <ListPage
+++      title={t("projects.title")}
+++      state={state}
+++      actions={
+++        readable ? (
+++          <Button
+++            size="sm"
+++            className="min-h-10 sm:min-h-10"
+++            aria-expanded={showForm}
+++            disabled={createProject.isPending}
+++            onClick={() => {
+++              setEditing(null);
+++              setShowForm((value) => !value);
+++            }}
+++          >
+++            <Plus className="h-4 w-4" aria-hidden />
+++            {t("projects.create")}
+++          </Button>
+++        ) : undefined
+++      }
+++    >
+        {showForm && (
+--        <form
+++        <PendingForm
+            onSubmit={handleCreate}
+++          pending={createProject.isPending}
+            aria-label={t("projects.create")}
+--          className="grid gap-3 border-y border-border py-4 sm:grid-cols-2 lg:grid-cols-3"
+++          className="border-y border-border py-4"
+          >
+--          <div className="space-y-1.5">
+--            <Label htmlFor="project-name">{t("projects.name")}</Label>
+--            <Input
+--              id="project-name"
+--              className="min-h-10"
+--              required
+--              value={form.name}
+--              onChange={(event) =>
+--                setForm({ ...form, name: event.target.value })
+--              }
+--            />
+--          </div>
+--          <div className="space-y-1.5">
+--            <Label htmlFor="project-repo">{t("projects.repositoryUrl")}</Label>
+--            <Input
+++          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+++            <FormField id="project-name" label={t("projects.name")} required>
+++              {(attrs) => (
+++                <Input
+++                  {...attrs}
+++                  value={form.name}
+++                  onChange={(event) =>
+++                    setForm({ ...form, name: event.target.value })
+++                  }
+++                />
+++              )}
+++            </FormField>
+++            <FormField
+                id="project-repo"
+--              className="min-h-10"
+++              label={t("projects.repositoryUrl")}
+                required
+--              placeholder="git@github.com:org/repo.git"
+--              value={form.repository_url}
+--              onChange={(event) =>
+--                setForm({ ...form, repository_url: event.target.value })
+--              }
+--            />
+--          </div>
+--          <div className="space-y-1.5">
+--            <Label htmlFor="project-branch">
+--              {t("projects.defaultBranch")}
+--            </Label>
+--            <Input
+++            >
+++              {(attrs) => (
+++                <Input
+++                  {...attrs}
+++                  placeholder="git@github.com:org/repo.git"
+++                  value={form.repository_url}
+++                  onChange={(event) =>
+++                    setForm({ ...form, repository_url: event.target.value })
+++                  }
+++                />
+++              )}
+++            </FormField>
+++            <FormField
+                id="project-branch"
+--              className="min-h-10"
+++              label={t("projects.defaultBranch")}
+                required
+--              value={form.default_branch}
+--              onChange={(event) =>
+--                setForm({ ...form, default_branch: event.target.value })
+--              }
+--            />
+--          </div>
+--          <div className="flex flex-wrap justify-end gap-2 sm:col-span-2 lg:col-span-3">
+--            <Button
+--              type="button"
+--              variant="outline"
+--              className="min-h-10 sm:min-h-10"
+--              disabled={createProject.isPending}
+--              onClick={() => setShowForm(false)}
+--            >
+--              {t("common.cancel")}
+--            </Button>
+--            <Button
+--              type="submit"
+--              className="min-h-10 sm:min-h-10"
+--              disabled={createProject.isPending}
+              >
+--              {t("projects.create")}
+--            </Button>
+++              {(attrs) => (
+++                <Input
+++                  {...attrs}
+++                  value={form.default_branch}
+++                  onChange={(event) =>
+++                    setForm({ ...form, default_branch: event.target.value })
+++                  }
+++                />
+++              )}
+++            </FormField>
+++            <div className="flex flex-wrap justify-end gap-2 sm:col-span-2 lg:col-span-3">
+++              <Button
+++                type="button"
+++                variant="outline"
+++                className="min-h-10 sm:min-h-10"
+++                disabled={createProject.isPending}
+++                onClick={() => setShowForm(false)}
+++              >
+++                {t("common.cancel")}
+++              </Button>
+++              <Button
+++                type="submit"
+++                className="min-h-10 sm:min-h-10"
+++                disabled={createProject.isPending}
+++              >
+++                {t("projects.create")}
+++              </Button>
+++            </div>
+            </div>
+--        </form>
+--      )}
+--
+--      {listError && hasProjectData && (
+--        <div
+--          role="alert"
+--          className="flex flex-wrap items-center gap-3 border-l-2 border-danger py-2 pl-3 text-sm text-text-secondary"
+--        >
+--          <span className="min-w-0 flex-1">
+--            {t("projects.refreshError")}
+--          </span>
+--          <Button
+--            type="button"
+--            size="sm"
+--            variant="outline"
+--            className="min-h-10 sm:min-h-10"
+--            onClick={() => {
+--              void refetch();
+--            }}
+--          >
+--            {t("common.retry")}
+--          </Button>
+--        </div>
+++        </PendingForm>
+        )}
+  
+--      <QueryState
+--        data={projectsData}
+--        isLoading={isLoading}
+--        error={hasProjectData ? null : listError}
+--        errorMessage={t("projects.loadError")}
+--        onRetry={() => {
+--          void refetch();
+--        }}
+--        isEmpty={(list) => list.length === 0}
+--        empty={{ title: t("projects.empty") }}
+--      >
+--        {() => (
+--          <section aria-label={t("projects.title")} className="space-y-3">
+--            <div className="relative">
+--              <Search
+--                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+--                aria-hidden
+--              />
+--              <Input
+--                type="search"
+--                aria-label={t("projects.search")}
+--                placeholder={t("projects.search")}
+--                className="min-h-10 pl-9"
+--                value={search}
+--                onChange={(event) => {
+--                  setSearch(event.target.value);
+--                  setPage(1);
+--                }}
+--              />
+--            </div>
+--            <p className="text-xs text-text-muted">
+--              {t("projects.shown", {
+--                count: visibleProjects.length,
+--                total: filteredProjects.length,
+--              })}
+++      {projects.length === 0 ? (
+++        <ResourceStateView
+++          state={{ kind: "empty", message: t("projects.empty") }}
+++        />
+++      ) : (
+++        <section aria-label={t("projects.title")} className="space-y-3">
+++          <div className="relative">
+++            <Search
+++              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+++              aria-hidden
+++            />
+++            <Input
+++              type="search"
+++              aria-label={t("projects.search")}
+++              placeholder={t("projects.search")}
+++              className="min-h-10 pl-9"
+++              value={search}
+++              onChange={(event) => {
+++                setParams((current) =>
+++                  updateQuery(
+++                    current,
+++                    { q: searchCodec.format(event.target.value) },
+++                    true,
+++                  ),
+++                );
+++              }}
+++            />
+++          </div>
+++          <p className="text-xs text-text-muted">
+++            {t("projects.shown", {
+++              count: visibleProjects.length,
+++              total: filteredProjects.length,
+++            })}
+++          </p>
+++          {filteredProjects.length === 0 ? (
+++            <p
+++              role="status"
+++              className="border-y border-border py-6 text-sm text-text-muted"
+++            >
+++              {t("projects.noMatches")}
+              </p>
+--            {filteredProjects.length === 0 ? (
+--              <p
+--                role="status"
+--                className="border-y border-border py-6 text-sm text-text-muted"
+--              >
+--                {t("projects.noMatches")}
+--              </p>
+--            ) : (
+--              <ul className="divide-y divide-border border-y border-border">
+--                {visibleProjects.map((project) => (
+--                  <li key={project.id}>
+--                    <div className="flex min-w-0 items-center gap-2">
+--                      <Link
+--                        to={`/projects/${project.id}/pipelines`}
+--                        aria-label={t("projects.openPipelines", {
+--                          name: project.name,
+--                        })}
+--                        className="flex min-h-16 min-w-0 flex-1 items-center gap-3 py-2 hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent"
+--                      >
+--                        <FolderGit2
+--                          className="h-4 w-4 shrink-0 text-accent"
+--                          aria-hidden
+--                        />
+--                        <span className="min-w-0 flex-1">
+--                          <span className="block truncate text-sm font-medium">
+--                            {project.name}
+--                          </span>
+--                          <span
+--                            className="block truncate text-xs text-text-muted"
+--                            title={project.repository_url}
+--                          >
+--                            {project.repository_url}
+--                          </span>
+--                          <span className="block truncate text-xs text-text-secondary">
+--                            {project.default_branch}
+--                          </span>
+++          ) : (
+++            <ul className="divide-y divide-border border-y border-border">
+++              {visibleProjects.map((project) => (
+++                <li key={project.id}>
+++                  <div className="flex min-w-0 items-center gap-2">
+++                    <Link
+++                      to={`/projects/${project.id}/pipelines`}
+++                      aria-label={t("projects.openPipelines", {
+++                        name: project.name,
+++                      })}
+++                      className="flex min-h-16 min-w-0 flex-1 items-center gap-3 py-2 hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent"
+++                    >
+++                      <FolderGit2
+++                        className="h-4 w-4 shrink-0 text-accent"
+++                        aria-hidden
+++                      />
+++                      <span className="min-w-0 flex-1">
+++                        <span className="block truncate text-sm font-medium">
+++                          {project.name}
+                          </span>
+--                        <ChevronRight
+--                          className="h-4 w-4 shrink-0 text-text-muted"
+--                          aria-hidden
+--                        />
+--                      </Link>
+--                      <DropdownMenu>
+--                        <DropdownMenuTrigger asChild>
+--                          <button
+--                            type="button"
+--                            aria-label={t("projects.actionsFor", {
+--                              name: project.name,
+--                            })}
+--                            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+--                          >
+--                            <MoreHorizontal className="h-5 w-5" aria-hidden />
+--                          </button>
+--                        </DropdownMenuTrigger>
+--                        <DropdownMenuContent align="end" className="w-52">
+--                          <DropdownMenuItem
+--                            asChild
+--                            className="min-h-10 sm:min-h-10"
+--                          >
+--                            <Link
+--                              to={`/repositories?project=${encodeURIComponent(project.name)}`}
+--                            >
+--                              <GitFork className="mr-2 h-4 w-4" aria-hidden />
+--                              {t("projects.repositories")}
+--                            </Link>
+--                          </DropdownMenuItem>
+--                          <DropdownMenuItem
+--                            asChild
+--                            className="min-h-10 sm:min-h-10"
+--                          >
+--                            <Link to={`/projects/${project.id}/secrets`}>
+--                              <KeyRound className="mr-2 h-4 w-4" aria-hidden />
+--                              {t("secrets.title")}
+--                            </Link>
+--                          </DropdownMenuItem>
+--                          <DropdownMenuItem
+--                            asChild
+--                            className="min-h-10 sm:min-h-10"
+--                          >
+--                            <Link to={`/projects/${project.id}/environments`}>
+--                              <Globe className="mr-2 h-4 w-4" aria-hidden />
+--                              {t("environments.title")}
+--                            </Link>
+--                          </DropdownMenuItem>
+--                          <DropdownMenuItem
+--                            asChild
+--                            className="min-h-10 sm:min-h-10"
+--                          >
+--                            <Link to={`/projects/${project.id}/schedules`}>
+--                              <Clock className="mr-2 h-4 w-4" aria-hidden />
+--                              {t("schedules.title")}
+--                            </Link>
+--                          </DropdownMenuItem>
+--                          <DropdownMenuItem
+--                            asChild
+--                            className="min-h-10 sm:min-h-10"
+--                          >
+--                            <Link to={`/projects/${project.id}/webhooks`}>
+--                              <Webhook className="mr-2 h-4 w-4" aria-hidden />
+--                              {t("webhooks.title")}
+--                            </Link>
+--                          </DropdownMenuItem>
+--                          <DropdownMenuItem
+--                            asChild
+--                            className="min-h-10 sm:min-h-10"
+--                          >
+--                            <Link to={`/projects/${project.id}/reports`}>
+--                              <BarChart3 className="mr-2 h-4 w-4" aria-hidden />
+--                              {t("reports.title")}
+--                            </Link>
+--                          </DropdownMenuItem>
+--                          <DropdownMenuSeparator />
+--                          <DropdownMenuItem
+--                            className="min-h-10 sm:min-h-10"
+--                            onSelect={() => {
+--                              setShowForm(false);
+--                              setEditing(project);
+--                            }}
+--                          >
+--                            <Pencil className="mr-2 h-4 w-4" aria-hidden />
+--                            {t("projects.edit")}
+--                          </DropdownMenuItem>
+--                          <DropdownMenuItem
+--                            className="min-h-10 text-danger focus:text-danger sm:min-h-10"
+--                            onSelect={() => setPendingDelete(project)}
+++                        <span
+++                          className="block truncate text-xs text-text-muted"
+++                          title={project.repository_url}
+++                        >
+++                          {project.repository_url}
+++                        </span>
+++                        <span className="block truncate text-xs text-text-secondary">
+++                          {project.default_branch}
+++                        </span>
+++                      </span>
+++                      <ChevronRight
+++                        className="h-4 w-4 shrink-0 text-text-muted"
+++                        aria-hidden
+++                      />
+++                    </Link>
+++                    <DropdownMenu>
+++                      <DropdownMenuTrigger asChild>
+++                        <Button
+++                          type="button"
+++                          variant="ghost"
+++                          size="icon"
+++                          aria-label={t("projects.actionsFor", {
+++                            name: project.name,
+++                          })}
+++                          className="shrink-0 text-text-secondary"
+++                        >
+++                          <MoreHorizontal className="h-5 w-5" aria-hidden />
+++                        </Button>
+++                      </DropdownMenuTrigger>
+++                      <DropdownMenuContent align="end" className="w-52">
+++                        <DropdownMenuItem
+++                          asChild
+++                          className="min-h-10 sm:min-h-10"
+++                        >
+++                          <Link
+++                            to={`/repositories?project=${encodeURIComponent(project.name)}`}
+                            >
+--                            <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+--                            {t("common.delete")}
+--                          </DropdownMenuItem>
+--                        </DropdownMenuContent>
+--                      </DropdownMenu>
+--                    </div>
+--                    {editing?.id === project.id && (
+--                      <form
+--                        onSubmit={handleUpdate}
+--                        aria-label={t("projects.editProject", {
+--                          name: project.name,
+--                        })}
+--                        className="grid gap-3 border-t border-border bg-surface-raised p-3 sm:grid-cols-2 lg:grid-cols-3"
+--                      >
+--                        <div className="space-y-1.5">
+--                          <Label htmlFor="edit-project-name">
+--                            {t("projects.name")}
+--                          </Label>
+--                          <Input
+--                            id="edit-project-name"
+--                            className="min-h-10"
+--                            required
+--                            value={editing.name}
+--                            onChange={(event) =>
+--                              setEditing({
+--                                ...editing,
+--                                name: event.target.value,
+--                              })
+--                            }
+--                          />
+--                        </div>
+--                        <div className="space-y-1.5">
+--                          <Label htmlFor="edit-project-repo">
+--                            {t("projects.repositoryUrl")}
+--                          </Label>
+--                          <Input
+--                            id="edit-project-repo"
+--                            className="min-h-10"
+--                            required
+--                            value={editing.repository_url}
+--                            onChange={(event) =>
+--                              setEditing({
+--                                ...editing,
+--                                repository_url: event.target.value,
+--                              })
+--                            }
+--                          />
+--                        </div>
+--                        <div className="space-y-1.5">
+--                          <Label htmlFor="edit-project-branch">
+--                            {t("projects.defaultBranch")}
+--                          </Label>
+--                          <Input
+--                            id="edit-project-branch"
+--                            className="min-h-10"
+--                            required
+--                            value={editing.default_branch}
+--                            onChange={(event) =>
+--                              setEditing({
+--                                ...editing,
+--                                default_branch: event.target.value,
+--                              })
+--                            }
+--                          />
+--                        </div>
+++                            <GitFork className="mr-2 h-4 w-4" aria-hidden />
+++                            {t("projects.repositories")}
+++                          </Link>
+++                        </DropdownMenuItem>
+++                        <DropdownMenuItem
+++                          asChild
+++                          className="min-h-10 sm:min-h-10"
+++                        >
+++                          <Link to={`/projects/${project.id}/secrets`}>
+++                            <KeyRound className="mr-2 h-4 w-4" aria-hidden />
+++                            {t("secrets.title")}
+++                          </Link>
+++                        </DropdownMenuItem>
+++                        <DropdownMenuItem
+++                          asChild
+++                          className="min-h-10 sm:min-h-10"
+++                        >
+++                          <Link to={`/projects/${project.id}/environments`}>
+++                            <Globe className="mr-2 h-4 w-4" aria-hidden />
+++                            {t("environments.title")}
+++                          </Link>
+++                        </DropdownMenuItem>
+++                        <DropdownMenuItem
+++                          asChild
+++                          className="min-h-10 sm:min-h-10"
+++                        >
+++                          <Link to={`/projects/${project.id}/schedules`}>
+++                            <Clock className="mr-2 h-4 w-4" aria-hidden />
+++                            {t("schedules.title")}
+++                          </Link>
+++                        </DropdownMenuItem>
+++                        <DropdownMenuItem
+++                          asChild
+++                          className="min-h-10 sm:min-h-10"
+++                        >
+++                          <Link to={`/projects/${project.id}/webhooks`}>
+++                            <Webhook className="mr-2 h-4 w-4" aria-hidden />
+++                            {t("webhooks.title")}
+++                          </Link>
+++                        </DropdownMenuItem>
+++                        <DropdownMenuItem
+++                          asChild
+++                          className="min-h-10 sm:min-h-10"
+++                        >
+++                          <Link to={`/projects/${project.id}/reports`}>
+++                            <BarChart3 className="mr-2 h-4 w-4" aria-hidden />
+++                            {t("reports.title")}
+++                          </Link>
+++                        </DropdownMenuItem>
+++                        <DropdownMenuSeparator />
+++                        <DropdownMenuItem
+++                          className="min-h-10 sm:min-h-10"
+++                          onSelect={() => {
+++                            setShowForm(false);
+++                            setEditing(project);
+++                          }}
+++                        >
+++                          <Pencil className="mr-2 h-4 w-4" aria-hidden />
+++                          {t("projects.edit")}
+++                        </DropdownMenuItem>
+++                        <DropdownMenuItem
+++                          className="min-h-10 text-danger focus:text-danger sm:min-h-10"
+++                          onSelect={() => setPendingDelete(project)}
+++                        >
+++                          <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+++                          {t("common.delete")}
+++                        </DropdownMenuItem>
+++                      </DropdownMenuContent>
+++                    </DropdownMenu>
+++                  </div>
+++                  {editing?.id === project.id && (
+++                    <PendingForm
+++                      onSubmit={handleUpdate}
+++                      pending={updateProject.isPending}
+++                      aria-label={t("projects.editProject", {
+++                        name: project.name,
+++                      })}
+++                      className="border-t border-border bg-surface-raised p-3"
+++                    >
+++                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+++                        <FormField
+++                          id="edit-project-name"
+++                          label={t("projects.name")}
+++                          required
+++                        >
+++                          {(attrs) => (
+++                            <Input
+++                              {...attrs}
+++                              value={editing.name}
+++                              onChange={(event) =>
+++                                setEditing({
+++                                  ...editing,
+++                                  name: event.target.value,
+++                                })
+++                              }
+++                            />
+++                          )}
+++                        </FormField>
+++                        <FormField
+++                          id="edit-project-repo"
+++                          label={t("projects.repositoryUrl")}
+++                          required
+++                        >
+++                          {(attrs) => (
+++                            <Input
+++                              {...attrs}
+++                              value={editing.repository_url}
+++                              onChange={(event) =>
+++                                setEditing({
+++                                  ...editing,
+++                                  repository_url: event.target.value,
+++                                })
+++                              }
+++                            />
+++                          )}
+++                        </FormField>
+++                        <FormField
+++                          id="edit-project-branch"
+++                          label={t("projects.defaultBranch")}
+++                          required
+++                        >
+++                          {(attrs) => (
+++                            <Input
+++                              {...attrs}
+++                              value={editing.default_branch}
+++                              onChange={(event) =>
+++                                setEditing({
+++                                  ...editing,
+++                                  default_branch: event.target.value,
+++                                })
+++                              }
+++                            />
+++                          )}
+++                        </FormField>
+                          <div className="flex flex-wrap justify-end gap-2 sm:col-span-2 lg:col-span-3">
+                            <Button
+                              type="button"
+@@@ -459,47 -459,47 +509,47 @@@
+                              {t("common.save")}
+                            </Button>
+                          </div>
+--                      </form>
+--                    )}
+--                  </li>
+--                ))}
+--              </ul>
+--            )}
+--            {filteredProjects.length > pageSize && (
+--              <nav
+--                aria-label={t("projects.pages")}
+--                className="flex items-center justify-end gap-2"
+++                      </div>
+++                    </PendingForm>
+++                  )}
+++                </li>
+++              ))}
+++            </ul>
+++          )}
+++          {filteredProjects.length > pageSize && (
+++            <nav
+++              aria-label={t("projects.pages")}
+++              className="flex items-center justify-end gap-2"
+++            >
+++              <Button
+++                type="button"
+++                size="sm"
+++                variant="outline"
+++                className="min-h-10 sm:min-h-10"
+++                disabled={currentPage === 1}
+++                onClick={() => changePage(currentPage - 1)}
+                >
+--                <Button
+--                  type="button"
+--                  size="sm"
+--                  variant="outline"
+--                  className="min-h-10 sm:min-h-10"
+--                  disabled={currentPage === 1}
+--                  onClick={() => setPage(currentPage - 1)}
+--                >
+--                  {t("projects.previous")}
+--                </Button>
+--                <span className="text-sm text-text-muted">
+--                  {currentPage} / {totalPages}
+--                </span>
+--                <Button
+--                  type="button"
+--                  size="sm"
+--                  variant="outline"
+--                  className="min-h-10 sm:min-h-10"
+--                  disabled={currentPage === totalPages}
+--                  onClick={() => setPage(currentPage + 1)}
+--                >
+--                  {t("projects.next")}
+--                </Button>
+--              </nav>
+--            )}
+--          </section>
+--        )}
+--      </QueryState>
+++                {t("projects.previous")}
+++              </Button>
+++              <span className="text-sm text-text-muted">
+++                {currentPage} / {totalPages}
+++              </span>
+++              <Button
+++                type="button"
+++                size="sm"
+++                variant="outline"
+++                className="min-h-10 sm:min-h-10"
+++                disabled={currentPage === totalPages}
+++                onClick={() => changePage(currentPage + 1)}
+++              >
+++                {t("projects.next")}
+++              </Button>
+++            </nav>
+++          )}
+++        </section>
+++      )}
+        <ConfirmDialog
+--        open={pendingDelete !== null}
+++        open={readable && pendingDelete !== null}
+          title={
+            pendingDelete
+              ? `${t("projects.deleteConfirm")} "${pendingDelete.name}"?`
+@@@ -509,7 -509,7 +559,7 @@@
+          pending={deleteProject.isPending}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+--          if (pendingDelete) {
+++          if (pendingDelete && readable && !deleteProject.isPending) {
+              deleteProject.mutate(pendingDelete.id, {
+                onSuccess: () => {
+                  setPendingDelete(null);
+@@@ -520,6 -520,6 +570,6 @@@
+            }
+          }}
+        />
+--    </div>
+++    </ListPage>
+    );
+  }
+diff --cc frontend/src/pages/projects/projects.test.tsx
+index 1622adb,788439b..60b97ee
+--- a/frontend/src/pages/projects/projects.test.tsx
++++ b/frontend/src/pages/projects/projects.test.tsx
+@@@ -1,7 -1,8 +1,9 @@@
+--import { act, fireEvent, render, screen } from "@testing-library/react";
+--import { MemoryRouter } from "react-router";
+++import { act, fireEvent, render, screen, within } from "@testing-library/react";
+++import { MemoryRouter, useLocation, useNavigate } from "react-router";
+  import { afterEach, describe, expect, it, vi } from "vitest";
+  import { ProjectsPage } from "./index";
++ import { toast } from "sonner";
+++import { ApiError } from "@/api/client";
+  
+  const mocks = vi.hoisted(() => ({
+    useProjects: vi.fn(),
+@@@ -9,6 -10,6 +11,8 @@@
+    update: vi.fn(),
+    remove: vi.fn(),
+    refetch: vi.fn(),
+++  createPending: false,
+++  updatePending: false,
+  }));
+  
+  vi.mock("react-i18next", () => ({
+@@@ -19,8 -20,8 +23,14 @@@
+  }));
+  vi.mock("@/api/hooks", () => ({
+    useProjects: mocks.useProjects,
+--  useCreateProject: () => ({ mutate: mocks.create, isPending: false }),
+--  useUpdateProject: () => ({ mutate: mocks.update, isPending: false }),
+++  useCreateProject: () => ({
+++    mutate: mocks.create,
+++    isPending: mocks.createPending,
+++  }),
+++  useUpdateProject: () => ({
+++    mutate: mocks.update,
+++    isPending: mocks.updatePending,
+++  }),
+    useDeleteProject: () => ({ mutate: mocks.remove, isPending: false }),
+  }));
+  vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+@@@ -35,33 -36,63 +45,348 @@@ function project(index: number) 
+    };
+  }
+  
+--function setup(count: number) {
+++function setup(count: number, path = "/projects") {
+    mocks.useProjects.mockReturnValue({
+      data: Array.from({ length: count }, (_, index) => project(index + 1)),
+      isLoading: false,
+      error: null,
+      refetch: mocks.refetch,
+    });
+--  renderPage();
+++  return renderPage(path);
+++}
+++
+++function HistoryProbe() {
+++  const location = useLocation();
+++  const navigate = useNavigate();
+++  return (
+++    <>
+++      <span data-testid="location">
+++        {location.pathname + location.search + location.hash}
+++      </span>
+++      <button onClick={() => void navigate(-1)}>History back</button>
+++      <button onClick={() => void navigate(1)}>History forward</button>
+++    </>
+++  );
+  }
+  
+--function renderPage() {
+--  render(
+--    <MemoryRouter>
+++function renderPage(path = "/projects") {
+++  return render(
+++    <MemoryRouter initialEntries={[path]}>
+        <ProjectsPage />
+++      <HistoryProbe />
+      </MemoryRouter>,
+    );
+  }
+  
+--afterEach(() => vi.clearAllMocks());
+++afterEach(() => {
+++  vi.clearAllMocks();
+++  mocks.createPending = false;
+++  mocks.updatePending = false;
+++});
+  
+  describe("ProjectsPage", () => {
+++  it.each(["create", "update"])(
+++    "locks every %s field while pending and retains the draft after rejection",
+++    async (mode) => {
+++      const view = setup(1);
+++      const probe = () => (
+++        <MemoryRouter>
+++          <ProjectsPage />
+++          <HistoryProbe />
+++        </MemoryRouter>
+++      );
+++      if (mode === "create") {
+++        fireEvent.click(
+++          screen.getByRole("button", { name: "projects.create" }),
+++        );
+++      } else {
+++        fireEvent.keyDown(
+++          screen.getByRole("button", {
+++            name: "projects.actionsFor Project 01",
+++          }),
+++          { key: "Enter" },
+++        );
+++        fireEvent.click(
+++          screen.getByRole("menuitem", { name: "projects.edit" }),
+++        );
+++      }
+++      const form = screen.getByRole("form", {
+++        name:
+++          mode === "create"
+++            ? "projects.create"
+++            : "projects.editProject Project 01",
+++      });
+++      const fields = within(form).getAllByRole("textbox");
+++      fireEvent.change(fields[0], {
+++        target: { value: "Safe unsaved project" },
+++      });
+++      fireEvent.change(fields[1], {
+++        target: { value: "https://example.test/retained.git" },
+++      });
+++      const mutation = mode === "create" ? mocks.create : mocks.update;
+++      fireEvent.submit(form);
+++      expect(mutation).toHaveBeenCalledOnce();
+++      if (mode === "create") mocks.createPending = true;
+++      else mocks.updatePending = true;
+++      view.rerender(probe());
+++      expect(form).toHaveAttribute("aria-busy", "true");
+++      for (const field of fields) expect(field).toBeDisabled();
+++      expect(
+++        within(form).getByRole("button", { name: "common.cancel" }),
+++      ).toBeDisabled();
+++      fireEvent.submit(form);
+++      expect(mutation).toHaveBeenCalledOnce();
+++      await act(async () =>
+++        mutation.mock.calls[0][1].onError(new Error("Rejected safely")),
+++      );
+++      mocks.createPending = false;
+++      mocks.updatePending = false;
+++      view.rerender(probe());
+++      expect(fields[0]).toBeEnabled();
+++      expect(fields[0]).toHaveValue("Safe unsaved project");
+++      expect(fields[1]).toHaveValue("https://example.test/retained.git");
+++      expect(form).not.toHaveAttribute("aria-busy");
+++    },
+++  );
+++
+++  it("uses Base field composition with required semantics for project creation", () => {
+++    setup(0);
+++    fireEvent.click(screen.getByRole("button", { name: "projects.create" }));
+++    for (const input of screen.getAllByRole("textbox")) {
+++      expect(input).toBeRequired();
+++      expect(input.closest(".base-form-field")).not.toBeNull();
+++      expect(input).toHaveAccessibleName();
+++    }
+++  });
+++
+++  it("restores the catalog page and preserves context through history", () => {
+++    setup(25, "/projects?page=2&context=keep#catalog");
+++    expect(
+++      screen.getByRole("link", { name: "projects.openPipelines Project 13" }),
+++    ).toBeVisible();
+++    expect(
+++      screen.queryByRole("link", { name: "projects.openPipelines Project 01" }),
+++    ).not.toBeInTheDocument();
+++    fireEvent.click(screen.getByRole("button", { name: "projects.next" }));
+++    expect(screen.getByTestId("location")).toHaveTextContent(
+++      "/projects?page=3&context=keep#catalog",
+++    );
+++    fireEvent.click(screen.getByRole("button", { name: "History back" }));
+++    expect(screen.getByText("2 / 3")).toBeVisible();
+++    fireEvent.click(screen.getByRole("button", { name: "History forward" }));
+++    expect(screen.getByText("3 / 3")).toBeVisible();
+++  });
+++
+++  it("resets pagination for a search and restores it from the resulting URL", () => {
+++    const view = setup(25, "/projects?page=2&context=one&context=two#catalog");
+++    fireEvent.change(
+++      screen.getByRole("searchbox", { name: "projects.search" }),
+++      { target: { value: "project-25.git" } },
+++    );
+++    const path = screen.getByTestId("location").textContent!;
+++    expect(path).toBe(
+++      "/projects?context=one&context=two&q=project-25.git#catalog",
+++    );
+++    expect(
+++      screen.getByRole("link", { name: "projects.openPipelines Project 25" }),
+++    ).toBeVisible();
+++    view.unmount();
+++    renderPage(path);
+++    expect(
+++      screen.getByRole("searchbox", { name: "projects.search" }),
+++    ).toHaveValue("project-25.git");
+++    expect(
+++      screen.getAllByRole("link", { name: /projects.openPipelines/ }),
+++    ).toHaveLength(1);
+++  });
+++
+++  it.each(["0", "-1", "invalid", "9007199254740992", "999"])(
+++    "corrects settled catalog page %s without losing other parameters",
+++    (page) => {
+++      setup(25, `/projects?page=${page}&context=keep#catalog`);
+++      const last = page === "999";
+++      expect(screen.getByText(last ? "3 / 3" : "1 / 3")).toBeVisible();
+++      expect(screen.getByTestId("location")).toHaveTextContent(
+++        last
+++          ? "/projects?page=3&context=keep#catalog"
+++          : "/projects?context=keep#catalog",
+++      );
+++    },
+++  );
+++
+++  it("does not correct pagination from denied cached data", () => {
+++    mocks.useProjects.mockReturnValue({
+++      data: [project(1)],
+++      isLoading: false,
+++      error: new ApiError({ kind: "api", status: 403, message: "denied" }),
+++      refetch: mocks.refetch,
+++    });
+++    renderPage("/projects?page=3&context=keep#catalog");
+++    expect(screen.getByTestId("location")).toHaveTextContent(
+++      "/projects?page=3&context=keep#catalog",
+++    );
+++    expect(
+++      screen.queryByRole("link", { name: /projects.openPipelines/ }),
+++    ).not.toBeInTheDocument();
+++  });
+++
+++  for (const cached of [false, true]) {
+++    it.each([403, 404, 422, 408, 429, 503])(
+++      `uses Base project state policy for ${cached ? "cached" : "cold"} HTTP %s`,
+++      (status) => {
+++        mocks.useProjects.mockReturnValue({
+++          data: cached ? [project(1)] : undefined,
+++          isLoading: false,
+++          error: new ApiError({
+++            kind: "api",
+++            status,
+++            message: "PRIVATE DIAGNOSTIC",
+++          }),
+++          refetch: mocks.refetch,
+++        });
+++        renderPage();
+++        const repeatable = [408, 429, 503].includes(status);
+++        const retained = cached && repeatable;
+++        expect(
+++          screen.queryByRole("link", {
+++            name: "projects.openPipelines Project 01",
+++          }) !== null,
+++        ).toBe(retained);
+++        expect(
+++          screen.queryByRole("button", {
+++            name: "projects.actionsFor Project 01",
+++          }) !== null,
+++        ).toBe(retained);
+++        expect(
+++          screen.queryByRole("button", { name: "projects.create" }) !== null,
+++        ).toBe(retained);
+++        expect(
+++          screen.queryByRole("searchbox", { name: "projects.search" }) !== null,
+++        ).toBe(retained);
+++        expect(screen.queryByText("projects.empty")).not.toBeInTheDocument();
+++        expect(
+++          screen.queryByText("PRIVATE DIAGNOSTIC"),
+++        ).not.toBeInTheDocument();
+++        if (status === 403 || status === 404) {
+++          expect(
+++            document.querySelector(
+++              `[data-page-state="${status === 403 ? "permission-denied" : "not-found"}"]`,
+++            ),
+++          ).toBeInTheDocument();
+++        } else if (retained) {
+++          expect(
+++            document.querySelector('[data-page-state="partial-error"]'),
+++          ).toBeInTheDocument();
+++          expect(screen.getByRole("status")).toHaveTextContent(
+++            "projects.refreshError",
+++          );
+++        } else {
+++          expect(screen.getByRole("alert")).toHaveTextContent(
+++            "projects.loadError",
+++          );
+++        }
+++        if (repeatable) {
+++          fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+++          expect(mocks.refetch).toHaveBeenCalledOnce();
+++        } else {
+++          expect(
+++            screen.queryByRole("button", { name: "common.retry" }),
+++          ).not.toBeInTheDocument();
+++        }
+++        expect(mocks.create).not.toHaveBeenCalled();
+++        expect(mocks.update).not.toHaveBeenCalled();
+++        expect(mocks.remove).not.toHaveBeenCalled();
+++      },
+++    );
+++  }
+++
+++  it("uses Base loading state without create actions before project data arrives", () => {
+++    mocks.useProjects.mockReturnValue({
+++      data: undefined,
+++      isLoading: true,
+++      error: null,
+++      refetch: mocks.refetch,
+++    });
+++    renderPage();
+++    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
+++    expect(
+++      screen.queryByRole("button", { name: "projects.create" }),
+++    ).not.toBeInTheDocument();
+++    expect(screen.queryByText("projects.empty")).not.toBeInTheDocument();
+++  });
+++
+++  it("uses the shared list heading and keeps creation available for a confirmed empty catalog", () => {
+++    setup(0);
+++    expect(screen.getByRole("heading", { level: 1 })).toHaveClass(
+++      "base-page-title",
+++    );
+++    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+++    expect(
+++      screen.getByRole("button", { name: "projects.create" }),
+++    ).toBeEnabled();
+++    expect(screen.getByRole("status")).toHaveTextContent("projects.empty");
+++  });
+++
++   it("keeps the create form and entered URL after backend validation rejects it", () => {
++     setup(0);
++     fireEvent.click(screen.getByRole("button", { name: "projects.create" }));
++     const form = screen.getByRole("form", { name: "projects.create" });
+ -    fireEvent.change(screen.getByLabelText("projects.name"), { target: { value: "Test" } });
+ -    fireEvent.change(screen.getByLabelText("projects.repositoryUrl"), { target: { value: "not-a-repository-url" } });
+++    fireEvent.change(screen.getByRole("textbox", { name: "projects.name" }), {
+++      target: { value: "Test" },
+++    });
+++    fireEvent.change(
+++      screen.getByRole("textbox", { name: "projects.repositoryUrl" }),
+++      { target: { value: "not-a-repository-url" } },
+++    );
++     fireEvent.submit(form);
+ -    const error = new Error("repository_url must be an HTTP(S), SSH or Git URL");
+++    const error = new Error(
+++      "repository_url must be an HTTP(S), SSH or Git URL",
+++    );
++     act(() => mocks.create.mock.calls[0][1].onError(error));
++     expect(toast.error).toHaveBeenCalledWith(error.message);
++     expect(toast.success).not.toHaveBeenCalled();
++     expect(form).toBeVisible();
+ -    expect(screen.getByLabelText("projects.repositoryUrl")).toHaveValue("not-a-repository-url");
+++    expect(
+++      screen.getByRole("textbox", { name: "projects.repositoryUrl" }),
+++    ).toHaveValue("not-a-repository-url");
++   });
++ 
++   it("keeps the edit form after a repository URL validation error", () => {
++     setup(1);
+ -    fireEvent.keyDown(screen.getByRole("button", { name: "projects.actionsFor Project 01" }), { key: "Enter" });
+++    fireEvent.keyDown(
+++      screen.getByRole("button", { name: "projects.actionsFor Project 01" }),
+++      { key: "Enter" },
+++    );
++     fireEvent.click(screen.getByRole("menuitem", { name: "projects.edit" }));
+ -    const form = screen.getByRole("form", { name: "projects.editProject Project 01" });
+ -    fireEvent.change(screen.getByLabelText("projects.repositoryUrl"), { target: { value: "not-a-repository-url" } });
+++    const form = screen.getByRole("form", {
+++      name: "projects.editProject Project 01",
+++    });
+++    fireEvent.change(
+++      screen.getByRole("textbox", { name: "projects.repositoryUrl" }),
+++      { target: { value: "not-a-repository-url" } },
+++    );
++     fireEvent.submit(form);
+ -    const error = new Error("repository_url must be an HTTP(S), SSH or Git URL");
+++    const error = new Error(
+++      "repository_url must be an HTTP(S), SSH or Git URL",
+++    );
++     act(() => mocks.update.mock.calls[0][1].onError(error));
++     expect(toast.error).toHaveBeenCalledWith(error.message);
++     expect(toast.success).not.toHaveBeenCalled();
++     expect(form).toBeVisible();
+ -    expect(screen.getByLabelText("projects.repositoryUrl")).toHaveValue("not-a-repository-url");
+++    expect(
+++      screen.getByRole("textbox", { name: "projects.repositoryUrl" }),
+++    ).toHaveValue("not-a-repository-url");
++   });
++ 
+    it("keeps pipelines direct and exposes secondary destinations in an accessible menu", () => {
+      setup(2);
+  
+      expect(
+        screen.getByRole("link", { name: "projects.openPipelines Project 01" }),
+      ).toHaveAttribute("href", "/projects/project-1/pipelines");
+++    expect(
+++      screen.getByRole("button", { name: "projects.actionsFor Project 01" }),
+++    ).toHaveClass("base-control");
+      expect(
+        screen.queryByRole("link", { name: "secrets.title" }),
+      ).not.toBeInTheDocument();
+@@@ -91,9 -122,9 +416,9 @@@
+      expect(
+        screen.getByRole("form", { name: "projects.editProject Project 01" }),
+      ).toBeInTheDocument();
+--    expect(screen.getByLabelText("projects.repositoryUrl")).toHaveValue(
+--      "https://example.test/project-1.git",
+--    );
+++    expect(
+++      screen.getByRole("textbox", { name: "projects.repositoryUrl" }),
+++    ).toHaveValue("https://example.test/project-1.git");
+    });
+  
+    it("searches and paginates a growing project catalog", () => {
+@@@ -128,12 -159,12 +453,15 @@@
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "projects.create" }));
+      const form = screen.getByRole("form", { name: "projects.create" });
+--    fireEvent.change(screen.getByLabelText("projects.name"), {
+++    fireEvent.change(screen.getByRole("textbox", { name: "projects.name" }), {
+        target: { value: "New project" },
+      });
+--    fireEvent.change(screen.getByLabelText("projects.repositoryUrl"), {
+--      target: { value: "https://example.test/new.git" },
+--    });
+++    fireEvent.change(
+++      screen.getByRole("textbox", { name: "projects.repositoryUrl" }),
+++      {
+++        target: { value: "https://example.test/new.git" },
+++      },
+++    );
+      fireEvent.submit(form);
+      expect(mocks.create).toHaveBeenCalledWith(
+        {
+@@@ -198,7 -229,7 +526,7 @@@
+      expect(
+        screen.getByRole("link", { name: "projects.openPipelines Project 01" }),
+      ).toBeInTheDocument();
+--    expect(screen.getByRole("alert")).toHaveTextContent(
+++    expect(screen.getByRole("status")).toHaveTextContent(
+        "projects.refreshError",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "common.retry" }));

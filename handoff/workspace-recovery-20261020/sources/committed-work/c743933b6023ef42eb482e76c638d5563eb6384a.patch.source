@@ -1,0 +1,14 @@
+diff --git a/README.md b/README.md
+index 46bd39c..b0405c0 100644
+--- a/README.md
++++ b/README.md
+@@ -228,6 +228,9 @@ CI-CD/
+ 
+ ## Документы
+ 
++Штатная регистрация, изоляция и восстановление локальных jobs описаны в
++[Compose runner](docs/COMPOSE_RUNNER.md).
++
+ | Аудитория | Документы |
+ |---|---|
+ | Overview | [docs/README.md](docs/README.md), [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md), [docs/ROADMAP.md](docs/ROADMAP.md) |

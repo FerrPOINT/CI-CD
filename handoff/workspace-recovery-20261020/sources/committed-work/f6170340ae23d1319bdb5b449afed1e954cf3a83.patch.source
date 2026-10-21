@@ -1,0 +1,19 @@
+diff --git a/.base-revision b/.base-revision
+index f317139..53b0f2c 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-d0a10f69e222eef08f803d372d69f6f46bfe056d
++99c40b9f6ab3f33ae05258d1e2ca16f008aefa03
+diff --git a/.gitattributes b/.gitattributes
+index 2d9fa6c..856bb85 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -19,3 +19,7 @@ backend/migrations/0038_platform_messaging.sql text eol=crlf
+ backend/tests/fixtures/historical_platform_messaging.sql text eol=crlf
+ # UI/source evidence must have identical bytes on Windows and Linux.
+ frontend/** text=auto eol=lf
++# Attested runtime policy and build manifests use portable source bytes.
++*.rs text eol=lf
++Cargo.toml text eol=lf
++Cargo.lock text eol=lf

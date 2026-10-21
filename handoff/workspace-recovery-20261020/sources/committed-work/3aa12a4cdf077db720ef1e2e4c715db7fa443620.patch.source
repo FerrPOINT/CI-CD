@@ -1,0 +1,1416 @@
+diff --git a/backend/app/src/lib.rs b/backend/app/src/lib.rs
+index 6949285..77ed6be 100644
+--- a/backend/app/src/lib.rs
++++ b/backend/app/src/lib.rs
+@@ -440,8 +440,14 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
+     user(
+         POST,
+         "/api/v1/deployments/{deployment_id}/rollback",
+-        Action::Admin,
+-        Role::Maintainer,
++        Action::Write,
++        Role::Developer,
++    ),
++    user(
++        POST,
++        "/api/v1/deployments/{deployment_id}/cancel",
++        Action::Write,
++        Role::Developer,
+     ),
+     user(
+         GET,
+@@ -805,5 +811,13 @@ mod tests {
+         let approval_path = "/api/v1/deployments/018f3c59-38f6-7c2a-bc55-081eb78cbf17/approvals";
+         assert!(!allows(Role::Developer, "POST", approval_path));
+         assert!(allows(Role::Maintainer, "POST", approval_path));
++
++        let rollback_path = "/api/v1/deployments/018f3c59-38f6-7c2a-bc55-081eb78cbf17/rollback";
++        assert!(allows(Role::Developer, "POST", rollback_path));
++        assert!(!allows(Role::Viewer, "POST", rollback_path));
++
++        let cancel_path = "/api/v1/deployments/018f3c59-38f6-7c2a-bc55-081eb78cbf17/cancel";
++        assert!(allows(Role::Developer, "POST", cancel_path));
++        assert!(!allows(Role::Viewer, "POST", cancel_path));
+     }
+ }
+diff --git a/backend/migrations/0036_deployment_idempotency.sql b/backend/migrations/0036_deployment_idempotency.sql
+new file mode 100644
+index 0000000..2232b40
+--- /dev/null
++++ b/backend/migrations/0036_deployment_idempotency.sql
+@@ -0,0 +1,4 @@
++ALTER TABLE deployments ADD COLUMN request_key uuid;
++
++CREATE UNIQUE INDEX deployments_environment_request_key_idx
++    ON deployments (environment_id, request_key);
+diff --git a/backend/migrations/0037_deployment_plan_source.sql b/backend/migrations/0037_deployment_plan_source.sql
+new file mode 100644
+index 0000000..8a8e70c
+--- /dev/null
++++ b/backend/migrations/0037_deployment_plan_source.sql
+@@ -0,0 +1,3 @@
++ALTER TABLE pipeline_plans DROP CONSTRAINT pipeline_plans_config_source_check;
++ALTER TABLE pipeline_plans ADD CONSTRAINT pipeline_plans_config_source_check
++    CHECK (config_source IN ('repository', 'legacy_template', 'deployment'));
+diff --git a/backend/src/api/jobs_routes.rs b/backend/src/api/jobs_routes.rs
+index b24fcb0..db7f05b 100644
+--- a/backend/src/api/jobs_routes.rs
++++ b/backend/src/api/jobs_routes.rs
+@@ -323,6 +323,18 @@ pub(crate) async fn refresh_statuses(pool: &PgPool, stage_id: Uuid) -> Result<()
+         .await
+         .map_err(ApiError::internal)?;
+     sqlx::query("UPDATE pipelines SET status = $2, started_at = CASE WHEN $2 = 'running' THEN COALESCE(started_at, now()) ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1").bind(pipeline_id).bind(&pipeline_status).execute(pool).await.map_err(ApiError::internal)?;
++    let deployment_status = match pipeline_status.as_str() {
++        "success" => "success",
++        "failed" | "canceled" => "failed",
++        "running" => "running",
++        _ => "pending",
++    };
++    sqlx::query("UPDATE deployments SET status = $2 WHERE pipeline_id = $1 AND status IN ('pending', 'running')")
++        .bind(pipeline_id)
++        .bind(deployment_status)
++        .execute(pool)
++        .await
++        .map_err(ApiError::internal)?;
+     if matches!(pipeline_status.as_str(), "queued" | "running") {
+         crate::dispatch_signal::notify_runner_work_available();
+     }
+diff --git a/backend/src/api/mod.rs b/backend/src/api/mod.rs
+index e0166a9..c8cac81 100644
+--- a/backend/src/api/mod.rs
++++ b/backend/src/api/mod.rs
+@@ -29,8 +29,10 @@ pub(crate) use authz_mw::{
+ #[cfg(test)]
+ use axum::http::{HeaderMap, HeaderValue, Method, header};
+ use dto::{Job, Pipeline, PipelineDetail, PipelinePlan, Stage, StageDetail};
++pub(crate) use jobs_routes::cancel_pipeline;
+ pub(crate) use jobs_routes::refresh_statuses;
+ pub(crate) use pipelines_routes::create_pipeline_with_vars_idempotent;
++pub(crate) use pipelines_routes::validate_deployment_target;
+ pub(crate) use readiness::PageParams;
+ use router::build_router_from_env;
+ pub use router::{app_with_auth_secret, app_with_git_and_auth_secret, app_with_git_and_config};
+@@ -128,6 +130,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
+         crate::platform::list_deployment_approvals,
+         crate::platform::record_deployment_approval,
+         crate::platform::rollback_deployment,
++        crate::platform::cancel_deployment,
+         crate::platform::list_schedules, crate::platform::create_schedule,
+         crate::platform::update_schedule, crate::platform::delete_schedule,
+         crate::platform::list_webhooks, crate::platform::create_webhook, crate::platform::delete_webhook,
+@@ -577,6 +580,10 @@ mod tests {
+             project_scope_ref(&format!("/api/v1/deployments/{deployment_id}/rollback")),
+             Some(ProjectScopeRef::Deployment(deployment_id))
+         );
++        assert_eq!(
++            project_scope_ref(&format!("/api/v1/deployments/{deployment_id}/cancel")),
++            Some(ProjectScopeRef::Deployment(deployment_id))
++        );
+         assert_eq!(
+             project_scope_ref(&format!("/api/v1/schedules/{schedule_id}")),
+             Some(ProjectScopeRef::Schedule(schedule_id))
+diff --git a/backend/src/api/pipelines_routes.rs b/backend/src/api/pipelines_routes.rs
+index af83fd2..cf41350 100644
+--- a/backend/src/api/pipelines_routes.rs
++++ b/backend/src/api/pipelines_routes.rs
+@@ -66,6 +66,67 @@ pub(crate) struct PipelineTriggerOutcome {
+     pub(crate) replayed: bool,
+ }
+ 
++pub(crate) async fn validate_deployment_target(
++    pool: &PgPool,
++    project_id: Uuid,
++    git_ref: &str,
++    git_root: &FsPath,
++) -> Result<(), ApiError> {
++    let repository_url: String =
++        sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
++            .bind(project_id)
++            .fetch_optional(pool)
++            .await
++            .map_err(ApiError::internal)?
++            .ok_or_else(ApiError::not_found)?;
++    if extract_repo_name_from_url(&repository_url).as_deref() != Some("service-pulse") {
++        return Err(ApiError::bad_request(
++            "deploy runner is reserved for Service Pulse",
++        ));
++    }
++    if git_ref.len() != 40
++        || !git_ref.bytes().all(|byte| byte.is_ascii_hexdigit())
++        || resolve_commit_sha(Some(&repository_url), git_ref, git_root)
++            .await
++            .as_deref()
++            != Some(git_ref)
++    {
++        return Err(ApiError::bad_request(
++            "deployment requires an exact commit SHA",
++        ));
++    }
++    let protected: Vec<String> =
++        sqlx::query_scalar("SELECT protected_branches FROM projects WHERE id = $1")
++            .bind(project_id)
++            .fetch_one(pool)
++            .await
++            .map_err(ApiError::internal)?;
++    if !protected.iter().any(|branch| branch == "main")
++        || !commit_is_on_main(&repository_url, git_ref, git_root).await
++    {
++        return Err(ApiError::bad_request(
++            "deployment commit must be reachable from protected main",
++        ));
++    }
++    let raw = read_deployment_config(&repository_url, git_ref, git_root)
++        .await
++        .ok_or_else(|| ApiError::bad_request(".forge-deploy.yml is required"))?;
++    let config = parse_pipeline_config(Some(&raw)).map_err(ApiError::bad_request)?;
++    if config.stages.len() != 1
++        || config.stages[0].jobs.len() != 1
++        || config.stages[0].jobs[0].required_tags != ["deploy"]
++        || config.stages[0].jobs[0].command != "set -e\nservice-pulse-deploy"
++        || config.stages[0].jobs[0].allow_failure
++        || config.stages[0].jobs[0].manual
++        || !config.stages[0].jobs[0].required_secrets.is_empty()
++    {
++        return Err(ApiError::bad_request(
++            "deployment config must contain only the protected deploy job",
++        ));
++    }
++    Ok(())
++}
++
+ pub(crate) async fn create_pipeline_with_vars_idempotent(
+     pool: &PgPool,
+     project_id: Uuid,
+@@ -84,15 +145,84 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
+             .ok_or_else(ApiError::not_found)?;
+     // Never clone here: this path is called by post-receive and must return
+     // before git-receive-pack finishes. Local config is read from the bare repo.
++    let deployment = source.starts_with("deployment-");
++    if deployment && extract_repo_name_from_url(&repository_url).as_deref() != Some("service-pulse")
++    {
++        return Err(ApiError::bad_request(
++            "deploy runner is reserved for Service Pulse",
++        ));
++    }
+     let commit_sha = resolve_commit_sha(Some(repository_url.as_str()), &git_ref, git_root).await;
++    if deployment {
++        let valid_sha = git_ref.len() == 40 && git_ref.bytes().all(|byte| byte.is_ascii_hexdigit());
++        if !valid_sha || commit_sha.as_deref() != Some(git_ref.as_str()) {
++            return Err(ApiError::bad_request(
++                "deployment requires an exact commit SHA",
++            ));
++        }
++        let protected: Vec<String> =
++            sqlx::query_scalar("SELECT protected_branches FROM projects WHERE id = $1")
++                .bind(project_id)
++                .fetch_one(pool)
++                .await
++                .map_err(ApiError::internal)?;
++        if !protected.iter().any(|branch| branch == "main")
++            || !commit_is_on_main(&repository_url, &git_ref, git_root).await
++        {
++            return Err(ApiError::bad_request(
++                "deployment commit must be reachable from protected main",
++            ));
++        }
++    }
+     let config_ref = commit_sha.as_deref().unwrap_or(&git_ref);
+-    let config =
+-        read_local_forge_ci_config(Some(repository_url.as_str()), config_ref, git_root).await;
++    let config_file = if deployment {
++        ".forge-deploy.yml"
++    } else {
++        ".forge-ci.yml"
++    };
++    let config = if deployment {
++        read_deployment_config(&repository_url, config_ref, git_root).await
++    } else {
++        read_local_forge_config(Some(&repository_url), config_ref, git_root, config_file).await
++    };
+     let (config_source, raw_config) = match config {
+-        Some(raw_config) => ("repository", raw_config),
++        Some(raw_config) => (
++            if deployment {
++                "deployment"
++            } else {
++                "repository"
++            },
++            raw_config,
++        ),
++        None if deployment => return Err(ApiError::bad_request(".forge-deploy.yml is required")),
+         None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
+     };
+     let parsed_config = parse_pipeline_config(Some(&raw_config)).map_err(ApiError::bad_request)?;
++    if !deployment
++        && parsed_config.stages.iter().any(|stage| {
++            stage
++                .jobs
++                .iter()
++                .any(|job| job.required_tags.iter().any(|tag| tag == "deploy"))
++        })
++    {
++        return Err(ApiError::bad_request(
++            "deploy tag is reserved for explicit deployments",
++        ));
++    }
++    if deployment
++        && (parsed_config.stages.len() != 1
++            || parsed_config.stages[0].jobs.len() != 1
++            || parsed_config.stages[0].jobs[0].required_tags != ["deploy"]
++            || parsed_config.stages[0].jobs[0].command != "set -e\nservice-pulse-deploy"
++            || parsed_config.stages[0].jobs[0].allow_failure
++            || parsed_config.stages[0].jobs[0].manual
++            || !parsed_config.stages[0].jobs[0].required_secrets.is_empty())
++    {
++        return Err(ApiError::bad_request(
++            "deployment config must contain only the protected deploy job",
++        ));
++    }
+     let plan_snapshot = build_pipeline_plan_snapshot(
+         &git_ref,
+         commit_sha.as_deref(),
+@@ -490,10 +620,11 @@ struct CiJob {
+ /// Reads `.forge-ci.yml` from an already-pushed local bare repository.
+ /// External URLs deliberately use the template: cloning during post-receive
+ /// could wait on the same Smart HTTP request that is still completing.
+-async fn read_local_forge_ci_config(
++async fn read_local_forge_config(
+     repo_url: Option<&str>,
+     git_ref: &str,
+     git_root: &FsPath,
++    config_file: &str,
+ ) -> Option<String> {
+     let name = extract_repo_name_from_url(repo_url?)?;
+     let bare_path = git_root.join(format!("{name}.git"));
+@@ -503,7 +634,7 @@ async fn read_local_forge_ci_config(
+ 
+     let output = tokio::process::Command::new("git")
+         .arg(format!("--git-dir={}", bare_path.display()))
+-        .args(["show", &format!("{git_ref}:.forge-ci.yml")])
++        .args(["show", &format!("{git_ref}:{config_file}")])
+         .output()
+         .await
+         .ok()?;
+@@ -513,6 +644,48 @@ async fn read_local_forge_ci_config(
+         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+ }
+ 
++async fn read_deployment_config(
++    repository_url: &str,
++    commit_sha: &str,
++    git_root: &FsPath,
++) -> Option<String> {
++    if let Some(config) = read_local_forge_config(
++        Some(repository_url),
++        commit_sha,
++        git_root,
++        ".forge-deploy.yml",
++    )
++    .await
++    {
++        return Some(config);
++    }
++    // Historical commits can predate the config. The current protected-main
++    // config is snapshotted into the pipeline plan; source stays at commit_sha.
++    read_local_forge_config(
++        Some(repository_url),
++        "refs/heads/main",
++        git_root,
++        ".forge-deploy.yml",
++    )
++    .await
++}
++
++async fn commit_is_on_main(repo_url: &str, commit_sha: &str, git_root: &FsPath) -> bool {
++    let Some(name) = extract_repo_name_from_url(repo_url) else {
++        return false;
++    };
++    let bare_path = git_root.join(format!("{name}.git"));
++    if !bare_path.is_dir() {
++        return false;
++    }
++    tokio::process::Command::new("git")
++        .arg(format!("--git-dir={}", bare_path.display()))
++        .args(["merge-base", "--is-ancestor", commit_sha, "refs/heads/main"])
++        .status()
++        .await
++        .is_ok_and(|status| status.success())
++}
++
+ /// Resolves a ref to a commit sha in the local bare repo (best-effort).
+ async fn resolve_commit_sha(
+     repo_url: Option<&str>,
+@@ -1555,6 +1728,64 @@ mod tests {
+     use super::*;
+     use crate::api::projects_routes::default_project_role;
+ 
++    #[tokio::test]
++    async fn historical_main_commit_uses_snapshotted_main_deploy_config() {
++        fn git(directory: &FsPath, args: &[&str]) -> String {
++            let output = std::process::Command::new("git")
++                .current_dir(directory)
++                .args(args)
++                .output()
++                .expect("git should run");
++            assert!(
++                output.status.success(),
++                "{}",
++                String::from_utf8_lossy(&output.stderr)
++            );
++            String::from_utf8_lossy(&output.stdout).trim().to_owned()
++        }
++
++        let root = std::env::temp_dir().join(format!("forge-deploy-config-{}", Uuid::new_v4()));
++        std::fs::create_dir_all(&root).unwrap();
++        git(&root, &["init", "--bare", "service-pulse.git"]);
++        git(&root, &["init", "-b", "main", "source"]);
++        let source = root.join("source");
++        git(&source, &["config", "user.email", "qa@example.test"]);
++        git(&source, &["config", "user.name", "Forge QA"]);
++        std::fs::write(source.join("README.md"), "historical release\n").unwrap();
++        git(&source, &["add", "."]);
++        git(&source, &["commit", "-m", "historical release"]);
++        let historical_sha = git(&source, &["rev-parse", "HEAD"]);
++        std::fs::write(source.join(".forge-deploy.yml"), "version: 1\n").unwrap();
++        git(&source, &["add", "."]);
++        git(&source, &["commit", "-m", "add deploy config"]);
++        let current_sha = git(&source, &["rev-parse", "HEAD"]);
++        git(
++            &source,
++            &[
++                "remote",
++                "add",
++                "origin",
++                root.join("service-pulse.git").to_str().unwrap(),
++            ],
++        );
++        git(&source, &["push", "origin", "main"]);
++
++        let url = "http://localhost/git/service-pulse.git";
++        assert_eq!(
++            read_deployment_config(url, &historical_sha, &root)
++                .await
++                .as_deref(),
++            Some("version: 1\n")
++        );
++        assert_eq!(
++            read_deployment_config(url, &current_sha, &root)
++                .await
++                .as_deref(),
++            Some("version: 1\n")
++        );
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
+     #[test]
+     fn parses_execution_controls() {
+         let stages = parse_forge_ci(Some(
+diff --git a/backend/src/bin/forge-runner.rs b/backend/src/bin/forge-runner.rs
+index cab5b89..8c20ee4 100644
+--- a/backend/src/bin/forge-runner.rs
++++ b/backend/src/bin/forge-runner.rs
+@@ -1,5 +1,5 @@
+ use std::{
+-    collections::BTreeSet,
++    collections::{BTreeMap, BTreeSet},
+     path::{Component, Path, PathBuf},
+     process::Stdio,
+     time::Duration,
+@@ -35,6 +35,8 @@ struct Cli {
+     name: String,
+     #[arg(long, env = "CICD_RUNNER_CREDENTIAL")]
+     credential: Option<String>,
++    #[arg(long, env = "CICD_RUNNER_CREDENTIAL_FILE")]
++    credential_file: Option<PathBuf>,
+     #[arg(long, env = "CICD_RUNNER_REGISTRATION_TOKEN")]
+     registration_token: Option<String>,
+     #[arg(
+@@ -83,6 +85,8 @@ struct AttemptSpec {
+     commit_sha: Option<String>,
+     commands: Vec<String>,
+     #[serde(default)]
++    environment: BTreeMap<String, String>,
++    #[serde(default)]
+     secrets: Vec<String>,
+     #[serde(default)]
+     artifacts: Vec<String>,
+@@ -240,6 +244,17 @@ async fn ensure_credential(
+     {
+         return Ok(credential.to_owned());
+     }
++    if let Some(path) = &cli.credential_file {
++        if path.exists() {
++            let credential = std::fs::read_to_string(path)
++                .with_context(|| format!("read runner credential file {}", path.display()))?;
++            let credential = credential.trim();
++            if credential.is_empty() {
++                bail!("runner credential file is empty");
++            }
++            return Ok(credential.to_owned());
++        }
++    }
+     let registration_token = cli
+         .registration_token
+         .as_deref()
+@@ -259,14 +274,45 @@ async fn ensure_credential(
+         .await
+         .context("register runner request failed")?;
+     let registered: RegisterResponse = response_json(response).await?;
+-    eprintln!(
+-        "registered runner {}. Persist CICD_RUNNER_CREDENTIAL for the next start.",
+-        registered.runner_id
+-    );
+-    eprintln!("runner credential: {}", registered.credential);
++    if let Some(path) = &cli.credential_file {
++        persist_runner_credential(path, &registered.credential)?;
++    }
++    eprintln!("registered runner {}", registered.runner_id);
+     Ok(registered.credential)
+ }
+ 
++fn persist_runner_credential(path: &Path, credential: &str) -> anyhow::Result<()> {
++    use std::io::Write;
++
++    let parent = path
++        .parent()
++        .context("runner credential file has no parent")?;
++    std::fs::create_dir_all(parent)
++        .with_context(|| format!("create runner credential directory {}", parent.display()))?;
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
++        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
++        let mut file = std::fs::OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .mode(0o600)
++            .open(path)?;
++        file.write_all(credential.as_bytes())?;
++        file.sync_all()?;
++    }
++    #[cfg(not(unix))]
++    {
++        let mut file = std::fs::OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .open(path)?;
++        file.write_all(credential.as_bytes())?;
++        file.sync_all()?;
++    }
++    Ok(())
++}
++
+ async fn heartbeat(
+     client: &reqwest::Client,
+     base: &str,
+@@ -656,6 +702,7 @@ async fn execute_attempt(
+             &workspace,
+             offer.attempt.timeout_seconds,
+             log_context.as_ref(),
++            &offer.attempt.environment,
+             secret_env,
+         )
+         .await
+@@ -800,6 +847,7 @@ async fn run_shell_command(
+     cwd: &Path,
+     timeout_seconds: i32,
+     log_context: Option<&LogContext>,
++    environment: &BTreeMap<String, String>,
+     secret_env: &[(String, String)],
+ ) -> anyhow::Result<CommandOutcome> {
+     eprintln!("running: {command}");
+@@ -816,6 +864,7 @@ async fn run_shell_command(
+ 
+     let mut command_process = shell(command);
+     command_process.current_dir(cwd).stdin(Stdio::null());
++    command_process.envs(environment);
+     for (name, value) in secret_env {
+         command_process.env(name, value);
+     }
+@@ -1173,6 +1222,7 @@ mod tests {
+             api_url: "http://127.0.0.1:22801".to_string(),
+             name: "test-runner".to_string(),
+             credential: Some("credential".to_string()),
++            credential_file: None,
+             registration_token: None,
+             tags: vec!["linux".to_string()],
+             total_slots: 1,
+@@ -1184,6 +1234,27 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn persisted_runner_credential_is_private() {
++        let root = std::env::temp_dir().join(format!("forge-runner-auth-{}", Uuid::new_v4()));
++        let path = root.join("credential");
++        persist_runner_credential(&path, "runner-secret").unwrap();
++        assert_eq!(std::fs::read_to_string(&path).unwrap(), "runner-secret");
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            assert_eq!(
++                std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
++                0o700
++            );
++            assert_eq!(
++                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
++                0o600
++            );
++        }
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
+     fn test_offer(command: &str, timeout_seconds: i32) -> LeaseOffer {
+         LeaseOffer {
+             lease_id: Uuid::new_v4(),
+@@ -1195,6 +1266,7 @@ mod tests {
+                 git_ref: "main".to_string(),
+                 commit_sha: None,
+                 commands: vec![command.to_string()],
++                environment: BTreeMap::new(),
+                 secrets: Vec::new(),
+                 artifacts: Vec::new(),
+                 timeout_seconds,
+diff --git a/backend/src/config.rs b/backend/src/config.rs
+index a564367..8783b84 100644
+--- a/backend/src/config.rs
++++ b/backend/src/config.rs
+@@ -195,6 +195,7 @@ pub struct RunnerConfig {
+     /// Optional Docker volume exposed read-only at /runner-sources in jobs.
+     pub shared_sources_volume: Option<String>,
+     pub registration_token: Option<String>,
++    pub deploy_registration_token: Option<String>,
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -280,6 +281,9 @@ impl RuntimeConfig {
+             ),
+             shared_sources_volume: optional_trimmed(get("CICD_RUNNER_SHARED_SOURCES_VOLUME")),
+             registration_token: optional_secret_value(get("CICD_RUNNER_REGISTRATION_TOKEN")),
++            deploy_registration_token: optional_secret_value(get(
++                "CICD_DEPLOY_RUNNER_REGISTRATION_TOKEN",
++            )),
+         };
+         let auth = AuthConfig {
+             secret: optional_secret_value(get("CICD_AUTH_SECRET")),
+@@ -342,6 +346,7 @@ impl RuntimeConfig {
+                 docker_network: DEFAULT_RUNNER_DOCKER_NETWORK.to_string(),
+                 shared_sources_volume: None,
+                 registration_token: None,
++                deploy_registration_token: None,
+             },
+             auth: AuthConfig { secret: None },
+             secrets: SecretsConfig { key: None },
+diff --git a/backend/src/platform.rs b/backend/src/platform.rs
+index 8c7b5de..1b2df58 100644
+--- a/backend/src/platform.rs
++++ b/backend/src/platform.rs
+@@ -87,6 +87,10 @@ pub fn routes() -> Router<Arc<AppState>> {
+             "/api/v1/deployments/{deployment_id}/rollback",
+             post(rollback_deployment),
+         )
++        .route(
++            "/api/v1/deployments/{deployment_id}/cancel",
++            post(cancel_deployment),
++        )
+         .route(
+             "/api/v1/projects/{project_id}/schedules",
+             get(list_schedules).post(create_schedule),
+@@ -679,6 +683,48 @@ pub(crate) struct CreateDeployment {
+     git_ref: String,
+     pipeline_id: Option<Uuid>,
+     status: Option<String>,
++    request_key: Option<Uuid>,
++}
++
++async fn insert_or_replay_deployment(
++    db: &PgPool,
++    environment_id: Uuid,
++    git_ref: &str,
++    rollback_of_id: Option<Uuid>,
++    request_key: Option<Uuid>,
++) -> Result<(Uuid, bool), ApiError> {
++    let id = Uuid::new_v4();
++    let inserted: Option<Uuid> = sqlx::query_scalar(
++        "INSERT INTO deployments (id, environment_id, rollback_of_id, git_ref, status, request_key) \
++         VALUES ($1, $2, $3, $4, 'pending', $5) \
++         ON CONFLICT (environment_id, request_key) DO NOTHING RETURNING id",
++    )
++    .bind(id)
++    .bind(environment_id)
++    .bind(rollback_of_id)
++    .bind(git_ref)
++    .bind(request_key)
++    .fetch_optional(db)
++    .await
++    .map_err(ApiError::internal)?;
++    if let Some(id) = inserted {
++        return Ok((id, true));
++    }
++    let existing: (Uuid, String, Option<Uuid>) = sqlx::query_as(
++        "SELECT id, git_ref, rollback_of_id FROM deployments \
++         WHERE environment_id = $1 AND request_key = $2",
++    )
++    .bind(environment_id)
++    .bind(request_key)
++    .fetch_one(db)
++    .await
++    .map_err(ApiError::internal)?;
++    if existing.1 != git_ref || existing.2 != rollback_of_id {
++        return Err(ApiError::conflict(
++            "deployment request key belongs to another release",
++        ));
++    }
++    Ok((existing.0, false))
+ }
+ #[utoipa::path(get, path = "/api/v1/environments/{environment_id}/deployments", tag = "environments", params(("environment_id" = Uuid, Path)), responses((status = 200, body = [Deployment])))]
+ async fn list_deployments(
+@@ -708,37 +754,61 @@ async fn create_deployment(
+     }
+     let db = pool(&state)?;
+     let policy = fetch_environment_policy(db, environment_id).await?;
+-    validate_pipeline_project(db, input.pipeline_id, policy.project_id).await?;
+-    let approval_required = policy.requires_approval();
+-    if approval_required && input.pipeline_id.is_some() {
++    crate::api::validate_deployment_target(
++        db,
++        policy.project_id,
++        input.git_ref.trim(),
++        &state.config.git.root,
++    )
++    .await?;
++    if input.pipeline_id.is_some()
++        || input
++            .status
++            .as_deref()
++            .is_some_and(|status| status != "pending")
++    {
+         return Err(ApiError::bad_request(
+-            "protected environment deployment must be approved before pipeline execution",
++            "deployment pipeline and terminal status are assigned by Forge",
+         ));
+     }
+-    let status = input.status.unwrap_or_else(|| {
+-        if approval_required {
+-            "pending".into()
+-        } else {
+-            "success".into()
++    let approval_required = policy.requires_approval();
++    let (id, created) = insert_or_replay_deployment(
++        db,
++        environment_id,
++        input.git_ref.trim(),
++        None,
++        input.request_key,
++    )
++    .await?;
++    let current = fetch_deployment(db, id).await?;
++    if !approval_required && current.pipeline_id.is_none() {
++        if let Err(error) = start_deployment_pipeline(
++            db,
++            DeploymentPipelineStart {
++                deployment_id: id,
++                project_id: policy.project_id,
++                environment_id,
++                git_ref: input.git_ref.trim().to_owned(),
++                rollback_of_id: None,
++                source: "deployment-direct",
++                git_root: &state.config.git.root,
++            },
++        )
++        .await
++        {
++            if created {
++                sqlx::query("DELETE FROM deployments WHERE id = $1 AND pipeline_id IS NULL")
++                    .bind(id)
++                    .execute(db)
++                    .await
++                    .map_err(ApiError::internal)?;
++            }
++            return Err(error);
+         }
+-    });
+-    validate_deployment_status(&status)?;
+-    if approval_required && status != "pending" {
+-        return Err(ApiError::bad_request(
+-            "protected environment deployment must start as pending approval",
+-        ));
+     }
+-    let id = Uuid::new_v4();
+-    sqlx::query("INSERT INTO deployments (id, environment_id, pipeline_id, git_ref, status) VALUES ($1, $2, $3, $4, $5)")
+-        .bind(id)
+-        .bind(environment_id)
+-        .bind(input.pipeline_id)
+-        .bind(input.git_ref.trim())
+-        .bind(status)
+-        .execute(db)
+-        .await
+-        .map_err(ApiError::internal)?;
+-    audit(db, "deployment.created", "deployment", id, None).await?;
++    if created {
++        audit(db, "deployment.created", "deployment", id, None).await?;
++    }
+     let value = fetch_deployment(db, id).await?;
+     Ok(Json(value))
+ }
+@@ -763,6 +833,29 @@ pub(crate) struct RecordDeploymentApproval {
+ #[derive(Debug, Deserialize, utoipa::ToSchema)]
+ pub(crate) struct RollbackDeployment {
+     git_ref: Option<String>,
++    request_key: Option<Uuid>,
++}
++
++#[utoipa::path(post, path = "/api/v1/deployments/{deployment_id}/cancel", tag = "environments", params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 404), (status = 409)))]
++async fn cancel_deployment(
++    State(state): State<Arc<AppState>>,
++    Path(deployment_id): Path<Uuid>,
++) -> ApiResult<Deployment> {
++    let db = pool(&state)?;
++    let deployment = fetch_deployment(db, deployment_id).await?;
++    if !matches!(deployment.status.as_str(), "pending" | "running") {
++        return Err(ApiError::conflict("deployment is not active"));
++    }
++    if let Some(pipeline_id) = deployment.pipeline_id {
++        let _ = crate::api::cancel_pipeline(State(state.clone()), Path(pipeline_id)).await?;
++    }
++    sqlx::query("UPDATE deployments SET status = 'failed' WHERE id = $1 AND status IN ('pending', 'running')")
++        .bind(deployment_id)
++        .execute(db)
++        .await
++        .map_err(ApiError::internal)?;
++    audit(db, "deployment.canceled", "deployment", deployment_id, None).await?;
++    Ok(Json(fetch_deployment(db, deployment_id).await?))
+ }
+ 
+ #[utoipa::path(get, path = "/api/v1/deployments/{deployment_id}/approvals", tag = "environments", params(("deployment_id" = Uuid, Path)), responses((status = 200, body = [DeploymentApproval]), (status = 404)))]
+@@ -834,18 +927,21 @@ async fn rollback_deployment(
+         .filter(|value| !value.is_empty())
+         .unwrap_or(source.git_ref.as_str())
+         .to_owned();
+-    let new_id = Uuid::new_v4();
+-    sqlx::query("INSERT INTO deployments (id, environment_id, pipeline_id, rollback_of_id, git_ref, status) VALUES ($1, $2, $3, $4, $5, $6)")
+-        .bind(new_id)
+-        .bind(source.environment_id)
+-        .bind(None::<Uuid>)
+-        .bind(deployment_id)
+-        .bind(&git_ref)
+-        .bind("pending")
+-        .execute(db)
+-        .await
+-        .map_err(ApiError::internal)?;
+-    if !source.requires_approval() {
++    if git_ref != source.git_ref {
++        return Err(ApiError::bad_request(
++            "rollback must use the selected successful deployment commit",
++        ));
++    }
++    let (new_id, created) = insert_or_replay_deployment(
++        db,
++        source.environment_id,
++        &git_ref,
++        Some(deployment_id),
++        input.request_key,
++    )
++    .await?;
++    let current = fetch_deployment(db, new_id).await?;
++    if !source.requires_approval() && current.pipeline_id.is_none() {
+         start_deployment_pipeline(
+             db,
+             DeploymentPipelineStart {
+@@ -860,14 +956,16 @@ async fn rollback_deployment(
+         )
+         .await?;
+     }
+-    audit(
+-        db,
+-        "deployment.rollback.created",
+-        "deployment",
+-        new_id,
+-        None,
+-    )
+-    .await?;
++    if created {
++        audit(
++            db,
++            "deployment.rollback.created",
++            "deployment",
++            new_id,
++            None,
++        )
++        .await?;
++    }
+     Ok(Json(fetch_deployment(db, new_id).await?))
+ }
+ 
+@@ -952,29 +1050,6 @@ async fn fetch_environment_policy(
+     .ok_or_else(ApiError::not_found)
+ }
+ 
+-async fn validate_pipeline_project(
+-    db: &PgPool,
+-    pipeline_id: Option<Uuid>,
+-    project_id: Uuid,
+-) -> Result<(), ApiError> {
+-    let Some(pipeline_id) = pipeline_id else {
+-        return Ok(());
+-    };
+-    let pipeline_project_id: Uuid =
+-        sqlx::query_scalar("SELECT project_id FROM pipelines WHERE id = $1")
+-            .bind(pipeline_id)
+-            .fetch_optional(db)
+-            .await
+-            .map_err(ApiError::internal)?
+-            .ok_or_else(ApiError::not_found)?;
+-    if pipeline_project_id != project_id {
+-        return Err(ApiError::bad_request(
+-            "pipeline belongs to a different project than environment",
+-        ));
+-    }
+-    Ok(())
+-}
+-
+ async fn ensure_deployment_exists(db: &PgPool, deployment_id: Uuid) -> Result<(), ApiError> {
+     let exists =
+         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM deployments WHERE id = $1)")
+@@ -1048,19 +1123,14 @@ async fn record_approval_decision(
+     if target.status != "pending" || target.pipeline_id.is_some() {
+         return Err(ApiError::conflict("deployment is not pending approval"));
+     }
+-    let existing_by_actor = sqlx::query_scalar::<_, bool>(
+-        "SELECT EXISTS(SELECT 1 FROM deployment_approvals WHERE deployment_id = $1 AND actor = $2)",
++    let existing_by_actor: Option<String> = sqlx::query_scalar(
++        "SELECT decision FROM deployment_approvals WHERE deployment_id = $1 AND actor = $2",
+     )
+     .bind(deployment_id)
+     .bind(actor)
+-    .fetch_one(&mut *tx)
++    .fetch_optional(&mut *tx)
+     .await
+     .map_err(ApiError::internal)?;
+-    if existing_by_actor {
+-        return Err(ApiError::conflict(
+-            "actor already recorded a deployment approval decision",
+-        ));
+-    }
+     let (approved_count, rejected_count): (i64, i64) = sqlx::query_as(
+         "SELECT \
+             COALESCE(COUNT(*) FILTER (WHERE decision = 'approved'), 0)::bigint, \
+@@ -1071,7 +1141,24 @@ async fn record_approval_decision(
+     .fetch_one(&mut *tx)
+     .await
+     .map_err(ApiError::internal)?;
+-    if rejected_count > 0 || approved_count >= i64::from(target.required_approvals) {
++    if rejected_count == 0
++        && approved_count >= i64::from(target.required_approvals)
++        && decision == "approved"
++        && existing_by_actor.as_deref() == Some("approved")
++    {
++        tx.commit().await.map_err(ApiError::internal)?;
++        return Ok(RecordedApprovalTarget {
++            environment_id: target.environment_id,
++            project_id: target.project_id,
++            git_ref: target.git_ref,
++            rollback_of_id: target.rollback_of_id,
++            should_start_pipeline: true,
++        });
++    }
++    if existing_by_actor.is_some()
++        || rejected_count > 0
++        || approved_count >= i64::from(target.required_approvals)
++    {
+         return Err(ApiError::conflict("deployment approval is already decided"));
+     }
+     sqlx::query("INSERT INTO deployment_approvals (id, deployment_id, decision, actor, comment) VALUES ($1, $2, $3, $4, $5)")
+@@ -1154,7 +1241,8 @@ async fn fetch_rollback_source(
+         "SELECT d.environment_id, e.project_id, d.git_ref, d.status, e.protected, e.required_approvals \
+          FROM deployments d \
+          JOIN environments e ON e.id = d.environment_id \
+-         WHERE d.id = $1",
++         WHERE d.id = $1 AND d.pipeline_id IS NOT NULL \
++           AND EXISTS (SELECT 1 FROM pipelines p WHERE p.id = d.pipeline_id AND p.status = 'success')",
+     )
+     .bind(deployment_id)
+     .fetch_optional(db)
+@@ -1191,14 +1279,6 @@ fn normalize_required_approvals(
+     Ok(value)
+ }
+ 
+-fn validate_deployment_status(status: &str) -> Result<(), ApiError> {
+-    if matches!(status, "pending" | "running" | "success" | "failed") {
+-        Ok(())
+-    } else {
+-        Err(ApiError::bad_request("invalid deployment status"))
+-    }
+-}
+-
+ fn deployment_status_from_pipeline(status: &str) -> &'static str {
+     match status {
+         "running" => "running",
+diff --git a/backend/src/runner.rs b/backend/src/runner.rs
+index 862ed5a..536f7a9 100644
+--- a/backend/src/runner.rs
++++ b/backend/src/runner.rs
+@@ -1444,7 +1444,8 @@ async fn prepare_workspace(
+ 
+     // Prefer local bare repo: avoid HTTP round-trips that can deadlock if the
+     // repository_url points back at the same backend serving this runner.
+-    let cloned = clone_from_local_bare(&repo_url, &git_ref, &workspace, &config.git_root).await;
++    let checkout_ref = job.commit_sha.as_deref().unwrap_or(&git_ref);
++    let cloned = clone_from_local_bare(&repo_url, checkout_ref, &workspace, &config.git_root).await;
+     if !cloned {
+         if let Err(error) = clone_via_http(&repo_url, &git_ref, &workspace, pool, job.id).await {
+             let _ = tokio::fs::remove_dir_all(&workspace).await;
+@@ -1471,17 +1472,25 @@ async fn clone_from_local_bare(
+     let output = tokio::process::Command::new("git")
+         .arg("clone")
+         .arg("--quiet")
+-        .arg("--depth")
+-        .arg("50")
+-        .arg("--branch")
+-        .arg(git_ref)
++        .arg("--no-checkout")
+         .arg(&bare_path)
+         .arg("workspace")
+         .current_dir(workspace)
+         .output()
+         .await;
+     match output {
+-        Ok(out) if out.status.success() => true,
++        Ok(out) if out.status.success() => {
++            let checked_out = tokio::process::Command::new("git")
++                .args(["checkout", "--quiet", "--detach", git_ref])
++                .current_dir(workspace.join("workspace"))
++                .status()
++                .await
++                .is_ok_and(|status| status.success());
++            if !checked_out {
++                let _ = tokio::fs::remove_dir_all(workspace.join("workspace")).await;
++            }
++            checked_out
++        }
+         Ok(out) => {
+             tracing::warn!(
+                 "local bare clone failed for {repo_url}: {}",
+@@ -1999,6 +2008,52 @@ where
+ mod tests {
+     use super::*;
+ 
++    #[tokio::test]
++    async fn local_bare_checkout_accepts_an_exact_merge_sha() {
++        let root = std::env::temp_dir().join(format!("forge-sha-checkout-{}", Uuid::new_v4()));
++        let source = root.join("source");
++        let bare = root.join("pulse.git");
++        let workspace = root.join("job");
++        std::fs::create_dir_all(&source).unwrap();
++        std::fs::create_dir_all(&workspace).unwrap();
++        let git = |args: &[&str], cwd: &Path| {
++            let output = std::process::Command::new("git")
++                .args(args)
++                .current_dir(cwd)
++                .output()
++                .unwrap();
++            assert!(
++                output.status.success(),
++                "{}",
++                String::from_utf8_lossy(&output.stderr)
++            );
++            String::from_utf8(output.stdout).unwrap().trim().to_owned()
++        };
++        git(
++            &["init", "--quiet", "--bare", bare.to_str().unwrap()],
++            &root,
++        );
++        git(&["init", "--quiet", "-b", "main"], &source);
++        git(&["config", "user.email", "test@example.invalid"], &source);
++        git(&["config", "user.name", "Test"], &source);
++        std::fs::write(source.join("README.md"), "verified commit\n").unwrap();
++        git(&["add", "README.md"], &source);
++        git(&["commit", "--quiet", "-m", "test"], &source);
++        let sha = git(&["rev-parse", "HEAD"], &source);
++        git(
++            &["push", "--quiet", bare.to_str().unwrap(), "HEAD:main"],
++            &source,
++        );
++        assert!(
++            clone_from_local_bare("http://localhost/git/pulse.git", &sha, &workspace, &root).await
++        );
++        assert_eq!(
++            git(&["rev-parse", "HEAD"], &workspace.join("workspace")),
++            sha
++        );
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
+     #[test]
+     fn cleanup_root_removes_the_job_directory_not_only_checkout() {
+         let root = Path::new("/workspaces/forge-runner-123");
+diff --git a/backend/src/runner_protocol.rs b/backend/src/runner_protocol.rs
+index 065a8fe..2ec2ef1 100644
+--- a/backend/src/runner_protocol.rs
++++ b/backend/src/runner_protocol.rs
+@@ -380,13 +380,23 @@ pub(crate) async fn register_runner_protocol(
+     Json(input): Json<RunnerRegisterRequest>,
+ ) -> Result<(StatusCode, Json<RunnerRegisterResponse>), ApiError> {
+     validate_protocol_version(input.protocol_version)?;
+-    validate_registration_token(
+-        &input.registration_token,
+-        state.config.runner.registration_token.as_deref(),
+-    )?;
+     let name = input.name.trim();
+     validate_name(name)?;
+     let tags = normalize_tags(&input.tags)?;
++    let deploy_runner = tags.iter().any(|tag| tag == "deploy");
++    if deploy_runner && tags != ["deploy"] {
++        return Err(ApiError::bad_request(
++            "deploy runner may only have the deploy tag",
++        ));
++    }
++    validate_registration_token(
++        &input.registration_token,
++        if deploy_runner {
++            state.config.runner.deploy_registration_token.as_deref()
++        } else {
++            state.config.runner.registration_token.as_deref()
++        },
++    )?;
+     validate_capabilities(&input.capabilities)?;
+ 
+     let credential = new_opaque_token("cicd_runner");
+@@ -450,6 +460,11 @@ pub(crate) async fn runner_protocol_heartbeat(
+         .map(|tags| normalize_tags(tags))
+         .transpose()?
+         .unwrap_or_else(|| runner.tags.clone());
++    if tags.iter().any(|tag| tag == "deploy") != runner.tags.iter().any(|tag| tag == "deploy")
++        || (runner.tags.iter().any(|tag| tag == "deploy") && tags != ["deploy"])
++    {
++        return Err(ApiError::bad_request("deploy runner tag is immutable"));
++    }
+     if !matches!(input.status.as_str(), "online" | "draining") {
+         return Err(ApiError::bad_request(
+             "runner status must be online or draining",
+@@ -1164,6 +1179,18 @@ async fn claim_next_work(
+              WHERE q.state = 'queued' \
+                AND q.not_before <= now() \
+                AND q.required_tags <@ $8::text[] \
++               AND (NOT ('deploy' = ANY($8::text[])) OR ( \
++                   'deploy' = ANY(q.required_tags) \
++                   AND j.command = $9 \
++                   AND pp.config_source = 'deployment' \
++                   AND EXISTS ( \
++                     SELECT 1 FROM deployments d \
++                     JOIN environments e ON e.id = d.environment_id \
++                     WHERE d.pipeline_id = p.id \
++                       AND d.status IN ('pending','running') \
++                       AND e.project_id = p.project_id \
++                   ) \
++               )) \
+                AND j.status = 'queued' \
+                AND a.status = 'queued' \
+                AND NOT j.manual \
+@@ -1251,6 +1278,7 @@ async fn claim_next_work(
+     .bind(ACK_DEADLINE_SECONDS)
+     .bind(PROTOCOL_VERSION)
+     .bind(runner_tags)
++    .bind("set -e\nservice-pulse-deploy")
+         .fetch_optional(&mut *tx)
+         .await;
+         let row = match row {
+@@ -1275,6 +1303,31 @@ async fn claim_next_work(
+             Err(error) => return Err(ApiError::internal(error)),
+         }
+         crate::api::refresh_statuses(db, row.stage_id).await?;
++        let variables: serde_json::Value =
++            sqlx::query_scalar("SELECT variables FROM pipelines WHERE id = $1")
++                .bind(row.pipeline_id)
++                .fetch_one(db)
++                .await
++                .map_err(ApiError::internal)?;
++        let mut environment = BTreeMap::new();
++        environment.insert(
++            "CICD_COMMIT_SHA".to_owned(),
++            row.commit_sha.clone().unwrap_or_default(),
++        );
++        if let Some(values) = variables.as_object() {
++            for key in [
++                "deployment_id",
++                "environment_id",
++                "rollback_of_deployment_id",
++            ] {
++                if let Some(value) = values.get(key).and_then(serde_json::Value::as_str) {
++                    environment.insert(
++                        format!("CICD_VAR_{}", key.to_ascii_uppercase()),
++                        value.to_owned(),
++                    );
++                }
++            }
++        }
+ 
+         return Ok(Some(RunnerLeaseOffer {
+             protocol_version: PROTOCOL_VERSION,
+@@ -1295,7 +1348,7 @@ async fn claim_next_work(
+                 executor: "shell".to_string(),
+                 image: row.image,
+                 commands: vec![row.command],
+-                environment: BTreeMap::new(),
++                environment,
+                 secrets: row.required_secrets,
+                 timeout_seconds: row.timeout_seconds,
+                 workspace: RunnerWorkspace {
+diff --git a/deploy/pulse-runner.Dockerfile b/deploy/pulse-runner.Dockerfile
+new file mode 100644
+index 0000000..3ac4845
+--- /dev/null
++++ b/deploy/pulse-runner.Dockerfile
+@@ -0,0 +1,12 @@
++ARG FORGE_IMAGE=pulse-forge-qa-backend:automation
++FROM docker:27-cli AS docker_cli
++
++FROM ${FORGE_IMAGE}
++USER root
++COPY --from=docker_cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
++COPY deploy/service-pulse-demo.compose.yml /opt/pulse-deploy/demo.compose.yml
++COPY deploy/service-pulse-deploy /usr/local/bin/service-pulse-deploy
++RUN chmod 0755 /usr/local/bin/service-pulse-deploy /usr/local/lib/docker/cli-plugins/docker-compose \
++    && mkdir -p /var/lib/pulse-deploy/releases
++ENV CICD_RUNNER_TAGS=deploy
++ENTRYPOINT ["/usr/local/bin/forge-runner"]
+diff --git a/deploy/pulse-runner.compose.yml b/deploy/pulse-runner.compose.yml
+new file mode 100644
+index 0000000..2029610
+--- /dev/null
++++ b/deploy/pulse-runner.compose.yml
+@@ -0,0 +1,33 @@
++services:
++  pulse-deploy-runner:
++    image: pulse-forge-deploy-runner:local
++    environment:
++      CICD_API_URL: http://cicd-backend:22801
++      CICD_RUNNER_NAME: pulse-deploy-local
++      CICD_RUNNER_TAGS: deploy
++      CICD_RUNNER_REGISTRATION_TOKEN: ${PULSE_DEPLOY_REGISTRATION_TOKEN:?required}
++      CICD_RUNNER_CREDENTIAL_FILE: /var/lib/pulse-deploy/auth/credential
++      CICD_RUNNER_NO_CHECKOUT: "true"
++      CICD_RUNNER_WORK_DIR: /workspaces
++      SERVICE_PULSE_DB_PASSWORD: ${SERVICE_PULSE_DB_PASSWORD:?required}
++    volumes:
++      - /var/run/docker.sock:/var/run/docker.sock
++      - sdlc-demo_cicd_git_repos:/forge-git:ro
++      - ${PULSE_BASE_SOURCE_PATH:?required}:/runner-sources/services-base:ro
++      - pulse_deploy_releases:/var/lib/pulse-deploy/releases
++      - pulse_runner_auth:/var/lib/pulse-deploy/auth
++      - pulse_deploy_workspaces:/workspaces
++    networks:
++      - sdlc-demo_cicd
++    restart: unless-stopped
++
++volumes:
++  sdlc-demo_cicd_git_repos:
++    external: true
++  pulse_deploy_releases:
++  pulse_runner_auth:
++  pulse_deploy_workspaces:
++
++networks:
++  sdlc-demo_cicd:
++    external: true
+diff --git a/deploy/service-pulse-demo.compose.yml b/deploy/service-pulse-demo.compose.yml
+new file mode 100644
+index 0000000..e995c7f
+--- /dev/null
++++ b/deploy/service-pulse-demo.compose.yml
+@@ -0,0 +1,49 @@
++services:
++  postgres:
++    image: postgres:16-alpine
++    environment:
++      POSTGRES_USER: pulse
++      POSTGRES_PASSWORD: ${SERVICE_PULSE_DB_PASSWORD:?required}
++      POSTGRES_DB: pulse
++    ports:
++      - "127.0.0.1:5442:5432"
++    volumes:
++      - service-pulse-postgres:/var/lib/postgresql/data
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U pulse -d pulse"]
++      interval: 5s
++      timeout: 3s
++      retries: 20
++  api:
++    image: ${API_IMAGE:?required}
++    environment:
++      SERVICE_PULSE_DATABASE_URL: postgres://pulse:${SERVICE_PULSE_DB_PASSWORD:?required}@postgres:5432/pulse
++      SERVICE_PULSE_AUTH__CENTRAL_JWKS_URI: http://host.docker.internal:7701/oidc/jwks
++      SERVICE_PULSE_AUTH__CENTRAL_ISSUER: http://localhost:7701
++      RUST_LOG: service_pulse=info,tower_http=info
++    ports:
++      - "127.0.0.1:7792:7792"
++    extra_hosts:
++      - "host.docker.internal:host-gateway"
++    depends_on:
++      postgres:
++        condition: service_healthy
++    healthcheck:
++      test: ["CMD", "curl", "--fail", "http://127.0.0.1:7792/healthz"]
++      interval: 10s
++      timeout: 3s
++      retries: 20
++  web:
++    image: ${WEB_IMAGE:?required}
++    ports:
++      - "127.0.0.1:7791:80"
++    depends_on:
++      api:
++        condition: service_healthy
++    healthcheck:
++      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/"]
++      interval: 10s
++      timeout: 3s
++      retries: 20
++volumes:
++  service-pulse-postgres:
+diff --git a/deploy/service-pulse-deploy b/deploy/service-pulse-deploy
+new file mode 100644
+index 0000000..5eee3fe
+--- /dev/null
++++ b/deploy/service-pulse-deploy
+@@ -0,0 +1,72 @@
++#!/bin/sh
++set -eu
++
++SHA=${CICD_COMMIT_SHA:?missing commit SHA}
++DEPLOYMENT_ID=${CICD_VAR_DEPLOYMENT_ID:?missing deployment ID}
++ROLLBACK_ID=${CICD_VAR_ROLLBACK_OF_DEPLOYMENT_ID:-}
++STORE=/var/lib/pulse-deploy/releases
++COMPOSE=/opt/pulse-deploy/demo.compose.yml
++BASE_SHA=14abba88ec3000fa2d10f7431a0d5a1182d9eeb5
++BASE_TREE_SHA256=5288796d511b1b1fe5df65b8f5a0e974f73526d77815802cc90b25dbfae3d79d
++
++printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'
++printf '%s' "$DEPLOYMENT_ID" | grep -Eq '^[0-9a-f-]{36}$'
++if [ -n "$ROLLBACK_ID" ]; then
++  printf '%s' "$ROLLBACK_ID" | grep -Eq '^[0-9a-f-]{36}$'
++fi
++
++PREV_API=$(docker inspect service-pulse-api-1 --format '{{.Image}}' 2>/dev/null || true)
++PREV_WEB=$(docker inspect service-pulse-web-1 --format '{{.Image}}' 2>/dev/null || true)
++
++if [ -n "$ROLLBACK_ID" ]; then
++  TARGET="$STORE/$ROLLBACK_ID.env"
++  [ -f "$TARGET" ] || { echo "rollback target has no verified image manifest" >&2; exit 1; }
++  . "$TARGET"
++  [ "$RELEASE_SHA" = "$SHA" ] || { echo "rollback SHA does not match release manifest" >&2; exit 1; }
++  API_IMAGE=$RELEASE_API_IMAGE
++  WEB_IMAGE=$RELEASE_WEB_IMAGE
++else
++  [ -d /forge-git/service-pulse.git ] || { echo "Pulse bare repository is unavailable" >&2; exit 1; }
++  ACTUAL_BASE_TREE_SHA256=$(find /runner-sources/services-base -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)
++  [ "$ACTUAL_BASE_TREE_SHA256" = "$BASE_TREE_SHA256" ] || {
++    echo "services-base source differs from the pinned release tree" >&2; exit 1;
++  }
++  mkdir -p source/service-pulse source/services-base
++  git --git-dir=/forge-git/service-pulse.git archive "$SHA" | tar -x -C source/service-pulse
++  cp -a /runner-sources/services-base/. source/services-base/
++  MIGRATIONS=source/service-pulse/backend/migrations
++  [ "$(find "$MIGRATIONS" -maxdepth 1 -name '*.sql' | wc -l)" -eq 2 ] || {
++    echo "schema change requires a backup/restore release procedure" >&2; exit 1;
++  }
++  printf '%s  %s\n' \
++    b31623045f34982eac0a02e5acf77bd96898e15fda752814751cf4769464ff65e8abfe17d195d8676cd3fe520e81ab76 "$MIGRATIONS/0001_service_pulse.sql" \
++    abea8037a10bbf2e5d4605f804f413a35c7d26b33d80ed035959c73a6f2a5754173bf050fd91b0c205aa7dc5bf23e8eb "$MIGRATIONS/0002_availability_incidents.sql" \
++    | sha384sum --check --status || {
++      echo "migration bytes differ from the verified rollback baseline" >&2; exit 1;
++    }
++  printf '%s\n' '.git' 'target' 'node_modules' '.artifacts' > source/.dockerignore
++  docker build --build-arg "SERVICE_PULSE_COMMIT_SHA=$SHA" -f source/service-pulse/backend/Dockerfile -t "service-pulse-api:sha-$SHA" source
++  docker build -f source/service-pulse/frontend/Dockerfile -t "service-pulse-web:sha-$SHA" source
++  API_IMAGE=$(docker image inspect "service-pulse-api:sha-$SHA" --format '{{.Id}}')
++  WEB_IMAGE=$(docker image inspect "service-pulse-web:sha-$SHA" --format '{{.Id}}')
++fi
++
++export API_IMAGE WEB_IMAGE
++if ! docker compose -p service-pulse -f "$COMPOSE" up -d --no-build --wait; then
++  echo "Pulse health failed; restoring the previous images" >&2
++  if [ -n "$PREV_API" ] && [ -n "$PREV_WEB" ]; then
++    API_IMAGE=$PREV_API WEB_IMAGE=$PREV_WEB
++    export API_IMAGE WEB_IMAGE
++    docker compose -p service-pulse -f "$COMPOSE" up -d --no-build --wait || true
++  fi
++  exit 1
++fi
++
++RELEASE_API_IMAGE=$API_IMAGE
++RELEASE_WEB_IMAGE=$WEB_IMAGE
++RELEASE_SHA=$SHA
++printf 'RELEASE_API_IMAGE=%s\nRELEASE_WEB_IMAGE=%s\nRELEASE_SHA=%s\n' \
++  "$RELEASE_API_IMAGE" "$RELEASE_WEB_IMAGE" "$RELEASE_SHA" > "$STORE/$DEPLOYMENT_ID.env"
++printf '{"deployment_id":"%s","commit_sha":"%s","base_sha":"%s","base_tree_sha256":"%s","api_image":"%s","web_image":"%s","rollback_of":"%s","health":"passed"}\n' \
++  "$DEPLOYMENT_ID" "$SHA" "$BASE_SHA" "$BASE_TREE_SHA256" "$API_IMAGE" "$WEB_IMAGE" "$ROLLBACK_ID" > release.json
++cat release.json
+diff --git a/docs/API.md b/docs/API.md
+index c6f4397..ab14dcf 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -1094,12 +1094,15 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
+ | PATCH | `/environments/{environment_id}` | Обновить окружение |
+ | DELETE | `/environments/{environment_id}` | Удалить окружение |
+ | GET | `/environments/{environment_id}/deployments` | Список деплоев |
+-| POST | `/environments/{environment_id}/deployments` | Создать деплой (git_ref, status) |
++| POST | `/environments/{environment_id}/deployments` | Создать деплой (`git_ref`: точный SHA защищённого `main`, optional UUID `request_key`) |
+ | GET | `/deployments/{deployment_id}/approvals` | Append-only решения по protected deployment |
+ | POST | `/deployments/{deployment_id}/approvals` | Записать approval decision (`approved`/`rejected`, optional actor/comment) |
+ | POST | `/deployments/{deployment_id}/rollback` | Создать отдельную rollback delivery запись |
++| POST | `/deployments/{deployment_id}/cancel` | Отменить pending/running deployment и связанный pipeline |
+ 
+-`Environment` содержит `protected` и `required_approvals`. Для protected environment deployment нельзя сразу создать как terminal `success`/`failed` или связать с уже запущенным pipeline: запись стартует как `pending`, а `POST /deployments/{deployment_id}/approvals` сохраняет immutable decision. При включённой auth-схеме actor берётся из JWT/PAT subject; body `actor` используется только в trusted-network режиме. Когда набрано `required_approvals`, backend запускает pipeline через тот же idempotent trigger helper и связывает его с deployment. Rollback не переписывает исходный deployment: создаётся новая запись с `rollback_of_id`; для обычного окружения pipeline стартует сразу, для protected окружения rollback также ждёт approval.
++`Environment` содержит `protected` и `required_approvals`. Любой новый deployment стартует как `pending`; клиент не может установить terminal status или привязать pipeline. Forge заранее проверяет точный SHA из защищённого `main` Service Pulse. Конфигурация `.forge-deploy.yml` берётся из этого commit; для исторического commit до её появления берётся конфигурация из текущего защищённого `main` и фиксируется вместе с hash в immutable pipeline plan, тогда как код всегда собирается из запрошенного SHA. Для protected environment `POST /deployments/{deployment_id}/approvals` сохраняет immutable decision; после нужного числа approvals запускается отдельный deploy pipeline. Для unprotected environment он запускается сразу. `request_key` идемпотентен внутри environment: повтор тех же параметров возвращает ту же запись, иной SHA или rollback target даёт `409`. Rollback не переписывает исходный deployment, а создаёт новую запись с `rollback_of_id` и optional `request_key`. Статус deployment следует terminal результату связанного deploy pipeline; зелёный push CI не является выпуском.
++
++При обычном push Forge читает только `.forge-ci.yml`, а при явном deployment — только `.forge-deploy.yml`. Последний допускает единственный job с `tags: [deploy]`, командой `service-pulse-deploy`, без `allow_failure`, `manual` и job secrets. Тег `deploy` запрещён в push CI. Выделенный `forge-runner` регистрируется отдельным `CICD_DEPLOY_RUNNER_REGISTRATION_TOKEN`; обычный registration token не может получить этот тег, heartbeat не может изменить его, deploy runner не получает untagged CI jobs. Локальный fixed script и Compose манифест находятся в `deploy/`, вне репозитория Pulse; они проверяют неизменные миграции, собирают образы из SHA с закреплённым Base, ждут API/UI health, сохраняют image ID и восстанавливают предыдущие образы при неуспехе. Тома PostgreSQL не удаляются.
+ 
+ ### Schedules
+ 
+diff --git a/docs/DATA_MODEL.md b/docs/DATA_MODEL.md
+index 25331c2..9ba62ee 100644
+--- a/docs/DATA_MODEL.md
++++ b/docs/DATA_MODEL.md
+@@ -442,7 +442,7 @@ External claim выполняется в транзакции `SERIALIZABLE`: п
+ 
+ ## 5.2 job_leases
+ 
+-Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит compatible `job_queue` row в `leased`, `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version, плюс проверяет current `shell` executor compatibility перед claim. Unacknowledged external lease после `ack_deadline` закрывается как `expired` delivery, а текущая queue row/attempt возвращается в `queued` для следующей generation. `forge-runner` уже работает как отдельный shell process поверх этой модели, получает declared secrets, держит active-lease heartbeat и загружает declared artifact files через lease-scoped endpoint; stale-runner reconciliation не переводит runner в `offline`, пока за ним есть unexpired active lease. Production chunked artifact sessions, protected tag/pool policy, advanced capability matching, sandbox и расширенная restart/race lost-runner suite остаются target.
++Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит compatible `job_queue` row в `leased`, `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version, плюс проверяет current `shell` executor compatibility перед claim. Unacknowledged external lease после `ack_deadline` закрывается как `expired` delivery, а текущая queue row/attempt возвращается в `queued` для следующей generation. `forge-runner` уже работает как отдельный shell process поверх этой модели, получает declared secrets, держит active-lease heartbeat и загружает declared artifact files через lease-scoped endpoint; stale-runner reconciliation не переводит runner в `offline`, пока за ним есть unexpired active lease. Специальный тег `deploy` защищён отдельным registration token и не выдаёт untagged jobs. Production chunked artifact sessions, общие protected tag/pool policy, advanced capability matching, sandbox и расширенная restart/race lost-runner suite остаются target.
+ 
+ | Колонка | Тип | Nullable | Default | Описание |
+ |---|---|---|---|---|
+@@ -657,7 +657,8 @@ Runtime maintenance переводит `status='online'` в `offline`, когд
+ | `environment_id` | UUID | NOT NULL | — | FK → `environments(id)` CASCADE |
+ | `pipeline_id` | UUID | NULL | — | FK → `pipelines(id)` SET NULL |
+ | `rollback_of_id` | UUID | NULL | — | FK → `deployments(id)` SET NULL; исходная delivery-запись для rollback |
+-| `git_ref` | TEXT | NOT NULL | — | Деплойимый Git-реф |
++| `request_key` | UUID | NULL | — | Идемпотентность запроса в пределах environment, UNIQUE `(environment_id, request_key)` |
++| `git_ref` | TEXT | NOT NULL | — | Точный commit SHA из защищённого `main` Service Pulse |
+ | `status` | TEXT | NOT NULL | `'pending'` | CHECK: `pending`, `running`, `success`, `failed` |
+ | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+ 
+diff --git a/docs/adr/0017-service-pulse-deployment-boundary.md b/docs/adr/0017-service-pulse-deployment-boundary.md
+new file mode 100644
+index 0000000..97afb89
+--- /dev/null
++++ b/docs/adr/0017-service-pulse-deployment-boundary.md
+@@ -0,0 +1,17 @@
++# ADR-0017: отдельная граница выпуска Service Pulse
++
++## Контекст
++
++Push CI выполняется на общих Docker runners. Его зелёный результат не доказывает, что приложение развернуто и отвечает. Прямой доступ таких jobs к Docker host недопустим.
++
++## Решение
++
++- `.forge-ci.yml` читается только для push/API CI. Запрос deployment по точному SHA из защищённого `main` читает `.forge-deploy.yml` из этого commit, а для исторического commit без файла — из текущего защищённого `main`, фиксируя её hash в плане. Fallback template запрещён.
++- Deployment создаётся в `pending`, approval сохраняется в существующем журнале. `success` выставляется только после terminal success выделенного pipeline, чей фиксированный job выполняется runner с защищённым тегом `deploy`.
++- Для deploy runner используется отдельный registration token; обычный runner не может добавить тег через heartbeat. Deploy runner не получает untagged jobs.
++- Команда job фиксирована как `service-pulse-deploy`; скрипт и Compose живут у runner, а не в изменяемом продуктовом checkout. Скрипт собирает и применяет immutable image ID, проверяет health, сохраняет release manifest; при ошибке применяет прошлые ID, не трогая том PostgreSQL.
++- Forge хранит UUID `request_key` для безопасного повтора deployment/rollback после рестарта Fleet. Fleet отдельно проверяет работающие API и UI перед `completed`.
++
++## Ограничение
++
++Это локальный доверенный `demo` стенд. Новые миграции блокируются до отдельного backup/restore и проверки совместимости отката. Production runner pools и release tags не входят в этот проход.

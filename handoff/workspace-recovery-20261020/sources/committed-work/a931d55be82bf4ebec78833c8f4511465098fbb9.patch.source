@@ -1,0 +1,58 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 75bce97..4787a82 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,9 @@
+ 
+ ## [Unreleased]
+ 
++- Nginx возвращает 404 для отсутствующих assets; bare `/api` передаётся
++  backend без redirect. SPA и Git Smart HTTP сохраняются; runtime не меняется.
++
+ - Общий Base snapshot обновлён до 0ffb99e: verified profile/directory contracts
+   и UI dependency graph без замены shell. Принятый runtime не переключается.
+ 
+diff --git a/docs/plans/2026-10-06-static-asset-routing.md b/docs/plans/2026-10-06-static-asset-routing.md
+new file mode 100644
+index 0000000..f4e2427
+--- /dev/null
++++ b/docs/plans/2026-10-06-static-asset-routing.md
+@@ -0,0 +1,24 @@
++# Корректная обработка отсутствующих assets
++
++## Подтверждённая проблема
++
++Реальный web-кандидат отдаёт SPA HTML с HTTP 200 вместо отсутствующего JS.
++Запрос `/api` получает nginx redirect вместо ответа backend; published port
++не должен теряться при прямом обращении через web origin.
++
++## Изменение
++
++Отдельный `/assets/` location возвращает файл или 404. Exact `/api` proxy
++сохраняет исходный URI без redirect; `/api/`, Git Smart HTTP и SPA неизменны.
++Base shell, pinned UI snapshot, API backend, auth и runtime не меняются.
++
++## Приёмка
++
++- Штатные frontend tests, typecheck, lint, format/OpenAPI, build и Base gate.
++- Реальный immutable image: metadata и digests всех JS/CSS совпадают;
++  отсутствующие JS/CSS/nested assets возвращают 404 без SPA fallback.
++- SPA direct open/reload работают; `/api` и неизвестный API URI сохраняют
++  HTTP status, content type и body фактического backend, без redirect в SPA.
++- Owned temporary Compose убран, принятые images и данные не меняются.
++
++SSO, роли и полный browser acceptance проверяются отдельно.
+diff --git a/frontend/nginx.conf b/frontend/nginx.conf
+index b0ab6de..309aaf0 100644
+--- a/frontend/nginx.conf
++++ b/frontend/nginx.conf
+@@ -4,7 +4,9 @@ server {
+   root /usr/share/nginx/html;
+ 
+   # REST API and Git Smart HTTP share the backend service.
++  location = /api { proxy_pass http://backend:22801; }
+   location /api/ { proxy_pass http://backend:22801; }
+   location /git/ { proxy_pass http://backend:22801; }
++  location /assets/ { try_files $uri =404; }
+   location / { try_files $uri $uri/ /index.html; }
+ }

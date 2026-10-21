@@ -1,0 +1,318 @@
+//! Remote Docker jobs transfer files explicitly instead of sharing host paths.
+use std::{io, path::Path, time::Duration};
+use tokio::process::Command;
+use uuid::Uuid;
+
+#[derive(Clone)]
+pub(crate) struct Client {
+    host: String,
+    cert_path: String,
+    daemon_id: String,
+}
+
+fn invalid(message: &str) -> io::Error {
+    io::Error::other(message)
+}
+
+impl Client {
+    fn from_env() -> io::Result<Self> {
+        let host = std::env::var("DOCKER_HOST").unwrap_or_default();
+        let cert_path = std::env::var("DOCKER_CERT_PATH").unwrap_or_default();
+        let daemon_id = std::env::var("CICD_RUNNER_DOCKER_DAEMON_ID").unwrap_or_default();
+        if !host.starts_with("tcp://")
+            || std::env::var("DOCKER_TLS_VERIFY").as_deref() != Ok("1")
+            || daemon_id.is_empty()
+            || ["ca.pem", "cert.pem", "key.pem"]
+                .iter()
+                .any(|name| !Path::new(&cert_path).join(name).is_file())
+        {
+            return Err(invalid(
+                "remote Docker requires a TLS endpoint, certificates and expected daemon ID",
+            ));
+        }
+        Ok(Self {
+            host,
+            cert_path,
+            daemon_id,
+        })
+    }
+
+    pub(crate) fn apply(&self, command: &mut Command) {
+        // Job variables must never redirect the control-plane Docker client.
+        command
+            .env_remove("DOCKER_CONTEXT")
+            .env("DOCKER_HOST", &self.host)
+            .env("DOCKER_CERT_PATH", &self.cert_path)
+            .env("DOCKER_TLS_VERIFY", "1");
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new("docker");
+        self.apply(&mut command);
+        command
+    }
+
+    async fn run(&self, args: &[&str]) -> io::Result<String> {
+        let output =
+            tokio::time::timeout(Duration::from_secs(60), self.command().args(args).output())
+                .await
+                .map_err(|_| invalid("remote Docker operation timed out"))??;
+        if !output.status.success() {
+            return Err(invalid(&format!(
+                "remote Docker {} failed: {}",
+                args[0],
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    async fn verify(&self) -> io::Result<()> {
+        if self.run(&["info", "--format", "{{.ID}}"]).await? != self.daemon_id {
+            return Err(invalid(
+                "remote Docker daemon identity differs from workspace",
+            ));
+        }
+        let network = std::env::var("CICD_RUNNER_DOCKER_NETWORK").unwrap_or_default();
+        let sources = std::env::var("CICD_RUNNER_SHARED_SOURCES_VOLUME").unwrap_or_default();
+        if network.is_empty() || sources.is_empty() {
+            return Err(invalid(
+                "remote Docker requires its workspace network and source volume",
+            ));
+        }
+        self.run(&["network", "inspect", &network]).await?;
+        // Fail before Docker can create an empty replacement for a missing source volume.
+        self.run(&["volume", "inspect", &sources]).await?;
+        Ok(())
+    }
+}
+
+pub(crate) fn enabled() -> bool {
+    std::env::var("CICD_RUNNER_REMOTE_DOCKER").as_deref() == Ok("true")
+}
+
+pub(crate) fn docker_command() -> io::Result<Command> {
+    if enabled() {
+        Ok(Client::from_env()?.command())
+    } else {
+        Ok(Command::new("docker"))
+    }
+}
+
+pub(crate) struct RemoteJob {
+    client: Client,
+    helper: String,
+    pub(crate) volume: String,
+    active: bool,
+}
+
+impl RemoteJob {
+    pub(crate) async fn prepare(id: Uuid, workspace: &Path) -> io::Result<Self> {
+        let client = Client::from_env()?;
+        client.verify().await?;
+        let mut job = Self {
+            client,
+            helper: format!("forge-transfer-{id}"),
+            volume: format!("forge-workspace-{id}"),
+            active: true,
+        };
+        let prepared = async {
+            job.client
+                .run(&[
+                    "volume",
+                    "create",
+                    "--label",
+                    &format!("sdlc.job={id}"),
+                    &job.volume,
+                ])
+                .await?;
+            job.client
+                .run(&[
+                    "run",
+                    "-d",
+                    "--name",
+                    &job.helper,
+                    "--network",
+                    "none",
+                    "--mount",
+                    &format!("type=volume,src={},dst=/workspace", job.volume),
+                    "alpine:3.21",
+                    "sleep",
+                    "86400",
+                ])
+                .await?;
+            let parent = workspace
+                .parent()
+                .ok_or_else(|| invalid("workspace has no job directory"))?;
+            job.client
+                .run(&[
+                    "cp",
+                    &format!("{}/.", parent.display()),
+                    &format!("{}:/workspace", job.helper),
+                ])
+                .await?;
+            job.client
+                .run(&[
+                    "exec",
+                    &job.helper,
+                    "chown",
+                    "-R",
+                    "10001:10001",
+                    "/workspace",
+                ])
+                .await?;
+            Ok::<_, io::Error>(())
+        }
+        .await;
+        if let Err(error) = prepared {
+            job.cleanup().await;
+            return Err(error);
+        }
+        Ok(job)
+    }
+
+    pub(crate) fn command(&self) -> Command {
+        self.client.command()
+    }
+    pub(crate) fn apply(&self, command: &mut Command) {
+        self.client.apply(command);
+    }
+
+    pub(crate) async fn copy_back(&self, workspace: &Path) -> io::Result<()> {
+        self.client
+            .run(&[
+                "cp",
+                &format!("{}:/workspace/workspace/.", self.helper),
+                &workspace.to_string_lossy(),
+            ])
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn stage_artifacts(&self, directory: &Path) -> io::Result<()> {
+        self.client
+            .run(&[
+                "exec",
+                &self.helper,
+                "mkdir",
+                "-p",
+                "/workspace/artifacts",
+                "/workspace/pipeline-artifacts",
+            ])
+            .await?;
+        self.client
+            .run(&[
+                "cp",
+                &format!("{}/.", directory.display()),
+                &format!("{}:/workspace/pipeline-artifacts", self.helper),
+            ])
+            .await?;
+        self.client
+            .run(&[
+                "exec",
+                &self.helper,
+                "chown",
+                "-R",
+                "10001:10001",
+                "/workspace",
+            ])
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn return_artifacts(&self, job: &Path, pipeline: &Path) -> io::Result<()> {
+        self.client
+            .run(&[
+                "cp",
+                &format!("{}:/workspace/artifacts/.", self.helper),
+                &job.to_string_lossy(),
+            ])
+            .await?;
+        self.client
+            .run(&[
+                "cp",
+                &format!("{}:/workspace/pipeline-artifacts/.", self.helper),
+                &pipeline.to_string_lossy(),
+            ])
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn cleanup(&mut self) {
+        // Also covers timeout/early return after killing only the Docker CLI.
+        let main = self.helper.replace("forge-transfer-", "forge-job-");
+        let _ = self.client.run(&["rm", "-f", &main]).await;
+        let _ = self.client.run(&["rm", "-f", &self.helper]).await;
+        let _ = self.client.run(&["volume", "rm", &self.volume]).await;
+        self.active = false;
+    }
+}
+
+impl Drop for RemoteJob {
+    fn drop(&mut self) {
+        if self.active {
+            let client = self.client.clone();
+            let helper = self.helper.clone();
+            let volume = self.volume.clone();
+            tokio::spawn(async move {
+                let main = helper.replace("forge-transfer-", "forge-job-");
+                let _ = client.run(&["rm", "-f", &main]).await;
+                let _ = client.run(&["rm", "-f", &helper]).await;
+                let _ = client.run(&["volume", "rm", &volume]).await;
+            });
+        }
+    }
+}
+
+pub(crate) fn remote_mounts(args: Vec<String>, volume: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut entries = args.into_iter();
+    while let Some(arg) = entries.next() {
+        if arg == "--mount" {
+            let value = entries.next().expect("Docker mount has a value");
+            if value.contains("dst=/workspaces") {
+                continue;
+            }
+            if value.contains("dst=/workspace,") {
+                result.extend([arg, format!("type=volume,src={volume},dst=/workspace")]);
+                continue;
+            }
+            result.extend([arg, value]);
+        } else {
+            result.push(arg);
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_workspace_has_no_host_bind_or_other_jobs_volume() {
+        let args = vec![
+            "run",
+            "--mount",
+            "type=volume,src=shared,dst=/workspaces",
+            "--mount",
+            "type=bind,src=/var/lib/docker/volumes/shared/_data/job,dst=/workspace,readonly=false",
+            "--mount",
+            "type=volume,src=cache,dst=/usr/local/cargo/registry",
+            "alpine:3.21",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        let actual = remote_mounts(args, "job-only");
+        assert!(actual.contains(&"type=volume,src=job-only,dst=/workspace".to_string()));
+        assert!(
+            !actual
+                .iter()
+                .any(|v| v.contains("type=bind") || v.contains("dst=/workspaces"))
+        );
+        assert!(
+            actual.contains(&"type=volume,src=cache,dst=/usr/local/cargo/registry".to_string())
+        );
+    }
+}

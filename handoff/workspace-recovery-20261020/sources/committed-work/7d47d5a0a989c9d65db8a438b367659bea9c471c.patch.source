@@ -1,0 +1,1915 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 5012bda..e3dc370 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -2,16 +2,19 @@
+ 
+ ## Репозиторий
+ 
+-- **Путь**: `/opt/dev/CI-CD`.
++- **Путь**: корень выбранного checkout `CI-CD`; проверки выполняются из чистой task-ветки.
+ - **GitHub**: `git@github.com:FerrPOINT/CI-CD.git`.
+ - **Назначение**: self-hosted CI/CD control plane. В MVP jobs выполняет embedded runner (Docker/shell) с `job_queue` + `job_leases` ledger/reconciliation; внешний runner protocol MVP покрывает register/heartbeat/poll с bounded `waitSeconds` wakeup через in-process signal + PostgreSQL `LISTEN/NOTIFY`/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic runner tag + executor capability matching, ack-timeout requeue, queue-timeout diagnostic для отсутствующего compatible runner-а, cancel signal delivery и stale-runner offline reconciliation, а `forge-runner` даёт отдельный shell-runner process поверх этого protocol с active-lease heartbeat. Production-grade dispatch policy/fairness, richer log chunks, resumable artifact sessions и sandbox hardening остаются target.
+ - **Стек**: Rust 2024, Axum 0.8, SQLx 0.8, PostgreSQL 17; React 19, Vite 6, Tailwind CSS 4, shadcn/ui.
+ - **Env prefix**: `CICD_`.
+-- **Порты**: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
++- **Standalone defaults**: backend `22801`, web `22802`. Установленный workspace
++  использует адреса из выбранного profile/runtime; фиксированные defaults не
++  являются smoke-конфигурацией. PostgreSQL workspace находится в `sdlc-common`
++  без host-порта.
+ 
+ ## Правила работы с репозиторием
+ 
+-1. Работать из `/opt/dev/CI-CD`; перед изменениями читать `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/API.md` и релевантный ADR.
++1. Работать из выбранного checkout; перед изменениями читать `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/API.md` и релевантный ADR.
+ 2. До начала проверять `git status`. Не отменять и не перезаписывать чужие изменения; при неожиданном изменении во время работы остановиться и запросить указания.
+ 3. Backend сохраняет слои `api -> domain -> store`. `JobStatus::transition_to()` — единственный источник правил перехода статусов. SQL-запросы параметризуются через SQLx.
+ 4. Frontend использует React, Tailwind и shadcn/ui; новые API-клиенты и DTO остаются типизированными. Vite dev proxy направляет `/api` на `http://localhost:22801`.
+@@ -44,12 +47,16 @@ cd frontend && pnpm build
+ ```
+ 
+ Для полного backend gate выполнять также `cargo build --locked --release --workspace`
+-в том же QA-сервисе. Integration tests получают только JDBC/SQLx-параметры
++в том же QA-сервисе. Integration tests получают только SQLx-параметры
+ собственного disposable PostgreSQL; проверки migration catalog требуют имени
+ базы `forge_test_*`. Штатный installed runtime не используется для тестов.
+ Исторические `just up/down` не являются launcher полного workspace.
+ 
+-Не использовать `docker compose restart` для применения нового образа или env: пересоздавать сервисы через `docker compose up -d` либо `docker compose up --build -d`.
++Изменение image/env действующего workspace выполняется защищённой процедурой
++`workspace.ps1 Apply`: совместимость миграций, backup/locks, сохранение остальных
++image IDs/mounts/secrets и пересоздание только выбранного сервиса. Обычный Start
++не пересобирает принятый runtime. `docker compose restart` не применяет новый образ
++или env. Прямые Compose-команды разрешены для собственных QA-проектов.
+ 
+ ## Checklist перед завершением
+ 
+@@ -84,3 +91,18 @@ sdlc1, sdlc2 и sdlc-common; временные sdlc-qa-/sdlc-build- имеют
+ labels и общий prune запрещены. Rootless runner проверяет TLS и daemon ID без
+ Desktop fallback. Pulse — приватный Git/pipeline только в CI/CD sdlc1.
+ Подробности: [Compose runner](docs/COMPOSE_RUNNER.md).
++
++## Browser acceptance и роли
++
++При Central Auth действует ADR-0010: все активные люди имеют одинаковые
++пользовательские права. Browser actor — `central_user`, подтверждённый через
++`auth/principal` и локальный enabled профиль с тем же immutable central subject.
++Legacy viewer/developer/maintainer/admin и machine scopes проверяются отдельно
++и не изображаются как роли нынешнего SSO Dashboard.
++
++Матрица `docs/ui-routes.json` следует реальным renderers, включая статические
++settings/users и independent requests. Typed 403/404 скрывают stale содержимое;
++recoverable refresh сохраняет предусмотренный retry. Контракт и unit tests не
++заменяют оба QA-профиля, реальный SSO, source-attested images и полный browser
++evidence. Исходники коммитятся до образа, evidence — отдельным коммитом после него.
++Подробности: [UI acceptance](docs/plans/2026-10-05-ui-acceptance-contract.md).
+diff --git a/docs/plans/2026-10-05-ui-acceptance-contract.md b/docs/plans/2026-10-05-ui-acceptance-contract.md
+new file mode 100644
+index 0000000..336d3a1
+--- /dev/null
++++ b/docs/plans/2026-10-05-ui-acceptance-contract.md
+@@ -0,0 +1,64 @@
++# UI-контракт CI/CD — 5 октября 2026
++
++Матрица описывает 24 действующих route patterns, из них 19 operational pages.
++`acceptanceStatus: pending` сохраняется до полной browser-приёмки обоих профилей.
++Исходники фиксируются до сборки кандидата; evidence сохраняется после сборки
++и подтверждает неизменность runtime sources.
++
++## Identity и доступ
++
++ADR-0010 и `backend/src/central_auth.rs::link_central_user` задают действующую
++модель: активный человек связан по immutable central subject и получает единые
++права. Историческая роль локального `users` row сохраняется, но не выбирает
++права нынешнего Central Auth Dashboard. Поэтому browser actor — `central_user`,
++а не список legacy viewer/developer/maintainer/admin. Machine principals и PAT
++scopes имеют отдельные API-проверки; browser fixtures не подменяют их SSO-сессией.
++
++QA использует существующий `/api/v1/auth/principal`: `principal_type=user` и
++`sub` сверяются с enabled локальным профилем, связанным с тем же subject, что
++в Central Auth `/auth/me`. Проверка выполняется только в собственном disposable
++QA-проекте после проверки daemon/labels. UUID проверяются до SQL; credentials и
++личные данные не попадают в опубликованный evidence. Новых API/схем не добавлено.
++
++## Renderers и состояния
++
++Все operational pages защищены `ProtectedRoute` и используют Base AppShell.
++Loading включает фактический lazy/Suspense boundary, даже у статических страниц.
++`/users` только направляет к Admin Panel: ему не назначены API-error/empty.
++`/settings` — статическая справка с локальным поиском: empty означает отсутствие
++совпадений, а не пустую базу. Его standalone defaults не задают адреса workspace.
++
++Lists, tabs, forms и независимые requests перечислены отдельно в stateSources
++и stateNotes. Частичная ошибка refresh, lookup, download или дочернего запроса
++не заменяет normal всего маршрута. Состояния pipeline stages, diff/noChanges,
++filtered noMatches, deliveries и notifications проверяются по реальным renderers.
++Нулевое число stages не объявляется несуществующим отдельным empty renderer.
++
++Typed HTTP 403/404 получают точный denial/not-found DOM. Такой ресурс скрывает
++cached данные и business controls, включая отказ при refresh Dashboard, projects,
++audit и pipeline detail. В aggregate pipeline summaries запрещённый cached run
++исключается, доступные проекты остаются видны. Recoverable 503/network errors
++сохраняют существующий retry и partial-error behavior.
++
++PR detail использует Base ResourceStateView для 404/invalid number; 403 сохраняет
++существующий ForbiddenPage. Error screen `/forbidden` остаётся fullscreen в
++действующем router: он не переведён в public ради gate. Синтетический 403 response
++не считается доказательством отсутствующей browser роли или normal acceptance.
++
++## Проверки и остаток
++
++Regression tests проверяют начальные 403/404, denied/deleted cached resources,
++скрытие mutation controls, aggregate summaries и сохранение retry при 503.
++Проверка browser identity отдельно отклоняет service accounts, disabled/unlinked
++профили, несовпадающих людей и невалидные UUID до SQL.
++
++Frozen frontend install, typecheck, все 217 Vitest tests в 35 файлах, lint,
++24-route contract, production build и OpenAPI check прошли. Browser identity
++проверен четырьмя отдельными negative/positive tests в Base; его общий frontend
++suite прошёл 51 Node и 93 Vitest tests. Эти результаты не заменяют image evidence.
++
++До завершения R5 обязательны frozen install/typecheck/lint/build/OpenAPI gates,
++оба source-attested QA-профиля и все объявленные state cases с safe screenshots,
++SSO/direct/reload, viewport/темами, keyboard/focus, geometry и console/network.
++Текущие source contracts и component tests не являются готовыми browser receipts.
++Рабочие стенды, runner registration, jobs, данные и secrets этим этапом не меняются.
+diff --git a/docs/ui-routes.json b/docs/ui-routes.json
+index 0ee9ad0..596e7b9 100644
+--- a/docs/ui-routes.json
++++ b/docs/ui-routes.json
+@@ -1,5 +1,5 @@
+ {
+-  "schemaVersion": 1,
++  "schemaVersion": 2,
+   "product": "CI-CD",
+   "acceptanceStatus": "pending",
+   "routeSource": "frontend/src/app/router.tsx",
+@@ -10,8 +10,7 @@
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/",
+       "states": [
+@@ -19,11 +18,41 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/dashboard/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts",
++        "frontend/src/shared/lib/use-project-pipelines.ts"
++      ],
++      "stateNotes": "Независимые projects/runners/pipeline requests. Recoverable refresh сохраняет данные с alert; 403/404 скрывают запрещённый cache. Offline runner не означает отказ SSO. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/*",
+@@ -34,8 +63,7 @@
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/audit-log",
+       "states": [
+@@ -43,11 +71,40 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/audit-log/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Empty — успешный total=0 без фильтров; поиск без совпадений сохраняет фильтры. Partial-error — recoverable refresh с cache, 403/404 скрывают записи. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/forbidden",
+@@ -58,8 +115,7 @@
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/jobs/:jobId/artifacts",
+       "states": [
+@@ -67,11 +123,40 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/artifacts/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Partial-error относится к failed download/verification при доступном списке. Синтетические artifacts не содержат secrets. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/login",
+@@ -82,28 +167,53 @@
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/pipelines/:pipelineId",
+       "states": [
+         "normal",
+         "loading",
+-        "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/pipeline-detail/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Detail loading/error и terminal 403/404; partial-error — recoverable refresh или независимые logs/test-report. Число stages=0 не создаёт отдельного empty renderer. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/projects",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/projects",
+       "states": [
+@@ -111,19 +221,47 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/projects/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Partial-error — recoverable refresh сохранённого списка. Terminal 403/404 скрывает список и все формы; ошибка не доказывает normal. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/projects/:projectId/environments",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/projects/:projectId/environments",
+       "states": [
+@@ -131,11 +269,40 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/environments/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Environment list и открытые deployments имеют отдельные запросы; partial-error — отказ дочернего списка/операции. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/projects/:projectId/members",
+@@ -146,8 +313,7 @@
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/projects/:projectId/pipelines",
+       "states": [
+@@ -155,19 +321,45 @@
+         "loading",
+         "empty",
+         "permission-denied",
++        "not-found",
+         "error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/pipelines/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Успешный список, lazy/query loading, пустой список, typed 403/404 и recoverable error с retry. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/projects/:projectId/reports",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/projects/:projectId/reports",
+       "states": [
+@@ -175,19 +367,45 @@
+         "loading",
+         "empty",
+         "permission-denied",
++        "not-found",
+         "error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/reports/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Успешный список, lazy/query loading, пустой список, typed 403/404 и recoverable error с retry. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/projects/:projectId/schedules",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/projects/:projectId/schedules",
+       "states": [
+@@ -195,19 +413,45 @@
+         "loading",
+         "empty",
+         "permission-denied",
++        "not-found",
+         "error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/schedules/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Успешный список, lazy/query loading, пустой список, typed 403/404 и recoverable error с retry. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/projects/:projectId/secrets",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/projects/:projectId/secrets",
+       "states": [
+@@ -215,19 +459,45 @@
+         "loading",
+         "empty",
+         "permission-denied",
++        "not-found",
+         "error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/secrets/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Успешный список, lazy/query loading, пустой список, typed 403/404 и recoverable error с retry. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/projects/:projectId/webhooks",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/projects/:projectId/webhooks",
+       "states": [
+@@ -235,19 +505,47 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/webhooks/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Webhooks, deliveries, notifications и events проверяются отдельно по tabs. Пустые списки и отказ независимого section не подменяют всю страницу. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/repositories",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/repositories",
+       "states": [
+@@ -255,19 +553,47 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/repositories/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Независимый project lookup может отказать при доступном repository list. Фильтрация и пустой store различаются. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/repositories/:repo",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/repositories/:repo",
+       "states": [
+@@ -275,19 +601,47 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/repository-browser/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Code/commits/branches/tags/releases — собственные loading/empty/error. Refs lookup и stale commits/release form дают partial-error. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/repositories/:repo/compare",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/repositories/:repo/compare",
+       "states": [
+@@ -295,19 +649,47 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/compare/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Comparison требует from/to; chooseRefs — read-only исходное состояние, noChanges — empty результата. Refs lookup имеет независимый отказ. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/repositories/:repo/pulls",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/repositories/:repo/pulls",
+       "states": [
+@@ -315,19 +697,47 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/pull-requests/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "List total=0 и filtered noMatches различаются. Create form refs lookup даёт partial-error, HTTP 403/404 списка — terminal. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/repositories/:repo/pulls/:number",
+       "kind": "operational",
+       "layout": "detail-with-aside",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/repositories/:repo/pulls/:number",
+       "states": [
+@@ -335,7 +745,9 @@
+         "loading",
+         "empty",
+         "permission-denied",
+-        "error"
++        "not-found",
++        "error",
++        "partial-error"
+       ],
+       "qa": {
+         "status": "not-run"
+@@ -345,15 +757,41 @@
+           "query": "view=diff",
+           "layout": "wide"
+         }
+-      ]
++      ],
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error",
++          "partial-error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/pull-request-detail/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Detail 403/404/invalid number скрывает pull actions. view=diff использует wide layout и независимый comparison с loading/empty/partial-error. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/runners",
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/runners",
+       "states": [
+@@ -361,31 +799,76 @@
+         "loading",
+         "empty",
+         "permission-denied",
++        "not-found",
+         "error"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty",
++          "permission-denied",
++          "not-found",
++          "error"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/runners/index.tsx",
++        "frontend/src/app/router.tsx",
++        "frontend/src/shared/ui/query-state.tsx",
++        "frontend/src/api/client.ts"
++      ],
++      "stateNotes": "Успешный список, lazy/query loading, пустой список, typed 403/404 и recoverable error с retry. Denial case — ответ собственного QA API; он не вводит legacy viewer/developer browser roles в действующий Central Auth."
+     },
+     {
+       "pattern": "/settings",
+       "kind": "operational",
+       "layout": "reading",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/settings",
+       "states": [
+         "normal",
+         "loading",
+-        "empty",
+-        "permission-denied",
+-        "error"
++        "empty"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading",
++          "empty"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/settings/index.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "stateNotes": "Статическая справка: loading только lazy/Suspense, empty только поиск без совпадений. Запросов БД и server error renderer нет."
+     },
+     {
+       "pattern": "/sso/callback",
+@@ -396,20 +879,47 @@
+       "kind": "operational",
+       "layout": "wide",
+       "roles": [
+-        "authenticated",
+-        "system-admin"
++        "central_user"
+       ],
+       "fixture": "synthetic:CI-CD:/users",
+       "states": [
+         "normal",
+-        "loading",
+-        "empty",
+-        "permission-denied",
+-        "error"
++        "loading"
+       ],
+       "qa": {
+         "status": "not-run"
+-      }
++      },
++      "roleSources": [
++        "backend/src/central_auth.rs",
++        "backend/src/api/authz_mw.rs",
++        "backend/src/platform.rs",
++        "backend/app/src/lib.rs",
++        "frontend/src/shared/auth/auth-provider.tsx",
++        "frontend/src/shared/auth/protected-route.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "roleStates": {
++        "central_user": [
++          "normal",
++          "loading"
++        ]
++      },
++      "stateSources": [
++        "frontend/src/pages/users/index.tsx",
++        "frontend/src/app/router.tsx"
++      ],
++      "stateNotes": "Статическая ссылка в Admin Panel: normal и lazy/Suspense loading. Нет локального users list, empty или error API."
+     }
++  ],
++  "runtimeSources": [
++    "frontend/src",
++    "backend/src",
++    "backend/migrations",
++    "backend/api/src",
++    "backend/app/src",
++    "backend/domain/src",
++    "backend/infra/src",
++    "backend/migration/src",
++    "backend/cli/src"
+   ]
+ }
+diff --git a/frontend/AGENTS.md b/frontend/AGENTS.md
+index 0adfc50..2f99e28 100644
+--- a/frontend/AGENTS.md
++++ b/frontend/AGENTS.md
+@@ -5,8 +5,10 @@
+   принадлежат продукту; страницы входа Auth не требуют доступности Admin.
+ - Описать маршруты, роли, состояния и layout modes в route contract. Приватный
+   operational route сохраняет SSO; fixtures используют synthetic данные.
+-- Перед коммитом выполнить route/acceptance gates и матрицу viewport, тем,
+-  direct/reload, keyboard/focus, geometry, console/network.
++- До source-коммита выполнить route contract и соответствующие unit/build gates.
++  Затем собрать candidate image из committed source SHA и сохранить browser
++  evidence отдельным коммитом. До review readiness обязательны acceptance gates
++  и матрица viewport/тем, direct/reload, keyboard/focus, geometry, console/network.
+ - Browser evidence относится к committed source SHA и реальному candidate image.
+   После evidence допускаются документационные коммиты, если runtime fingerprints
+   не изменились. Secrets и реальные пользовательские данные исключить.
+diff --git a/frontend/src/api/client.ts b/frontend/src/api/client.ts
+index 3c2e32e..eac70a2 100644
+--- a/frontend/src/api/client.ts
++++ b/frontend/src/api/client.ts
+@@ -40,6 +40,11 @@ export class ApiError extends Error {
+   }
+ }
+ 
++/** A refresh may retain cached data, but denied or deleted resources must hide it. */
++export function isTerminalResourceError(error: unknown): error is ApiError {
++  return error instanceof ApiError && (error.status === 403 || error.status === 404)
++}
++
+ type TerminalAuthHandler = () => void
+ let terminalAuthHandler: TerminalAuthHandler | null = null
+ 
+diff --git a/frontend/src/pages/artifacts/artifacts-ux.test.tsx b/frontend/src/pages/artifacts/artifacts-ux.test.tsx
+index d9f96fc..52a4e1c 100644
+--- a/frontend/src/pages/artifacts/artifacts-ux.test.tsx
++++ b/frontend/src/pages/artifacts/artifacts-ux.test.tsx
+@@ -19,8 +19,8 @@ vi.mock('react-i18next', () => ({
+   }),
+ }))
+ vi.mock('@/api/hooks', () => ({ useArtifacts: mocks.useArtifacts }))
+-vi.mock('@/api/client', () => ({
+-  ApiError: class ApiError extends Error {},
++vi.mock('@/api/client', async (importOriginal) => ({
++  ...await importOriginal<typeof import('@/api/client')>(),
+   downloadArtifact: mocks.download,
+   saveDownloadedArtifact: mocks.save,
+ }))
+diff --git a/frontend/src/pages/artifacts/artifacts.test.tsx b/frontend/src/pages/artifacts/artifacts.test.tsx
+index f44a609..8d22e65 100644
+--- a/frontend/src/pages/artifacts/artifacts.test.tsx
++++ b/frontend/src/pages/artifacts/artifacts.test.tsx
+@@ -28,7 +28,10 @@ vi.mock('@/api/hooks', () => ({
+     error: null,
+   }),
+ }))
+-vi.mock('@/api/client', () => clientMocks)
++vi.mock('@/api/client', async (importOriginal) => ({
++  ...await importOriginal<typeof import('@/api/client')>(),
++  ...clientMocks,
++}))
+ vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
+ 
+ afterEach(() => {
+diff --git a/frontend/src/pages/audit-log/audit-log.test.tsx b/frontend/src/pages/audit-log/audit-log.test.tsx
+index 1357afe..0db9470 100644
+--- a/frontend/src/pages/audit-log/audit-log.test.tsx
++++ b/frontend/src/pages/audit-log/audit-log.test.tsx
+@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ 
+ import { AuditLogPage } from './index'
++import { ApiError } from '@/api/client'
+ 
+ const mocks = vi.hoisted(() => ({
+   refetch: vi.fn(),
+@@ -72,6 +73,18 @@ beforeEach(() => {
+ afterEach(cleanup)
+ 
+ describe('AuditLogPage', () => {
++  it.each([[403, 'permission-denied'], [404, 'not-found']] as const)(
++    'hides cached audit records and filters after HTTP %s', (status, state) => {
++      mocks.useAuditLog.mockReturnValue({ ...auditResult({}),
++        error: new ApiError({ kind: 'api', status, message: 'Synthetic unavailable audit' }) })
++      const { container } = renderPage()
++      expect(container.querySelector(`[data-page-state="${state}"]`)).toBeVisible()
++      expect(screen.queryByText('qa-1')).not.toBeInTheDocument()
++      expect(screen.queryByRole('searchbox', { name: 'auditLog.search' })).not.toBeInTheDocument()
++      expect(screen.queryByRole('button', { name: 'common.retry' })).not.toBeInTheDocument()
++    },
++  )
++
+   it('restores server filters from the URL and resets the page when they change', async () => {
+     renderPage('/audit-log?page=2&action=auth.login_failed&q=qa')
+ 
+diff --git a/frontend/src/pages/audit-log/index.tsx b/frontend/src/pages/audit-log/index.tsx
+index 2a64610..0727b3a 100644
+--- a/frontend/src/pages/audit-log/index.tsx
++++ b/frontend/src/pages/audit-log/index.tsx
+@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, History, Search, X } from 'lucide-react'
+ 
+ import { useAuditLog } from '@/api/hooks'
+ import { QueryState } from '@/shared/ui/query-state'
++import { isTerminalResourceError } from '@/api/client'
+ import { UserAvatar } from '@/shared/ui/user-avatar'
+ import { Button, Card, Input, Label } from '@sdlc/ui/ui'
+ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@sdlc/ui/ui'
+@@ -95,6 +96,10 @@ export function AuditLogPage() {
+     }, { replace: true })
+   }
+ 
++  if (isTerminalResourceError(auditQuery.error)) return (
++    <QueryState data={undefined} isLoading={false} error={auditQuery.error}>{() => null}</QueryState>
++  )
++
+   return (
+     <div className="space-y-4">
+       <header className="flex items-center gap-2">
+diff --git a/frontend/src/pages/dashboard/dashboard-page.test.tsx b/frontend/src/pages/dashboard/dashboard-page.test.tsx
+index aa357d4..62df311 100644
+--- a/frontend/src/pages/dashboard/dashboard-page.test.tsx
++++ b/frontend/src/pages/dashboard/dashboard-page.test.tsx
+@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
+ import { MemoryRouter } from 'react-router'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+ import { DashboardPage } from './index'
++import { ApiError } from '@/api/client'
+ 
+ const mocks = vi.hoisted(() => ({
+   useProjects: vi.fn(),
+@@ -81,6 +82,31 @@ afterEach(() => {
+ })
+ 
+ describe('DashboardPage recovery states', () => {
++  it.each([[403, 'permission-denied'], [404, 'not-found']] as const)(
++    'hides cached dashboard data after HTTP %s', (status, state) => {
++      defaultQueries()
++      mocks.useProjects.mockReturnValue({ data: projects, isLoading: false,
++        error: new ApiError({ kind: 'api', status, message: 'Synthetic unavailable catalog' }),
++        refetch: mocks.refetchProjects })
++      renderPage()
++      expect(document.querySelector(`[data-page-state="${state}"]`)).toBeVisible()
++      expect(screen.queryByText('Platform API')).not.toBeInTheDocument()
++      expect(screen.queryByRole('heading', { name: 'dashboard.recentRuns' })).not.toBeInTheDocument()
++      expect(screen.queryByRole('button', { name: 'common.retry' })).not.toBeInTheDocument()
++    },
++  )
++
++  it('hides cached runner status after a denied refresh', () => {
++    defaultQueries()
++    mocks.useRunners.mockReturnValue({ data: [{ id: 'synthetic', name: 'private runner', status: 'online' }],
++      isLoading: false, error: new ApiError({ kind: 'api', status: 403, message: 'Denied runner catalog' }),
++      refetch: mocks.refetchRunners })
++    renderPage()
++    expect(document.querySelector('[data-page-state="permission-denied"]')).toBeVisible()
++    expect(screen.queryByText('private runner')).not.toBeInTheDocument()
++    expect(screen.queryByText('Platform API')).not.toBeInTheDocument()
++  })
++
+   it('keeps successful runs visible when another project request fails', () => {
+     defaultQueries()
+     mocks.useProjectPipelines.mockReturnValue({
+diff --git a/frontend/src/pages/dashboard/index.tsx b/frontend/src/pages/dashboard/index.tsx
+index 456d1ae..003f005 100644
+--- a/frontend/src/pages/dashboard/index.tsx
++++ b/frontend/src/pages/dashboard/index.tsx
+@@ -4,6 +4,7 @@ import { useProjects, useRunners } from '@/api/hooks'
+ import { useProjectPipelines } from '@/shared/lib/use-project-pipelines'
+ import { formatDate } from '@/shared/lib/format'
+ import { QueryState } from '@/shared/ui/query-state'
++import { isTerminalResourceError } from '@/api/client'
+ import { Button } from '@sdlc/ui/ui'
+ import { ArrowRight, Clock3, FolderGit2, Play, Server } from 'lucide-react'
+ import { summarizePipelines } from './model'
+@@ -55,6 +56,9 @@ export function DashboardPage() {
+     { label: t('dashboard.failed'), value: runsReady ? summary.failed : pipelineQuery.isLoading ? '…' : '—', tone: 'text-danger' },
+   ]
+ 
++  const terminalError = [projectsError, runnersError].find(isTerminalResourceError)
++  if (terminalError) return <QueryState data={undefined} isLoading={false} error={terminalError}>{() => null}</QueryState>
++
+   return (
+     <div className="space-y-5">
+       <div className="flex flex-wrap items-center justify-between gap-3">
+diff --git a/frontend/src/pages/forbidden/index.tsx b/frontend/src/pages/forbidden/index.tsx
+index d5f3b6e..e43aa7f 100644
+--- a/frontend/src/pages/forbidden/index.tsx
++++ b/frontend/src/pages/forbidden/index.tsx
+@@ -9,7 +9,7 @@ import { Button } from '@sdlc/ui/ui'
+ export function ForbiddenPage() {
+   const { t } = useTranslation()
+   return (
+-    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 p-8 text-center">
++    <div data-page-state="permission-denied" className="flex min-h-[60vh] flex-col items-center justify-center gap-4 p-8 text-center">
+       <ShieldAlert className="h-12 w-12 text-status-failed" aria-hidden />
+       <h1 className="text-xl font-semibold">{t('errors.forbidden.title', 'Доступ запрещён')}</h1>
+       <p className="max-w-md text-sm text-text-secondary">
+diff --git a/frontend/src/pages/pipeline-detail/index.tsx b/frontend/src/pages/pipeline-detail/index.tsx
+index 1f5e90a..ddbb156 100644
+--- a/frontend/src/pages/pipeline-detail/index.tsx
++++ b/frontend/src/pages/pipeline-detail/index.tsx
+@@ -26,7 +26,7 @@ import {
+   AlertDialogTitle,
+ } from '@sdlc/ui/ui'
+ import type { Job, TestReport } from '@/api/types'
+-import { Button } from '@sdlc/ui/ui'
++import { Button, ResourceStateView } from '@sdlc/ui/ui'
+ import { Input } from '@sdlc/ui/ui'
+ import {
+   ChevronRight,
+@@ -70,6 +70,8 @@ export function PipelineDetailPage() {
+     if (selectedJobId) logPanelRef.current?.scrollIntoView?.({ block: 'start' })
+   }, [selectedJobId])
+ 
++  if (error instanceof ApiError && error.status === 403) return <ForbiddenPage />
++  if (error instanceof ApiError && error.status === 404) return <ResourceStateView state={{ kind: 'not-found' }} />
+   if (isLoading)
+     return (
+       <p role="status" className="text-sm text-text-muted">
+@@ -77,7 +79,6 @@ export function PipelineDetailPage() {
+       </p>
+     )
+   if (error && !data) {
+-    if (error instanceof ApiError && error.status === 403) return <ForbiddenPage />
+     return (
+       <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-danger">
+         <span>{t('pipelines.loadError')}</span>
+diff --git a/frontend/src/pages/pipeline-detail/pipeline-detail.test.tsx b/frontend/src/pages/pipeline-detail/pipeline-detail.test.tsx
+index 3e04d05..3031eb3 100644
+--- a/frontend/src/pages/pipeline-detail/pipeline-detail.test.tsx
++++ b/frontend/src/pages/pipeline-detail/pipeline-detail.test.tsx
+@@ -1,11 +1,11 @@
+ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
++import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+ import { MemoryRouter, Route, Routes } from 'react-router'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+ import { PipelineDetailPage } from './index'
+ 
+ vi.mock('react-i18next', () => ({
+-  useTranslation: () => ({ t: (key: string, fallback?: string) => fallback ?? key }),
++  useTranslation: () => ({ t: (key: string, fallback?: string | { defaultValue?: string }) => typeof fallback === 'string' ? fallback : key }),
+ }))
+ 
+ vi.mock('sonner', () => ({
+@@ -28,6 +28,8 @@ function renderPipelineDetail(
+     failFirstLogs?: boolean
+     failFirstOlderLogs?: boolean
+     newLogOnRefresh?: boolean
++    terminalDetailStatus?: 403 | 404
++    terminalOnRefresh?: 403 | 404
+   } = {},
+ ) {
+   const jobStatus = options.jobStatus ?? 'running'
+@@ -42,7 +44,13 @@ function renderPipelineDetail(
+       const url = typeof input === 'string' ? input : input.toString()
+       requests.push(url)
+       if (url === `/api/v1/pipelines/${pipelineId}`) {
+-        if (options.failFirstDetail && detailCalls++ === 0) {
++        const call = detailCalls++
++        const terminalStatus = options.terminalDetailStatus ?? (call > 0 ? options.terminalOnRefresh : undefined)
++        if (terminalStatus) {
++          return Promise.resolve(new Response(JSON.stringify({ error: 'Synthetic unavailable resource' }),
++            { status: terminalStatus, headers: { 'Content-Type': 'application/json' } }))
++        }
++        if (options.failFirstDetail && call === 0) {
+           return Promise.resolve(new Response('unavailable', { status: 503 }))
+         }
+         return json({
+@@ -181,6 +189,7 @@ function renderPipelineDetail(
+       </MemoryRouter>
+     </QueryClientProvider>,
+   )
++  return client
+ }
+ 
+ function logRow(sequence: number, message: string) {
+@@ -209,6 +218,34 @@ afterEach(() => {
+ })
+ 
+ describe('PipelineDetailPage logs', () => {
++  it.each([[403, 'permission-denied'], [404, 'not-found']] as const)(
++    'removes cached pipeline actions after a refresh returns HTTP %s', async (status, state) => {
++      const requests: string[] = []
++      const client = renderPipelineDetail(requests, { terminalOnRefresh: status })
++      expect(await screen.findByText('pipelines.planTitle')).toBeInTheDocument()
++      expect(screen.getByRole('button', { name: 'pipelines.cancel' })).toBeVisible()
++      await act(() => client.invalidateQueries({ queryKey: ['pipeline', pipelineId] }))
++      await waitFor(() => expect(document.querySelector(`[data-page-state="${state}"]`)).toBeVisible())
++      expect(screen.queryByText('pipelines.planTitle')).not.toBeInTheDocument()
++      expect(screen.queryByRole('button', { name: 'pipelines.cancel' })).not.toBeInTheDocument()
++      expect(screen.queryByRole('button', { name: 'pipelines.retry' })).not.toBeInTheDocument()
++      expect(requests.every(url => !url.endsWith('/cancel') && !url.endsWith('/retry'))).toBe(true)
++    },
++  )
++
++  it.each([[403, 'permission-denied'], [404, 'not-found']] as const)(
++    'renders terminal HTTP %s without pipeline or job controls', async (status, state) => {
++      const requests: string[] = []
++      renderPipelineDetail(requests, { terminalDetailStatus: status })
++      await waitFor(() => expect(document.querySelector(`[data-page-state="${state}"]`)).toBeVisible())
++      expect(screen.queryByText('pipelines.planTitle')).not.toBeInTheDocument()
++      expect(screen.queryByRole('button', { name: 'pipelines.retry' })).not.toBeInTheDocument()
++      expect(screen.queryByRole('button', { name: 'pipelines.cancel' })).not.toBeInTheDocument()
++      expect(requests.length).toBeGreaterThan(0)
++      expect(requests.every(url => url === `/api/v1/pipelines/${pipelineId}`)).toBe(true)
++    },
++  )
++
+   it('shows immutable pipeline plan evidence', async () => {
+     const requests: string[] = []
+     renderPipelineDetail(requests)
+diff --git a/frontend/src/pages/projects/index.tsx b/frontend/src/pages/projects/index.tsx
+index 89deb3d..210164d 100644
+--- a/frontend/src/pages/projects/index.tsx
++++ b/frontend/src/pages/projects/index.tsx
+@@ -36,6 +36,7 @@ import {
+ } from "@sdlc/ui/ui";
+ import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+ import { QueryState } from "@/shared/ui/query-state";
++import { isTerminalResourceError } from "@/api/client";
+ 
+ const pageSize = 12;
+ const emptyForm = { name: "", repository_url: "", default_branch: "main" };
+@@ -107,6 +108,10 @@ export function ProjectsPage() {
+     );
+   }
+ 
++  if (isTerminalResourceError(listError)) return (
++    <QueryState data={undefined} isLoading={false} error={listError}>{() => null}</QueryState>
++  );
++
+   return (
+     <div className="space-y-5">
+       <header className="flex flex-wrap items-center justify-between gap-3">
+diff --git a/frontend/src/pages/projects/projects.test.tsx b/frontend/src/pages/projects/projects.test.tsx
+index 1622adb..b39e2ad 100644
+--- a/frontend/src/pages/projects/projects.test.tsx
++++ b/frontend/src/pages/projects/projects.test.tsx
+@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
+ import { MemoryRouter } from "react-router";
+ import { afterEach, describe, expect, it, vi } from "vitest";
+ import { ProjectsPage } from "./index";
++import { ApiError } from "@/api/client";
+ 
+ const mocks = vi.hoisted(() => ({
+   useProjects: vi.fn(),
+@@ -56,6 +57,22 @@ function renderPage() {
+ afterEach(() => vi.clearAllMocks());
+ 
+ describe("ProjectsPage", () => {
++  it.each([[403, 'permission-denied'], [404, 'not-found']] as const)(
++    'hides cached projects and mutation controls after HTTP %s', (status, state) => {
++      mocks.useProjects.mockReturnValue({ data: [project(1)], isLoading: false,
++        error: new ApiError({ kind: 'api', status, message: 'Synthetic unavailable catalog' }),
++        refetch: mocks.refetch });
++      renderPage();
++      expect(document.querySelector(`[data-page-state="${state}"]`)).toBeVisible();
++      expect(screen.queryByText('Project 01')).not.toBeInTheDocument();
++      expect(screen.queryByRole('button', { name: 'projects.create' })).not.toBeInTheDocument();
++      expect(screen.queryByRole('button', { name: 'common.retry' })).not.toBeInTheDocument();
++      expect(mocks.create).not.toHaveBeenCalled();
++      expect(mocks.update).not.toHaveBeenCalled();
++      expect(mocks.remove).not.toHaveBeenCalled();
++    },
++  );
++
+   it("keeps pipelines direct and exposes secondary destinations in an accessible menu", () => {
+     setup(2);
+ 
+diff --git a/frontend/src/pages/pull-request-detail/index.tsx b/frontend/src/pages/pull-request-detail/index.tsx
+index d98ad6d..879da99 100644
+--- a/frontend/src/pages/pull-request-detail/index.tsx
++++ b/frontend/src/pages/pull-request-detail/index.tsx
+@@ -2,7 +2,7 @@ import { Link, useParams, useSearchParams } from 'react-router'
+ import { useTranslation } from 'react-i18next'
+ import { usePullRequest, useRepositoryComparison } from '@/api/hooks'
+ import { ApiError } from '@/api/client'
+-import { Button } from '@sdlc/ui/ui'
++import { Button, ResourceStateView } from '@sdlc/ui/ui'
+ import { ChevronRight, GitPullRequest, FileDiff, ArrowLeft } from 'lucide-react'
+ import type { PullRequest, PullRequestStatus } from '@/api/types'
+ import { formatDate } from '@/shared/lib/format'
+@@ -59,16 +59,16 @@ export function PullRequestDetailPage() {
+     showDiff && pr ? pr.source_branch : '',
+   )
+ 
+-  if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
++  if (!repo) return <ResourceStateView state={{ kind: 'not-found', message: t('repositories.notFound') }} />
+   if (!pullRequestNumber || error instanceof ApiError && error.status === 404) {
+-    return <p className="text-sm text-text-muted">{t('pulls.notFound')}</p>
++    return <ResourceStateView state={{ kind: 'not-found', message: t('pulls.notFound') }} />
+   }
+   if (isLoading || error) return (
+     <QueryState data={pr} isLoading={isLoading} error={error} onRetry={() => refetch()}>
+       {() => null}
+     </QueryState>
+   )
+-  if (!pr) return <p className="text-sm text-text-muted">{t('pulls.notFound')}</p>
++  if (!pr) return <ResourceStateView state={{ kind: 'not-found', message: t('pulls.notFound') }} />
+ 
+   if (showDiff) {
+     return (
+diff --git a/frontend/src/pages/pull-request-detail/resource-state.test.tsx b/frontend/src/pages/pull-request-detail/resource-state.test.tsx
+new file mode 100644
+index 0000000..89cfd72
+--- /dev/null
++++ b/frontend/src/pages/pull-request-detail/resource-state.test.tsx
+@@ -0,0 +1,100 @@
++import { render, screen } from "@testing-library/react";
++import { MemoryRouter, Route, Routes } from "react-router";
++import { beforeEach, describe, expect, it, vi } from "vitest";
++import { ApiError } from "@/api/client";
++import { PullRequestDetailPage } from "./index";
++
++const mocks = vi.hoisted(() => ({ usePullRequest: vi.fn() }));
++
++vi.mock("react-i18next", () => ({
++  useTranslation: () => ({ t: (key: string) => key, i18n: { language: "ru" } }),
++}));
++vi.mock("@/api/hooks", () => ({
++  usePullRequest: mocks.usePullRequest,
++  useRepositoryComparison: () => ({
++    data: undefined,
++    isLoading: false,
++    isError: false,
++  }),
++}));
++
++function renderDetail(number = "1") {
++  return render(
++    <MemoryRouter initialEntries={[`/repositories/synthetic/pulls/${number}`]}>
++      <Routes>
++        <Route
++          path="/repositories/:repo/pulls/:number"
++          element={<PullRequestDetailPage />}
++        />
++      </Routes>
++    </MemoryRouter>,
++  );
++}
++
++beforeEach(() => {
++  vi.clearAllMocks();
++});
++
++describe("pull request resource failures", () => {
++  it.each([
++    [403, "permission-denied"],
++    [404, "not-found"],
++  ] as const)(
++    "renders HTTP %s without pull request actions",
++    (status, state) => {
++      mocks.usePullRequest.mockReturnValue({
++        data: undefined,
++        isLoading: false,
++        error: new ApiError({
++          kind: "api",
++          status,
++          message: "Synthetic unavailable resource",
++        }),
++        refetch: vi.fn(),
++      });
++      const { container } = renderDetail();
++      expect(
++        container.querySelector(`[data-page-state="${state}"]`),
++      ).toBeVisible();
++      expect(screen.queryByText("pulls.actions")).not.toBeInTheDocument();
++      expect(
++        screen.queryByRole("button", { name: "common.retry" }),
++      ).not.toBeInTheDocument();
++    },
++  );
++
++  it("keeps retry for a recoverable service failure", () => {
++    mocks.usePullRequest.mockReturnValue({
++      data: undefined,
++      isLoading: false,
++      error: new ApiError({
++        kind: "api",
++        status: 503,
++        message: "Synthetic unavailable service",
++      }),
++      refetch: vi.fn(),
++    });
++    const { container } = renderDetail();
++    expect(screen.getByRole("alert")).toHaveTextContent(
++      "Synthetic unavailable service",
++    );
++    expect(screen.getByRole("button", { name: "common.retry" })).toBeVisible();
++    expect(container.querySelector("[data-page-state]")).toBeNull();
++    expect(screen.queryByText("pulls.actions")).not.toBeInTheDocument();
++  });
++
++  it("treats an invalid pull request number as not-found", () => {
++    mocks.usePullRequest.mockReturnValue({
++      data: undefined,
++      isLoading: false,
++      error: null,
++      refetch: vi.fn(),
++    });
++    const { container } = renderDetail("invalid");
++    expect(
++      container.querySelector('[data-page-state="not-found"]'),
++    ).toBeVisible();
++    expect(mocks.usePullRequest).toHaveBeenCalledWith("synthetic", undefined);
++    expect(screen.queryByText("pulls.actions")).not.toBeInTheDocument();
++  });
++});
+diff --git a/frontend/src/shared/lib/use-project-pipelines.test.tsx b/frontend/src/shared/lib/use-project-pipelines.test.tsx
+new file mode 100644
+index 0000000..33307bd
+--- /dev/null
++++ b/frontend/src/shared/lib/use-project-pipelines.test.tsx
+@@ -0,0 +1,55 @@
++import { renderHook } from "@testing-library/react";
++import { useQueries } from "@tanstack/react-query";
++import { describe, expect, it, vi } from "vitest";
++import { ApiError } from "@/api/client";
++import { useProjectPipelines } from "./use-project-pipelines";
++
++vi.mock("@tanstack/react-query", () => ({ useQueries: vi.fn() }));
++
++describe("project pipeline summaries", () => {
++  it.each([403, 404])(
++    "omits cached runs for HTTP %s while retaining allowed projects",
++    (status) => {
++      const allowed = { id: "allowed", project_id: "visible" };
++      const denied = { id: "private", project_id: "hidden" };
++      vi.mocked(useQueries).mockReturnValue([
++        { data: [allowed], isPending: false, error: null, refetch: vi.fn() },
++        {
++          data: [denied],
++          isPending: false,
++          error: new ApiError({
++            kind: "api",
++            status,
++            message: "Synthetic unavailable project",
++          }),
++          refetch: vi.fn(),
++        },
++      ] as unknown as ReturnType<typeof useQueries>);
++      const { result } = renderHook(() => useProjectPipelines([]));
++      expect(result.current.runs).toEqual([allowed]);
++      expect(result.current.hasData).toBe(true);
++      expect(result.current.failedCount).toBe(1);
++    },
++  );
++
++  it("retains a recoverable cached run and exposes its retry", async () => {
++    const refetch = vi.fn();
++    vi.mocked(useQueries).mockReturnValue([
++      {
++        data: [{ id: "cached" }],
++        isPending: false,
++        error: new ApiError({
++          kind: "api",
++          status: 503,
++          message: "Synthetic unavailable service",
++        }),
++        refetch,
++      },
++    ] as unknown as ReturnType<typeof useQueries>);
++    const { result } = renderHook(() => useProjectPipelines([]));
++    expect(result.current.runs).toEqual([{ id: "cached" }]);
++    expect(result.current.hasData).toBe(true);
++    await result.current.refetch();
++    expect(refetch).toHaveBeenCalledOnce();
++  });
++});
+diff --git a/frontend/src/shared/lib/use-project-pipelines.ts b/frontend/src/shared/lib/use-project-pipelines.ts
+index 0b1bb33..8a8aa14 100644
+--- a/frontend/src/shared/lib/use-project-pipelines.ts
++++ b/frontend/src/shared/lib/use-project-pipelines.ts
+@@ -1,6 +1,6 @@
+ import type { Pipeline, Project } from '@/api/types'
+ import { useQueries } from '@tanstack/react-query'
+-import { api } from '@/api/client'
++import { api, isTerminalResourceError } from '@/api/client'
+ 
+ // Keep one useQueries call while the visible project list changes.
+ export function useProjectPipelines(projects: Project[]) {
+@@ -11,11 +11,11 @@ export function useProjectPipelines(projects: Project[]) {
+     })),
+   })
+   return {
+-    runs: lists.flatMap(q => q.data ?? []),
++    runs: lists.filter(q => !isTerminalResourceError(q.error)).flatMap(q => q.data ?? []),
+     isLoading: lists.some(q => q.isPending),
+     error: lists.find(q => q.error)?.error ?? null,
+     failedCount: lists.filter(q => q.error).length,
+-    hasData: lists.some(q => q.data !== undefined),
++    hasData: lists.some(q => q.data !== undefined && !isTerminalResourceError(q.error)),
+     refetch: () => Promise.all(lists.map(q => q.refetch())),
+   }
+ }
+diff --git a/frontend/src/shared/ui/query-state.test.tsx b/frontend/src/shared/ui/query-state.test.tsx
+index 60f5672..901c6d3 100644
+--- a/frontend/src/shared/ui/query-state.test.tsx
++++ b/frontend/src/shared/ui/query-state.test.tsx
+@@ -1,71 +1,119 @@
+-import { MemoryRouter } from 'react-router'
+-import { fireEvent, render, screen } from '@testing-library/react'
+-import { describe, expect, it, vi } from 'vitest'
+-import { ApiError } from '@/api/client'
+-import { QueryState } from './query-state'
++import { MemoryRouter } from "react-router";
++import { fireEvent, render, screen } from "@testing-library/react";
++import { describe, expect, it, vi } from "vitest";
++import { ApiError } from "@/api/client";
++import { QueryState } from "./query-state";
+ 
+-vi.mock('react-i18next', () => ({
++vi.mock("react-i18next", () => ({
+   useTranslation: () => ({ t: (key: string) => key }),
+-}))
++}));
+ 
+-describe('QueryState', () => {
+-  it('[REQ-UI-002] renders the accessible loading contract', () => {
++describe("QueryState", () => {
++  it("[REQ-UI-002] renders the accessible loading contract", () => {
+     render(
+       <QueryState data={undefined} isLoading error={null}>
+         {() => <div>data</div>}
+       </QueryState>,
+-    )
++    );
+ 
+-    expect(screen.getByRole('status', { name: 'common.loading' })).toHaveAttribute(
+-      'aria-busy',
+-      'true',
+-    )
+-  })
++    expect(
++      screen.getByRole("status", { name: "common.loading" }),
++    ).toHaveAttribute("aria-busy", "true");
++  });
+ 
+-  it('[REQ-UI-002] renders an explicit empty state instead of children', () => {
++  it("[REQ-UI-002] renders an explicit empty state instead of children", () => {
+     render(
+       <QueryState
+         data={[]}
+         isLoading={false}
+         error={null}
+         isEmpty={(items) => items.length === 0}
+-        empty={{ title: 'Nothing here' }}
++        empty={{ title: "Nothing here" }}
+       >
+         {() => <div>data</div>}
+       </QueryState>,
+-    )
++    );
+ 
+-    expect(screen.getByText('Nothing here')).toBeInTheDocument()
+-    expect(screen.queryByText('data')).toBeNull()
+-  })
++    expect(screen.getByText("Nothing here")).toBeInTheDocument();
++    expect(screen.queryByText("data")).toBeNull();
++  });
+ 
+-  it('[REQ-UI-002] turns authorization failures into the forbidden page', () => {
++  it("[REQ-UI-002] turns authorization failures into the forbidden page", () => {
+     render(
+       <MemoryRouter>
+         <QueryState
+           data={undefined}
+           isLoading={false}
+-          error={new ApiError({ kind: 'api', status: 403, message: 'forbidden' })}
++          error={
++            new ApiError({ kind: "api", status: 403, message: "forbidden" })
++          }
+           errorMessage="Could not load"
+         >
+           {() => <div>data</div>}
+         </QueryState>
+       </MemoryRouter>,
+-    )
++    );
+ 
+-    expect(screen.getByText('errors.forbidden.title')).toBeInTheDocument()
+-  })
++    expect(screen.getByText("errors.forbidden.title")).toBeInTheDocument();
++  });
+ 
+-  it('[REQ-UI-002] offers retry for recoverable load failures', () => {
+-    const retry = vi.fn()
++  it.each([
++    [403, "permission-denied"],
++    [404, "not-found"],
++  ] as const)(
++    "does not expose stale business content or retry for terminal HTTP %s",
++    (status, state) => {
++      const retry = vi.fn();
++      const { container } = render(
++        <MemoryRouter>
++          <QueryState
++            data={[{ id: "synthetic" }]}
++            isLoading={false}
++            error={
++              new ApiError({
++                kind: "api",
++                status,
++                message: "Synthetic unavailable resource",
++              })
++            }
++            onRetry={retry}
++          >
++            {() => <button>Business mutation</button>}
++          </QueryState>
++        </MemoryRouter>,
++      );
++      expect(
++        container.querySelector(`[data-page-state="${state}"]`),
++      ).toBeVisible();
++      expect(
++        screen.queryByRole("button", { name: "Business mutation" }),
++      ).not.toBeInTheDocument();
++      expect(
++        screen.queryByRole("button", { name: "common.retry" }),
++      ).not.toBeInTheDocument();
++      expect(retry).not.toHaveBeenCalled();
++    },
++  );
++
++  it.each([
++    new Error("offline"),
++    new ApiError({ kind: "api", status: 503, message: "unavailable" }),
++  ])("[REQ-UI-002] offers retry for recoverable load failures: %s", (error) => {
++    const retry = vi.fn();
+     render(
+-      <QueryState data={undefined} isLoading={false} error={new Error('offline')} errorMessage="Could not load" onRetry={retry}>
++      <QueryState
++        data={undefined}
++        isLoading={false}
++        error={error}
++        errorMessage="Could not load"
++        onRetry={retry}
++      >
+         {() => <div>data</div>}
+       </QueryState>,
+-    )
++    );
+ 
+-    expect(screen.getByRole('alert')).toHaveTextContent('Could not load')
+-    fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
+-    expect(retry).toHaveBeenCalledOnce()
+-  })
+-})
++    expect(screen.getByRole("alert")).toHaveTextContent("Could not load");
++    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
++    expect(retry).toHaveBeenCalledOnce();
++  });
++});
+diff --git a/frontend/src/shared/ui/query-state.tsx b/frontend/src/shared/ui/query-state.tsx
+index 6a34276..6a25ed1 100644
+--- a/frontend/src/shared/ui/query-state.tsx
++++ b/frontend/src/shared/ui/query-state.tsx
+@@ -4,9 +4,9 @@
+ import type { ReactNode } from 'react'
+ import { useTranslation } from 'react-i18next'
+ import { Inbox } from 'lucide-react'
+-import { ApiError } from '@/api/client'
++import { isTerminalResourceError } from '@/api/client'
+ import { ForbiddenPage } from '@/pages/forbidden'
+-import { Button } from '@sdlc/ui/ui'
++import { Button, ResourceStateView } from '@sdlc/ui/ui'
+ 
+ export function QueryState<T>({
+   data,
+@@ -29,6 +29,10 @@ export function QueryState<T>({
+ }) {
+   const { t } = useTranslation()
+ 
++  if (isTerminalResourceError(error)) {
++    return error.status === 403 ? <ForbiddenPage /> : <ResourceStateView state={{ kind: 'not-found' }} />
++  }
++
+   if (isLoading) {
+     return (
+       <div
+@@ -45,9 +49,6 @@ export function QueryState<T>({
+   }
+ 
+   if (error) {
+-    if (error instanceof ApiError && error.status === 403) {
+-      return <ForbiddenPage />
+-    }
+     return (
+       <div
+         className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 bg-surface p-4 text-sm text-text-secondary"

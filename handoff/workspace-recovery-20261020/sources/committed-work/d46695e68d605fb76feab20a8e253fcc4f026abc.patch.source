@@ -1,0 +1,20 @@
+diff --git a/.base-revision b/.base-revision
+index 5cd7882..4604f10 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-cc52d3121335c616415bc8675e229a22f775931a
++193ad1e8fd6260f001640943a5ec07ff04f527d1
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e2f7ce4..269ef8f 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,7 +9,7 @@
+ 
+ ## [Unreleased]
+ 
+-- Base закреплён на `cc52d3121335c616415bc8675e229a22f775931a`: общий
++- Base закреплён на `193ad1e8fd6260f001640943a5ec07ff04f527d1`: общий
+   cross-platform fingerprint и согласованная локальная UI/UX-поставка.
+   Source/dependency checkpoint не заменяет приёмку фактических images и SSO.
+ 

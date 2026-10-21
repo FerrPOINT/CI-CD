@@ -1,0 +1,16 @@
+# Ops Runbook — Forge CI/CD — Moved
+
+> **Redirect.** Этот документ объединён в [OPERATIONS.md ](OPERATIONS.md) и больше не поддерживается здесь.
+> Историческая версия доступна в git history. Полная карта консолидации — `docs/DOCUMENTATION_GOVERNANCE.md`; удаление stub-ов запланировано в следующем release-цикле (см. `CHANGELOG.md`).
+
+## Эксплуатация межсервисной шины
+
+См. [межсервисные события CI/CD](PLATFORM_MESSAGING.md): terminal/cancel/retry transaction, SDK publisher, private credentials, диагностика и disposable product smoke.
+
+## Шина: хранение и восстановление (2026-10-03)
+
+Общий профиль SDK: stream/published/feed 90 суток; failed/terminal inbox/quarantine
+180 суток. Pending сохраняется. Cleanup/progress/state принадлежат своей БД.
+Новые миграции: CI/CD `0039`, Admin `0008`; существующие версии не меняются.
+Operator replay не сбрасывает inbox. Additive status/contracts сохраняют старые
+ответы и выделяют неизвестные значения. Подробности: [документация](PLATFORM_MESSAGING.md).

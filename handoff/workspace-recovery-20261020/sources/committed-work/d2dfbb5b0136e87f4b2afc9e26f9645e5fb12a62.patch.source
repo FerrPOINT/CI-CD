@@ -1,0 +1,469 @@
+diff --cc .base-revision
+index 98978a5,ce5a2ed..bdec66c
+--- a/.base-revision
++++ b/.base-revision
+@@@ -1,1 -1,1 +1,1 @@@
+- eb5b832ac6dace06ed9777d70ee9c6d5d186b24f
+ -c083783a37791e277db796361203884b87828a7d
+++6f63595a891f78b96b665889f80e6eb5cf34381a
+diff --cc backend/cli/tests/cli_real_api.rs
+index f26c2e4,f26c2e4..ec4a1d4
+--- a/backend/cli/tests/cli_real_api.rs
++++ b/backend/cli/tests/cli_real_api.rs
+@@@ -18,10 -18,10 +18,6 @@@ struct ApiServer 
+  }
+  
+  impl ApiServer {
+--    async fn start(pool: sqlx::PgPool) -> Self {
+--        Self::start_with_auth_secret(pool, None).await
+--    }
+--
+      async fn start_with_auth_secret(pool: sqlx::PgPool, auth_secret: Option<String>) -> Self {
+          let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+              .await
+@@@ -65,12 -65,12 +61,16 @@@ async fn test_pool() -> sqlx::PgPool 
+      pool
+  }
+  
+--fn cli_json_with_flags(api_url: &str, args: &[&str]) -> serde_json::Value {
+++fn cli_json_with_flags(api_url: &str, token: &str, args: &[&str]) -> serde_json::Value {
+      let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+++        .env_remove("SDLC_API_TOKEN")
+++        .env_remove("CICD_API_TOKEN")
+          .env("CICD_API_URL", "http://127.0.0.1:1")
+          .env("CICD_OUTPUT", "table")
+          .arg("--api-url")
+          .arg(api_url)
+++        .arg("--token")
+++        .arg(token)
+          .arg("--output")
+          .arg("json")
+          .arg("--timeout-seconds")
+@@@ -89,8 -89,8 +89,10 @@@
+      serde_json::from_slice(&output.stdout).expect("CLI JSON output")
+  }
+  
+--fn cli_json_from_env(api_url: &str, args: &[&str]) -> serde_json::Value {
+++fn cli_json_from_env(api_url: &str, token: &str, args: &[&str]) -> serde_json::Value {
+      let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+++        .env_remove("SDLC_API_TOKEN")
+++        .env("CICD_API_TOKEN", token)
+          .env("CICD_API_URL", api_url)
+          .env("CICD_OUTPUT", "json")
+          .env("CICD_TIMEOUT_SECONDS", "5")
+@@@ -110,6 -110,6 +112,7 @@@
+  
+  fn cli_json_with_token(api_url: &str, token: &str, args: &[&str]) -> serde_json::Value {
+      let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+++        .env("SDLC_API_TOKEN", "bad-base-env-token")
+          .env("CICD_API_URL", "http://127.0.0.1:1")
+          .env("CICD_API_TOKEN", "bad-env-token")
+          .env("CICD_OUTPUT", "table")
+@@@ -135,8 -135,8 +138,10 @@@
+      serde_json::from_slice(&output.stdout).expect("CLI JSON output")
+  }
+  
+--fn cli_failure(api_url: &str, args: &[&str]) -> String {
+++fn cli_failure(api_url: &str, token: Option<&str>, args: &[&str], expected_exit: i32) -> String {
+      let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+++        .env_remove("SDLC_API_TOKEN")
+++        .env("CICD_API_TOKEN", token.unwrap_or_default())
+          .env("CICD_API_URL", api_url)
+          .env("CICD_OUTPUT", "json")
+          .env("CICD_TIMEOUT_SECONDS", "5")
+@@@ -150,11 -150,11 +155,13 @@@
+          String::from_utf8_lossy(&output.stdout),
+          String::from_utf8_lossy(&output.stderr)
+      );
+++    assert_eq!(output.status.code(), Some(expected_exit));
+      String::from_utf8_lossy(&output.stderr).into_owned()
+  }
+  
+  fn cli_failure_with_token(api_url: &str, token: &str, args: &[&str]) -> String {
+      let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+++        .env("SDLC_API_TOKEN", "bad-base-env-token")
+          .env("CICD_API_URL", api_url)
+          .env("CICD_API_TOKEN", "bad-env-token")
+          .env("CICD_OUTPUT", "json")
+@@@ -173,6 -173,6 +180,11 @@@
+      );
+      let stdout = String::from_utf8_lossy(&output.stdout);
+      let stderr = String::from_utf8_lossy(&output.stderr);
+++    assert_eq!(
+++        output.status.code(),
+++        Some(5),
+++        "auth failures must keep the stable exit code"
+++    );
+      assert!(
+          !stdout.contains(token) && !stderr.contains(token),
+          "CLI failure leaked bearer token\nstdout:\n{stdout}\nstderr:\n{stderr}"
+@@@ -230,13 -230,13 +242,22 @@@ async fn login_access_token(api_url: &s
+  #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+  async fn cli_exercises_real_http_api_and_postgres_stack() {
+      let pool = test_pool().await;
+--    let server = ApiServer::start(pool.clone()).await;
+      let namespace = Uuid::new_v4();
+++    let server = ApiServer::start_with_auth_secret(
+++        pool.clone(),
+++        Some(format!("cli-stack-secret-{namespace}")),
+++    )
+++    .await;
+++    let username = format!("cli-stack-admin-{}", namespace.simple());
+++    let password = format!("StackPass-{}", namespace.simple());
+++    let actor_id = insert_login_user(&pool, &username, "admin", &password).await;
+++    let access = login_access_token(&server.base_url, &username, &password).await;
+      let project_name = format!("cli-real-api-{}", namespace.simple());
+      let repo_url = format!("https://example.invalid/{project_name}.git");
+  
+      let project = cli_json_with_flags(
+          &server.base_url,
+++        &access,
+          &[
+              "project",
+              "create",
+@@@ -254,6 -254,6 +275,7 @@@
+  
+      let projects = cli_json_from_env(
+          &server.base_url,
+++        &access,
+          &["project", "list", "--limit", "200", "--offset", "0"],
+      );
+      assert!(
+@@@ -268,6 -268,6 +290,7 @@@
+      let idempotency_key = Uuid::new_v4().to_string();
+      let pipeline = cli_json_with_flags(
+          &server.base_url,
+++        &access,
+          &[
+              "pipeline",
+              "run",
+@@@ -294,6 -294,6 +317,7 @@@
+  
+      let replay = cli_json_with_flags(
+          &server.base_url,
+++        &access,
+          &[
+              "pipeline",
+              "run",
+@@@ -309,6 -309,6 +333,7 @@@
+  
+      let detail = cli_json_from_env(
+          &server.base_url,
+++        &access,
+          &["pipeline", "show", "--id", &pipeline_id],
+      );
+      assert_eq!(detail["pipeline"]["id"], pipeline_id);
+@@@ -316,15 -316,15 +341,17 @@@
+  
+      let attempts = cli_json_from_env(
+          &server.base_url,
+++        &access,
+          &["job", "attempts", "--id", &first_job_id],
+      );
+      assert!(
+--        attempts.as_array().expect("attempt list").len() >= 1,
+++        !attempts.as_array().expect("attempt list").is_empty(),
+          "pipeline run should create attempt history"
+      );
+  
+      let environment = cli_json_with_flags(
+          &server.base_url,
+++        &access,
+          &[
+              "environment",
+              "create",
+@@@ -346,6 -346,6 +373,7 @@@
+  
+      let deployment = cli_json_with_flags(
+          &server.base_url,
+++        &access,
+          &[
+              "deployment",
+              "create",
+@@@ -362,6 -362,6 +390,7 @@@
+  
+      let approved = cli_json_with_flags(
+          &server.base_url,
+++        &access,
+          &[
+              "deployment",
+              "approve",
+@@@ -379,14 -379,14 +408,21 @@@
+  
+      let approvals = cli_json_from_env(
+          &server.base_url,
+++        &access,
+          &["deployment", "approvals", "--id", &deployment_id],
+      );
+--    assert_eq!(approvals[0]["actor"], "cli-smoke");
+++    assert_eq!(
+++        approvals[0]["actor"],
+++        actor_id.to_string(),
+++        "the authenticated actor must override the client-supplied actor",
+++    );
+      assert_eq!(approvals[0]["decision"], "approved");
+  
+      let stderr = cli_failure(
+          &server.base_url,
+++        Some(&access),
+          &["pipeline", "show", "--id", &Uuid::new_v4().to_string()],
+++        4,
+      );
+      assert!(
+          stderr.contains("404 Not Found") || stderr.contains("not found"),
+@@@ -412,11 -412,11 +448,17 @@@ async fn cli_exercises_auth_rbac_and_to
+      insert_login_user(&pool, &admin_username, "admin", &admin_password).await;
+      let admin_access = login_access_token(&server.base_url, &admin_username, &admin_password).await;
+  
+--    let unauthenticated = cli_failure(&server.base_url, &["project", "list"]);
+++    let unauthenticated = cli_failure(&server.base_url, None, &["project", "list"], 2);
+      assert!(
+--        unauthenticated.contains("401 Unauthorized") || unauthenticated.contains("unauthorized"),
+--        "CLI should surface missing bearer as unauthorized, got stderr:\n{unauthenticated}"
+++        unauthenticated.contains("SDLC_API_TOKEN is not set"),
+++        "CLI should reject missing credentials locally, got stderr:\n{unauthenticated}"
+++    );
+++    let invalid_bearer = cli_failure_with_token(
+++        &server.base_url,
+++        "invalid-fixture-token",
+++        &["project", "list"],
+      );
+++    assert!(invalid_bearer.contains("token is invalid or lacks access"));
+  
+      let project_name = format!("cli-auth-api-{}", namespace.simple());
+      let repo_url = format!("https://example.invalid/{project_name}.git");
+@@@ -546,7 -546,7 +588,7 @@@
+          ],
+      );
+      assert!(
+--        viewer_denied.contains("403 Forbidden") || viewer_denied.contains("forbidden"),
+++        viewer_denied.contains("token is invalid or lacks access"),
+          "viewer should be denied write actions, got stderr:\n{viewer_denied}"
+      );
+  
+@@@ -599,7 -599,7 +641,7 @@@
+          ],
+      );
+      assert!(
+--        pat_denied.contains("403 Forbidden") || pat_denied.contains("forbidden"),
+++        pat_denied.contains("token is invalid or lacks access"),
+          "read-only PAT should be denied write actions, got stderr:\n{pat_denied}"
+      );
+  
+diff --cc docs/API.md
+index 891ba25,6285308..c979b0e
+--- a/docs/API.md
++++ b/docs/API.md
+@@@ -10,7 -10,7 +10,7 @@@ REST API первой версии Forg
+  
+  - Base URL: `http://{host}:22801/api/v1`
+  - Content-Type: `application/json`
+--- Auth: conditional. Без непустого `CICD_AUTH_SECRET` API работает в trusted-network режиме; с секретом большинство endpoint-ов требует `Authorization: Bearer <JWT-or-PAT>`.
+++- Auth: protected routes требуют настроенную auth и `Authorization: Bearer <JWT-or-PAT>`. Без непустого `CICD_AUTH_SECRET` они fail-closed с HTTP 503; public/runner/system/Git routes сохраняют собственную политику.
+  - Версионирование: path-based `/api/v1`.
+  - Сериализация: `serde_json`, `snake_case` для enum-значений статусов.
+  - Ошибки: `{"error":{"code":"...","message":"...","request_id":"..."}}` с соответствующим HTTP статусом и header `x-request-id`.
+@@@ -1043,7 -1043,7 +1043,7 @@@ curl -sS "http://127.0.0.1:22801/api/v1
+  
+  ## Platform endpoints (MVP)
+  
+--> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, scoped PAT, session-bound access invalidation, refresh cookie + CSRF для browser flow, session-family reuse revocation, route roles и project memberships для project-owned ресурсов. Tenant isolation, service-account tokens и scoped Git credentials ещё target.
+++> **Security note:** protected endpoints ниже требуют настроенную auth; без непустого `CICD_AUTH_SECRET` middleware возвращает HTTP 503, а не anonymous/trusted-network доступ. Применяются JWT/PAT, scoped PAT, session-bound access invalidation, refresh cookie + CSRF для browser flow, session-family reuse revocation, route roles и project memberships для project-owned ресурсов. Public/runner/system/Git endpoints сохраняют свою route policy. Фактическое покрытие возможностей и оставшиеся ограничения указаны в DEVELOPMENT_GUIDE.
+  
+  ### Runners
+  
+@@@ -1098,7 -1098,7 +1098,7 @@@
+  | POST | `/deployments/{deployment_id}/approvals` | Записать approval decision (`approved`/`rejected`, optional actor/comment) |
+  | POST | `/deployments/{deployment_id}/rollback` | Создать отдельную rollback delivery запись |
+  
+--`Environment` содержит `protected` и `required_approvals`. Для protected environment deployment нельзя сразу создать как terminal `success`/`failed` или связать с уже запущенным pipeline: запись стартует как `pending`, а `POST /deployments/{deployment_id}/approvals` сохраняет immutable decision. При включённой auth-схеме actor берётся из JWT/PAT subject; body `actor` используется только в trusted-network режиме. Когда набрано `required_approvals`, backend запускает pipeline через тот же idempotent trigger helper и связывает его с deployment. Rollback не переписывает исходный deployment: создаётся новая запись с `rollback_of_id`; для обычного окружения pipeline стартует сразу, для protected окружения rollback также ждёт approval.
+++`Environment` содержит `protected` и `required_approvals`. Для protected environment deployment нельзя сразу создать как terminal `success`/`failed` или связать с уже запущенным pipeline: запись стартует как `pending`, а `POST /deployments/{deployment_id}/approvals` сохраняет immutable decision. Actor берётся из JWT/PAT subject и имеет приоритет над body `actor`; protected endpoint не предоставляет trusted-network bypass. Когда набрано `required_approvals`, backend запускает pipeline через тот же idempotent trigger helper и связывает его с deployment. Rollback не переписывает исходный deployment: создаётся новая запись с `rollback_of_id`; для обычного окружения pipeline стартует сразу, для protected окружения rollback также ждёт approval.
+  
+  ### Schedules
+  
+@@@ -1293,7 -1293,7 +1293,7 @@@ legacy-режима. Управлени
+  }
+  ```
+  
+--`password` опционален в trusted-network режиме, но нужен для интерактивного входа через `/login` при включённом `CICD_AUTH_SECRET`. API никогда не возвращает password hash или plaintext.
+++Поле `password` в DTO опционально, но нужно для интерактивного входа через `/login` с локальной credential. Это не разрешает anonymous/trusted-network доступ к protected user API. API никогда не возвращает password hash или plaintext.
+  
+  ### API Tokens
+  
+@@@ -1351,7 -1351,7 +1351,7 @@@ Machine principals для автома�
+  }
+  ```
+  
+--`project_id` обязателен при непустом `CICD_AUTH_SECRET`; без auth-mode он может быть опущен только для legacy/trusted-network сценариев. Поддерживаемые scopes: `api:read`, `api:write`, `git:read`, `git:write`. Если scopes не переданы, создаётся project-scoped read/write PAT для API и Git. `expires_in_days` принимает `1..365`; в auth-mode default — 30 дней.
+++`project_id` обязателен при непустом `CICD_AUTH_SECRET`; protected API не допускает обход этого требования через отсутствие auth config. Поддерживаемые scopes: `api:read`, `api:write`, `git:read`, `git:write`. Если scopes не переданы, создаётся project-scoped read/write PAT для API и Git. `expires_in_days` принимает `1..365`; default в auth-mode — 30 дней.
+  
+  **Response 200:**
+  ```json
+diff --cc docs/CLI.md
+index bf0d744,bf0d744..80d2807
+--- a/docs/CLI.md
++++ b/docs/CLI.md
+@@@ -204,11 -204,11 +204,17 @@@ cicd-cli --output ndjson project list 
+  | `2` | usage / локальная ошибка аргументов или вывода |
+  | `3` | сеть или 5xx сервера (connection refused, DNS, 500) |
+  | `4` | 404 / not found |
+--| `5` | 401 / unauthorized |
+++| `5` | 401/403 / недостаточно прав или невалидный токен |
+  | `6` | 400/422 validation |
+  
+  Скрипты должны проверять код, а не парсить stderr.
+  
+++Без `--token`, product/profile token и `SDLC_API_TOKEN` CLI завершается локальной
+++ошибкой (exit 2), не отправляя HTTP-запрос. Невалидный токен или недостаточные
+++права дают exit 5. Protected API требует настроенную auth и fail-closed при её
+++отсутствии. Ошибки используют безопасные сообщения Base, без server body и
+++credentials; явный product token имеет приоритет над общим env token.
+++
+  ## Completions (K5)
+  
+  ```bash
+diff --cc frontend/src/pages/login/login.test.tsx
+index 0000000,efaf5e0..956f3dd
+mode 000000,100644..100644
+--- a/frontend/src/pages/login/login.test.tsx
++++ b/frontend/src/pages/login/login.test.tsx
+@@@ -1,0 -1,70 +1,69 @@@
++ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
++ import { MemoryRouter } from 'react-router'
++ import { SsoLogoutPendingError } from '@sdlc/ui/sso'
++ import { LoginPage } from './'
++ 
++ const beginSso = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}))
++ vi.mock('@sdlc/ui/sso', async (importOriginal) => ({
++   ...await importOriginal<typeof import('@sdlc/ui/sso')>(), beginSso,
++ }))
++ vi.mock('@sdlc/ui/ui', async (importOriginal) => ({
++   ...await importOriginal<typeof import('@sdlc/ui/ui')>(),
++   PlatformMark: () => <span>SDLC</span>,
++ }))
++ vi.mock('@/shared/auth/auth-provider', () => ({
++   ssoConfig: { issuer: 'http://localhost:7701', clientId: 'ci-cd' },
++   useAuth: () => ({ status: 'anonymous' }),
++ }))
++ 
++ function renderLogin(path = '/login') {
++   return render(<MemoryRouter initialEntries={[path]}><LoginPage /></MemoryRouter>)
++ }
++ 
++ describe('ci-cd login recovery', () => {
++   beforeEach(() => {
++     beginSso.mockReset().mockResolvedValue(undefined)
++   })
++   afterEach(cleanup)
++ 
++   it('keeps automatic guards non-interactive', async () => {
++     renderLogin()
++     await waitFor(() => expect(beginSso).toHaveBeenCalledWith(
++       expect.objectContaining({ clientId: 'ci-cd' }), '/',
++     ))
++   })
++ 
++   it('requires explicit login after logout and marks it interactive', async () => {
++     renderLogin('/login?logged_out=1')
++     expect(beginSso).not.toHaveBeenCalled()
++     fireEvent.click(screen.getByRole('button', { name: 'Войти через SDLC' }))
++     await waitFor(() => expect(beginSso).toHaveBeenCalledWith(
++       expect.objectContaining({ clientId: 'ci-cd' }), '/', { interactive: true },
++     ))
++   })
++ 
++   it.each([new SsoLogoutPendingError(), new DOMException('Cancelled', 'AbortError')])(
++     'does not report interrupted automatic navigation as auth failure: %s', async (error) => {
++       beginSso.mockRejectedValueOnce(error)
++       renderLogin()
++       await waitFor(() => expect(beginSso).toHaveBeenCalledOnce())
++       fireEvent.click(screen.getByRole('button', { name: 'Войти через SDLC' }))
++       await waitFor(() => expect(beginSso).toHaveBeenCalledTimes(2))
++       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
++       expect(beginSso).toHaveBeenLastCalledWith(
++         expect.objectContaining({ clientId: 'ci-cd' }), '/', { interactive: true },
++       )
++     },
++   )
++ 
++   it('keeps real auth failure visible and clears it after retry', async () => {
++     beginSso.mockRejectedValueOnce(new Error('private auth details'))
++     renderLogin('/login?logged_out=1')
++     fireEvent.click(screen.getByRole('button', { name: 'Войти через SDLC' }))
++     expect(await screen.findByRole('alert')).toHaveTextContent('Central Auth временно недоступен.')
++     expect(screen.queryByText(/private auth details/)).not.toBeInTheDocument()
++     fireEvent.click(screen.getByRole('button', { name: 'Войти через SDLC' }))
++     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
++   })
++ })
+ -
+diff --cc plans/2026-10-02-base-ui-default-reconciliation.md
+index 0000000,0000000..bf446f6
+new file mode 100644
+--- /dev/null
++++ b/plans/2026-10-02-base-ui-default-reconciliation.md
+@@@ -1,0 -1,0 +1,63 @@@
+++# Сохранение Default Fixes В Base UI-Кандидате
+++
+++Продолжение утверждённой стандартизации всех семи продуктов. Исходный owned
+++CI/CD: `07f6665aee1d0940a84f898b2f7153ae8228be59`, clean, ahead 6 / behind 35
+++сохранённого `origin/main=365afd2ba5b414d01a9fd4053d6afc2f2cf5a53d`.
+++GitHub/fetch/Actions и canonical runtime не используются.
+++
+++Merge должен сохранить incoming техническую Base унификацию, recovery SSO
+++navigation, session до Central Auth logout, actual-peer rate limit и
+++authenticated PostgreSQL policy fixtures. Общий AppShell, page compositions,
+++URL/draft/state fixes нашей ветки сохраняются. Product API и schema этим шагом
+++не расширяются. Единственный Git conflict — add/add `.base-revision`; он
+++разрешается на SHA итогового проверенного Base. Дублирующий packageManager,
+++появившийся при auto-merge JSON, удаляется без изменения версии.
+++
+++Проверки: frozen install/installed fingerprint, frontend tests/lint/build,
+++theme/OpenAPI/UI/docs gates; Rust 1.88 fmt/clippy с integration feature,
+++workspace tests, real scratch PostgreSQL integration_db/target_policy/CLI
+++и release build. Test DB и build containers временные и принадлежат только QA;
+++чужие containers/volumes и pinned images не меняются. Результаты предыдущего
+++source-кандидата не подтверждают новый merge или фактический image.
+++
+++Все потребители должны получить один Base snapshot. Operational route/image/
+++SSO/role/state/browser acceptance, desktop gallery/provenance, default integration
+++и mirror остаются обязательными; Pulse исключён только из каталога и mirror.
+++
+++Real CLI gate выявил устаревший fixture без auth: текущий protected API требует
+++настроенную auth и возвращает 503 при её отсутствии. Fixtures получают JWT
+++тестовых учёток; fail-closed API и строгий Base constructor сохраняются. Тесты
+++проверяют missing credentials (exit 2), invalid bearer и RBAC (exit 5), not-found
+++(exit 4), priority над обоими env tokens и redaction вместо parsing старого
+++server stderr. Clippy finding `len() >= 1` исправлен без allow; merge whitespace
+++в login test также исправлен. Предварительный anonymous transport не принят
+++и удалён до commit: не возвращать auth bypass ради прежнего fixture.
+++
+++## Source Gates 2026-10-02
+++
+++Base pin: `6f63595a891f78b96b665889f80e6eb5cf34381a`. Base checkout clean;
+++source/installed UI fingerprint:
+++`a383932722c73aa8ed540a416b2ec0def375d97c967ab64b23daeb9d9abf3e30`.
+++Frozen offline force install: 422 reused, zero downloads; generated OpenAPI
+++и lockfile после установки не изменились. Frontend: 226 tests / 35 files,
+++lint/semantic, typecheck/build, installed 24-pattern UI gate, OpenAPI generation/
+++compatibility, packed Base consumer и built effective-theme contrast проходят.
+++Docs gate и 14 Python script tests проходят. Build chunk >500 kB остаётся debt.
+++
+++Rust 1.88.0 fmt, workspace/all-target/integration Clippy с `-D warnings`,
+++149 workspace tests, 58 PostgreSQL integration_db, 4 target_policy и 2 CLI
+++real-HTTP/PostgreSQL tests проходят. Release workspace build прошёл; OpenAPI
+++из release binary совпал с committed YAML (нормализованы только CRLF).
+++CLI fixtures проверяют stable exit codes, JWT/PAT приоритет, безопасные ошибки
+++и authenticated actor вместо client-supplied actor. SDK/auth/runtime API не
+++изменялись нашими fixes; incoming fail-closed behavior сохранён.
+++
+++Chromium source QA: 10 passed, 39 PNG, 30 audit geometry observations,
+++light/gray/dark и десять widths от 375 до 2560. URL/history, drawer keyboard/
+++focus/Escape/resize, loading/empty, cached network/403/404/422/503 и axe проверены.
+++Desktop normal и mobile partial-error кадры просмотрены. HTTP/OIDC mocked:
+++это не all-route/role/no-mock image acceptance и не текущая README gallery.
+++Evidence prefix: `audit-artifacts/base-standard-2026-10-01/cicd-default-reconcile`.
+++Preview остановлен, scratch PostgreSQL и QA network удалены после tests;
+++canonical runtime и чужие resources не изменены. Docker candidate build,
+++all-page template migration и полная выпускная приёмка остаются обязательными.

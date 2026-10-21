@@ -1,4 +1,36 @@
 //! Opt-in acceptance against explicitly owned provider repositories. No provider token output.
+#[cfg(unix)]
+#[path = "repository_sync_archive.rs"]
+mod archive;
+
+#[path = "repository_sync_ci_delivery.rs"]
+mod ci_delivery;
+
+#[path = "repository_sync_final_receipt.rs"]
+mod final_receipt;
+
+#[path = "repository_sync_expired_credentials.rs"]
+mod expired_credentials;
+#[cfg(unix)]
+#[path = "repository_sync_oracle_facets.rs"]
+mod oracle_facets;
+#[cfg(unix)]
+#[path = "repository_sync_postgres_live_restart.rs"]
+mod postgres_live_restart;
+#[cfg(unix)]
+#[path = "repository_sync_recovery_other.rs"]
+mod recovery_other;
+#[path = "repository_sync_slot_loss.rs"]
+mod slot_loss;
+#[cfg(unix)]
+#[path = "repository_sync_timeout_cancel.rs"]
+mod timeout_cancel;
+#[cfg(unix)]
+#[path = "repository_sync_tls_chain.rs"]
+mod tls_chain;
+#[path = "repository_sync_workflow.rs"]
+mod workflow;
+
 use super::*;
 use cicd_domain::repository_sync::SyncRun;
 use cicd_infra::sync_git::GitSession;
@@ -26,6 +58,33 @@ async fn git(path: &Path, args: &[&str]) -> String {
         .await
         .unwrap();
     assert!(output.status.success(), "local QA Git operation failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+async fn tree_with_entry(path: &Path, entry: &str) -> String {
+    use tokio::io::AsyncWriteExt;
+    let mut child = tokio::process::Command::new("git")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .arg("-C")
+        .arg(path)
+        .arg("mktree")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(entry.as_bytes())
+        .await
+        .unwrap();
+    let output = child.wait_with_output().await.unwrap();
+    assert!(output.status.success());
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
@@ -129,35 +188,341 @@ impl Live {
     }
 }
 
+#[tokio::test]
+#[ignore = "Private helper serving the production router for the owned API crash experiment"]
+async fn api_process() {
+    use std::io::Read;
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).unwrap();
+    let input: serde_json::Value = serde_json::from_str(&input).unwrap();
+    assert_eq!(input["purpose"], "forge-owned-api-fault-fixture");
+    let root = PathBuf::from(input["root"].as_str().unwrap());
+    assert!(
+        root.file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("forge-capabilities-")
+    );
+    let options = sqlx::postgres::PgConnectOptions::from_str(input["database"].as_str().unwrap())
+        .unwrap()
+        .options([("search_path", input["schema"].as_str().unwrap())]);
+    let pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let mut config = cicd::config::RuntimeConfig::from_env_source(|_| None, false)
+        .unwrap()
+        .with_auth_secret(Some("fixture-live-api-secret".into()));
+    config.git.root = root.clone();
+    config.secrets.key = Some([19; 32]);
+    config.git_sync.enabled = true;
+    config.git_sync.allowed_gitlab_origins = vec![input["origin"].as_str().unwrap().to_owned()];
+    let api =
+        cicd::api::app_with_git_and_config(Some(pool), config.git.to_git_config(), None, config)
+            .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    std::fs::write(
+        root.join("api-ready"),
+        listener.local_addr().unwrap().to_string(),
+    )
+    .unwrap();
+    axum::serve(listener, api).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "Requires owned live provider; SIGKILL only its own API after a real HTTPS read"]
+async fn api_process_crash_during_real_provider_check() {
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::io::AsyncWriteExt;
+    let mut f = Live::new().await;
+    f.stop_tasks().await;
+    let before_local = git(&f.local, &["for-each-ref"]).await;
+    let controls = f.root.join("check-control");
+    std::fs::create_dir(&controls).unwrap();
+    let _release = ReleaseGate(controls.clone());
+    let bin = f.root.join("check-bin");
+    std::fs::create_dir(&bin).unwrap();
+    let shim = format!(
+        "#!/bin/sh\ncase \"$*\" in *ls-remote*https://*) /usr/bin/git \"$@\"; result=$?; touch '{0}/entered'; while [ ! -e '{0}/release' ]; do sleep 0.1; done; exit \"$result\";; esac\nexec /usr/bin/git \"$@\"\n",
+        controls.display()
+    );
+    std::fs::write(bin.join("git"), shim).unwrap();
+    std::fs::set_permissions(bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let schema: String = sqlx::query_scalar("SELECT current_schema()")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    let input = serde_json::json!({"purpose":"forge-owned-api-fault-fixture","root":f.root,"origin":f.settings.instance_url,"database":std::env::var("CICD_TEST_DATABASE_URL").unwrap(),"schema":schema});
+    let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "repository_sync::live::api_process",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .stdin(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.to_string().as_bytes())
+        .await
+        .unwrap();
+    let address = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            if let Ok(address) = std::fs::read_to_string(f.root.join("api-ready")) {
+                break address;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let client = reqwest::Client::new();
+    let request = client
+        .post(format!(
+            "http://{address}/api/v1/catalog/repositories/{}/sync/check",
+            f.repository
+        ))
+        .bearer_auth(&f.authorization)
+        .json(&serde_json::json!({"settings":f.settings}))
+        .send();
+    let pending = tokio::spawn(request);
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while !controls.join("entered").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("real provider HTTPS read completed before killing API");
+    let check_scratch = f.root.join(".forge-sync-checks/.forge-sync-scratch");
+    let orphan = std::fs::read_dir(&check_scratch)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
+    assert!(
+        pending.await.unwrap().is_err(),
+        "killed API must not claim a successful check"
+    );
+    assert!(
+        cicd_infra::sync_git::MutationGuard::try_acquire(&f.root, f.repository)
+            .unwrap()
+            .is_none(),
+        "live Git child retains API mutation guard"
+    );
+    assert!(orphan.exists(), "process death leaves recoverable scratch");
+    std::fs::write(controls.join("release"), b"release own Git child").unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            if let Some(guard) =
+                cicd_infra::sync_git::MutationGuard::try_acquire(&f.root, f.repository).unwrap()
+            {
+                drop(guard);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (status, checked) = f
+        .request(
+            "POST",
+            "/check",
+            Some(serde_json::json!({"settings":f.settings})),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(checked["read"], true);
+    assert!(
+        !orphan.exists(),
+        "next production check reclaims only stale guarded scratch"
+    );
+    assert_eq!(git(&f.local, &["for-each-ref"]).await, before_local);
+    assert_eq!(
+        f.remote.as_ref().unwrap().refs(true).await.unwrap(),
+        f.initial
+    );
+    assert_eq!(f.store.runs(f.repository, 20, 0).await.unwrap().1, 0);
+    println!(
+        "LIVE_API_CHECK_CRASH_OK provider={:?} prefix={}",
+        f.settings.provider, f.prefix
+    );
+    f.pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "Requires a dedicated genuinely empty owned GitHub/GitLab hosted repository"]
+async fn empty_hosted_repository_initial_sync_and_head_preservation() {
+    let mut f = Live::new().await;
+    assert!(
+        f.initial.is_empty(),
+        "use a dedicated empty external repository"
+    );
+    let head = std::fs::read(f.local.join("HEAD")).unwrap();
+    f.settings(Direction::Both, false).await;
+    assert_eq!(f.manual().await.state, "success");
+    assert!(
+        f.remote
+            .as_ref()
+            .unwrap()
+            .refs(true)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let a = f
+        .commit(None, "QA first commit into empty hosted repository")
+        .await;
+    let branch = f.head("first");
+    f.local(&branch, &a).await;
+    let tag = format!("refs/tags/{}/annotated", f.prefix);
+    git(
+        &f.actor,
+        &[
+            "-c",
+            "user.name=Forge QA",
+            "-c",
+            "user.email=qa@example.invalid",
+            "tag",
+            "-a",
+            tag.strip_prefix("refs/tags/").unwrap(),
+            &a,
+            "-m",
+            "empty hosted QA tag",
+        ],
+    )
+    .await;
+    let tag_sha = git(&f.actor, &["rev-parse", &tag]).await;
+    f.local(&tag, &tag_sha).await;
+    let run = f.manual().await;
+    assert_eq!(run.state, "success");
+    f.ref_result(run.id, &branch, "applied").await;
+    f.ref_result(run.id, &tag, "applied").await;
+    f.same(&branch, &a).await;
+    f.same(&tag, &tag_sha).await;
+    assert_eq!(git(&f.local, &["cat-file", "-t", &tag_sha]).await, "tag");
+    let b = f
+        .commit(Some(&a), "QA external fast-forward after first push")
+        .await;
+    f.external(&branch, Some(&a), &b).await;
+    assert_eq!(f.manual().await.state, "success");
+    f.same(&branch, &b).await;
+    if f.settings.provider == Provider::Github {
+        // Dispatch-only synthetic content checks Workflows transport without
+        // automatically executing a GitHub Action or consuming runner minutes.
+        let content = "name: Forge sync QA\non: workflow_dispatch\njobs:\n  noop:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ':'\n";
+        let file = f.root.join("synthetic-workflow.yml");
+        std::fs::write(&file, content).unwrap();
+        let blob = git(&f.actor, &["hash-object", "-w", file.to_str().unwrap()]).await;
+        let workflows = tree_with_entry(
+            &f.actor,
+            &format!("100644 blob {blob}\tforge-sync-qa.yml\n"),
+        )
+        .await;
+        let github =
+            tree_with_entry(&f.actor, &format!("040000 tree {workflows}\tworkflows\n")).await;
+        let tree = tree_with_entry(&f.actor, &format!("040000 tree {github}\t.github\n")).await;
+        let sha = git(
+            &f.actor,
+            &[
+                "-c",
+                "user.name=Forge QA",
+                "-c",
+                "user.email=qa@example.invalid",
+                "commit-tree",
+                &tree,
+                "-p",
+                &b,
+                "-m",
+                "QA dispatch-only workflow transport",
+            ],
+        )
+        .await;
+        f.local(&branch, &sha).await;
+        assert_eq!(f.manual().await.state, "success");
+        f.same(&branch, &sha).await;
+        let remote = f.remote.as_ref().unwrap();
+        remote.fetch().await.unwrap();
+        assert_eq!(
+            git(
+                &remote.scratch,
+                &[
+                    "show",
+                    &format!("{sha}:.github/workflows/forge-sync-qa.yml")
+                ]
+            )
+            .await,
+            content.trim()
+        );
+        println!("LIVE_GITHUB_WORKFLOW_TRANSPORT_OK prefix={}", f.prefix);
+    }
+    assert_eq!(std::fs::read(f.local.join("HEAD")).unwrap(), head);
+    let no_op = f.manual().await;
+    assert_eq!(no_op.state, "success");
+    f.ref_result(no_op.id, &branch, "unchanged").await;
+    assert_eq!(
+        f.remote.as_ref().unwrap().refs(true).await.unwrap().len(),
+        2
+    );
+    f.settings(Direction::Disabled, false).await;
+    f.stop_tasks().await;
+    f.pool.close().await;
+    println!(
+        "LIVE_EMPTY_HOSTED_OK provider={:?} prefix={}",
+        f.settings.provider, f.prefix
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "Requires owned live provider repository; kills only its own QA worker process"]
 async fn actual_worker_crash_with_live_git_child_and_lost_ack() {
-    process_recovery(false, false).await;
+    process_recovery(false, false, false).await;
 }
 
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "Requires owned live provider repository; disables only its own QA connection after remote acceptance"]
 async fn disable_after_accepted_push_preserves_actual_result() {
-    process_recovery(true, false).await;
+    process_recovery(true, false, false).await;
 }
 
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "Requires owned live provider repository; kills only its own worker before remote effect"]
 async fn crash_before_push_retries_only_after_old_sha_observation() {
-    process_recovery(false, true).await;
+    process_recovery(false, true, false).await;
 }
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "Requires owned live provider repository; stops only its own queued Git effect"]
 async fn disable_before_push_never_sends_changes() {
-    process_recovery(true, true).await;
+    process_recovery(true, true, false).await;
 }
 
 #[cfg(unix)]
-async fn process_recovery(disable: bool, before: bool) {
+#[tokio::test]
+#[ignore = "Requires owned live provider; kills own worker after one receipt and one accepted unknown push"]
+async fn crash_after_partial_progress_preserves_receipts_and_resumes_remaining_refs() {
+    process_recovery(false, false, true).await;
+}
+
+#[cfg(unix)]
+async fn process_recovery(disable: bool, before: bool, partial: bool) {
     use std::os::unix::fs::PermissionsExt;
     let mut f = Live::new().await;
     f.stop_tasks().await;
@@ -165,6 +530,12 @@ async fn process_recovery(disable: bool, before: bool) {
     let sha = f.commit(None, "QA actual worker crash").await;
     let name = f.head("lost-ack-process");
     f.local(&name, &sha).await;
+    let confirmed = f.head("00-confirmed");
+    let pending = f.head("zz-pending");
+    if partial {
+        f.local(&confirmed, &sha).await;
+        f.local(&pending, &sha).await;
+    }
     let controls = f.root.join("fault-control");
     std::fs::create_dir(&controls).unwrap();
     let _release_on_failure = ReleaseGate(controls.clone());
@@ -178,7 +549,7 @@ esac
 case " $* " in
   *" push "*)
     echo push >> "$control/push-count"
-    if test -f "$control/arm"; then
+    if test -f "$control/arm" && {{ test ! -f "$control/partial" || test "$(wc -l < "$control/push-count")" -eq 2; }}; then
       rm "$control/arm"
       echo $$ > "$control/child-pid"
       if test -f "$control/before"; then
@@ -205,6 +576,9 @@ exec /usr/bin/git "$@"
     std::fs::write(controls.join("arm"), b"owned QA push only").unwrap();
     if before {
         std::fs::write(controls.join("before"), b"gate before real Git").unwrap();
+    }
+    if partial {
+        std::fs::write(controls.join("partial"), b"gate only the second owned ref").unwrap();
     }
     let mut first = f.process(&controls).await;
     let (status, body) = f.request("POST", "/runs", None, Some(Uuid::new_v4())).await;
@@ -239,6 +613,19 @@ exec /usr/bin/git "$@"
             "0"
         );
         f.same(&name, &sha).await;
+    }
+    if partial {
+        f.ref_result(run.id, &confirmed, "applied").await;
+        f.same(&confirmed, &sha).await;
+        assert!(
+            !f.remote
+                .as_ref()
+                .unwrap()
+                .refs(true)
+                .await
+                .unwrap()
+                .contains_key(&pending)
+        );
     }
     first.kill().await.unwrap();
     first.wait().await.unwrap();
@@ -350,6 +737,12 @@ exec /usr/bin/git "$@"
     } else {
         f.same(&name, &sha).await;
     }
+    if partial {
+        for reference in [&confirmed, &pending] {
+            f.ref_result(run.id, reference, "applied").await;
+            f.same(reference, &sha).await;
+        }
+    }
     second.kill().await.unwrap();
     second.wait().await.unwrap();
     assert_eq!(
@@ -357,18 +750,30 @@ exec /usr/bin/git "$@"
             .unwrap()
             .lines()
             .count(),
-        if before && !disable { 2 } else { 1 },
+        if partial {
+            3
+        } else if before && !disable {
+            2
+        } else {
+            1
+        },
         "recovery observes the accepted push without repeating it"
     );
     let effects = std::fs::read_to_string(controls.join("effect-count")).unwrap_or_default();
     assert_eq!(
         effects.lines().count(),
-        if before && disable { 0 } else { 1 },
+        if partial {
+            3
+        } else if before && disable {
+            0
+        } else {
+            1
+        },
         "only the intended Git effect reaches the provider"
     );
     f.pool.close().await;
     println!(
-        "LIVE_PROCESS_RECOVERY_OK provider={:?} prefix={} run={} disable={disable} before={before}",
+        "LIVE_PROCESS_RECOVERY_OK provider={:?} prefix={} run={} disable={disable} before={before} partial={partial}",
         f.settings.provider, f.prefix, run.id
     );
 }
@@ -958,6 +1363,10 @@ async fn all_directions_modes_tags_conflicts_and_actual_schedule() {
     let run = f.manual().await;
     f.ref_result(run.id, &protected, "blocked").await;
     let protected_output = tokio::process::Command::new("git")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .arg("-C")
         .arg(&f.local)
         .args(["rev-parse", "--verify", &protected])
@@ -1177,6 +1586,115 @@ async fn gitlab_git_only_scopes_and_revoked_credentials() {
     f.stop_tasks().await;
     f.pool.close().await;
     println!("LIVE_GIT_ONLY_SCOPES_OK prefix={}", f.prefix);
+}
+
+#[tokio::test]
+#[ignore = "Requires owned live provider; verifies an actual viewer login cannot mutate its connection"]
+async fn viewer_login_reads_history_but_cannot_mutate_real_connection() {
+    let mut f = Live::new().await;
+    let (_, original) = f.request("GET", "", None, None).await;
+    let mut draft = f.settings.clone();
+    draft.direction = Direction::Both;
+    let (invalid, diagnostic) = f
+        .request(
+            "POST",
+            "/check",
+            Some(serde_json::json!({"settings":draft,"token":"fictional-invalid-provider-token"})),
+            None,
+        )
+        .await;
+    assert_eq!(invalid, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        !diagnostic
+            .to_string()
+            .contains("fictional-invalid-provider-token")
+    );
+    let (valid, checked) = f
+        .request(
+            "POST",
+            "/check",
+            Some(serde_json::json!({"settings":draft})),
+            None,
+        )
+        .await;
+    assert_eq!(valid, StatusCode::OK);
+    assert_eq!(checked["read"], true);
+    assert!(matches!(
+        checked["write"].as_str(),
+        Some("preliminary" | "unconfirmed")
+    ));
+    let (_, after_check) = f.request("GET", "", None, None).await;
+    assert_eq!(original["version"], after_check["version"]);
+    assert_eq!(original["settings"], after_check["settings"]);
+    let viewer = Uuid::new_v4();
+    let username = format!("qa-viewer-{}", viewer.simple());
+    let password = "fixture-Viewer-QA-Only!1";
+    sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,'viewer')")
+        .bind(viewer)
+        .bind(&username)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)")
+        .bind(viewer)
+        .bind(cicd::auth::hash_password(password).unwrap())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'viewer')")
+        .bind(f.project)
+        .bind(viewer)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    f.authorization = login_access_token(f.api.clone(), &username, password).await;
+    let (status, saved) = f.request("GET", "", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["writable"], false);
+    assert_eq!(saved["has_credential"], true);
+    assert!(saved.get("token").is_none());
+    assert_eq!(
+        f.request("GET", "/runs", None, None).await.0,
+        StatusCode::OK
+    );
+    let save = serde_json::json!({"expected_version":saved["version"],"settings":f.settings});
+    assert_eq!(
+        f.request("PUT", "", Some(save), Some(Uuid::new_v4()))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.request(
+            "POST",
+            "/check",
+            Some(serde_json::json!({"settings":f.settings})),
+            None
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        f.request("POST", "/runs", None, Some(Uuid::new_v4()))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let (_, after) = f.request("GET", "", None, None).await;
+    assert_eq!(saved["version"], after["version"]);
+    assert_eq!(saved["settings"], after["settings"]);
+    assert_eq!(f.store.runs(f.repository, 20, 0).await.unwrap().1, 0);
+    assert_eq!(
+        f.remote.as_ref().unwrap().refs(true).await.unwrap(),
+        f.initial
+    );
+    f.stop_tasks().await;
+    f.pool.close().await;
+    println!(
+        "LIVE_VIEWER_LOGIN_OK provider={:?} prefix={}",
+        f.settings.provider, f.prefix
+    );
 }
 
 #[tokio::test]

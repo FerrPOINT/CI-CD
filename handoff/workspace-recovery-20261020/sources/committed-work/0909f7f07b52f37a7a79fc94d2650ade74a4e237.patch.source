@@ -1,0 +1,1595 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 484d6da..cdf7675 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -62,7 +62,7 @@ jobs:
+         with:
+           repository: FerrPOINT/services-base
+           path: services-base
+-          ref: main
++          ref: 14abba88ec3000fa2d10f7431a0d5a1182d9eeb5
+           token: ${{ secrets.SERVICES_BASE_TOKEN }}
+       - uses: dtolnay/rust-toolchain@stable
+         with:
+@@ -74,11 +74,11 @@ jobs:
+       - name: fmt
+         run: cargo fmt --all -- --check
+       - name: clippy
+-        run: cargo clippy --workspace --all-targets -- -D warnings
+-      - name: unit tests
+-        run: cargo test --workspace
+-      - name: integration tests (real PostgreSQL)
+-        run: cargo test --features integration --test integration_db -- --test-threads=1
++        run: cargo clippy --locked --workspace --all-targets --features integration -- -D warnings
++      - name: workspace tests (real PostgreSQL and CLI)
++        run: cargo test --locked --workspace --features integration -- --test-threads=1
++      - name: release build
++        run: cargo build --locked --release --workspace
+       - name: openapi drift gate
+         run: |
+           cargo run --bin openapi-dump -- /tmp/openapi.yaml
+@@ -100,7 +100,7 @@ jobs:
+           repository: FerrPOINT/services-base
+           path: services-base
+           token: ${{ secrets.SERVICES_BASE_TOKEN }}
+-          ref: main
++          ref: 14abba88ec3000fa2d10f7431a0d5a1182d9eeb5
+       - uses: pnpm/action-setup@v4
+         with:
+           version: 10.28.1
+@@ -109,7 +109,7 @@ jobs:
+           node-version: 22
+           cache: pnpm
+           cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
+-      - run: pnpm install --no-frozen-lockfile
++      - run: pnpm install --frozen-lockfile
+         env:
+           CI: "true"
+       - run: pnpm openapi:check
+diff --git a/backend/cli/tests/cli_contract.rs b/backend/cli/tests/cli_contract.rs
+index 3a62498..cf54b4a 100644
+--- a/backend/cli/tests/cli_contract.rs
++++ b/backend/cli/tests/cli_contract.rs
+@@ -173,6 +173,23 @@ fn cli_ndjson_flag_parses() {
+     );
+ }
+ 
++#[test]
++fn cli_missing_token_fails_before_connecting() {
++    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
++        .env_remove("CICD_API_TOKEN")
++        .env_remove("SDLC_API_TOKEN")
++        .env_remove("CICD_PROFILE")
++        .args(["--api-url", "http://127.0.0.1:1", "project", "list"])
++        .output()
++        .unwrap();
++    assert_eq!(output.status.code(), Some(2));
++    assert_contains(
++        &String::from_utf8(output.stderr).unwrap(),
++        "SDLC_API_TOKEN is not set",
++    );
++    assert!(output.stdout.is_empty());
++}
++
+ #[test]
+ fn cli_profile_flag_documented() {
+     let stdout = cli_help(&["--help"]);
+diff --git a/backend/cli/tests/cli_real_api.rs b/backend/cli/tests/cli_real_api.rs
+index f26c2e4..e3e4f37 100644
+--- a/backend/cli/tests/cli_real_api.rs
++++ b/backend/cli/tests/cli_real_api.rs
+@@ -23,11 +23,19 @@ impl ApiServer {
+     }
+ 
+     async fn start_with_auth_secret(pool: sqlx::PgPool, auth_secret: Option<String>) -> Self {
++        Self::start_with_git(pool, auth_secret, cicd::git_host::GitConfig::default()).await
++    }
++
++    async fn start_with_git(
++        pool: sqlx::PgPool,
++        auth_secret: Option<String>,
++        git: cicd::git_host::GitConfig,
++    ) -> Self {
+         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+             .await
+             .expect("bind disposable API port");
+         let addr = listener.local_addr().expect("read disposable API addr");
+-        let app = cicd::api::app_with_auth_secret(Some(pool), auth_secret);
++        let app = cicd::api::app_with_git_and_auth_secret(Some(pool), git, auth_secret);
+         let handle = tokio::spawn(async move {
+             axum::serve(listener, app)
+                 .await
+@@ -48,6 +56,9 @@ impl ApiServer {
+     }
+ }
+ 
++#[path = "../../tests/support/release_repository.rs"]
++mod release_repository;
++
+ async fn test_pool() -> sqlx::PgPool {
+     let url = std::env::var("CICD_TEST_DATABASE_URL")
+         .expect("CICD_TEST_DATABASE_URL must point at the integration PostgreSQL");
+@@ -65,19 +76,26 @@ async fn test_pool() -> sqlx::PgPool {
+     pool
+ }
+ 
+-fn cli_json_with_flags(api_url: &str, args: &[&str]) -> serde_json::Value {
+-    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+-        .env("CICD_API_URL", "http://127.0.0.1:1")
+-        .env("CICD_OUTPUT", "table")
+-        .arg("--api-url")
+-        .arg(api_url)
+-        .arg("--output")
+-        .arg("json")
+-        .arg("--timeout-seconds")
+-        .arg("5")
+-        .args(args)
+-        .output()
+-        .expect("run cicd-cli");
++fn cli_json_with_flags(api_url: &str, token: &str, args: &[&str]) -> serde_json::Value {
++    let output = tokio::task::block_in_place(|| {
++        Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
++            .env_remove("SDLC_API_TOKEN")
++            .env_remove("CICD_PROFILE")
++            .env("CICD_API_TOKEN", "bad-env-token")
++            .env("CICD_API_URL", "http://127.0.0.1:1")
++            .env("CICD_OUTPUT", "table")
++            .arg("--api-url")
++            .arg(api_url)
++            .arg("--token")
++            .arg(token)
++            .arg("--output")
++            .arg("json")
++            .arg("--timeout-seconds")
++            .arg("5")
++            .args(args)
++            .output()
++            .expect("run cicd-cli")
++    });
+     assert!(
+         output.status.success(),
+         "cicd-cli {} failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+@@ -89,14 +107,19 @@ fn cli_json_with_flags(api_url: &str, args: &[&str]) -> serde_json::Value {
+     serde_json::from_slice(&output.stdout).expect("CLI JSON output")
+ }
+ 
+-fn cli_json_from_env(api_url: &str, args: &[&str]) -> serde_json::Value {
+-    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+-        .env("CICD_API_URL", api_url)
+-        .env("CICD_OUTPUT", "json")
+-        .env("CICD_TIMEOUT_SECONDS", "5")
+-        .args(args)
+-        .output()
+-        .expect("run cicd-cli with env config");
++fn cli_json_from_env(api_url: &str, token: &str, args: &[&str]) -> serde_json::Value {
++    let output = tokio::task::block_in_place(|| {
++        Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
++            .env_remove("SDLC_API_TOKEN")
++            .env_remove("CICD_PROFILE")
++            .env("CICD_API_TOKEN", token)
++            .env("CICD_API_URL", api_url)
++            .env("CICD_OUTPUT", "json")
++            .env("CICD_TIMEOUT_SECONDS", "5")
++            .args(args)
++            .output()
++            .expect("run cicd-cli with env config")
++    });
+     assert!(
+         output.status.success(),
+         "cicd-cli {} failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+@@ -109,21 +132,25 @@ fn cli_json_from_env(api_url: &str, args: &[&str]) -> serde_json::Value {
+ }
+ 
+ fn cli_json_with_token(api_url: &str, token: &str, args: &[&str]) -> serde_json::Value {
+-    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+-        .env("CICD_API_URL", "http://127.0.0.1:1")
+-        .env("CICD_API_TOKEN", "bad-env-token")
+-        .env("CICD_OUTPUT", "table")
+-        .arg("--api-url")
+-        .arg(api_url)
+-        .arg("--token")
+-        .arg(token)
+-        .arg("--output")
+-        .arg("json")
+-        .arg("--timeout-seconds")
+-        .arg("5")
+-        .args(args)
+-        .output()
+-        .expect("run authenticated cicd-cli");
++    let output = tokio::task::block_in_place(|| {
++        Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
++            .env_remove("SDLC_API_TOKEN")
++            .env_remove("CICD_PROFILE")
++            .env("CICD_API_URL", "http://127.0.0.1:1")
++            .env("CICD_API_TOKEN", "bad-env-token")
++            .env("CICD_OUTPUT", "table")
++            .arg("--api-url")
++            .arg(api_url)
++            .arg("--token")
++            .arg(token)
++            .arg("--output")
++            .arg("json")
++            .arg("--timeout-seconds")
++            .arg("5")
++            .args(args)
++            .output()
++            .expect("run authenticated cicd-cli")
++    });
+     assert!(
+         output.status.success(),
+         "cicd-cli {} failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+@@ -135,14 +162,19 @@ fn cli_json_with_token(api_url: &str, token: &str, args: &[&str]) -> serde_json:
+     serde_json::from_slice(&output.stdout).expect("CLI JSON output")
+ }
+ 
+-fn cli_failure(api_url: &str, args: &[&str]) -> String {
+-    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+-        .env("CICD_API_URL", api_url)
+-        .env("CICD_OUTPUT", "json")
+-        .env("CICD_TIMEOUT_SECONDS", "5")
+-        .args(args)
+-        .output()
+-        .expect("run failing cicd-cli command");
++fn cli_failure(api_url: &str, token: &str, args: &[&str]) -> String {
++    let output = tokio::task::block_in_place(|| {
++        Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
++            .env_remove("SDLC_API_TOKEN")
++            .env_remove("CICD_PROFILE")
++            .env("CICD_API_TOKEN", token)
++            .env("CICD_API_URL", api_url)
++            .env("CICD_OUTPUT", "json")
++            .env("CICD_TIMEOUT_SECONDS", "5")
++            .args(args)
++            .output()
++            .expect("run failing cicd-cli command")
++    });
+     assert!(
+         !output.status.success(),
+         "cicd-cli {} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+@@ -154,16 +186,20 @@ fn cli_failure(api_url: &str, args: &[&str]) -> String {
+ }
+ 
+ fn cli_failure_with_token(api_url: &str, token: &str, args: &[&str]) -> String {
+-    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+-        .env("CICD_API_URL", api_url)
+-        .env("CICD_API_TOKEN", "bad-env-token")
+-        .env("CICD_OUTPUT", "json")
+-        .env("CICD_TIMEOUT_SECONDS", "5")
+-        .arg("--token")
+-        .arg(token)
+-        .args(args)
+-        .output()
+-        .expect("run failing authenticated cicd-cli command");
++    let output = tokio::task::block_in_place(|| {
++        Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
++            .env_remove("SDLC_API_TOKEN")
++            .env_remove("CICD_PROFILE")
++            .env("CICD_API_URL", api_url)
++            .env("CICD_API_TOKEN", "bad-env-token")
++            .env("CICD_OUTPUT", "json")
++            .env("CICD_TIMEOUT_SECONDS", "5")
++            .arg("--token")
++            .arg(token)
++            .args(args)
++            .output()
++            .expect("run failing authenticated cicd-cli command")
++    });
+     assert!(
+         !output.status.success(),
+         "cicd-cli {} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+@@ -171,6 +207,11 @@ fn cli_failure_with_token(api_url: &str, token: &str, args: &[&str]) -> String {
+         String::from_utf8_lossy(&output.stdout),
+         String::from_utf8_lossy(&output.stderr)
+     );
++    assert_eq!(
++        output.status.code(),
++        Some(5),
++        "authorization failure must exit 5"
++    );
+     let stdout = String::from_utf8_lossy(&output.stdout);
+     let stderr = String::from_utf8_lossy(&output.stderr);
+     assert!(
+@@ -230,13 +271,27 @@ async fn login_access_token(api_url: &str, username: &str, password: &str) -> St
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn cli_exercises_real_http_api_and_postgres_stack() {
+     let pool = test_pool().await;
+-    let server = ApiServer::start(pool.clone()).await;
+     let namespace = Uuid::new_v4();
++    let (git_root, _, release_sha) = release_repository::release_repository(namespace).await;
++    let server = ApiServer::start_with_git(
++        pool.clone(),
++        Some(format!("cli-api-secret-{namespace}")),
++        cicd::git_host::GitConfig {
++            root: git_root.clone(),
++            ..Default::default()
++        },
++    )
++    .await;
++    let username = format!("cli-api-admin-{}", namespace.simple());
++    let password = format!("AdminPass-{}", namespace.simple());
++    let admin_id = insert_login_user(&pool, &username, "admin", &password).await;
++    let token = login_access_token(&server.base_url, &username, &password).await;
+     let project_name = format!("cli-real-api-{}", namespace.simple());
+-    let repo_url = format!("https://example.invalid/{project_name}.git");
++    let repo_url = format!("{}/git/service-pulse.git", server.base_url);
+ 
+     let project = cli_json_with_flags(
+         &server.base_url,
++        &token,
+         &[
+             "project",
+             "create",
+@@ -251,9 +306,24 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
+     assert_eq!(project["name"], project_name);
+     assert_eq!(project["repository_url"], repo_url);
+     let project_id = project["id"].as_str().expect("project id").to_owned();
++    let protection = reqwest::Client::new()
++        .patch(format!("{}/api/v1/projects/{project_id}", server.base_url))
++        .bearer_auth(&token)
++        .json(&json!({"protected_branches":["main"]}))
++        .send()
++        .await
++        .expect("protect release fixture main");
++    let protection_status = protection.status();
++    let protection_body: serde_json::Value = protection.json().await.unwrap();
++    assert_eq!(
++        protection_status,
++        reqwest::StatusCode::OK,
++        "protect main: {protection_body}"
++    );
+ 
+     let projects = cli_json_from_env(
+         &server.base_url,
++        &token,
+         &["project", "list", "--limit", "200", "--offset", "0"],
+     );
+     assert!(
+@@ -268,6 +338,7 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
+     let idempotency_key = Uuid::new_v4().to_string();
+     let pipeline = cli_json_with_flags(
+         &server.base_url,
++        &token,
+         &[
+             "pipeline",
+             "run",
+@@ -294,6 +365,7 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
+ 
+     let replay = cli_json_with_flags(
+         &server.base_url,
++        &token,
+         &[
+             "pipeline",
+             "run",
+@@ -309,6 +381,7 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
+ 
+     let detail = cli_json_from_env(
+         &server.base_url,
++        &token,
+         &["pipeline", "show", "--id", &pipeline_id],
+     );
+     assert_eq!(detail["pipeline"]["id"], pipeline_id);
+@@ -316,15 +389,17 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
+ 
+     let attempts = cli_json_from_env(
+         &server.base_url,
++        &token,
+         &["job", "attempts", "--id", &first_job_id],
+     );
+     assert!(
+-        attempts.as_array().expect("attempt list").len() >= 1,
++        !attempts.as_array().expect("attempt list").is_empty(),
+         "pipeline run should create attempt history"
+     );
+ 
+     let environment = cli_json_with_flags(
+         &server.base_url,
++        &token,
+         &[
+             "environment",
+             "create",
+@@ -346,22 +421,25 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
+ 
+     let deployment = cli_json_with_flags(
+         &server.base_url,
++        &token,
+         &[
+             "deployment",
+             "create",
+             "--environment",
+             &environment_id,
+             "--git-ref",
+-            "main",
++            &release_sha,
+         ],
+     );
+     assert_eq!(deployment["approval_required"], true);
++    assert_eq!(deployment["git_ref"], release_sha);
+     assert_eq!(deployment["approval_state"], "pending");
+     assert!(deployment["pipeline_id"].is_null());
+     let deployment_id = deployment["id"].as_str().expect("deployment id").to_owned();
+ 
+     let approved = cli_json_with_flags(
+         &server.base_url,
++        &token,
+         &[
+             "deployment",
+             "approve",
+@@ -379,13 +457,15 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
+ 
+     let approvals = cli_json_from_env(
+         &server.base_url,
++        &token,
+         &["deployment", "approvals", "--id", &deployment_id],
+     );
+-    assert_eq!(approvals[0]["actor"], "cli-smoke");
++    assert_eq!(approvals[0]["actor"], admin_id.to_string());
+     assert_eq!(approvals[0]["decision"], "approved");
+ 
+     let stderr = cli_failure(
+         &server.base_url,
++        &token,
+         &["pipeline", "show", "--id", &Uuid::new_v4().to_string()],
+     );
+     assert!(
+@@ -398,6 +478,37 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
+         .execute(&pool)
+         .await
+         .expect("cleanup project");
++    sqlx::query("DELETE FROM users WHERE username = $1")
++        .bind(&username)
++        .execute(&pool)
++        .await
++        .expect("cleanup admin");
++    server.shutdown().await;
++    tokio::fs::remove_dir_all(git_root).await.unwrap();
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn cli_reports_unconfigured_auth_as_unavailable() {
++    let pool = test_pool().await;
++    let server = ApiServer::start(pool).await;
++    let response = reqwest::Client::new()
++        .get(format!("{}/api/v1/projects", server.base_url))
++        .send()
++        .await
++        .expect("query unconfigured API");
++    assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
++    let output = tokio::task::block_in_place(|| {
++        Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
++            .env_remove("SDLC_API_TOKEN")
++            .env_remove("CICD_PROFILE")
++            .env("CICD_API_TOKEN", "unconfigured-auth-fixture-token")
++            .args(["--api-url", &server.base_url, "project", "list"])
++            .output()
++            .expect("run CLI against unconfigured API")
++    });
++    assert_eq!(output.status.code(), Some(3));
++    assert!(String::from_utf8_lossy(&output.stderr).contains("service is temporarily unavailable"));
++    assert!(output.stdout.is_empty());
+     server.shutdown().await;
+ }
+ 
+@@ -412,10 +523,14 @@ async fn cli_exercises_auth_rbac_and_token_redaction_against_real_api() {
+     insert_login_user(&pool, &admin_username, "admin", &admin_password).await;
+     let admin_access = login_access_token(&server.base_url, &admin_username, &admin_password).await;
+ 
+-    let unauthenticated = cli_failure(&server.base_url, &["project", "list"]);
++    let unauthenticated = cli_failure_with_token(
++        &server.base_url,
++        "invalid-bearer-token",
++        &["project", "list"],
++    );
+     assert!(
+-        unauthenticated.contains("401 Unauthorized") || unauthenticated.contains("unauthorized"),
+-        "CLI should surface missing bearer as unauthorized, got stderr:\n{unauthenticated}"
++        unauthenticated.contains("token is invalid or lacks access"),
++        "CLI should surface rejected bearer without leaking it, got stderr:\n{unauthenticated}"
+     );
+ 
+     let project_name = format!("cli-auth-api-{}", namespace.simple());
+@@ -546,7 +661,7 @@ async fn cli_exercises_auth_rbac_and_token_redaction_against_real_api() {
+         ],
+     );
+     assert!(
+-        viewer_denied.contains("403 Forbidden") || viewer_denied.contains("forbidden"),
++        viewer_denied.contains("token is invalid or lacks access"),
+         "viewer should be denied write actions, got stderr:\n{viewer_denied}"
+     );
+ 
+@@ -599,7 +714,7 @@ async fn cli_exercises_auth_rbac_and_token_redaction_against_real_api() {
+         ],
+     );
+     assert!(
+-        pat_denied.contains("403 Forbidden") || pat_denied.contains("forbidden"),
++        pat_denied.contains("token is invalid or lacks access"),
+         "read-only PAT should be denied write actions, got stderr:\n{pat_denied}"
+     );
+ 
+diff --git a/backend/src/api/authz_mw.rs b/backend/src/api/authz_mw.rs
+index 12b0921..1c8a1d1 100644
+--- a/backend/src/api/authz_mw.rs
++++ b/backend/src/api/authz_mw.rs
+@@ -11,9 +11,9 @@ use std::sync::Arc;
+ use uuid::Uuid;
+ 
+ /// AUTHZ_CONTRACT current mode: when CICD_AUTH_SECRET is configured, every
+-/// /api/v1 route except the public allowlist requires a valid Bearer JWT/PAT
++/// user route except the public allowlist requires a valid Bearer JWT/PAT
+ /// and project-scoped resources require `project_memberships`. Without the
+-/// secret the API stays in trusted-network mode (open), matching CURRENT_STATE.
++/// secret user routes fail closed as unavailable.
+ pub(crate) async fn request_id_mw(
+     req: axum::extract::Request,
+     next: axum::middleware::Next,
+@@ -456,7 +456,7 @@ pub(crate) async fn list_projects_for_claims(
+         .await
+         .map_err(ApiError::internal),
+         (_, Some(project_id)) => sqlx::query_as::<_, Project>(
+-            "SELECT p.id, p.name, p.repository_url, p.default_branch, p.max_running_jobs, p.created_at \
++            "SELECT p.id, p.name, p.repository_url, p.default_branch, p.protected_branches, p.max_running_jobs, p.created_at \
+                  FROM projects p \
+                  JOIN project_memberships m ON m.project_id = p.id \
+                  WHERE m.user_id = $3 AND p.id = $4 \
+@@ -473,7 +473,7 @@ pub(crate) async fn list_projects_for_claims(
+             // Tenant visibility (AUTHORIZATION target, bounded step): active
+             // tenant membership implies read access to that tenant's projects
+             // alongside the user's direct project memberships.
+-            "SELECT DISTINCT p.id, p.name, p.repository_url, p.default_branch, p.max_running_jobs, p.created_at \
++            "SELECT DISTINCT p.id, p.name, p.repository_url, p.default_branch, p.protected_branches, p.max_running_jobs, p.created_at \
+                  FROM projects p \
+                  LEFT JOIN project_memberships m ON m.project_id = p.id AND m.user_id = $3 \
+                  LEFT JOIN tenant_memberships tm ON tm.user_id = $3 AND tm.tenant_id = p.tenant_id \
+diff --git a/backend/src/pulls.rs b/backend/src/pulls.rs
+index f73a82f..7ad5e75 100644
+--- a/backend/src/pulls.rs
++++ b/backend/src/pulls.rs
+@@ -858,16 +858,16 @@ pub async fn pr_action(
+             }
+             // P0-4 merge gate: when the target branch is protected, require a
+             // success pipeline on the PR source branch head (GitLab parity).
+-            let protected: Option<bool> = sqlx::query_scalar(
+-                "SELECT BOOL_OR($2 = ANY(p.protected_branches)) FROM projects p \
++            let protected: bool = sqlx::query_scalar(
++                "SELECT COALESCE(BOOL_OR($2 = ANY(p.protected_branches)), false) FROM projects p \
+                  WHERE p.repository_url LIKE ('%' || $1 || '%')",
+             )
+             .bind(&pr.repository_name)
+             .bind(&pr.target_branch)
+-            .fetch_optional(pool)
++            .fetch_one(pool)
+             .await
+             .map_err(ApiError::internal)?;
+-            if protected == Some(true) {
++            if protected {
+                 let source_head: Option<String> = {
+                     let path = resolve_repo_path(&state, &repo).await?;
+                     let out = tokio::process::Command::new("git")
+diff --git a/backend/tests/integration_db.rs b/backend/tests/integration_db.rs
+index 5f0fdac..2ea0783 100644
+--- a/backend/tests/integration_db.rs
++++ b/backend/tests/integration_db.rs
+@@ -33,6 +33,28 @@ type CanceledExternalLeaseState = (
+     Option<chrono::DateTime<chrono::Utc>>,
+ );
+ 
++type RequeuedLeaseState = (
++    String,
++    String,
++    String,
++    Option<Uuid>,
++    Option<chrono::DateTime<Utc>>,
++    String,
++    Option<String>,
++);
++
++type NotificationConfigState = (
++    Uuid,
++    String,
++    String,
++    bool,
++    i32,
++    i32,
++    i32,
++    String,
++    Vec<String>,
++);
++
+ async fn test_pool() -> sqlx::PgPool {
+     test_pool_in_schema(&format!("it_{}", Uuid::new_v4().simple())).await
+ }
+@@ -91,55 +113,9 @@ async fn test_pool_in_schema(schema: &str) -> sqlx::PgPool {
+     pool
+ }
+ 
+-async fn authenticated_app(pool: sqlx::PgPool) -> axum::Router {
+-    authenticated_app_with_git(pool, cicd::git_host::GitConfig::default()).await
+-}
+-
+-async fn authenticated_app_with_git(
+-    pool: sqlx::PgPool,
+-    git: cicd::git_host::GitConfig,
+-) -> axum::Router {
+-    let user_id = Uuid::new_v4();
+-    let username = format!("it-api-user-{}", user_id.simple());
+-    let password = "IntegrationPass1!";
+-    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+-        .bind(user_id)
+-        .bind(&username)
+-        .execute(&pool)
+-        .await
+-        .expect("insert API test user");
+-    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+-        .bind(user_id)
+-        .bind(cicd::auth::hash_password(password).expect("hash password"))
+-        .execute(&pool)
+-        .await
+-        .expect("insert API test credential");
+-
+-    let app = cicd::api::app_with_git_and_auth_secret(
+-        Some(pool),
+-        git,
+-        Some(format!("api-test-secret-{user_id}")),
+-    );
+-    let token = login_access_token(app.clone(), &username, password).await;
+-    let authorization = axum::http::HeaderValue::from_str(&format!("Bearer {token}"))
+-        .expect("valid API test token");
+-    app.layer(axum::middleware::from_fn(
+-        move |mut request: Request<Body>, next: axum::middleware::Next| {
+-            let authorization = authorization.clone();
+-            async move {
+-                if !request
+-                    .headers()
+-                    .contains_key(axum::http::header::AUTHORIZATION)
+-                {
+-                    request
+-                        .headers_mut()
+-                        .insert(axum::http::header::AUTHORIZATION, authorization);
+-                }
+-                next.run(request).await
+-            }
+-        },
+-    ))
+-}
++#[path = "support/authenticated_app.rs"]
++mod authenticated_app;
++use authenticated_app::{authenticated_app, authenticated_app_with_git, release_test_project};
+ 
+ #[tokio::test]
+ async fn migrations_apply_and_reapply_idempotently() {
+@@ -3032,7 +3008,7 @@ async fn artifact_download_rejects_storage_paths_outside_artifact_root() {
+     let attempt_id = Uuid::new_v4();
+     let artifact_id = Uuid::new_v4();
+     let project_name = format!("it-artifact-containment-{}", project_id.simple());
+-    let artifact_root = std::env::temp_dir().join(format!("forge-artifacts-{}", project_id));
++    let artifact_root = std::env::temp_dir().join(format!("forge-artifacts-{project_id}"));
+     let inside_path = artifact_root.join(format!("{artifact_id}.bin"));
+     let outside_path = std::env::temp_dir().join(format!("forge-outside-{artifact_id}.txt"));
+ 
+@@ -4386,7 +4362,7 @@ async fn embedded_runner_closes_lease_when_prepare_fails() {
+     let job_id = Uuid::new_v4();
+     let attempt_id = Uuid::new_v4();
+     let project_name = format!("it-runner-lease-{}", project_id.simple());
+-    let missing_repo = std::env::temp_dir().join(format!("forge-missing-{}.git", project_id));
++    let missing_repo = std::env::temp_dir().join(format!("forge-missing-{project_id}.git"));
+ 
+     sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+         .bind(project_id)
+@@ -4756,15 +4732,7 @@ async fn unacknowledged_external_lease_is_requeued_after_ack_deadline() {
+         queue_leased_at,
+         lease_status,
+         lease_terminal_status,
+-    ): (
+-        String,
+-        String,
+-        String,
+-        Option<Uuid>,
+-        Option<chrono::DateTime<chrono::Utc>>,
+-        String,
+-        Option<String>,
+-    ) = sqlx::query_as(
++    ): RequeuedLeaseState = sqlx::query_as(
+         "SELECT j.status, a.status, q.state, q.lease_id, q.leased_at, l.lease_status, l.terminal_status \
+          FROM jobs j \
+          JOIN execution_attempts a ON a.job_id = j.id \
+@@ -5642,7 +5610,7 @@ async fn parallel_delivery_claims_message_exactly_once() {
+     .bind(message_id)
+     .bind(event_id)
+     .bind(project_id)
+-    .bind(format!("notification:{}", config_id))
++    .bind(format!("notification:{config_id}"))
+     .bind(serde_json::json!({
+         "event": "pipeline.failed",
+         "project_id": project_id,
+@@ -6013,7 +5981,7 @@ async fn invalid_notification_replacement_preserves_existing_configs() {
+         .unwrap();
+     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+ 
+-    let configs: Vec<(Uuid, String, String, bool, i32, i32, i32, String, Vec<String>)> =
++    let configs: Vec<NotificationConfigState> =
+         sqlx::query_as(
+             "SELECT id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses \
+              FROM notification_configs WHERE project_id = $1",
+@@ -6057,7 +6025,7 @@ async fn invalid_notification_replacement_preserves_existing_configs() {
+         .unwrap();
+     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+ 
+-    let after_insert_error: Vec<(Uuid, String, String, bool, i32, i32, i32, String, Vec<String>)> =
++    let after_insert_error: Vec<NotificationConfigState> =
+         sqlx::query_as(
+             "SELECT id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses \
+              FROM notification_configs WHERE project_id = $1",
+@@ -6646,16 +6614,7 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
+ #[tokio::test]
+ async fn protected_environment_deployment_requires_approval_before_pipeline() {
+     let pool = test_pool().await;
+-    let namespace = Uuid::new_v4();
+-    let project_id = Uuid::new_v4();
+-    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+-        .bind(project_id)
+-        .bind(format!("it-env-approval-{}", namespace.simple()))
+-        .bind("https://example.invalid/env-approval.git")
+-        .execute(&pool)
+-        .await
+-        .expect("insert project");
+-    let app = authenticated_app(pool.clone()).await;
++    let (project_id, app, git_root, _, sha) = release_test_project(&pool).await;
+ 
+     let environment_response = app
+         .clone()
+@@ -6680,7 +6639,9 @@ async fn protected_environment_deployment_requires_approval_before_pipeline() {
+         .oneshot(
+             Request::post(format!("/api/v1/environments/{environment_id}/deployments"))
+                 .header("content-type", "application/json")
+-                .body(Body::from(r#"{"git_ref":"main","status":"success"}"#))
++                .body(Body::from(
++                    serde_json::json!({"git_ref":sha,"status":"success"}).to_string(),
++                ))
+                 .unwrap(),
+         )
+         .await
+@@ -6692,7 +6653,7 @@ async fn protected_environment_deployment_requires_approval_before_pipeline() {
+         .oneshot(
+             Request::post(format!("/api/v1/environments/{environment_id}/deployments"))
+                 .header("content-type", "application/json")
+-                .body(Body::from(r#"{"git_ref":"main"}"#))
++                .body(Body::from(serde_json::json!({"git_ref":sha}).to_string()))
+                 .unwrap(),
+         )
+         .await
+@@ -6748,21 +6709,13 @@ async fn protected_environment_deployment_requires_approval_before_pipeline() {
+         .execute(&pool)
+         .await
+         .expect("cleanup project");
++    tokio::fs::remove_dir_all(git_root).await.unwrap();
+ }
+ 
+ #[tokio::test]
+ async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
+     let pool = test_pool().await;
+-    let namespace = Uuid::new_v4();
+-    let project_id = Uuid::new_v4();
+-    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+-        .bind(project_id)
+-        .bind(format!("it-env-rollback-{}", namespace.simple()))
+-        .bind("https://example.invalid/env-rollback.git")
+-        .execute(&pool)
+-        .await
+-        .expect("insert project");
+-    let app = authenticated_app(pool.clone()).await;
++    let (project_id, app, git_root, previous_sha, current_sha) = release_test_project(&pool).await;
+ 
+     let environment_response = app
+         .clone()
+@@ -6786,7 +6739,7 @@ async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
+             Request::post(format!("/api/v1/environments/{environment_id}/deployments"))
+                 .header("content-type", "application/json")
+                 .body(Body::from(
+-                    r#"{"git_ref":"release-2026-08","status":"success"}"#,
++                    serde_json::json!({"git_ref":previous_sha}).to_string(),
+                 ))
+                 .unwrap(),
+         )
+@@ -6795,13 +6748,50 @@ async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
+     assert_eq!(source_response.status(), StatusCode::OK);
+     let source = response_json(source_response).await;
+     let source_id = source["id"].as_str().unwrap();
++    // Model runner outcomes through the API; this isolated test does not execute a release.
++    let job_id: Uuid = sqlx::query_scalar(
++        "SELECT j.id FROM jobs j JOIN stages s ON s.id = j.stage_id WHERE s.pipeline_id = $1",
++    )
++    .bind(Uuid::parse_str(source["pipeline_id"].as_str().unwrap()).unwrap())
++    .fetch_one(&pool)
++    .await
++    .unwrap();
++    for status in ["running", "success"] {
++        let response = app
++            .clone()
++            .oneshot(
++                Request::post(format!("/api/v1/jobs/{job_id}/status"))
++                    .header("content-type", "application/json")
++                    .body(Body::from(serde_json::json!({"status":status}).to_string()))
++                    .unwrap(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(response.status(), StatusCode::OK);
++    }
++
++    let wrong_sha = app
++        .clone()
++        .oneshot(
++            Request::post(format!("/api/v1/deployments/{source_id}/rollback"))
++                .header("content-type", "application/json")
++                .body(Body::from(
++                    serde_json::json!({"git_ref":current_sha}).to_string(),
++                ))
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(wrong_sha.status(), StatusCode::BAD_REQUEST);
+ 
+     let rollback_response = app
+         .clone()
+         .oneshot(
+             Request::post(format!("/api/v1/deployments/{source_id}/rollback"))
+                 .header("content-type", "application/json")
+-                .body(Body::from(r#"{"git_ref":"release-2026-07"}"#))
++                .body(Body::from(
++                    serde_json::json!({"git_ref":previous_sha}).to_string(),
++                ))
+                 .unwrap(),
+         )
+         .await
+@@ -6810,7 +6800,7 @@ async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
+     let rollback = response_json(rollback_response).await;
+     assert_ne!(rollback["id"], source["id"]);
+     assert_eq!(rollback["rollback_of_id"], source["id"]);
+-    assert_eq!(rollback["git_ref"], "release-2026-07");
++    assert_eq!(rollback["git_ref"], previous_sha);
+     assert_eq!(rollback["approval_state"], "not_required");
+     assert!(rollback["pipeline_id"].as_str().is_some());
+ 
+@@ -6828,6 +6818,7 @@ async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
+         .execute(&pool)
+         .await
+         .expect("cleanup project");
++    tokio::fs::remove_dir_all(git_root).await.unwrap();
+ }
+ 
+ #[tokio::test]
+@@ -7031,9 +7022,8 @@ async fn artifact_upload_sessions_resume_and_complete() {
+         .await
+         .unwrap();
+     let begun = response_json(response).await;
+-    assert_eq!(
++    assert!(
+         begun.get("sessionId").is_some(),
+-        true,
+         "begin session failed: {begun:?}"
+     );
+     let session_id = Uuid::parse_str(begun["sessionId"].as_str().expect("session id")).unwrap();
+@@ -8098,23 +8088,14 @@ async fn tenants_crud_and_project_scoping() {
+         StatusCode::CREATED,
+         "admin must create tenant"
+     );
+-    let created: serde_json::Value = serde_json::from_str(
+-        &String::from_utf8(
+-            axum::body::to_bytes(create.into_body(), usize::MAX)
+-                .await
+-                .unwrap()
+-                .to_vec(),
+-        )
+-        .unwrap(),
+-    )
+-    .unwrap();
++    let created = response_json(create).await;
+     let tenant_id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+ 
+     // Admin adds the viewer as a tenant member.
+     let membership = app
+         .clone()
+         .oneshot(
+-            Request::post(&format!("/api/v1/admin/tenants/{tenant_id}/memberships"))
++            Request::post(format!("/api/v1/admin/tenants/{tenant_id}/memberships"))
+                 .header("authorization", admin_bearer.clone())
+                 .header("content-type", "application/json")
+                 .body(Body::from(format!(
+@@ -8331,6 +8312,365 @@ async fn pull_requests_are_paged_filtered_and_readable_by_number() {
+     assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+ }
+ 
++#[tokio::test]
++async fn merged_pull_diff_survives_branch_updates_and_deletion() {
++    verify_merged_pull_diff(Some(false)).await;
++}
++
++#[tokio::test]
++async fn project_lists_include_protection_for_legacy_member_tokens() {
++    let pool = test_pool().await;
++    let project_id = Uuid::new_v4();
++    let other_id = Uuid::new_v4();
++    for id in [project_id, other_id] {
++        sqlx::query("INSERT INTO projects (id, name, repository_url, protected_branches, max_running_jobs) VALUES ($1, $2, $3, $4, 3)")
++            .bind(id)
++            .bind(format!("member-list-{id}"))
++            .bind(format!("https://example.invalid/{id}.git"))
++            .bind(vec!["main"])
++            .execute(&pool)
++            .await
++            .unwrap();
++    }
++    let app = authenticated_app(pool.clone()).await;
++    let mut results = Vec::new();
++    for role in ["viewer", "developer"] {
++        let user_id = Uuid::new_v4();
++        sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, $3)")
++            .bind(user_id)
++            .bind(format!("member-{user_id}"))
++            .bind(role)
++            .execute(&pool)
++            .await
++            .unwrap();
++        sqlx::query(
++            "INSERT INTO project_memberships (project_id, user_id, role) VALUES ($1, $2, $3)",
++        )
++        .bind(project_id)
++        .bind(user_id)
++        .bind(role)
++        .execute(&pool)
++        .await
++        .unwrap();
++        for scope in [None, Some(project_id)] {
++            let token = format!("cicd_{}", Uuid::new_v4().simple());
++            sqlx::query("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id, project_id, scopes, expires_at) VALUES ($1, 'member-list', $2, 'fixture', $3, $4, $5, now() + interval '1 day')")
++                .bind(Uuid::new_v4())
++                .bind(cicd::auth::hash_token(&token))
++                .bind(user_id)
++                .bind(scope)
++                .bind(vec!["api:read"])
++                .execute(&pool)
++                .await
++                .unwrap();
++            let response = app
++                .clone()
++                .oneshot(
++                    Request::get("/api/v1/projects?limit=200&offset=0")
++                        .header("authorization", format!("Bearer {token}"))
++                        .body(Body::empty())
++                        .unwrap(),
++                )
++                .await
++                .unwrap();
++            let status = response.status();
++            let body = response_json(response).await;
++            results.push((role, scope.is_some(), status, body));
++            let page = app
++                .clone()
++                .oneshot(
++                    Request::get("/api/v1/projects?limit=1&offset=1")
++                        .header("authorization", format!("Bearer {token}"))
++                        .body(Body::empty())
++                        .unwrap(),
++                )
++                .await
++                .unwrap();
++            assert_eq!(page.status(), StatusCode::OK, "empty page {role} {scope:?}");
++            assert_eq!(response_json(page).await, serde_json::json!([]));
++        }
++    }
++    for (role, scoped, status, body) in results {
++        assert_eq!(status, StatusCode::OK, "{role}, scoped={scoped}: {body}");
++        let projects = body.as_array().unwrap();
++        assert_eq!(projects.len(), 1, "{role}, scoped={scoped}");
++        assert_eq!(projects[0]["id"], project_id.to_string());
++        assert_eq!(
++            projects[0]["protected_branches"],
++            serde_json::json!(["main"])
++        );
++        assert_eq!(projects[0]["max_running_jobs"], 3);
++        assert!(projects.iter().all(|p| p["id"] != other_id.to_string()));
++    }
++}
++
++#[tokio::test]
++async fn repository_without_ci_project_can_merge_and_read_historical_diff() {
++    verify_merged_pull_diff(None).await;
++}
++
++#[tokio::test]
++async fn protected_pull_requires_successful_pipeline_on_current_head() {
++    verify_merged_pull_diff(Some(true)).await;
++}
++
++async fn verify_merged_pull_diff(project_protection: Option<bool>) {
++    let pool = test_pool().await;
++    let name = format!("merged-diff-{}", Uuid::new_v4().simple());
++    let root = std::env::temp_dir().join(format!("forge-{name}"));
++    let worktree = root.join("worktree");
++    let work = worktree.to_str().unwrap();
++    let bare = root.join(format!("{name}.git"));
++    let git_dir = format!("--git-dir={}", bare.display());
++    tokio::fs::create_dir_all(&root).await.unwrap();
++    run_git(
++        &["init", "--quiet", "--initial-branch=main"],
++        Some(&worktree),
++    )
++    .await;
++    run_git(&["-C", work, "config", "user.name", "Forge Test"], None).await;
++    run_git(
++        &["-C", work, "config", "user.email", "forge@example.test"],
++        None,
++    )
++    .await;
++    tokio::fs::write(worktree.join("README.md"), b"base\n")
++        .await
++        .unwrap();
++    run_git(&["-C", work, "add", "."], None).await;
++    run_git(&["-C", work, "commit", "--quiet", "-m", "Base"], None).await;
++    run_git(&["-C", work, "checkout", "--quiet", "-b", "feature"], None).await;
++    tokio::fs::write(worktree.join("README.md"), b"base\nrelease_sha\n")
++        .await
++        .unwrap();
++    run_git(&["-C", work, "commit", "--quiet", "-am", "Change"], None).await;
++    run_git(&["clone", "--bare", "--quiet", work], Some(&bare)).await;
++    sqlx::query("INSERT INTO repositories (id, name) VALUES ($1, $2)")
++        .bind(Uuid::new_v4())
++        .bind(&name)
++        .execute(&pool)
++        .await
++        .unwrap();
++    let project_id = Uuid::new_v4();
++    if let Some(protected) = project_protection {
++        sqlx::query("INSERT INTO projects (id, name, repository_url, protected_branches) VALUES ($1, $2, $3, $4)")
++            .bind(project_id)
++            .bind(&name)
++            .bind(format!("http://localhost/git/{name}.git"))
++            .bind(if protected { vec!["main"] } else { vec![] })
++            .execute(&pool)
++            .await
++            .unwrap();
++    }
++    let app = authenticated_app_with_git(
++        pool.clone(),
++        cicd::git_host::GitConfig {
++            root: root.clone(),
++            ..Default::default()
++        },
++    )
++    .await;
++    let created = app
++        .clone()
++        .oneshot(
++            Request::post(format!("/api/v1/repos/{name}/pulls"))
++                .header("content-type", "application/json")
++                .body(Body::from(
++                    serde_json::json!({
++                        "repository_name": name, "title": "Release identity",
++                        "source_branch": "feature", "target_branch": "main"
++                    })
++                    .to_string(),
++                ))
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(created.status(), StatusCode::OK);
++    let number = response_json(created).await["number"].as_i64().unwrap();
++    if project_protection == Some(true) {
++        let head = tokio::process::Command::new("git")
++            .args([&git_dir, "rev-parse", "feature"])
++            .output()
++            .await
++            .unwrap();
++        assert!(head.status.success());
++        let head = String::from_utf8(head.stdout).unwrap().trim().to_string();
++        let base = tokio::process::Command::new("git")
++            .args([&git_dir, "rev-parse", "main"])
++            .output()
++            .await
++            .unwrap();
++        assert!(base.status.success());
++        let base = String::from_utf8(base.stdout).unwrap().trim().to_string();
++        for (status, commit) in [("success", &base), ("failed", &head)] {
++            sqlx::query("INSERT INTO pipelines (id, project_id, git_ref, commit_sha, status) VALUES ($1, $2, 'feature', $3, $4)")
++                .bind(Uuid::new_v4())
++                .bind(project_id)
++                .bind(commit)
++                .bind(status)
++                .execute(&pool)
++                .await
++                .unwrap();
++            let denied = app
++                .clone()
++                .oneshot(
++                    Request::post(format!("/api/v1/repos/{name}/pulls/{number}/action"))
++                        .header("content-type", "application/json")
++                        .body(Body::from(r#"{"action":"merge"}"#))
++                        .unwrap(),
++                )
++                .await
++                .unwrap();
++            assert_eq!(denied.status(), StatusCode::CONFLICT, "{status} {commit}");
++            let main = tokio::process::Command::new("git")
++                .args([&git_dir, "rev-parse", "main"])
++                .output()
++                .await
++                .unwrap();
++            assert!(main.status.success());
++            assert_eq!(String::from_utf8(main.stdout).unwrap().trim(), base);
++            let status: String = sqlx::query_scalar(
++                "SELECT status FROM pull_requests WHERE repository_name = $1 AND number = $2",
++            )
++            .bind(&name)
++            .bind(number as i32)
++            .fetch_one(&pool)
++            .await
++            .unwrap();
++            assert_eq!(status, "open");
++        }
++        sqlx::query("INSERT INTO pipelines (id, project_id, git_ref, commit_sha, status) VALUES ($1, $2, 'feature', $3, 'success')")
++            .bind(Uuid::new_v4())
++            .bind(project_id)
++            .bind(&head)
++            .execute(&pool)
++            .await
++            .unwrap();
++    }
++    let merged = app
++        .clone()
++        .oneshot(
++            Request::post(format!("/api/v1/repos/{name}/pulls/{number}/action"))
++                .header("content-type", "application/json")
++                .body(Body::from(r#"{"action":"merge"}"#))
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(merged.status(), StatusCode::OK);
++    let merged = response_json(merged).await;
++    let sha = merged["merge_commit_sha"].as_str().unwrap();
++    let parents = tokio::process::Command::new("git")
++        .args([&git_dir, "rev-parse", &format!("{sha}^1")])
++        .output()
++        .await
++        .unwrap();
++    assert!(parents.status.success());
++    let base = String::from_utf8(parents.stdout)
++        .unwrap()
++        .trim()
++        .to_string();
++    assert_ne!(base, sha);
++
++    let mutable = app
++        .clone()
++        .oneshot(
++            Request::get(format!("/api/v1/repos/{name}/compare?from=main&to=feature"))
++                .body(Body::empty())
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(mutable.status(), StatusCode::OK);
++    assert!(
++        response_json(mutable).await["files"]
++            .as_array()
++            .unwrap()
++            .is_empty()
++    );
++
++    for state in ["merged", "advanced", "deleted"] {
++        if state == "advanced" {
++            run_git(
++                &[
++                    "-C",
++                    work,
++                    "fetch",
++                    "--quiet",
++                    bare.to_str().unwrap(),
++                    "main",
++                ],
++                None,
++            )
++            .await;
++            run_git(
++                &["-C", work, "checkout", "--quiet", "--detach", "FETCH_HEAD"],
++                None,
++            )
++            .await;
++            tokio::fs::write(worktree.join("later.txt"), b"not in this PR\n")
++                .await
++                .unwrap();
++            run_git(&["-C", work, "add", "."], None).await;
++            run_git(&["-C", work, "commit", "--quiet", "-m", "Later"], None).await;
++            run_git(
++                &[
++                    &git_dir,
++                    "fetch",
++                    "--quiet",
++                    work,
++                    "HEAD:refs/heads/main",
++                    "HEAD:refs/heads/feature",
++                ],
++                None,
++            )
++            .await;
++        } else if state == "deleted" {
++            run_git(&[&git_dir, "update-ref", "-d", "refs/heads/main"], None).await;
++            run_git(&[&git_dir, "update-ref", "-d", "refs/heads/feature"], None).await;
++        }
++        let diff = app
++            .clone()
++            .oneshot(
++                Request::get(format!(
++                    "/api/v1/repos/{name}/compare?from={sha}%5E1&to={sha}"
++                ))
++                .body(Body::empty())
++                .unwrap(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(diff.status(), StatusCode::OK, "{state}");
++        let diff = response_json(diff).await;
++        assert_eq!(diff["merge_base"], base.to_string(), "{state}");
++        assert_eq!(diff["files"].as_array().unwrap().len(), 1, "{state}");
++        assert_eq!(diff["files"][0]["path"], "README.md", "{state}");
++        assert!(
++            diff["patch"].as_str().unwrap().contains("+release_sha"),
++            "{state}"
++        );
++        assert!(
++            !diff["patch"].as_str().unwrap().contains("later.txt"),
++            "{state}"
++        );
++    }
++    let unavailable = app
++        .oneshot(
++            Request::get(format!(
++                "/api/v1/repos/{name}/compare?from={}%5E1&to={}",
++                "0".repeat(40),
++                "0".repeat(40)
++            ))
++            .body(Body::empty())
++            .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(unavailable.status(), StatusCode::BAD_REQUEST);
++    tokio::fs::remove_dir_all(root).await.unwrap();
++}
++
+ async fn bearer(response: axum::response::Response) -> String {
+     let body = String::from_utf8(
+         axum::body::to_bytes(response.into_body(), usize::MAX)
+diff --git a/backend/tests/integration_target_policy.rs b/backend/tests/integration_target_policy.rs
+index 7ab38eb..8286d09 100644
+--- a/backend/tests/integration_target_policy.rs
++++ b/backend/tests/integration_target_policy.rs
+@@ -14,12 +14,16 @@ use axum::{
+     body::{Body, to_bytes},
+     http::{Request, StatusCode},
+ };
+-use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
++use chrono::{Duration, TimeZone, Timelike, Utc};
+ use sqlx::postgres::PgPoolOptions;
+ use std::str::FromStr;
+ use tower::ServiceExt;
+ use uuid::Uuid;
+ 
++#[path = "support/authenticated_app.rs"]
++mod authenticated_app;
++use authenticated_app::{admin_authorization, authenticated_app, release_test_project};
++
+ async fn test_pool_in_schema(schema: &str) -> sqlx::PgPool {
+     let base_url = std::env::var("CICD_TEST_DATABASE_URL")
+         .expect("CICD_TEST_DATABASE_URL must point at the test-compose PostgreSQL");
+@@ -87,7 +91,7 @@ async fn seed_project(pool: &sqlx::PgPool, prefix: &str) -> Uuid {
+ async fn scheduler_utc_cron_next_fire_is_stable_utc_wall_clock() {
+     let pool = test_pool().await;
+     let project_id = seed_project(&pool, "it-utc-wall-clock").await;
+-    let app = cicd::api::app(Some(pool.clone()));
++    let app = authenticated_app(pool.clone()).await;
+     // Daily at 02:30 UTC.
+     let response = app
+         .oneshot(
+@@ -277,8 +281,9 @@ async fn outbox_attempts_ledger_single_observed_outcome_per_attempt() {
+ #[tokio::test]
+ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
+     let pool = test_pool().await;
+-    let project_id = seed_project(&pool, "it-approval-policy").await;
+-    let app = cicd::api::app(Some(pool.clone()));
++    let (project_id, app, git_root, _, current_sha) = release_test_project(&pool).await;
++    let rejecting_actor = admin_authorization(&pool, app.clone()).await;
++    let late_actor = admin_authorization(&pool, app.clone()).await;
+ 
+     let environment_response = app
+         .clone()
+@@ -301,7 +306,9 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
+         .oneshot(
+             Request::post(format!("/api/v1/environments/{environment_id}/deployments"))
+                 .header("content-type", "application/json")
+-                .body(Body::from(r#"{"git_ref":"main"}"#))
++                .body(Body::from(
++                    serde_json::json!({"git_ref":current_sha}).to_string(),
++                ))
+                 .unwrap(),
+         )
+         .await
+@@ -311,7 +318,7 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
+     assert_eq!(deployment["approval_state"], "pending");
+     let deployment_id = deployment["id"].as_str().unwrap();
+ 
+-    // First approval by release-manager.
++    // The authenticated subject, not the supplied actor label, owns the vote.
+     let first = app
+         .clone()
+         .oneshot(
+@@ -347,6 +354,7 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
+         .oneshot(
+             Request::post(format!("/api/v1/deployments/{deployment_id}/approvals"))
+                 .header("content-type", "application/json")
++                .header("authorization", rejecting_actor)
+                 .body(Body::from(
+                     r#"{"decision":"rejected","actor":"sre-on-call"}"#,
+                 ))
+@@ -366,6 +374,7 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
+         .oneshot(
+             Request::post(format!("/api/v1/deployments/{deployment_id}/approvals"))
+                 .header("content-type", "application/json")
++                .header("authorization", late_actor)
+                 .body(Body::from(r#"{"decision":"approved","actor":"qa-lead"}"#))
+                 .unwrap(),
+         )
+@@ -384,6 +393,8 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
+         "rejected deployment must not start a pipeline"
+     );
+ 
++    tokio::fs::remove_dir_all(git_root).await.unwrap();
++
+     sqlx::query("DELETE FROM projects WHERE id = $1")
+         .bind(project_id)
+         .execute(&pool)
+diff --git a/backend/tests/support/authenticated_app.rs b/backend/tests/support/authenticated_app.rs
+new file mode 100644
+index 0000000..f135cb8
+--- /dev/null
++++ b/backend/tests/support/authenticated_app.rs
+@@ -0,0 +1,91 @@
++use axum::{
++    body::{Body, to_bytes},
++    http::{HeaderValue, Request, StatusCode, header::AUTHORIZATION},
++};
++use tower::ServiceExt;
++use uuid::Uuid;
++
++#[path = "release_repository.rs"]
++mod release_repository;
++
++pub async fn admin_authorization(pool: &sqlx::PgPool, app: axum::Router) -> HeaderValue {
++    let user_id = Uuid::new_v4();
++    let username = format!("it-api-user-{}", user_id.simple());
++    let password = "IntegrationPass1!";
++    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
++        .bind(user_id)
++        .bind(&username)
++        .execute(pool)
++        .await
++        .expect("insert API test user");
++    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
++        .bind(user_id)
++        .bind(cicd::auth::hash_password(password).expect("hash password"))
++        .execute(pool)
++        .await
++        .expect("insert API test credential");
++    let response = app
++        .oneshot(
++            Request::post("/api/v1/auth/login")
++                .header("content-type", "application/json")
++                .body(Body::from(
++                    serde_json::json!({"username": username, "password": password}).to_string(),
++                ))
++                .unwrap(),
++        )
++        .await
++        .unwrap();
++    assert_eq!(response.status(), StatusCode::OK);
++    let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
++    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
++    let token = body["access_token"].as_str().expect("access token");
++    HeaderValue::from_str(&format!("Bearer {token}")).expect("valid API test token")
++}
++
++pub async fn authenticated_app(pool: sqlx::PgPool) -> axum::Router {
++    authenticated_app_with_git(pool, cicd::git_host::GitConfig::default()).await
++}
++
++pub async fn authenticated_app_with_git(
++    pool: sqlx::PgPool,
++    git: cicd::git_host::GitConfig,
++) -> axum::Router {
++    let app = cicd::api::app_with_git_and_auth_secret(
++        Some(pool.clone()),
++        git,
++        Some(format!("api-test-secret-{}", Uuid::new_v4())),
++    );
++    let authorization = admin_authorization(&pool, app.clone()).await;
++    app.layer(axum::middleware::from_fn(
++        move |mut request: Request<Body>, next: axum::middleware::Next| {
++            let authorization = authorization.clone();
++            async move {
++                if !request.headers().contains_key(AUTHORIZATION) {
++                    request.headers_mut().insert(AUTHORIZATION, authorization);
++                }
++                next.run(request).await
++            }
++        },
++    ))
++}
++
++pub async fn release_test_project(
++    pool: &sqlx::PgPool,
++) -> (Uuid, axum::Router, std::path::PathBuf, String, String) {
++    let project_id = Uuid::new_v4();
++    let (root, previous, current) = release_repository::release_repository(project_id).await;
++    sqlx::query("INSERT INTO projects (id, name, repository_url, protected_branches) VALUES ($1, $2, 'http://localhost/git/service-pulse.git', $3)")
++        .bind(project_id)
++        .bind(format!("it-release-{project_id}"))
++        .bind(vec!["main"])
++        .execute(pool).await.unwrap();
++    let app = authenticated_app_with_git(
++        pool.clone(),
++        cicd::git_host::GitConfig {
++            root: root.clone(),
++            ..Default::default()
++        },
++    )
++    .await;
++    (project_id, app, root, previous, current)
++}
+diff --git a/backend/tests/support/release_repository.rs b/backend/tests/support/release_repository.rs
+new file mode 100644
+index 0000000..b3d2e9a
+--- /dev/null
++++ b/backend/tests/support/release_repository.rs
+@@ -0,0 +1,50 @@
++use std::path::{Path, PathBuf};
++use uuid::Uuid;
++
++async fn git(source: &Path, args: &[&str]) -> String {
++    let output = tokio::process::Command::new("git")
++        .args(args)
++        .current_dir(source)
++        .output()
++        .await
++        .expect("run fixture Git");
++    assert!(
++        output.status.success(),
++        "fixture Git failed: {}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    String::from_utf8(output.stdout).unwrap().trim().to_string()
++}
++
++pub async fn release_repository(namespace: Uuid) -> (PathBuf, String, String) {
++    let root = std::env::temp_dir().join(format!("forge-release-{namespace}"));
++    let source = root.join("source");
++    tokio::fs::create_dir_all(&source).await.unwrap();
++    git(&source, &["init", "--quiet", "--initial-branch=main"]).await;
++    git(&source, &["config", "user.name", "Forge Test"]).await;
++    git(&source, &["config", "user.email", "forge@example.test"]).await;
++    tokio::fs::write(source.join(".forge-deploy.yml"), "version: 1\njobs:\n  deploy:\n    image: alpine:3.21\n    tags: [deploy]\n    commands: [service-pulse-deploy]\n").await.unwrap();
++    git(&source, &["add", "."]).await;
++    git(
++        &source,
++        &["commit", "--quiet", "-m", "Previous release fixture"],
++    )
++    .await;
++    let previous = git(&source, &["rev-parse", "HEAD"]).await;
++    tokio::fs::write(source.join("README.md"), b"Current release fixture\n")
++        .await
++        .unwrap();
++    git(&source, &["add", "."]).await;
++    git(
++        &source,
++        &["commit", "--quiet", "-m", "Current release fixture"],
++    )
++    .await;
++    let current = git(&source, &["rev-parse", "HEAD"]).await;
++    git(
++        &source,
++        &["clone", "--bare", "--quiet", ".", "../service-pulse.git"],
++    )
++    .await;
++    (root, previous, current)
++}
+diff --git a/docs/API.md b/docs/API.md
+index ab14dcf..a2abe78 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -10,7 +10,7 @@ REST API первой версии Forge CI/CD. Контрольная плос
+ 
+ - Base URL: `http://{host}:22801/api/v1`
+ - Content-Type: `application/json`
+-- Auth: conditional. Без непустого `CICD_AUTH_SECRET` API работает в trusted-network режиме; с секретом большинство endpoint-ов требует `Authorization: Bearer <JWT-or-PAT>`.
++- Auth: пользовательские routes требуют настроенную авторизацию и `Authorization: Bearer <JWT-or-PAT>`. Без непустого `CICD_AUTH_SECRET` они закрыты с `503`, а не открыты в trusted-network режиме. Public health/readiness/OpenAPI и машинные протоколы используют собственные правила доступа.
+ - Версионирование: path-based `/api/v1`.
+ - Сериализация: `serde_json`, `snake_case` для enum-значений статусов.
+ - Ошибки: `{"error":{"code":"...","message":"...","request_id":"..."}}` с соответствующим HTTP статусом и header `x-request-id`.
+@@ -28,7 +28,7 @@ REST API первой версии Forge CI/CD. Контрольная плос
+ | 410 Gone | Lease или protocol resource истёк |
+ | 429 Too Many Requests | In-process rate limit по client key |
+ | 500 Internal Server Error | Внутренняя ошибка; детали логируются server-side, клиент получает безопасное сообщение |
+-| 503 Service Unavailable | БД недоступна |
++| 503 Service Unavailable | БД или авторизация недоступны либо не настроены |
+ 
+ ---
+ 
+@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует
+   "database": "ok",
+   "migrations": {
+     "status": "ok",
+-    "latest_applied_version": 35,
+-    "latest_required_version": 35,
++    "latest_applied_version": 37,
++    "latest_required_version": 37,
+     "pending_versions": [],
+     "checksum_mismatches": [],
+     "unknown_applied_versions": [],
+@@ -107,7 +107,7 @@ curl -sS http://127.0.0.1:22801/api/v1/readiness
+ | POST | `/auth/refresh` | Обновить пару токенов |
+ | POST | `/auth/logout` | Отозвать refresh session |
+ 
+-Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут, содержит `sessions.id` и `users.token_version`, а protected API на каждом запросе проверяет активную session, enabled user, текущую роль и token version из БД. Refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. Browser flow получает refresh token в `HttpOnly; SameSite=Lax` cookie `forge_refresh` и CSRF companion cookie `forge_csrf`; `/auth/refresh` и `/auth/logout` с cookie требуют совпадающий `X-CSRF-Token`. Rotation/reuse сериализуются по session family; повторное использование уже заменённого refresh token отзывает всю family и один раз инвалидирует ранее выданные access JWT через `users.token_version`. Body `refresh_token` остаётся совместимым для CLI/API clients и legacy dashboard migration. PAT `cicd_...` принимается как Bearer token при включённом enforcement; новые PAT в auth-mode требуют `project_id`, имеют явные scopes и срок действия.
++Auth enforcement требует непустой `CICD_AUTH_SECRET`; без него пользовательские API fail closed с `503`. Access token — JWT HS256 на 15 минут, содержит `sessions.id` и `users.token_version`, а protected API на каждом запросе проверяет активную session, enabled user, текущую роль и token version из БД. Refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. Browser flow получает refresh token в `HttpOnly; SameSite=Lax` cookie `forge_refresh` и CSRF companion cookie `forge_csrf`; `/auth/refresh` и `/auth/logout` с cookie требуют совпадающий `X-CSRF-Token`. Rotation/reuse сериализуются по session family; повторное использование уже заменённого refresh token отзывает всю family и один раз инвалидирует ранее выданные access JWT через `users.token_version`. Body `refresh_token` остаётся совместимым для CLI/API clients и legacy dashboard migration. PAT `cicd_...` принимается как Bearer token при включённом enforcement; новые PAT в auth-mode требуют `project_id`, имеют явные scopes и срок действия.
+ 
+ #### POST /api/v1/auth/login
+ 
+@@ -1104,6 +1104,10 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
+ 
+ При обычном push Forge читает только `.forge-ci.yml`, а при явном deployment — только `.forge-deploy.yml`. Последний допускает единственный job с `tags: [deploy]`, командой `service-pulse-deploy`, без `allow_failure`, `manual` и job secrets. Тег `deploy` запрещён в push CI. Выделенный `forge-runner` регистрируется отдельным `CICD_DEPLOY_RUNNER_REGISTRATION_TOKEN`; обычный registration token не может получить этот тег, heartbeat не может изменить его, deploy runner не получает untagged CI jobs. Локальный fixed script и Compose манифест находятся в `deploy/`, вне репозитория Pulse; они проверяют неизменные миграции, собирают образы из SHA с закреплённым Base, ждут API/UI health, сохраняют image ID и восстанавливают предыдущие образы при неуспехе. Тома PostgreSQL не удаляются.
+ 
++#### POST /api/v1/deployments/{deployment_id}/cancel
++
++Отменяет активный (`pending` или `running`) deployment, включая связанный pipeline. Тело запроса не требуется. Ответ `200` содержит deployment со статусом `failed`; событие audit имеет тип `deployment.canceled`. Для неактивного deployment возвращается `409`, для неизвестного ID -- `404`. Отмена не является откатом работающего приложения: для возврата предыдущего успешного выпуска нужен отдельный rollback.
++
+ ### Schedules
+ 
+ | Метод | Путь | Назначение |
+diff --git a/docs/CLI.md b/docs/CLI.md
+index bf0d744..5f2a6b5 100644
+--- a/docs/CLI.md
++++ b/docs/CLI.md
+@@ -24,6 +24,11 @@ docker run --rm --entrypoint /bin/bash -v "$(dirname "$PWD"):/workspace" -w /wor
+ | `CICD_PROFILE` | - | Имя профиля из `~/.config/forge-cli/config.toml`; эквивалентно `--profile` |
+ | `CICD_CONFIG` | `~/.config/forge-cli/config.toml` | Путь к TOML-конфигу профилей |
+ 
++Токен обязателен: при его отсутствии CLI завершается с кодом `2` до HTTP-запроса.
++Отклонённый сервером токен или недостаточные права дают код `5` и безопасное
++сообщение `token is invalid or lacks access`, без вывода токена или тела ответа.
++Флаги `--token` и `CICD_API_TOKEN` имеют приоритет над `SDLC_API_TOKEN`.
++
+ Глобальные флаги:
+ 
+ ```bash
+diff --git a/docs/DEVELOPMENT_GUIDE.md b/docs/DEVELOPMENT_GUIDE.md
+index 05dc65a..a6ce663 100644
+--- a/docs/DEVELOPMENT_GUIDE.md
++++ b/docs/DEVELOPMENT_GUIDE.md
+@@ -179,7 +179,7 @@ docker run --rm --entrypoint /bin/bash \
+        /usr/local/cargo/bin/cargo build --release --workspace'
+ ```
+ 
+-Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. CLI real-API smoke запускается тем же PostgreSQL service командой `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1`. Backend release build входит в current CI gate.
++Для полного real-DB gate нужен PostgreSQL и `CICD_TEST_DATABASE_URL`: CI запускает `cargo test --locked --workspace --features integration -- --test-threads=1`, включая CLI real-API и target-policy тесты. Последовательный запуск обязателен из-за process-wide env и scheduler/runner scans. Clippy также включает `integration`; затем выполняется release build. CI фиксирует sibling `services-base` на `14abba88ec3000fa2d10f7431a0d5a1182d9eeb5` и использует lockfiles. При Linux-проверке Windows worktree через bind mount задайте `GIT_CEILING_DIRECTORIES=/workspace/CI-CD`, чтобы служебная проверка branch name не читала Windows-путь из `.git`; реальные fixture-репозитории создаются отдельно.
+ 
+ ### Frontend через Node Docker image
+ 
+@@ -238,7 +238,7 @@ python3 scripts/verify_docs.py --all
+ 
+ | Job | Фактические проверки |
+ |---|---|
+-| `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate |
++| `backend` | PostgreSQL 17 service; fmt, Clippy all-targets с `integration`, `cargo test --locked --workspace --features integration -- --test-threads=1`, release build, OpenAPI drift gate |
+ | `frontend` | `pnpm install --no-frozen-lockfile`, `pnpm openapi:check`, `pnpm test -- --run`, `pnpm lint`, `pnpm build` |
+ | Local extended gate | Release build, CLI real-API smoke, Compose health smoke, Playwright/axe/performance, audits, secret scan, SBOM and image scan run locally when their scope is touched. |
+ | `docs` | `python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py`, backup helper self-test/dry-run, shell wrapper syntax, `python3 scripts/verify_docs.py --all` |

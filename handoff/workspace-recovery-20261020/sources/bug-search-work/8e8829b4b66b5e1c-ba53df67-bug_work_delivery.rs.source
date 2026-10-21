@@ -1,0 +1,874 @@
+//! BugWork carrier on the existing static owner target/probes/versioned publication.
+//! It contains an actual immutable Accepted/pipeline, never a synthetic Task lease.
+use super::*;
+use crate::{domain::bug_work_publication::*, store::bug_work_publication as journal};
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct PublishIntent {
+    schema: String,
+    receipt: BugWorkPublishReceipt,
+    manifest: BugWorkStaticManifest,
+    policy_sha256: String,
+    previous_pointer: Option<Pointer>,
+}
+pub(super) fn require_settled(path: &Path, intent: &PublishIntent) -> anyhow::Result<()> {
+    let result = optional::<BugWorkPublishReceipt>(&path.join("reconciled.json"))?
+        .or(optional::<BugWorkPublishReceipt>(
+            &path.join("result.json"),
+        )?)
+        .context("unreconciled Bug publication holds target")?;
+    same_result(intent, &result)?;
+    ensure!(
+        result.status != DeliveryStatus::Unknown,
+        "unreconciled Bug publication holds target"
+    );
+    Ok(())
+}
+fn same_result(intent: &PublishIntent, result: &BugWorkPublishReceipt) -> anyhow::Result<()> {
+    ensure!(
+        intent.schema == "forge/bug-work-publication-intent/v1"
+            && result.schema == "forge/bug-work-publication/v1"
+            && result.command_sha256 == sha(&serde_json::to_vec(&result.command)?)
+            && result.command_sha256 == intent.receipt.command_sha256
+            && serde_json::to_vec(&result.original_operation)?
+                == serde_json::to_vec(&intent.receipt.original_operation)?
+            && result.manifest_sha256 == sha(&serde_json::to_vec(&intent.manifest)?)
+            && result.manifest_sha256 == intent.receipt.manifest_sha256
+            && result.previous_manifest_sha256 == intent.receipt.previous_manifest_sha256,
+        "Bug publication result differs from immutable intent"
+    );
+    Ok(())
+}
+fn manifest(target: &Target, hash: &str) -> anyhow::Result<BugWorkStaticManifest> {
+    ensure!(digest(hash), "invalid manifest hash");
+    let bytes = read_bytes(
+        &target.root.join("manifests").join(format!("{hash}.json")),
+        128 * 1024,
+    )?;
+    ensure!(sha(&bytes) == hash, "manifest hash differs");
+    let m: BugWorkStaticManifest = serde_json::from_slice(&bytes)?;
+    m.operation_receipt.validate().map_err(anyhow::Error::msg)?;
+    ensure!(
+        m.schema == "forge/bug-work-static-manifest/v1"
+            && m.operation_receipt.configuration_id == target.project_id
+            && m.target_policy_sha256 == target.policy_sha256
+            && m.pipeline_id == m.operation_receipt.pipeline.pipeline_id
+            && m.config_sha256 == m.operation_receipt.pipeline.config_sha256
+            && m.plan_sha256 == m.operation_receipt.pipeline.plan_sha256
+            && digest(&m.artifact.sha256)
+            && m.artifact.size_bytes > 0
+            && !m.artifact.artifact_id.is_nil()
+            && !m.artifact.job_id.is_nil()
+            && !m.artifact.attempt_id.is_nil(),
+        "manifest authority differs"
+    );
+    let bytes = read_bytes(
+        &target.root.join("objects").join(&m.artifact.sha256),
+        32 * 1024 * 1024,
+    )?;
+    ensure!(
+        bytes.len() as i64 == m.artifact.size_bytes && sha(&bytes) == m.artifact.sha256,
+        "published artifact changed"
+    );
+    Ok(m)
+}
+fn open_target(
+    state: &AppState,
+    mapping: &delivered_target::TargetMapping,
+    create: bool,
+) -> anyhow::Result<Target> {
+    let root = if mapping.root.exists() {
+        files::plain(&mapping.root)?;
+        mapping.root.canonicalize()?
+    } else {
+        let parent = mapping.root.parent().context("target parent missing")?;
+        files::plain(parent)?;
+        parent
+            .canonicalize()?
+            .join(mapping.root.file_name().context("target name missing")?)
+    };
+    for protected in [&state.git.root, &state.config.artifacts.root] {
+        let protected = protected.canonicalize()?;
+        ensure!(
+            !root.starts_with(&protected) && !protected.starts_with(&root),
+            "target overlaps protected storage"
+        );
+    }
+    let policy: DeliveryPolicy = read(&mapping.policy)?;
+    Target::open(&mapping.root, mapping.configuration_id, policy, create)
+}
+
+pub(crate) struct ProofObservation {
+    target: Target,
+    pointer: Pointer,
+    pub(crate) manifest: BugWorkStaticManifest,
+    receipt: BugWorkPublishReceipt,
+}
+/// Generic delivered-target reads may encounter either closed manifest purpose.
+/// Discover only the current owner pointer; never scan history or caller refs.
+pub(crate) fn prepare_current_target(
+    state: &AppState,
+    mapping: &delivered_target::TargetMapping,
+    project: &crate::domain::delivered_target::DeliveredProjectRef,
+) -> anyhow::Result<ProofObservation> {
+    let target = open_target(state, mapping, false)?;
+    let pointer = read_pointer(&target.root, "current.json")?.context("target unavailable")?;
+    let m = manifest(&target, &pointer.manifest_sha256)?;
+    ensure!(
+        &m.operation_receipt.request.project == project,
+        "delivered Bug source project differs"
+    );
+    prepare_proof(state, mapping, &m.operation_receipt)
+}
+pub(crate) fn target_origin(observation: &ProofObservation) -> String {
+    observation.target.policy.origin.clone()
+}
+pub(crate) fn as_delivered_target(
+    proof: BugWorkDeliveryProof,
+    origin: String,
+) -> crate::domain::delivered_target::DeliveredTargetReadback {
+    use crate::domain::delivered_target::{DeliveredTarget, DeliveredTargetReadback};
+    DeliveredTargetReadback {
+        schema: "forge/delivered-target/v1".into(),
+        producer_version: proof.producer_version,
+        project: proof.project,
+        configuration_id: proof.configuration_id,
+        repository_id: proof.repository_id,
+        environment_id: proof.environment_id,
+        target_ref: proof.target_ref,
+        status: proof.status,
+        observed_at: proof.observed_at,
+        blocked_reasons: proof.blocked_reasons,
+        target: proof.delivery.map(|d| DeliveredTarget {
+            delivery_ref: d.delivery_ref,
+            operation_key: d.operation_key,
+            generation: d.generation,
+            manifest_sha256: d.manifest_sha256,
+            commit_sha: d.commit_sha,
+            artifact_id: d.artifact_id,
+            artifact_digest: d.artifact_digest,
+            target_url: origin,
+            serving_identity: d.serving_identity,
+        }),
+    }
+}
+pub(crate) fn prepare_proof(
+    state: &AppState,
+    mapping: &delivered_target::TargetMapping,
+    original: &BugWorkOperationAccepted,
+) -> anyhow::Result<ProofObservation> {
+    let target = open_target(state, mapping, false)?;
+    let pointer =
+        read_pointer(&target.root, "current.json")?.context("current publication unavailable")?;
+    ensure!(
+        pointer.generation.is_some_and(|g| g > 0) && pointer.operation_key.is_some(),
+        "versioned publication required"
+    );
+    let key = pointer.operation_key.as_ref().unwrap();
+    ensure!(
+        files::pointer(&target.root, "confirmed.json")?.as_ref() == Some(&pointer.manifest_sha256),
+        "publication not confirmed"
+    );
+    let m = manifest(&target, &pointer.manifest_sha256)?;
+    ensure!(
+        serde_json::to_vec(&m.operation_receipt)? == serde_json::to_vec(original)?
+            && mapping.configuration_id == original.configuration_id
+            && mapping.repository_id == original.request.repository_id,
+        "published candidate differs"
+    );
+    let dir = operation_dir(&target.root, key);
+    let intent: PublishIntent = read(&dir.join("intent.json"))?;
+    ensure!(
+        intent.receipt.command.operation_key == *key
+            && intent.receipt.command.target_ref == mapping.target_ref
+            && serde_json::to_vec(&intent.manifest)? == serde_json::to_vec(&m)?,
+        "publication pointer/journal differs"
+    );
+    let result = readback(&target, &intent.receipt.command, original)?;
+    ensure!(
+        !result.reconciliation_needed
+            && result.receipt.status == DeliveryStatus::Verified
+            && result.receipt.manifest_sha256 == pointer.manifest_sha256,
+        "publication journal not confirmed"
+    );
+    Ok(ProofObservation {
+        target,
+        pointer,
+        manifest: m,
+        receipt: result.receipt,
+    })
+}
+pub(crate) fn unavailable(
+    mapping: &delivered_target::TargetMapping,
+    original: &BugWorkOperationAccepted,
+    reason: &str,
+) -> BugWorkDeliveryProof {
+    BugWorkDeliveryProof {
+        schema: "forge/bug-work-delivery-proof/v1".into(),
+        producer_version: env!("CARGO_PKG_VERSION").into(),
+        observed_at: Utc::now(),
+        project: original.request.project.clone(),
+        configuration_id: original.configuration_id,
+        repository_id: original.request.repository_id,
+        environment_id: mapping.environment_id,
+        target_ref: mapping.target_ref.clone(),
+        operation: original.operation.clone(),
+        bug_work: original.request.bug_work.clone(),
+        pipeline: original.pipeline.clone(),
+        artifact: None,
+        delivery: None,
+        status: crate::domain::delivered_target::DeliveredTargetStatus::Unavailable,
+        blocked_reasons: vec![reason.into()],
+    }
+}
+pub(crate) async fn observe_proof(
+    mapping: &delivered_target::TargetMapping,
+    observation: ProofObservation,
+) -> BugWorkDeliveryProof {
+    use crate::domain::delivered_target::{DeliveredTargetStatus, ServingIdentity};
+    let original = &observation.manifest.operation_receipt;
+    let mut proof = unavailable(mapping, original, "fresh_owner_probe_unavailable");
+    let fresh = observe(
+        &observation.target,
+        observation.receipt,
+        &observation.manifest,
+    )
+    .await;
+    proof.observed_at = Utc::now();
+    let current = read_pointer(&observation.target.root, "current.json");
+    let confirmed = files::pointer(&observation.target.root, "confirmed.json");
+    if !matches!(current,Ok(Some(ref p)) if p==&observation.pointer)
+        || !matches!(confirmed,Ok(Some(ref h)) if *h==observation.pointer.manifest_sha256)
+        || !read::<DeliveryPolicy>(&mapping.policy)
+            .and_then(|p| p.sha256())
+            .is_ok_and(|h| h == observation.target.policy_sha256)
+    {
+        proof.status = DeliveredTargetStatus::Changed;
+        proof.blocked_reasons = vec!["target_generation_changed".into()];
+        return proof;
+    }
+    if fresh.status != DeliveryStatus::Verified {
+        if fresh.status == DeliveryStatus::Failed {
+            proof.status = DeliveredTargetStatus::Changed;
+            proof.blocked_reasons = vec!["served_identity_changed".into()];
+        }
+        return proof;
+    }
+    let version = fresh.version.unwrap();
+    let artifact = fresh.served_artifact.unwrap();
+    let version_hash = version.body_sha256.unwrap();
+    let artifact_hash = artifact.body_sha256.unwrap();
+    if version_hash != observation.pointer.manifest_sha256
+        || artifact_hash != observation.manifest.artifact.sha256
+    {
+        return proof;
+    }
+    let generation = observation.pointer.generation.unwrap().to_string();
+    let key = observation.pointer.operation_key.unwrap();
+    let binding = serde_json::to_vec(&(
+        &proof.project,
+        mapping.configuration_id,
+        mapping.repository_id,
+        mapping.environment_id,
+        &mapping.target_ref,
+        &key,
+        &generation,
+        &version_hash,
+        &artifact_hash,
+        &original.request.bug_work.candidate_commit_sha,
+    ))
+    .expect("serving tuple serializable");
+    proof.artifact = Some(observation.manifest.artifact);
+    proof.delivery = Some(BugWorkDeliveryIdentity {
+        delivery_ref: format!("forge:delivered:{}", sha(&binding)),
+        operation_key: key,
+        generation,
+        manifest_sha256: observation.pointer.manifest_sha256,
+        commit_sha: original.request.bug_work.candidate_commit_sha.clone(),
+        artifact_id: proof.artifact.as_ref().unwrap().artifact_id,
+        artifact_digest: format!("sha256:{artifact_hash}"),
+        serving_identity: ServingIdentity {
+            version_body_sha256: version_hash,
+            artifact_body_sha256: artifact_hash,
+            observed_at: version.observed_at,
+        },
+    });
+    proof.status = DeliveredTargetStatus::Confirmed;
+    proof.blocked_reasons.clear();
+    if proof.require_confirmed(original).is_err() {
+        return unavailable(mapping, original, "exact_delivery_identity_invalid");
+    }
+    proof
+}
+
+async fn observe(
+    target: &Target,
+    mut receipt: BugWorkPublishReceipt,
+    m: &BugWorkStaticManifest,
+) -> BugWorkPublishReceipt {
+    let checks = target
+        .observe_static(&receipt.manifest_sha256, &m.artifact.sha256)
+        .await;
+    receipt.status = checks.status;
+    receipt.version = Some(checks.version);
+    receipt.served_artifact = Some(checks.served_artifact);
+    receipt.health = Some(checks.health);
+    receipt.acceptance = Some(checks.acceptance);
+    receipt.recorded_at = Utc::now();
+    receipt
+}
+fn readback(
+    target: &Target,
+    command: &BugWorkPublishCommand,
+    original: &BugWorkOperationAccepted,
+) -> anyhow::Result<BugWorkPublishReadback> {
+    let dir = operation_dir(&target.root, &command.operation_key);
+    let intent: PublishIntent = read(&dir.join("intent.json"))?;
+    ensure!(
+        intent.policy_sha256 == target.policy_sha256
+            && intent.receipt.command_sha256 == sha(&serde_json::to_vec(command)?)
+            && serde_json::to_vec(&intent.receipt.original_operation)?
+                == serde_json::to_vec(original)?,
+        "original Bug publication input differs"
+    );
+    let receipt = optional::<BugWorkPublishReceipt>(&dir.join("reconciled.json"))?
+        .or(optional::<BugWorkPublishReceipt>(&dir.join("result.json"))?)
+        .unwrap_or(intent.receipt.clone());
+    same_result(&intent, &receipt)?;
+    if receipt.status == DeliveryStatus::Verified {
+        for (probe, hash) in [
+            (&receipt.version, &receipt.manifest_sha256),
+            (&receipt.served_artifact, &intent.manifest.artifact.sha256),
+            (&receipt.health, &target.policy.health_body_sha256),
+            (&receipt.acceptance, &target.policy.acceptance_body_sha256),
+        ] {
+            ensure!(
+                probe
+                    .as_ref()
+                    .is_some_and(|p| p.status == DeliveryStatus::Verified
+                        && p.http_status == Some(200)
+                        && p.body_sha256.as_ref() == Some(hash)),
+                "verified publication lacks exact owner evidence"
+            );
+        }
+    }
+
+    Ok(BugWorkPublishReadback {
+        reconciliation_needed: receipt.status == DeliveryStatus::Unknown,
+        receipt,
+        current_manifest_sha256: pointer(&target.root, "current.json")?,
+    })
+}
+async fn candidate(
+    state: &AppState,
+    accepted: &BugWorkOperationAccepted,
+    artifact_id: Uuid,
+    policy: String,
+) -> anyhow::Result<(BugWorkStaticManifest, PathBuf)> {
+    let db = state.pool.as_ref().context("owner database unavailable")?;
+    let mut tx = db.begin().await?;
+    let pipeline = journal::candidate_pipeline(&mut tx, accepted)
+        .await?
+        .context("original pipeline unavailable")?;
+    let jobs = ledger::candidate_jobs(&mut tx, pipeline.pipeline_id).await?;
+    let artifacts = ledger::candidate_artifacts(&mut tx, pipeline.pipeline_id).await?;
+    tx.commit().await?;
+    ensure!(
+        pipeline.status == "success"
+            && pipeline.finished_at.is_some()
+            && !jobs.is_empty()
+            && jobs.len() <= 1000
+            && jobs
+                .iter()
+                .all(|j| j.terminal_acknowledged && j.artifacts_complete)
+            && pipeline.commit_sha.as_deref()
+                == Some(&accepted.request.bug_work.candidate_commit_sha)
+            && pipeline.resolved_commit_sha == pipeline.commit_sha
+            && pipeline.config_source.as_deref() == Some("repository")
+            && pipeline.config_sha256.as_deref() == Some(&accepted.pipeline.config_sha256)
+            && pipeline.plan_sha256.as_deref() == Some(&accepted.pipeline.plan_sha256),
+        "actual pipeline gates are not complete"
+    );
+    ensure!(
+        !artifacts.is_empty() && artifacts.len() <= 32,
+        "artifact inventory exceeds bound"
+    );
+    let row = artifacts
+        .into_iter()
+        .find(|a| a.artifact_id == artifact_id)
+        .context("selected artifact missing")?;
+    let attempt = row.attempt_id.context("artifact attempt missing")?;
+    let hash = row.sha256.context("artifact digest missing")?;
+    ensure!(
+        row.retained
+            && row.size_bytes > 0
+            && jobs.iter().any(|j| j.job_id == row.job_id
+                && j.attempt_id == Some(attempt)
+                && j.terminal_acknowledged),
+        "artifact attempt not acknowledged"
+    );
+    let repository = crate::git_host::validate_repo_name(&pipeline.repository_name)
+        .map_err(anyhow::Error::msg)?;
+    let repository = state.git.root.join(format!("{repository}.git"));
+    files::plain(&repository)?;
+    let config = crate::runner_workspace::preparation::repository_pipeline_config(
+        &repository,
+        &accepted.request.bug_work.candidate_commit_sha,
+    )
+    .await?;
+    ensure!(
+        sha(&config) == accepted.pipeline.config_sha256
+            && pipeline
+                .raw_config
+                .as_ref()
+                .is_some_and(|raw| raw.as_bytes() == config)
+            && pipeline
+                .plan
+                .as_ref()
+                .is_some_and(|p| serde_json::to_vec(p)
+                    .is_ok_and(|b| sha(&b) == accepted.pipeline.plan_sha256)),
+        "original config/plan bytes differ"
+    );
+    let path = PathBuf::from(row.storage_path);
+    crate::candidate_evidence::verify_artifact(
+        &state.config.artifacts.root,
+        &path,
+        &hash,
+        row.size_bytes,
+    )
+    .await?;
+    Ok((
+        BugWorkStaticManifest {
+            schema: "forge/bug-work-static-manifest/v1".into(),
+            operation_receipt: accepted.clone(),
+            pipeline_id: accepted.pipeline.pipeline_id,
+            artifact: BugWorkArtifactIdentity {
+                artifact_id,
+                job_id: row.job_id,
+                attempt_id: attempt,
+                sha256: hash,
+                size_bytes: row.size_bytes,
+            },
+            config_sha256: accepted.pipeline.config_sha256.clone(),
+            plan_sha256: accepted.pipeline.plan_sha256.clone(),
+            target_policy_sha256: policy,
+        },
+        path,
+    ))
+}
+
+/// Fresh local authority for an actual pointer mutation. No filesystem/network
+/// staging or probes retain SQL locks; callers mutate the pointer immediately.
+async fn publication_authority(
+    state: &AppState,
+    claims: &crate::auth::AccessClaims,
+    mapping: &delivered_target::TargetMapping,
+    original: &BugWorkOperationAccepted,
+    projection: &serde_json::Value,
+    policy_sha256: &str,
+    m: &BugWorkStaticManifest,
+) -> anyhow::Result<std::time::Instant> {
+    let path = state
+        .config
+        .sdlc_workspace
+        .delivered_targets
+        .as_ref()
+        .context("target mapping unavailable")?;
+    ensure!(
+        delivered_target::mapping(path, mapping.configuration_id, &mapping.target_ref)? == *mapping,
+        "target mapping changed"
+    );
+    ensure!(
+        read::<DeliveryPolicy>(&mapping.policy)?.sha256()? == policy_sha256,
+        "target policy changed"
+    );
+    let db = state.pool.as_ref().context("owner database unavailable")?;
+    let mut tx = db.begin().await?;
+    crate::api::bug_work_operations::authorize(
+        &mut tx,
+        state,
+        claims,
+        mapping.configuration_id,
+        true,
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("fresh publication credential denied"))?;
+    ensure!(
+        crate::store::delivered_target::lock_binding(
+            &mut tx,
+            mapping.configuration_id,
+            mapping.repository_id,
+            mapping.environment_id,
+            original.request.project.tracker_instance_id,
+            original.request.project.project_id
+        )
+        .await?
+        .as_ref()
+            == Some(projection),
+        "target namespace changed"
+    );
+    ensure!(
+        journal::matches_artifact(&mut tx, m).await?,
+        "original accepted artifact changed"
+    );
+    tx.commit().await?;
+    Ok(std::time::Instant::now())
+}
+fn fresh_pointer(observed: std::time::Instant) -> anyhow::Result<()> {
+    ensure!(
+        observed.elapsed() <= std::time::Duration::from_secs(5),
+        "pointer mutation authority expired"
+    );
+    Ok(())
+}
+
+// Deterministic owned-file latch for the existing integration harness only.
+// Production binaries do not contain this test boundary or inspect these files.
+async fn integration_boundary(root: &Path, phase: &str) -> anyhow::Result<()> {
+    #[cfg(feature = "integration")]
+    {
+        let controls = root.parent().context("test target parent missing")?;
+        let gate = controls.join(format!("block-bug-work-{phase}"));
+        if gate.exists() {
+            std::fs::write(
+                controls.join(format!("entered-bug-work-{phase}")),
+                b"entered",
+            )?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while gate.exists() {
+                ensure!(
+                    std::time::Instant::now() < deadline,
+                    "integration publication boundary deadline"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+    }
+    #[cfg(not(feature = "integration"))]
+    let _ = (root, phase);
+    Ok(())
+}
+
+/// Existing privileged owner CLI, separate closed command; no remote deployment
+/// or caller-provided candidate proof. A completed Accepted pipeline owns build
+/// custody even after the SDK worker/Tracker103 capacity has legitimately closed.
+pub async fn local_command(
+    state: Arc<AppState>,
+    configuration: Uuid,
+    token: &str,
+    command: BugWorkPublishCommand,
+    reconcile: bool,
+    read_only: bool,
+) -> anyhow::Result<BugWorkPublishReadback> {
+    command.validate().map_err(anyhow::Error::msg)?;
+    if !read_only {
+        ensure!(
+            state.config.sdlc_workspace.bug_work.enabled
+                && std::env::var("CICD_LOCAL_DELIVERY_MODE").ok().as_deref()
+                    == Some("local-verification"),
+            "explicit owner publication mode required"
+        );
+    }
+    ensure!(
+        token.starts_with("forge_sat_"),
+        "project machine credential required"
+    );
+    let db = state.pool.as_ref().context("owner database unavailable")?;
+    let claims = crate::api::identity_for_bearer_token(
+        db,
+        state
+            .auth_secret
+            .as_deref()
+            .context("owner auth unavailable")?,
+        token,
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("owner credential rejected"))?;
+    let mut tx = db.begin().await?;
+    crate::api::bug_work_operations::authorize(&mut tx, &state, &claims, configuration, !read_only)
+        .await
+        .map_err(|_| anyhow::anyhow!("publication producer denied"))?;
+    let (subject, original) =
+        journal::accepted(&mut tx, configuration, &command.original_operation_key)
+            .await?
+            .context("original Accepted unavailable")?;
+    ensure!(
+        subject == claims.sub
+            && original.operation.request_sha256 == command.original_request_sha256,
+        "original producer/request differs"
+    );
+    let mapping_path = state
+        .config
+        .sdlc_workspace
+        .delivered_targets
+        .as_ref()
+        .context("target mapping unavailable")?;
+    let mapping = delivered_target::mapping(mapping_path, configuration, &command.target_ref)?;
+    ensure!(
+        mapping.repository_id == original.request.repository_id,
+        "target repository differs"
+    );
+    let projection = crate::store::delivered_target::lock_binding(
+        &mut tx,
+        configuration,
+        mapping.repository_id,
+        mapping.environment_id,
+        original.request.project.tracker_instance_id,
+        original.request.project.project_id,
+    )
+    .await?
+    .context("target namespace unavailable")?;
+    let owner: sdlc_shared::resource_context::OwnerCommand =
+        serde_json::from_value(projection.clone())?;
+    crate::namespace::validate_projection(&owner)
+        .map_err(|_| anyhow::anyhow!("target namespace changed"))?;
+    tx.commit().await?;
+    let target = open_target(&state, &mapping, !read_only)?;
+    let dir = operation_dir(&target.root, &command.operation_key);
+    if read_only {
+        return readback(&target, &command, &original);
+    }
+    let observed = if dir.exists() {
+        None
+    } else {
+        Some(
+            candidate(
+                &state,
+                &original,
+                command.artifact_id,
+                target.policy_sha256.clone(),
+            )
+            .await?,
+        )
+    };
+    // No HTTP or artifact I/O while local authorization locks are held.
+    let mut tx = db.begin().await?;
+    crate::api::bug_work_operations::authorize(&mut tx, &state, &claims, configuration, true)
+        .await
+        .map_err(|_| anyhow::anyhow!("fresh publication authorization denied"))?;
+    ensure!(
+        crate::store::delivered_target::lock_binding(
+            &mut tx,
+            configuration,
+            mapping.repository_id,
+            mapping.environment_id,
+            original.request.project.tracker_instance_id,
+            original.request.project.project_id
+        )
+        .await?
+            == Some(projection.clone()),
+        "target namespace changed"
+    );
+    if let Some((m, _)) = &observed {
+        ensure!(
+            journal::matches_artifact(&mut tx, m).await?,
+            "artifact retention changed"
+        );
+    }
+    tx.commit().await?;
+    ensure!(
+        delivered_target::mapping(mapping_path, configuration, &command.target_ref)? == mapping,
+        "target mapping changed"
+    );
+    let _lock = Lock::acquire(&target.root)?;
+    if dir.exists() {
+        let old = readback(&target, &command, &original)?;
+        if !reconcile || !old.reconciliation_needed {
+            return Ok(old);
+        }
+        let intent: PublishIntent = read(&dir.join("intent.json"))?;
+        let current = read_pointer(&target.root, "current.json")?;
+        if current.as_ref().is_some_and(|p| {
+            p.manifest_sha256 == old.receipt.manifest_sha256
+                && p.operation_key.as_deref() == Some(command.operation_key.as_str())
+        }) {
+            let m = manifest(&target, &old.receipt.manifest_sha256)?;
+            let published_pointer = read_pointer(&target.root, "current.json")?;
+            let receipt = observe(&target, intent.receipt, &m).await;
+            integration_boundary(&target.root, "probe").await?;
+            if receipt.status != DeliveryStatus::Unknown {
+                if receipt.status == DeliveryStatus::Verified {
+                    fresh_pointer(
+                        publication_authority(
+                            &state,
+                            &claims,
+                            &mapping,
+                            &original,
+                            &projection,
+                            &target.policy_sha256,
+                            &m,
+                        )
+                        .await?,
+                    )?;
+                    ensure!(
+                        read_pointer(&target.root, "current.json")? == published_pointer,
+                        "publication generation changed during probes"
+                    );
+                    replace_pointer(&target.root, "confirmed.json", &receipt.manifest_sha256)?;
+                }
+                immutable(&dir.join("reconciled.json"), &receipt)?;
+            }
+        } else if current == intent.previous_pointer {
+            // Full generation/key equality proves this original publication did
+            // not apply. No new operation key/build, and no inferred ABA rollback.
+            let (m, path) = candidate(
+                &state,
+                &original,
+                command.artifact_id,
+                target.policy_sha256.clone(),
+            )
+            .await?;
+            ensure!(
+                serde_json::to_vec(&m)? == serde_json::to_vec(&intent.manifest)?,
+                "original candidate bytes changed"
+            );
+            ensure!(
+                target.stage_static(
+                    &serde_json::to_vec(&m)?,
+                    &m.artifact.sha256,
+                    m.artifact.size_bytes,
+                    Some(&path)
+                )? == intent.receipt.manifest_sha256,
+                "original stage differs"
+            );
+            manifest(&target, &intent.receipt.manifest_sha256)?;
+            integration_boundary(&target.root, "stage").await?;
+            fresh_pointer(
+                publication_authority(
+                    &state,
+                    &claims,
+                    &mapping,
+                    &original,
+                    &projection,
+                    &target.policy_sha256,
+                    &m,
+                )
+                .await?,
+            )?;
+            ensure!(
+                read_pointer(&target.root, "current.json")? == intent.previous_pointer,
+                "prepublication pointer changed"
+            );
+            publish_current(
+                &target.root,
+                &intent.receipt.manifest_sha256,
+                &command.operation_key,
+            )?;
+            let published_pointer = read_pointer(&target.root, "current.json")?;
+            let receipt = observe(&target, intent.receipt, &m).await;
+            integration_boundary(&target.root, "probe").await?;
+            if receipt.status != DeliveryStatus::Unknown {
+                if receipt.status == DeliveryStatus::Verified {
+                    fresh_pointer(
+                        publication_authority(
+                            &state,
+                            &claims,
+                            &mapping,
+                            &original,
+                            &projection,
+                            &target.policy_sha256,
+                            &m,
+                        )
+                        .await?,
+                    )?;
+                    ensure!(
+                        read_pointer(&target.root, "current.json")? == published_pointer,
+                        "publication generation changed during probes"
+                    );
+                    replace_pointer(&target.root, "confirmed.json", &receipt.manifest_sha256)?;
+                }
+                immutable(&dir.join("reconciled.json"), &receipt)?;
+            }
+        }
+        return readback(&target, &command, &original);
+    }
+    ensure!(!reconcile, "original publication missing");
+    target.ensure_idle(&command.operation_key)?;
+    let previous_pointer = read_pointer(&target.root, "current.json")?;
+    let previous = previous_pointer.as_ref().map(|p| p.manifest_sha256.clone());
+    ensure!(
+        previous == command.expected_manifest_sha256,
+        "target manifest CAS differs"
+    );
+    let (m, path) = observed.context("actual completed candidate unavailable")?;
+    let hash = sha(&serde_json::to_vec(&m)?);
+    let receipt = BugWorkPublishReceipt {
+        schema: "forge/bug-work-publication/v1".into(),
+        command: command.clone(),
+        command_sha256: sha(&serde_json::to_vec(&command)?),
+        original_operation: original.clone(),
+        manifest_sha256: hash.clone(),
+        previous_manifest_sha256: previous,
+        status: DeliveryStatus::Unknown,
+        version: None,
+        served_artifact: None,
+        health: None,
+        acceptance: None,
+        recorded_at: Utc::now(),
+    };
+    directory(&dir)?;
+    immutable(
+        &dir.join("intent.json"),
+        &PublishIntent {
+            schema: "forge/bug-work-publication-intent/v1".into(),
+            receipt: receipt.clone(),
+            manifest: m.clone(),
+            policy_sha256: target.policy_sha256.clone(),
+            previous_pointer: previous_pointer.clone(),
+        },
+    )?;
+    immutable(&dir.join("active.json"), &receipt.command_sha256)?;
+    ensure!(
+        target.stage_static(
+            &serde_json::to_vec(&m)?,
+            &m.artifact.sha256,
+            m.artifact.size_bytes,
+            Some(&path)
+        )? == hash,
+        "staged manifest differs"
+    );
+    manifest(&target, &hash)?;
+    integration_boundary(&target.root, "stage").await?;
+    fresh_pointer(
+        publication_authority(
+            &state,
+            &claims,
+            &mapping,
+            &original,
+            &projection,
+            &target.policy_sha256,
+            &m,
+        )
+        .await?,
+    )?;
+    ensure!(
+        read_pointer(&target.root, "current.json")? == previous_pointer,
+        "original target generation changed"
+    );
+    publish_current(&target.root, &hash, &command.operation_key)?;
+    let published_pointer = read_pointer(&target.root, "current.json")?;
+    let receipt = observe(&target, receipt, &m).await;
+    integration_boundary(&target.root, "probe").await?;
+    if receipt.status == DeliveryStatus::Verified {
+        fresh_pointer(
+            publication_authority(
+                &state,
+                &claims,
+                &mapping,
+                &original,
+                &projection,
+                &target.policy_sha256,
+                &m,
+            )
+            .await?,
+        )?;
+        ensure!(
+            read_pointer(&target.root, "current.json")? == published_pointer,
+            "publication generation changed during probes"
+        );
+        replace_pointer(&target.root, "confirmed.json", &hash)?;
+    }
+    immutable(&dir.join("result.json"), &receipt)?;
+    readback(&target, &command, &original)
+}
