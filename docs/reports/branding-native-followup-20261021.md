@@ -18,7 +18,8 @@ Rust 1.99 clippy `-D warnings` PASS. Native infra suite выполнен 12 ра
 test threads: каждый раз 11 PASS, четыре opt-in cases явно ignored. Это 12
 повторов одного набора, а не 132 различных сценария. Production behavior не
 менялся, кроме эквивалентной записи существующего fast-forward guard для clippy.
-Минимальный Rust учитывается отдельным прогоном, не выводится из версии 1.99.
+Rust 1.88.0 дополнительно выполнил тот же infra target: 11 PASS, четыре
+opt-in ignored. Поддержка минимальной версии не выводится из результата 1.99.
 
 Frontend tests/lint/build, frozen install и входящий Vite 6.4.4 security patch
 проверены отдельно. Последующий native/test-only diff не меняет frontend inputs.
