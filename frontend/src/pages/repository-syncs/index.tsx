@@ -780,7 +780,7 @@ onValueChange={(nextValue) => patch({
             </fieldset>
             <fieldset disabled={!writable || !!connection.active_run}>
               <legend className="mb-2 font-medium">Способ запуска</legend>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {[false, true].map((automatic) => (
                   <label
                     key={String(automatic)}

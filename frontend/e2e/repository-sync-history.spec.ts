@@ -59,6 +59,31 @@ for (const width of [375, 1026, 1440, 1920, 2560]) {
     expect(query.get('project_scope')).toBe('all')
     expect(query.get('provider')).toBe('github')
     expect(query.get('search')).toBe('service')
+    const modeCards = await page.getByRole('group', { name: 'Способ запуска', exact: true })
+      .locator('label').evaluateAll(labels => labels.map(label => {
+        const card = label.getBoundingClientRect()
+        const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT)
+        const text: { left: number; right: number; top: number; bottom: number }[] = []
+        while (walker.nextNode()) {
+          if (!walker.currentNode.textContent?.trim()) continue
+          const range = document.createRange()
+          range.selectNodeContents(walker.currentNode)
+          text.push(...Array.from(range.getClientRects(), rect => ({
+            left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+          })))
+        }
+        return { card: { left: card.left, right: card.right, top: card.top, bottom: card.bottom }, text }
+      }))
+    expect(modeCards).toHaveLength(2)
+    for (const { card, text } of modeCards) {
+      expect(text.length).toBeGreaterThan(0)
+      for (const rect of text) {
+        expect(rect.left).toBeGreaterThanOrEqual(card.left + 1)
+        expect(rect.right).toBeLessThanOrEqual(card.right - 1)
+        expect(rect.top).toBeGreaterThanOrEqual(card.top + 1)
+        expect(rect.bottom).toBeLessThanOrEqual(card.bottom - 1)
+      }
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath(`tabs-${width}.png`), fullPage: true })
     expect(mutations).toEqual([])
