@@ -1,0 +1,2693 @@
+diff --git a/backend/cli/src/main.rs b/backend/cli/src/main.rs
+index e5276df..58ab8e3 100644
+--- a/backend/cli/src/main.rs
++++ b/backend/cli/src/main.rs
+@@ -250,6 +250,9 @@ enum PipelineCommand {
+         /// Exact task intent JSON; requires an explicit original idempotency key.
+         #[arg(long)]
+         task_intent: Option<String>,
++        /// Retained delegated credential context, not a token or caller-issued permission.
++        #[arg(long, requires_all = ["task_intent", "idempotency_key"])]
++        credential_context: Option<String>,
+     },
+     Show {
+         #[arg(long)]
+@@ -1020,10 +1023,14 @@ async fn pipeline(api: &ApiClient, command: PipelineCommand) -> anyhow::Result<V
+             idempotency_key,
+             variables,
+             task_intent,
++            credential_context,
+         } => {
+             if task_intent.is_some() && idempotency_key.is_none() {
+                 anyhow::bail!("Task intent требует explicit original --idempotency-key");
+             }
++            if task_intent.as_deref() == Some("-") && credential_context.as_deref() == Some("-") {
++                anyhow::bail!("Task intent и credential context требуют разные input streams");
++            }
+             let mut body = json!({"git_ref":git_ref,"variables":variables.into_iter().collect::<std::collections::BTreeMap<_,_>>()});
+             if let Some(file) = task_intent {
+                 let raw = support::read_text(&file)?;
+@@ -1037,6 +1044,18 @@ async fn pipeline(api: &ApiClient, command: PipelineCommand) -> anyhow::Result<V
+                 }
+                 body["task_intent"] = value;
+             }
++            if let Some(file) = credential_context {
++                let raw = support::read_text(&file)?;
++                if raw.len() > 16 * 1024 {
++                    anyhow::bail!("Credential context превышает16KiB");
++                }
++                let value: Value = serde_json::from_str(&raw)
++                    .map_err(|_| anyhow::anyhow!("Некорректный credential context JSON"))?;
++                if !value.is_object() {
++                    anyhow::bail!("Ожидается credential context object");
++                }
++                body["credential_context"] = value;
++            }
+             let idempotency_key =
+                 idempotency_key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+             api.json(
+diff --git a/backend/cli/tests/cli_contract.rs b/backend/cli/tests/cli_contract.rs
+index 43ad424..65cfd37 100644
+--- a/backend/cli/tests/cli_contract.rs
++++ b/backend/cli/tests/cli_contract.rs
+@@ -62,6 +62,7 @@ fn cli_exposes_pipeline_run_idempotency_key() {
+     let stdout = cli_help(&["pipeline", "run", "--help"]);
+     assert_contains(&stdout, "--idempotency-key");
+     assert_contains(&stdout, "--task-intent");
++    assert_contains(&stdout, "--credential-context");
+     let readback = cli_help(&["pipeline", "task-workspace", "--help"]);
+     assert_contains(&readback, "--project");
+     assert_contains(&readback, "--id");
+diff --git a/backend/cli/tests/workflows.rs b/backend/cli/tests/workflows.rs
+index 768ad63..592f5d6 100644
+--- a/backend/cli/tests/workflows.rs
++++ b/backend/cli/tests/workflows.rs
+@@ -938,6 +938,98 @@ async fn task_pipeline_cli_preserves_supplied_intent_key_and_authenticated_locat
+     );
+ }
+ 
++#[tokio::test]
++async fn delegated_task_pipeline_cli_publishes_exact_context_without_mint_or_generated_key() {
++    let server = Server::start(vec![(200, json!({"id":"fixture"}))]).await;
++    let temp = tempfile::tempdir().unwrap();
++    let file = temp.path().join("context.json");
++    let context = json!({"version":1,"runId":uuid::Uuid::new_v4(),"chatId":uuid::Uuid::new_v4(),"machineSubject":"native-fixture"});
++    std::fs::write(&file, context.to_string()).unwrap();
++    let key = uuid::Uuid::new_v4().to_string();
++    let intent = json!({"operationKey":"retained:original"});
++    success(
++        &server
++            .run(
++                &[
++                    "pipeline",
++                    "run",
++                    "--project",
++                    "fixture-project",
++                    "--git-ref",
++                    &"a".repeat(40),
++                    "--idempotency-key",
++                    &key,
++                    "--task-intent",
++                    "-",
++                    "--credential-context",
++                    file.to_str().unwrap(),
++                ],
++                Some(&intent.to_string()),
++            )
++            .await,
++    );
++    let requests = server.requests();
++    assert_eq!(requests.len(), 1);
++    assert_eq!(requests[0].key.as_deref(), Some(key.as_str()));
++    assert_eq!(
++        requests[0].authorization.as_deref(),
++        Some("Bearer fixture-token")
++    );
++    let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
++    assert_eq!(body["credential_context"], context);
++    assert_eq!(body["task_intent"], intent);
++    assert_eq!(body.as_object().unwrap().len(), 4);
++    assert!(!body.to_string().contains("fixture-token"));
++}
++
++#[tokio::test]
++async fn delegated_context_cli_rejects_missing_original_inputs_and_bad_context_without_http() {
++    let server = Server::start(vec![]).await;
++    let temp = tempfile::tempdir().unwrap();
++    let intent = temp.path().join("intent.json");
++    std::fs::write(&intent, "{}").unwrap();
++    let missing = server
++        .run(
++            &[
++                "pipeline",
++                "run",
++                "--project",
++                "fixture-project",
++                "--credential-context",
++                "-",
++            ],
++            Some("{}"),
++        )
++        .await;
++    assert!(!missing.status.success());
++    for input in [
++        "private-invalid-json".to_owned(),
++        "[]".to_owned(),
++        "x".repeat(16 * 1024 + 1),
++    ] {
++        let output = server
++            .run(
++                &[
++                    "pipeline",
++                    "run",
++                    "--project",
++                    "fixture-project",
++                    "--idempotency-key",
++                    "00000000-0000-4000-8000-000000000001",
++                    "--task-intent",
++                    intent.to_str().unwrap(),
++                    "--credential-context",
++                    "-",
++                ],
++                Some(&input),
++            )
++            .await;
++        assert!(!output.status.success());
++        assert!(!String::from_utf8_lossy(&output.stderr).contains("private-invalid-json"));
++    }
++    assert!(server.requests().is_empty());
++}
++
+ #[tokio::test]
+ async fn task_pipeline_cli_no_generated_key_malformed_input_or_http_retry() {
+     let server = Server::start(vec![(409, json!({"error":"held"}))]).await;
+diff --git a/backend/infra/src/sdlc_workspace.rs b/backend/infra/src/sdlc_workspace.rs
+index e60870e..aeb05d1 100644
+--- a/backend/infra/src/sdlc_workspace.rs
++++ b/backend/infra/src/sdlc_workspace.rs
+@@ -9,8 +9,9 @@ use uuid::Uuid;
+ pub struct TaskPipelineJournal {
+     pub pipeline_id: Uuid,
+     pub project_id: Uuid,
+-    pub service_account_id: Uuid,
+-    pub api_token_id: Uuid,
++    pub service_account_id: Option<Uuid>,
++    pub api_token_id: Option<Uuid>,
++    pub delegated_credential: Option<sqlx::types::Json<serde_json::Value>>,
+     pub preparation_job_id: Uuid,
+     pub intent: sqlx::types::Json<TaskWorkspaceIntent>,
+     pub preparation_request: Option<sqlx::types::Json<WorkspaceOperationRequest>>,
+@@ -21,7 +22,7 @@ pub async fn find_task_pipeline(
+     pipeline: Uuid,
+     lock: bool,
+ ) -> Result<Option<TaskPipelineJournal>, sqlx::Error> {
+-    let mut sql = "SELECT pipeline_id,project_id,service_account_id,api_token_id,preparation_job_id,intent,preparation_request FROM task_pipeline_intents WHERE pipeline_id=$1".to_string();
++    let mut sql = "SELECT pipeline_id,project_id,service_account_id,api_token_id,delegated_credential,preparation_job_id,intent,preparation_request FROM task_pipeline_intents WHERE pipeline_id=$1".to_string();
+     if lock {
+         sql.push_str(" FOR UPDATE");
+     }
+@@ -46,6 +47,20 @@ pub async fn append_task_pipeline(
+     Ok(())
+ }
+ 
++pub async fn append_delegated_task_pipeline(
++    conn: &mut PgConnection,
++    pipeline: Uuid,
++    project: Uuid,
++    credential: &serde_json::Value,
++    job: Uuid,
++    intent: &TaskWorkspaceIntent,
++) -> Result<(), sqlx::Error> {
++    sqlx::query("INSERT INTO task_pipeline_intents(pipeline_id,project_id,delegated_credential,preparation_job_id,operation_key,intent) VALUES($1,$2,$3,$4,$5,$6)")
++        .bind(pipeline).bind(project).bind(sqlx::types::Json(credential)).bind(job)
++        .bind(&intent.operation_key).bind(sqlx::types::Json(intent)).execute(conn).await?;
++    Ok(())
++}
++
+ /// One-way custody before Git IO; an uncertain attempt is never reset.
+ pub async fn claim_task_preparation(
+     conn: &mut PgConnection,
+@@ -99,15 +114,47 @@ pub async fn append_receipt(
+     conn: &mut PgConnection,
+     subject: Uuid,
+     receipt: &WorkspaceOperationReceipt,
++) -> Result<(), sqlx::Error> {
++    append_owned_receipt(conn, Some(subject), None, None, receipt).await
++}
++
++pub async fn find_delegated_receipt(
++    conn: &mut PgConnection,
++    project: Uuid,
++    subject: Uuid,
++    context_hash: &str,
++    key: &str,
++) -> Result<Option<WorkspaceOperationReceipt>, sqlx::Error> {
++    sqlx::query_scalar::<_, sqlx::types::Json<WorkspaceOperationReceipt>>(
++        "SELECT receipt FROM sdlc_workspace_operations WHERE project_id=$1 AND delegated_subject=$2 AND delegated_context_hash=$3 AND operation_key=$4 AND service_account_id IS NULL")
++        .bind(project).bind(subject).bind(context_hash).bind(key).fetch_optional(conn).await.map(|r| r.map(|r| r.0))
++}
++
++pub async fn append_delegated_receipt(
++    conn: &mut PgConnection,
++    subject: Uuid,
++    context_hash: &str,
++    receipt: &WorkspaceOperationReceipt,
++) -> Result<(), sqlx::Error> {
++    append_owned_receipt(conn, None, Some(subject), Some(context_hash), receipt).await
++}
++
++async fn append_owned_receipt(
++    conn: &mut PgConnection,
++    subject: Option<Uuid>,
++    delegated_subject: Option<Uuid>,
++    delegated_context_hash: Option<&str>,
++    receipt: &WorkspaceOperationReceipt,
+ ) -> Result<(), sqlx::Error> {
+     let r = &receipt.request;
+     let b = &r.binding;
+-    sqlx::query("INSERT INTO sdlc_workspace_operations (id,project_id,service_account_id,operation_key,request_hash,task_id,root_task_id,assignment_id,execution_id,fencing_token,lease_id,attempt_id,workspace_generation,repository_id,source_commit,receipt,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)")
++    sqlx::query("INSERT INTO sdlc_workspace_operations (id,project_id,service_account_id,operation_key,request_hash,task_id,root_task_id,assignment_id,execution_id,fencing_token,lease_id,attempt_id,workspace_generation,repository_id,source_commit,receipt,recorded_at,delegated_subject,delegated_context_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)")
+         .bind(receipt.operation_id).bind(receipt.project_id).bind(subject).bind(&r.operation_key)
+         .bind(&receipt.request_hash).bind(b.task_id).bind(b.root_task_id).bind(b.assignment_id)
+         .bind(b.execution_id).bind(b.fencing_token).bind(r.lease_id).bind(r.attempt_id)
+         .bind(r.workspace_generation).bind(r.repository_id).bind(&r.source_commit)
+-        .bind(sqlx::types::Json(receipt)).bind(receipt.recorded_at).execute(conn).await?;
++        .bind(sqlx::types::Json(receipt)).bind(receipt.recorded_at)
++        .bind(delegated_subject).bind(delegated_context_hash).execute(conn).await?;
+     Ok(())
+ }
+ 
+diff --git a/backend/migrations/0093_delegated_task_credentials.sql b/backend/migrations/0093_delegated_task_credentials.sql
+new file mode 100644
+index 0000000..fe67c90
+--- /dev/null
++++ b/backend/migrations/0093_delegated_task_credentials.sql
+@@ -0,0 +1,80 @@
++-- Local SAT rows/FKs remain authoritative and byte-identical. Central children
++-- use a disjoint custody variant, never synthetic service_accounts/api_tokens.
++ALTER TABLE task_pipeline_intents
++    ALTER COLUMN service_account_id DROP NOT NULL,
++    ALTER COLUMN api_token_id DROP NOT NULL,
++    ADD COLUMN delegated_credential JSONB,
++    ADD CONSTRAINT task_pipeline_credential_variant CHECK ((
++        (service_account_id IS NOT NULL AND api_token_id IS NOT NULL AND delegated_credential IS NULL)
++        OR (service_account_id IS NULL AND api_token_id IS NULL
++            AND jsonb_typeof(delegated_credential)='object'
++            AND delegated_credential ?& ARRAY['subject','fingerprint','context_hash','context','encrypted_child']
++            AND delegated_credential-ARRAY['subject','fingerprint','context_hash','context','encrypted_child']='{}'::jsonb
++            AND jsonb_typeof(delegated_credential->'subject')='string'
++            AND delegated_credential->>'subject' ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
++            AND delegated_credential->>'subject'<>'00000000-0000-0000-0000-000000000000'
++            AND jsonb_typeof(delegated_credential->'fingerprint')='string'
++            AND delegated_credential->>'fingerprint' ~ '^[0-9a-f]{64}$'
++            AND jsonb_typeof(delegated_credential->'context_hash')='string'
++            AND delegated_credential->>'context_hash' ~ '^[0-9a-f]{64}$'
++            AND jsonb_typeof(delegated_credential->'encrypted_child')='string'
++            AND delegated_credential->>'encrypted_child' ~ '^v1:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$'
++            AND octet_length(delegated_credential::text)<=65536
++            AND jsonb_typeof(delegated_credential->'context')='object'
++            AND delegated_credential->'context' ?& ARRAY['version','projectId','intent','runId','chatId','machineSubject','triggerId','variablesSha256']
++            AND (delegated_credential->'context')-ARRAY['version','projectId','intent','runId','chatId','machineSubject','triggerId','variablesSha256']='{}'::jsonb
++            AND delegated_credential->'context'->'version'='1'::jsonb
++            AND delegated_credential->'context'->>'projectId'=project_id::text
++            AND delegated_credential->'context'->'intent'=intent
++            AND delegated_credential->'context'->>'runId' ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
++            AND delegated_credential->'context'->>'runId'<>'00000000-0000-0000-0000-000000000000'
++            AND delegated_credential->'context'->>'chatId' ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
++            AND delegated_credential->'context'->>'chatId'<>'00000000-0000-0000-0000-000000000000'
++            AND jsonb_typeof(delegated_credential->'context'->'machineSubject')='string'
++            AND length(delegated_credential->'context'->>'machineSubject') BETWEEN 1 AND 256
++            AND delegated_credential->'context'->>'triggerId' ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
++            AND delegated_credential->'context'->>'triggerId'<>'00000000-0000-0000-0000-000000000000'
++            AND delegated_credential->'context'->>'variablesSha256' ~ '^[0-9a-f]{64}$')
++    ) IS TRUE);
++
++ALTER TABLE sdlc_workspace_operations
++    ALTER COLUMN service_account_id DROP NOT NULL,
++    ADD COLUMN delegated_subject UUID,
++    ADD COLUMN delegated_context_hash TEXT,
++    ADD CONSTRAINT sdlc_workspace_credential_variant CHECK ((
++        (service_account_id IS NOT NULL AND delegated_subject IS NULL AND delegated_context_hash IS NULL)
++        OR (service_account_id IS NULL AND delegated_subject IS NOT NULL
++            AND delegated_subject<>'00000000-0000-0000-0000-000000000000'::uuid
++            AND delegated_context_hash ~ '^[0-9a-f]{64}$')
++    ) IS TRUE);
++
++-- Preserve the complete existing attempt/lease/custody guard; change only its
++-- original-owner receipt match to recognize the disjoint central variant.
++DO $$
++DECLARE
++    definition text := pg_get_functiondef('guard_task_pipeline_intent()'::regprocedure);
++    needle text := 'w.service_account_id=NEW.service_account_id';
++BEGIN
++    IF length(definition)-length(replace(definition,needle,''))<>length(needle) THEN
++        RAISE EXCEPTION 'Expected exactly one task receipt owner predicate';
++    END IF;
++    EXECUTE replace(definition,needle,
++        '(w.service_account_id=NEW.service_account_id OR (NEW.service_account_id IS NULL AND NEW.delegated_credential IS NOT NULL AND w.delegated_subject::text=NEW.delegated_credential->>''subject'' AND w.delegated_context_hash=NEW.delegated_credential->>''context_hash''))');
++END;
++$$;
++
++CREATE FUNCTION guard_delegated_workspace_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
++BEGIN
++    IF NEW.delegated_subject IS NOT NULL AND NOT EXISTS(
++        SELECT 1 FROM task_pipeline_intents t WHERE t.project_id=NEW.project_id
++            AND t.operation_key=NEW.operation_key AND t.service_account_id IS NULL
++            AND t.delegated_credential->>'subject'=NEW.delegated_subject::text
++            AND t.delegated_credential->>'context_hash'=NEW.delegated_context_hash
++            AND t.preparation_request=NEW.receipt->'request') THEN
++        RAISE EXCEPTION 'Delegated receipt requires original task credential custody';
++    END IF;
++    RETURN NEW;
++END;
++$$;
++CREATE TRIGGER sdlc_workspace_delegated_owner BEFORE INSERT ON sdlc_workspace_operations
++    FOR EACH ROW EXECUTE FUNCTION guard_delegated_workspace_receipt();
+diff --git a/backend/src/api/authz_mw.rs b/backend/src/api/authz_mw.rs
+index 2356f0f..5fd4f8b 100644
+--- a/backend/src/api/authz_mw.rs
++++ b/backend/src/api/authz_mw.rs
+@@ -176,6 +176,33 @@ pub(crate) async fn require_auth(
+         ));
+     };
+     let pool = pool(&state)?;
++    let bearer = req
++        .headers()
++        .get(axum::http::header::AUTHORIZATION)
++        .and_then(|v| v.to_str().ok())
++        .and_then(pdlc_auth_core::bearer_from_header);
++    let mut checked_central = None;
++    if let Some(token) = bearer.filter(|token| pdlc_auth_core::is_personal_token(token))
++        && let Some(central) = crate::central_auth::try_central(token).await?
++    {
++        if crate::delegated_credentials::has_grant(&central)
++            || state
++                .config
++                .sdlc_workspace
++                .delegated_subject
++                .is_some_and(|id| id.to_string() == central.user_id)
++        {
++            let identity = crate::delegated_credentials::Identity::verified(
++                &central,
++                &state.config.sdlc_workspace,
++            )?;
++            identity.route(&method, req.uri().path())?;
++            let mut req = req;
++            req.extensions_mut().insert(identity);
++            return Ok(next.run(req).await);
++        }
++        checked_central = Some(central_identity(pool, &central).await?);
++    }
+     let is_platform_token = req
+         .headers()
+         .get(axum::http::header::AUTHORIZATION)
+@@ -183,7 +210,10 @@ pub(crate) async fn require_auth(
+         .is_some_and(|value| {
+             pdlc_auth_core::bearer_from_header(value).is_some_and(pdlc_auth_core::is_personal_token)
+         });
+-    let claims = bearer_identity(pool, auth_secret, req.headers()).await?;
++    let claims = match checked_central {
++        Some(claims) => claims,
++        None => bearer_identity(pool, auth_secret, req.headers()).await?,
++    };
+     if is_platform_token {
+         let required = if matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
+             "ci-cd:read"
+@@ -629,6 +659,20 @@ pub(crate) async fn bearer_identity(
+     identity_for_bearer_token(pool, auth_secret, token).await
+ }
+ 
++async fn central_identity(
++    pool: &PgPool,
++    central: &pdlc_auth_core::AuthContext,
++) -> Result<crate::auth::AccessClaims, ApiError> {
++    if crate::namespace::registered_machine(&central.user_id)
++        || central.role.as_deref() == Some("service_account")
++        || crate::delegated_credentials::has_grant(central)
++        || crate::delegated_credentials::configured_subject(&central.user_id)
++    {
++        return Err(ApiError::forbidden());
++    }
++    crate::central_auth::link_central_user(pool, central).await
++}
++
+ pub(crate) async fn identity_for_bearer_token(
+     pool: &PgPool,
+     auth_secret: &str,
+@@ -637,12 +681,7 @@ pub(crate) async fn identity_for_bearer_token(
+     // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
+     // and cicd_ PATs remain valid during the migration window.
+     if let Some(central) = crate::central_auth::try_central(token).await? {
+-        if crate::namespace::registered_machine(&central.user_id)
+-            || central.role.as_deref() == Some("service_account")
+-        {
+-            return Err(ApiError::forbidden());
+-        }
+-        return crate::central_auth::link_central_user(pool, &central).await;
++        return central_identity(pool, &central).await;
+     }
+     if token.starts_with("forge_sat_") {
+         let hash = crate::auth::hash_token(token);
+diff --git a/backend/src/api/mod.rs b/backend/src/api/mod.rs
+index 6fe1357..dc9542d 100644
+--- a/backend/src/api/mod.rs
++++ b/backend/src/api/mod.rs
+@@ -221,6 +221,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
+         crate::domain::sdlc_workspace::WorkspaceOperationRequest,
+         crate::domain::sdlc_workspace::WorkspaceTaskBinding,
+         crate::domain::sdlc_workspace::TaskWorkspaceIntent,
++        crate::delegated_credentials::TaskCredentialContext,
+         crate::domain::sdlc_workspace::WorkspaceOperationReceipt,
+         crate::domain::sdlc_workspace::WorkspaceOperationReadback,
+         crate::domain::sdlc_workspace::WorkspaceOperationLookup,
+diff --git a/backend/src/api/pipelines_routes.rs b/backend/src/api/pipelines_routes.rs
+index ddfdfc3..c84fe07 100644
+--- a/backend/src/api/pipelines_routes.rs
++++ b/backend/src/api/pipelines_routes.rs
+@@ -26,6 +26,8 @@ pub(crate) struct TaskTriggerPipeline {
+     variables: Option<BTreeMap<String, String>>,
+     #[serde(default)]
+     task_intent: Option<crate::domain::sdlc_workspace::TaskWorkspaceIntent>,
++    #[serde(default)]
++    credential_context: Option<crate::delegated_credentials::TaskCredentialContext>,
+ }
+ 
+ #[utoipa::path(
+@@ -44,6 +46,7 @@ pub(crate) async fn trigger_pipeline(
+     Path(project_id): Path<Uuid>,
+     headers: HeaderMap,
+     claims: Option<Extension<crate::auth::AccessClaims>>,
++    child: Option<Extension<crate::delegated_credentials::Identity>>,
+     Json(input): Json<TaskTriggerPipeline>,
+ ) -> Result<(HeaderMap, Json<PipelineDetail>), ApiError> {
+     let idempotency_key = pipeline_idempotency_key(&headers)?;
+@@ -52,6 +55,7 @@ pub(crate) async fn trigger_pipeline(
+         git_ref,
+         variables,
+         task_intent,
++        credential_context,
+     } = input;
+     let legacy = TriggerPipeline { git_ref, variables };
+     let submission = match task_intent {
+@@ -61,13 +65,31 @@ pub(crate) async fn trigger_pipeline(
+                     "Task trigger требует original Idempotency-Key",
+                 ));
+             }
+-            let Extension(claims) = claims.ok_or_else(ApiError::forbidden)?;
+-            Some(
+-                super::sdlc_workspace::task_pipeline::admit(&state, &claims, project_id, intent)
+-                    .await?,
+-            )
++            Some(match (child, claims, credential_context) {
++                (Some(Extension(identity)), None, Some(context)) => {
++                    context.bind_trigger(
++                        idempotency_key.as_deref().ok_or_else(ApiError::forbidden)?,
++                        legacy.git_ref.as_deref(),
++                        &legacy.variables.clone().unwrap_or_default(),
++                    )?;
++                    super::sdlc_workspace::task_pipeline::admit_delegated(
++                        &state, &identity, project_id, intent, context,
++                    )
++                    .await?
++                }
++                (None, Some(Extension(claims)), None) => {
++                    super::sdlc_workspace::task_pipeline::admit(&state, &claims, project_id, intent)
++                        .await?
++                }
++                _ => return Err(ApiError::forbidden()),
++            })
++        }
++        None => {
++            if child.is_some() || credential_context.is_some() {
++                return Err(ApiError::forbidden());
++            }
++            None
+         }
+-        None => None,
+     };
+     let git_ref = legacy.git_ref.unwrap_or_else(|| "main".into());
+     let outcome = create_pipeline_bound(
+@@ -156,8 +178,10 @@ async fn create_pipeline_bound(
+         raw_config,
+         &parsed_config,
+     );
+-    let fingerprint =
+-        task_trigger_fingerprint(&git_ref, &variables, task.map(|s| (s.subject, &s.intent)));
++    let fingerprint = crate::delegated_credentials::trigger_fingerprint(
++        task_trigger_fingerprint(&git_ref, &variables, task.map(|s| (s.subject, &s.intent))),
++        task.and_then(|s| s.delegated.as_ref()),
++    )?;
+     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+ 
+     if let Some(idempotency_key) = idempotency_key {
+@@ -185,6 +209,15 @@ async fn create_pipeline_bound(
+                     "idempotency key was already used for a different pipeline trigger",
+                 ));
+             }
++            if let Some(task) = task.filter(|task| task.delegated.is_some()) {
++                let until = super::sdlc_workspace::task_pipeline::verify_submission(
++                    &mut tx, project_id, task,
++                )
++                .await?;
++                if std::time::Instant::now() >= until {
++                    return Err(ApiError::conflict("Tracker lease expired during replay"));
++                }
++            }
+             let pipeline = sqlx::query_as::<_, Pipeline>(
+                 "SELECT id, project_id, git_ref, status, created_at, started_at, finished_at \
+                  FROM pipelines WHERE id = $1",
+@@ -287,17 +320,30 @@ async fn create_pipeline_bound(
+     if let Some(task) = task {
+         let job =
+             preparation_job.ok_or_else(|| ApiError::conflict("Task pipeline не содержит jobs"))?;
+-        crate::store::sdlc_workspace::append_task_pipeline(
+-            &mut tx,
+-            pipeline.id,
+-            project_id,
+-            task.subject,
+-            task.token,
+-            job,
+-            &task.intent,
+-        )
+-        .await
+-        .map_err(ApiError::internal)?;
++        if let Some(stored) = &task.delegated {
++            crate::store::sdlc_workspace::append_delegated_task_pipeline(
++                &mut tx,
++                pipeline.id,
++                project_id,
++                &stored.value()?,
++                job,
++                &task.intent,
++            )
++            .await
++            .map_err(ApiError::internal)?;
++        } else {
++            crate::store::sdlc_workspace::append_task_pipeline(
++                &mut tx,
++                pipeline.id,
++                project_id,
++                task.subject,
++                task.token.ok_or_else(ApiError::forbidden)?,
++                job,
++                &task.intent,
++            )
++            .await
++            .map_err(ApiError::internal)?;
++        }
+     }
+     if let Some(idempotency_key) = idempotency_key {
+         sqlx::query(
+@@ -441,8 +487,9 @@ mod task_trigger_tests {
+             assert_eq!(typed["properties"][field], original["properties"][field]);
+         }
+         assert_eq!(typed.get("required"), original.get("required"));
+-        assert_eq!(typed["properties"].as_object().unwrap().len(), 3);
++        assert_eq!(typed["properties"].as_object().unwrap().len(), 4);
+         assert!(typed["properties"].get("task_intent").is_some());
++        assert!(typed["properties"].get("credential_context").is_some());
+     }
+ 
+     #[test]
+diff --git a/backend/src/api/sdlc_workspace/task_pipeline.rs b/backend/src/api/sdlc_workspace/task_pipeline.rs
+index e0bc5f5..b573090 100644
+--- a/backend/src/api/sdlc_workspace/task_pipeline.rs
++++ b/backend/src/api/sdlc_workspace/task_pipeline.rs
+@@ -1,7 +1,8 @@
+ //! Existing pipeline/embedded-runner bridge. No runner credential or effect authority in readback.
+ use super::*;
+ use crate::{
+-    config::SdlcWorkspaceConfig,
++    config::{SdlcWorkspaceConfig, SecretsConfig},
++    delegated_credentials::{Identity, StoredCredential, TaskCredentialContext},
+     runner_workspace::{OwnedWorkspace, preparation},
+ };
+ use serde_json::{Value, json};
+@@ -10,9 +11,11 @@ use std::{path::Path as FsPath, time::Instant};
+ 
+ pub(crate) struct Submission {
+     pub subject: Uuid,
+-    pub token: Uuid,
++    pub token: Option<Uuid>,
++    pub delegated: Option<StoredCredential>,
+     pub intent: TaskWorkspaceIntent,
+     pub config: SdlcWorkspaceConfig,
++    pub secrets: SecretsConfig,
+ }
+ 
+ fn hash(value: &impl serde::Serialize) -> Result<String, ApiError> {
+@@ -154,9 +157,20 @@ fn current(value: &Value, intent: &TaskWorkspaceIntent) -> anyhow::Result<Durati
+ async fn tracker(
+     config: &SdlcWorkspaceConfig,
+     intent: &TaskWorkspaceIntent,
++) -> Result<Instant, ApiError> {
++    tracker_bound(config, intent, None).await
++}
++
++async fn tracker_bound(
++    config: &SdlcWorkspaceConfig,
++    intent: &TaskWorkspaceIntent,
++    context: Option<&TaskCredentialContext>,
+ ) -> Result<Instant, ApiError> {
+     let (start, value) =
+         crate::task_delivery::tracker::read_lifecycle(config, intent.binding.task_id).await?;
++    if context.is_some_and(|context| !context.native_matches(&value)) {
++        return Err(ApiError::conflict("Original native task run changed"));
++    }
+     let until = start
+         + current(&value, intent).map_err(|_| {
+             ApiError::conflict("Текущий Tracker task assignment или lease не совпадает")
+@@ -171,16 +185,88 @@ async fn authorize_saved(
+     conn: &mut sqlx::PgConnection,
+     config: &SdlcWorkspaceConfig,
+     record: &ledger::TaskPipelineJournal,
+-) -> Result<(), ApiError> {
++    secrets: &SecretsConfig,
++) -> Result<Instant, ApiError> {
++    if let Some(credential) = &record.delegated_credential {
++        if record.service_account_id.is_some() || record.api_token_id.is_some() {
++            return Err(ApiError::forbidden());
++        }
++        let stored = StoredCredential::from_value(&credential.0)?;
++        return authorize_child(
++            conn,
++            config,
++            secrets,
++            record.project_id,
++            &record.intent,
++            &stored,
++        )
++        .await;
++    }
+     authorize_keys(
+         conn,
+         config,
+-        record.service_account_id,
+-        record.api_token_id,
++        record.service_account_id.ok_or_else(ApiError::forbidden)?,
++        record.api_token_id.ok_or_else(ApiError::forbidden)?,
+         record.project_id,
+         &record.intent,
+     )
+-    .await
++    .await?;
++    tracker(config, &record.intent).await
++}
++
++async fn authorize_child(
++    conn: &mut sqlx::PgConnection,
++    config: &SdlcWorkspaceConfig,
++    secrets: &SecretsConfig,
++    project: Uuid,
++    intent: &TaskWorkspaceIntent,
++    stored: &StoredCredential,
++) -> Result<Instant, ApiError> {
++    stored.verify(config, secrets, project, intent).await?;
++    if !ledger::task_project_matches(conn, project, intent)
++        .await
++        .map_err(ApiError::internal)?
++    {
++        return Err(ApiError::conflict(
++            "Task project/repository mapping changed",
++        ));
++    }
++    tracker_bound(config, intent, Some(&stored.context)).await
++}
++
++pub(crate) async fn admit_delegated(
++    state: &AppState,
++    identity: &Identity,
++    project: Uuid,
++    intent: TaskWorkspaceIntent,
++    context: TaskCredentialContext,
++) -> Result<Submission, ApiError> {
++    if !state.config.runner.embedded_enabled {
++        return Err(ApiError::service_unavailable(
++            "Task preparation requires embedded runner",
++        ));
++    }
++    identity.bind(&context, project, &intent)?;
++    let stored = identity.store(context, &state.config.secrets)?;
++    let mut tx = pool(state)?.begin().await.map_err(ApiError::internal)?;
++    authorize_child(
++        &mut tx,
++        &state.config.sdlc_workspace,
++        &state.config.secrets,
++        project,
++        &intent,
++        &stored,
++    )
++    .await?;
++    tx.commit().await.map_err(ApiError::internal)?;
++    Ok(Submission {
++        subject: identity.subject,
++        token: None,
++        delegated: Some(stored),
++        intent,
++        config: state.config.sdlc_workspace.clone(),
++        secrets: state.config.secrets.clone(),
++    })
+ }
+ 
+ async fn authorize_keys(
+@@ -236,9 +322,11 @@ pub(crate) async fn admit(
+     tx.commit().await.map_err(ApiError::internal)?;
+     Ok(Submission {
+         subject: claims.sub,
+-        token: claims.token_id.ok_or_else(ApiError::forbidden)?,
++        token: Some(claims.token_id.ok_or_else(ApiError::forbidden)?),
++        delegated: None,
+         intent,
+         config: state.config.sdlc_workspace.clone(),
++        secrets: state.config.secrets.clone(),
+     })
+ }
+ 
+@@ -247,11 +335,25 @@ pub(crate) async fn verify_submission(
+     project: Uuid,
+     submission: &Submission,
+ ) -> Result<Instant, ApiError> {
++    if let Some(stored) = &submission.delegated {
++        if submission.token.is_some() || stored.subject != submission.subject {
++            return Err(ApiError::forbidden());
++        }
++        return authorize_child(
++            conn,
++            &submission.config,
++            &submission.secrets,
++            project,
++            &submission.intent,
++            stored,
++        )
++        .await;
++    }
+     authorize_keys(
+         conn,
+         &submission.config,
+         submission.subject,
+-        submission.token,
++        submission.token.ok_or_else(ApiError::forbidden)?,
+         project,
+         &submission.intent,
+     )
+@@ -282,6 +384,7 @@ pub(crate) async fn before_spawn(
+     pipeline: Uuid,
+     attempt: Uuid,
+     config: &SdlcWorkspaceConfig,
++    secrets: &SecretsConfig,
+ ) -> Result<Spawn, ApiError> {
+     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+     let Some(record) = ledger::find_task_pipeline(&mut tx, pipeline, true)
+@@ -296,8 +399,7 @@ pub(crate) async fn before_spawn(
+     {
+         return Ok(Spawn::Held);
+     }
+-    authorize_saved(&mut tx, config, &record).await?;
+-    let until = tracker(config, &record.intent).await?;
++    let until = authorize_saved(&mut tx, config, &record, secrets).await?;
+     if !ledger::claim_task_submission(&mut tx, pipeline, attempt)
+         .await
+         .map_err(ApiError::internal)?
+@@ -308,12 +410,48 @@ pub(crate) async fn before_spawn(
+     Ok(Spawn::Permit(until))
+ }
+ 
++/// Reauthorize central child at ordinary publication boundaries; local SAT behavior is unchanged.
++pub(crate) async fn before_delegated_effect(
++    pool: &PgPool,
++    pipeline: Uuid,
++    attempt: Uuid,
++    config: &crate::runner::RuntimeRunnerConfig,
++) -> Result<(), ApiError> {
++    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
++    let Some(record) = ledger::find_task_pipeline(&mut tx, pipeline, false)
++        .await
++        .map_err(ApiError::internal)?
++    else {
++        return Ok(());
++    };
++    if record.delegated_credential.is_none() {
++        return Ok(());
++    }
++    if !ledger::task_attempt_submitted(&mut tx, pipeline, attempt)
++        .await
++        .map_err(ApiError::internal)?
++    {
++        return Err(ApiError::conflict(
++            "Original task submission is not confirmed",
++        ));
++    }
++    let until = authorize_saved(&mut tx, &config.sdlc_workspace, &record, &config.secrets).await?;
++    if Instant::now() >= until {
++        return Err(ApiError::conflict(
++            "Tracker lease expired before publication",
++        ));
++    }
++    tx.commit().await.map_err(ApiError::internal)?;
++    Ok(())
++}
++
+ /// Verify an already submitted task attempt without claiming or replaying it.
+ pub(crate) async fn verify_submitted_attempt(
+     pool: &PgPool,
+     pipeline: Uuid,
+     attempt: Uuid,
+     config: &SdlcWorkspaceConfig,
++    secrets: &SecretsConfig,
+ ) -> Result<Instant, ApiError> {
+     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+     let record = ledger::find_task_pipeline(&mut tx, pipeline, false)
+@@ -328,8 +466,7 @@ pub(crate) async fn verify_submitted_attempt(
+             "Исходная task submission не подтверждена",
+         ));
+     }
+-    authorize_saved(&mut tx, config, &record).await?;
+-    let until = tracker(config, &record.intent).await?;
++    let until = authorize_saved(&mut tx, config, &record, secrets).await?;
+     tx.commit().await.map_err(ApiError::internal)?;
+     Ok(until)
+ }
+@@ -352,8 +489,7 @@ pub(crate) async fn prepare(
+     else {
+         return Ok(None);
+     };
+-    authorize_saved(&mut tx, &config.sdlc_workspace, &record).await?;
+-    let until = tracker(&config.sdlc_workspace, &record.intent).await?;
++    let until = authorize_saved(&mut tx, &config.sdlc_workspace, &record, &config.secrets).await?;
+     if job != record.preparation_job_id {
+         return Ok(None);
+     }
+@@ -406,19 +542,10 @@ pub(crate) async fn prepare(
+         preparation::readback(root, &source, &request).await
+     };
+     result.map_err(|_| ApiError::conflict("Preparation удержана; требуется original readback"))?;
+-    let until = tracker(&config.sdlc_workspace, &record.intent).await?;
+     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+-    authorize_saved(&mut tx, &config.sdlc_workspace, &record).await?;
++    let until = authorize_saved(&mut tx, &config.sdlc_workspace, &record, &config.secrets).await?;
+     verify_lease(&mut tx, record.project_id, job, &request).await?;
+-    if let Some(receipt) = ledger::find_receipt(
+-        &mut tx,
+-        record.project_id,
+-        record.service_account_id,
+-        &request.operation_key,
+-    )
+-    .await
+-    .map_err(ApiError::internal)?
+-    {
++    if let Some(receipt) = find_owned_receipt(&mut tx, &record).await? {
+         if receipt.request != request || receipt.request_hash != hash(&request)? {
+             return Err(ApiError::conflict("Original receipt не совпадает"));
+         }
+@@ -438,9 +565,25 @@ pub(crate) async fn prepare(
+             physical_source_observed: true,
+             dispatch_allowed: false,
+         };
+-        ledger::append_receipt(&mut tx, record.service_account_id, &receipt)
++        if let Some(credential) = &record.delegated_credential {
++            let stored = StoredCredential::from_value(&credential.0)?;
++            ledger::append_delegated_receipt(
++                &mut tx,
++                stored.subject,
++                &stored.context_hash,
++                &receipt,
++            )
+             .await
+             .map_err(ApiError::internal)?;
++        } else {
++            ledger::append_receipt(
++                &mut tx,
++                record.service_account_id.ok_or_else(ApiError::forbidden)?,
++                &receipt,
++            )
++            .await
++            .map_err(ApiError::internal)?;
++        }
+     }
+     if Instant::now() >= until {
+         return Err(ApiError::conflict("Lease истёк до receipt"));
+@@ -487,21 +630,45 @@ async fn verify_lease(
+     responses((status=200,body=Option<WorkspaceOperationReceipt>),(status=403),(status=404)))]
+ pub(crate) async fn read_receipt(
+     State(state): State<Arc<AppState>>,
+-    Extension(claims): Extension<AccessClaims>,
++    claims: Option<Extension<AccessClaims>>,
++    child: Option<Extension<Identity>>,
+     Path((project, pipeline)): Path<(Uuid, Uuid)>,
+ ) -> ApiResult<Option<WorkspaceOperationReceipt>> {
+     let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+-    authorize(&mut tx, &state, &claims, project, "api:read").await?;
++    if child.is_none() {
++        let claims = claims.as_ref().ok_or_else(ApiError::forbidden)?;
++        authorize(&mut tx, &state, &claims.0, project, "api:read").await?;
++    }
+     let record = ledger::find_task_pipeline(&mut tx, pipeline, false)
+         .await
+         .map_err(ApiError::internal)?
+         .ok_or_else(ApiError::not_found)?;
+-    if record.project_id != project || record.service_account_id != claims.sub {
++    if record.project_id != project {
+         return Err(ApiError::forbidden());
+     }
+-    let receipt = ledger::find_receipt(&mut tx, project, claims.sub, &record.intent.operation_key)
+-        .await
+-        .map_err(ApiError::internal)?;
++    match (child, claims, &record.delegated_credential) {
++        (Some(Extension(identity)), None, Some(credential)) => {
++            let stored = StoredCredential::from_value(&credential.0)?;
++            if stored.subject != identity.subject || stored.fingerprint != identity.fingerprint() {
++                return Err(ApiError::forbidden());
++            }
++            identity.bind(&stored.context, project, &record.intent)?;
++            authorize_saved(
++                &mut tx,
++                &state.config.sdlc_workspace,
++                &record,
++                &state.config.secrets,
++            )
++            .await?;
++        }
++        (None, Some(Extension(claims)), None) => {
++            if record.service_account_id != Some(claims.sub) {
++                return Err(ApiError::forbidden());
++            }
++        }
++        _ => return Err(ApiError::forbidden()),
++    }
++    let receipt = find_owned_receipt(&mut tx, &record).await?;
+     if let Some(receipt) = &receipt {
+         if record.preparation_request.as_ref().map(|r| &r.0) != Some(&receipt.request)
+             || receipt.request_hash != hash(&receipt.request)?
+@@ -513,5 +680,32 @@ pub(crate) async fn read_receipt(
+     Ok(Json(receipt))
+ }
+ 
++async fn find_owned_receipt(
++    conn: &mut sqlx::PgConnection,
++    record: &ledger::TaskPipelineJournal,
++) -> Result<Option<WorkspaceOperationReceipt>, ApiError> {
++    if let Some(credential) = &record.delegated_credential {
++        let stored = StoredCredential::from_value(&credential.0)?;
++        ledger::find_delegated_receipt(
++            conn,
++            record.project_id,
++            stored.subject,
++            &stored.context_hash,
++            &record.intent.operation_key,
++        )
++        .await
++        .map_err(ApiError::internal)
++    } else {
++        ledger::find_receipt(
++            conn,
++            record.project_id,
++            record.service_account_id.ok_or_else(ApiError::forbidden)?,
++            &record.intent.operation_key,
++        )
++        .await
++        .map_err(ApiError::internal)
++    }
++}
++
+ #[cfg(test)]
+ mod tests;
+diff --git a/backend/src/api/sdlc_workspace/task_pipeline/tests.rs b/backend/src/api/sdlc_workspace/task_pipeline/tests.rs
+index 61c1fac..0d6295b 100644
+--- a/backend/src/api/sdlc_workspace/task_pipeline/tests.rs
++++ b/backend/src/api/sdlc_workspace/task_pipeline/tests.rs
+@@ -1,5 +1,71 @@
+ use super::*;
+ 
++#[tokio::test]
++async fn delegated_tracker_readback_requires_exact_native_tuple_and_current_assignment() {
++    use axum::{Router, routing::get};
++    use std::sync::{Arc, RwLock};
++    let (intent, value) = fixture(WorkspaceRole::Developer, "Development");
++    let context = TaskCredentialContext {
++        version: 1,
++        project_id: Uuid::new_v4(),
++        intent: intent.clone(),
++        run_id: serde_json::from_value(value["receipt"]["binding"]["run_id"].clone()).unwrap(),
++        chat_id: serde_json::from_value(value["receipt"]["binding"]["chat_id"].clone()).unwrap(),
++        machine_subject: value["receipt"]["binding"]["machine_subject"]
++            .as_str()
++            .unwrap()
++            .into(),
++        trigger_id: Uuid::new_v4(),
++        variables_sha256: "a".repeat(64),
++    };
++    let state = Arc::new(RwLock::new(value.clone()));
++    let peer = state.clone();
++    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let config = SdlcWorkspaceConfig {
++        tracker_read_url: Some(format!("http://{}", listener.local_addr().unwrap())),
++        tracker_read_token: Some("fixture-reader".into()),
++        ..Default::default()
++    };
++    let path = format!("/api/v1/issues/{}/sdlc/lifecycle", intent.binding.task_id);
++    let app = Router::new().route(
++        &path,
++        get(move |headers: axum::http::HeaderMap| {
++            let peer = peer.clone();
++            async move {
++                assert_eq!(headers["authorization"], "Bearer fixture-reader");
++                let value = peer.read().unwrap().clone();
++                Json(value)
++            }
++        }),
++    );
++    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
++    assert!(
++        tracker_bound(&config, &intent, Some(&context))
++            .await
++            .is_ok()
++    );
++    for (path, replacement) in [
++        ("/receipt/binding/run_id", json!(Uuid::new_v4())),
++        ("/receipt/binding/chat_id", json!(Uuid::new_v4())),
++        ("/receipt/binding/machine_subject", json!("other-native")),
++        ("/receipt/assignment/fencing_token", json!(4)),
++        ("/receipt/assignment/assignment_id", json!(Uuid::new_v4())),
++        ("/receipt/task/status", json!("Ready")),
++        ("/receipt/lease/expires_at", value["observed_at"].clone()),
++    ] {
++        let mut changed = value.clone();
++        *changed.pointer_mut(path).unwrap() = replacement;
++        *state.write().unwrap() = changed;
++        assert!(
++            tracker_bound(&config, &intent, Some(&context))
++                .await
++                .is_err(),
++            "{path}"
++        );
++    }
++    server.abort();
++}
++
+ fn fixture(role: WorkspaceRole, stage: &str) -> (TaskWorkspaceIntent, Value) {
+     let task = Uuid::new_v4();
+     let now = Utc::now();
+diff --git a/backend/src/config.rs b/backend/src/config.rs
+index 20a6e7d..278f775 100644
+--- a/backend/src/config.rs
++++ b/backend/src/config.rs
+@@ -97,6 +97,7 @@ impl LocalDeliveryKind {
+ #[derive(Clone, Default, PartialEq, Eq)]
+ pub struct SdlcWorkspaceConfig {
+     pub operation_subject: Option<uuid::Uuid>,
++    pub delegated_subject: Option<uuid::Uuid>,
+     /// A deployment-owned local mount. No caller-authored path or URL.
+     pub observation_root: Option<PathBuf>,
+     pub local_delivery_root: Option<PathBuf>,
+@@ -110,6 +111,7 @@ impl std::fmt::Debug for SdlcWorkspaceConfig {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         f.debug_struct("SdlcWorkspaceConfig")
+             .field("operation_subject", &self.operation_subject)
++            .field("delegated_subject", &self.delegated_subject)
+             .field("observation_root", &self.observation_root)
+             .field("local_delivery_root", &self.local_delivery_root)
+             .field("local_delivery_policy", &self.local_delivery_policy)
+@@ -361,6 +363,20 @@ impl RuntimeConfig {
+             secrets,
+             smtp,
+             sdlc_workspace: SdlcWorkspaceConfig {
++                delegated_subject: optional_trimmed(get("CICD_SDLC_DELEGATED_SUBJECT"))
++                    .map(|value| {
++                        value
++                            .parse::<uuid::Uuid>()
++                            .ok()
++                            .filter(|id| !id.is_nil() && id.to_string() == value)
++                            .ok_or_else(|| {
++                                ConfigError::invalid(
++                                    "CICD_SDLC_DELEGATED_SUBJECT",
++                                    "expected canonical non-nil UUID",
++                                )
++                            })
++                    })
++                    .transpose()?,
+                 local_delivery_kind: LocalDeliveryKind::from_env(get("CICD_LOCAL_DELIVERY_KIND"))?,
+                 tracker_read_url: optional_trimmed(get("CICD_TASK_TRACKER_URL")),
+                 tracker_read_token: optional_secret_value(get("CICD_TASK_TRACKER_READ_TOKEN")),
+diff --git a/backend/src/delegated_credentials.rs b/backend/src/delegated_credentials.rs
+new file mode 100644
+index 0000000..1abf000
+--- /dev/null
++++ b/backend/src/delegated_credentials.rs
+@@ -0,0 +1,359 @@
++//! Central child custody for the existing task pipeline, never a local SAT or human identity.
++use crate::{
++    api::ApiError,
++    config::{SdlcWorkspaceConfig, SecretsConfig},
++    domain::sdlc_workspace::TaskWorkspaceIntent,
++};
++use pdlc_auth_core::AuthContext;
++use serde::{Deserialize, Serialize};
++use serde_json::{Value, json};
++use sha2::{Digest, Sha256};
++use uuid::Uuid;
++
++pub(crate) const GRANT_PREFIX: &str = "ci-cd:sdlc:task:v1:";
++
++#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct TaskCredentialContext {
++    pub version: u32,
++    pub project_id: Uuid,
++    pub intent: TaskWorkspaceIntent,
++    pub run_id: Uuid,
++    pub chat_id: Uuid,
++    pub machine_subject: String,
++    pub trigger_id: Uuid,
++    pub variables_sha256: String,
++}
++
++pub(crate) fn digest(value: &impl Serialize) -> Result<String, ApiError> {
++    fn canonical(value: Value) -> Value {
++        match value {
++            Value::Object(v) => Value::Object(
++                v.into_iter()
++                    .map(|(k, v)| (k, canonical(v)))
++                    .collect::<std::collections::BTreeMap<_, _>>()
++                    .into_iter()
++                    .collect(),
++            ),
++            Value::Array(v) => Value::Array(v.into_iter().map(canonical).collect()),
++            v => v,
++        }
++    }
++    let value = serde_json::to_value(value)
++        .map_err(|_| ApiError::bad_request("invalid task credential context"))?;
++    let bytes = serde_json::to_vec(&canonical(value))
++        .map_err(|_| ApiError::bad_request("invalid task credential context"))?;
++    Ok(format!("{:x}", Sha256::digest(bytes)))
++}
++
++impl TaskCredentialContext {
++    pub(crate) fn bind_trigger(
++        &self,
++        trigger_id: &str,
++        git_ref: Option<&str>,
++        variables: &impl Serialize,
++    ) -> Result<(), ApiError> {
++        if trigger_id != self.trigger_id.to_string()
++            || git_ref != Some(self.intent.source_commit.as_str())
++            || digest(variables)? != self.variables_sha256
++        {
++            return Err(ApiError::forbidden());
++        }
++        Ok(())
++    }
++
++    pub(crate) fn validate(&self) -> Result<(), ApiError> {
++        self.intent.validate().map_err(ApiError::bad_request)?;
++        if self.version != 1
++            || [self.project_id, self.run_id, self.chat_id, self.trigger_id]
++                .iter()
++                .any(Uuid::is_nil)
++            || !hex_digest(&self.variables_sha256)
++            || self.machine_subject.is_empty()
++            || self.machine_subject.len() > 256
++            || self.machine_subject.trim() != self.machine_subject
++            || self.machine_subject.chars().any(char::is_control)
++        {
++            return Err(ApiError::bad_request("invalid task credential context"));
++        }
++        Ok(())
++    }
++
++    pub(crate) fn grant(&self) -> Result<String, ApiError> {
++        self.validate()?;
++        Ok(format!("{GRANT_PREFIX}{}", digest(self)?))
++    }
++
++    pub(crate) fn native_matches(&self, value: &Value) -> bool {
++        value["receipt"]["binding"]["run_id"] == json!(self.run_id)
++            && value["receipt"]["binding"]["chat_id"] == json!(self.chat_id)
++            && value["receipt"]["binding"]["machine_subject"] == json!(self.machine_subject)
++    }
++}
++
++fn hex_digest(value: &str) -> bool {
++    value.len() == 64
++        && value
++            .bytes()
++            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
++}
++
++pub(crate) fn has_grant(ctx: &AuthContext) -> bool {
++    ctx.scopes
++        .iter()
++        .any(|scope| scope.starts_with("ci-cd:sdlc:"))
++}
++
++pub(crate) fn configured_subject(subject: &str) -> bool {
++    std::env::var("CICD_SDLC_DELEGATED_SUBJECT").is_ok_and(|value| value == subject)
++}
++
++// Deliberately no Debug/Serialize: the verified bearer must not enter logs or responses.
++#[derive(Clone)]
++pub(crate) struct Identity {
++    pub subject: Uuid,
++    pub grant_hash: String,
++    token: String,
++}
++
++impl Identity {
++    pub(crate) fn fingerprint(&self) -> String {
++        crate::auth::hash_token(&self.token)
++    }
++
++    pub(crate) fn verified(
++        ctx: &AuthContext,
++        config: &SdlcWorkspaceConfig,
++    ) -> Result<Self, ApiError> {
++        let subject = Uuid::parse_str(&ctx.user_id).map_err(|_| ApiError::forbidden())?;
++        if subject.is_nil()
++            || subject.to_string() != ctx.user_id
++            || config.delegated_subject != Some(subject)
++            || config.operation_subject == Some(subject)
++            || crate::namespace::registered_machine(&ctx.user_id)
++            || ctx.session_id.is_some()
++            || ctx.role.is_some()
++            || !pdlc_auth_core::is_personal_token(&ctx.token)
++            || ctx.token.len() > 128
++            || ctx.token.chars().any(char::is_whitespace)
++        {
++            return Err(ApiError::forbidden());
++        }
++        let grants: Vec<_> = ctx
++            .scopes
++            .iter()
++            .filter(|s| s.starts_with("ci-cd:sdlc:"))
++            .collect();
++        let grant_hash = match grants.as_slice() {
++            [grant] => grant
++                .strip_prefix(GRANT_PREFIX)
++                .filter(|s| hex_digest(s))
++                .ok_or_else(ApiError::forbidden)?,
++            _ => return Err(ApiError::forbidden()),
++        };
++        // No cross-service, admin, git or unrelated product scopes on this child.
++        if !ctx.scopes.contains("ci-cd:read")
++            || !ctx.scopes.contains("ci-cd:write")
++            || ctx
++                .scopes
++                .iter()
++                .any(|s| s != "ci-cd:read" && s != "ci-cd:write" && !s.starts_with(GRANT_PREFIX))
++        {
++            return Err(ApiError::forbidden());
++        }
++        Ok(Self {
++            subject,
++            grant_hash: grant_hash.into(),
++            token: ctx.token.clone(),
++        })
++    }
++
++    pub(crate) fn route(&self, method: &str, path: &str) -> Result<(), ApiError> {
++        let parts: Vec<_> = path.split('/').collect();
++        let id = |s: &str| Uuid::parse_str(s).is_ok_and(|id| !id.is_nil() && id.to_string() == s);
++        let allowed = match (method, parts.as_slice()) {
++            ("POST", ["", "api", "v1", "projects", project, "pipelines"]) => id(project),
++            (
++                "GET",
++                [
++                    "",
++                    "api",
++                    "v1",
++                    "projects",
++                    project,
++                    "pipelines",
++                    pipeline,
++                    "task-workspace",
++                ],
++            ) => id(project) && id(pipeline),
++            _ => false,
++        };
++        if allowed {
++            Ok(())
++        } else {
++            Err(ApiError::forbidden())
++        }
++    }
++
++    pub(crate) fn bind(
++        &self,
++        context: &TaskCredentialContext,
++        project: Uuid,
++        intent: &TaskWorkspaceIntent,
++    ) -> Result<(), ApiError> {
++        context.validate()?;
++        if context.project_id != project
++            || context.intent != *intent
++            || digest(context)? != self.grant_hash
++        {
++            return Err(ApiError::forbidden());
++        }
++        Ok(())
++    }
++
++    pub(crate) fn store(
++        &self,
++        context: TaskCredentialContext,
++        secrets: &SecretsConfig,
++    ) -> Result<StoredCredential, ApiError> {
++        self.bind(&context, context.project_id, &context.intent)?;
++        let fingerprint = crate::auth::hash_token(&self.token);
++        let plain = serde_json::to_string(
++            &json!({"subject":self.subject,"context":context,"token":self.token}),
++        )
++        .map_err(|_| ApiError::forbidden())?;
++        let encrypted_child = crate::platform::encrypt_secret(&plain, secrets)
++            .map_err(|_| ApiError::service_unavailable("task credential encryption unavailable"))?;
++        Ok(StoredCredential {
++            subject: self.subject,
++            fingerprint,
++            context_hash: digest(&context)?,
++            context,
++            encrypted_child,
++        })
++    }
++}
++
++// Serialized only into the private DB custody column; never a response or a Debug field.
++#[derive(Clone, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(crate) struct StoredCredential {
++    pub subject: Uuid,
++    pub fingerprint: String,
++    pub context_hash: String,
++    pub context: TaskCredentialContext,
++    encrypted_child: String,
++}
++
++pub(crate) fn trigger_fingerprint(
++    legacy: String,
++    credential: Option<&StoredCredential>,
++) -> Result<String, ApiError> {
++    match credential {
++        Some(stored) => digest(
++            &json!({"trigger":legacy,"child":stored.fingerprint,"context":stored.context_hash}),
++        ),
++        None => Ok(legacy),
++    }
++}
++
++impl StoredCredential {
++    pub(crate) fn from_value(value: &Value) -> Result<Self, ApiError> {
++        serde_json::from_value(value.clone()).map_err(|_| ApiError::forbidden())
++    }
++
++    pub(crate) fn value(&self) -> Result<Value, ApiError> {
++        serde_json::to_value(self).map_err(|_| ApiError::forbidden())
++    }
++
++    pub(crate) async fn verify(
++        &self,
++        config: &SdlcWorkspaceConfig,
++        secrets: &SecretsConfig,
++        project: Uuid,
++        intent: &TaskWorkspaceIntent,
++    ) -> Result<(), ApiError> {
++        self.verify_with(config, secrets, project, intent, |token| async move {
++            crate::central_auth::try_central(&token).await
++        })
++        .await
++    }
++
++    async fn verify_with<F, Fut>(
++        &self,
++        config: &SdlcWorkspaceConfig,
++        secrets: &SecretsConfig,
++        project: Uuid,
++        intent: &TaskWorkspaceIntent,
++        introspect: F,
++    ) -> Result<(), ApiError>
++    where
++        F: FnOnce(String) -> Fut,
++        Fut: std::future::Future<Output = Result<Option<AuthContext>, ApiError>>,
++    {
++        let token = self.open(secrets)?;
++        let central = introspect(token).await?.ok_or_else(ApiError::forbidden)?;
++        let identity = Identity::verified(&central, config)?;
++        if identity.subject != self.subject
++            || crate::auth::hash_token(&identity.token) != self.fingerprint
++        {
++            return Err(ApiError::forbidden());
++        }
++        identity.bind(&self.context, project, intent)
++    }
++
++    fn open(&self, secrets: &SecretsConfig) -> Result<String, ApiError> {
++        use base64::Engine;
++        let parts: Vec<_> = self.encrypted_child.split(':').collect();
++        if self.encrypted_child.len() > 65536
++            || parts.len() != 3
++            || parts[0] != "v1"
++            || base64::engine::general_purpose::STANDARD
++                .decode(parts[1])
++                .map_or(true, |b| b.len() != 12)
++        {
++            return Err(ApiError::forbidden());
++        }
++        let plain = crate::platform::decrypt_secret(&self.encrypted_child, secrets)
++            .map_err(|_| ApiError::forbidden())?;
++        #[derive(Deserialize)]
++        #[serde(deny_unknown_fields)]
++        struct Envelope {
++            subject: Uuid,
++            context: TaskCredentialContext,
++            token: String,
++        }
++        let envelope: Envelope = serde_json::from_str(&plain).map_err(|_| ApiError::forbidden())?;
++        if envelope.subject != self.subject
++            || envelope.context != self.context
++            || digest(&self.context)? != self.context_hash
++            || crate::auth::hash_token(&envelope.token) != self.fingerprint
++        {
++            return Err(ApiError::forbidden());
++        }
++        Ok(envelope.token)
++    }
++}
++
++/// Server-side producer request for Base's EXISTING endpoint; never a CLI mint action.
++pub fn delegation_request(
++    context: &TaskCredentialContext,
++    key: &str,
++    ttl: i64,
++) -> Result<Value, ApiError> {
++    if !(1..=1800).contains(&ttl)
++        || key.is_empty()
++        || key.len() > 128
++        || !key.bytes().all(|b| b.is_ascii_graphic())
++    {
++        return Err(ApiError::bad_request(
++            "invalid task credential delegation bounds",
++        ));
++    }
++    Ok(json!({"service":"ci-cd","label":"Forge task pipeline",
++        "scopes":["ci-cd:read","ci-cd:write",context.grant()?],
++        "idempotency_key":key,"expires_in_seconds":ttl}))
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/backend/src/delegated_credentials/tests.rs b/backend/src/delegated_credentials/tests.rs
+new file mode 100644
+index 0000000..daf0f14
+--- /dev/null
++++ b/backend/src/delegated_credentials/tests.rs
+@@ -0,0 +1,499 @@
++use super::*;
++use crate::domain::sdlc_workspace::{WorkspaceRole, WorkspaceTaskBinding};
++use std::collections::HashSet;
++
++fn fixture() -> (
++    TaskCredentialContext,
++    AuthContext,
++    SdlcWorkspaceConfig,
++    SecretsConfig,
++) {
++    let task = Uuid::new_v4();
++    let context = TaskCredentialContext {
++        version: 1,
++        project_id: Uuid::new_v4(),
++        run_id: Uuid::new_v4(),
++        chat_id: Uuid::new_v4(),
++        machine_subject: "retained-native-machine".into(),
++        trigger_id: Uuid::new_v4(),
++        variables_sha256: digest(&json!({})).unwrap(),
++        intent: TaskWorkspaceIntent {
++            operation_key: "task:original".into(),
++            repository_id: Uuid::new_v4(),
++            source_commit: "a".repeat(40),
++            role: WorkspaceRole::Developer,
++            agent_id: Uuid::new_v4(),
++            tracker_lease_id: Uuid::new_v4(),
++            holder_subject: "fleet-scheduler".into(),
++            expected_lease_version: 2,
++            binding: WorkspaceTaskBinding {
++                tracker_instance_id: Uuid::new_v4().to_string(),
++                tracker_project_id: Uuid::new_v4(),
++                task_id: task,
++                root_task_id: task,
++                assignment_id: Uuid::new_v4(),
++                execution_id: Uuid::new_v4(),
++                routing_snapshot_id: Uuid::new_v4(),
++                requirement_revision: 1,
++                fencing_token: 3,
++                assignment_hash: "b".repeat(64),
++                workflow_task_ref: "SDLC-27".into(),
++            },
++        },
++    };
++    let subject = Uuid::new_v4();
++    let central = AuthContext {
++        user_id: subject.to_string(),
++        email: Some("machine@example.test".into()),
++        role: None,
++        session_id: None,
++        token: "sdlc_pat_fixture_child".into(),
++        scopes: [
++            "ci-cd:read".into(),
++            "ci-cd:write".into(),
++            context.grant().unwrap(),
++        ]
++        .into(),
++    };
++    let config = SdlcWorkspaceConfig {
++        delegated_subject: Some(subject),
++        ..Default::default()
++    };
++    (
++        context,
++        central,
++        config,
++        SecretsConfig {
++            key: Some([17; 32]),
++        },
++    )
++}
++
++#[test]
++fn producer_reuses_base_delegate_exact_service_scopes_and_bounded_ttl() {
++    let (context, _, _, _) = fixture();
++    let request = delegation_request(&context, "original:credential", 900).unwrap();
++    assert_eq!(request["service"], "ci-cd");
++    assert_eq!(
++        request["scopes"],
++        json!(["ci-cd:read", "ci-cd:write", context.grant().unwrap()])
++    );
++    assert_eq!(request["idempotency_key"], "original:credential");
++    assert_eq!(request.as_object().unwrap().len(), 5);
++    for ttl in [0, -1, 1801, i64::MAX] {
++        assert!(delegation_request(&context, "original", ttl).is_err());
++    }
++    for key in ["", "space key", "\n", &"x".repeat(129)] {
++        assert!(delegation_request(&context, key, 900).is_err());
++    }
++}
++
++#[test]
++fn grant_binds_every_context_field_including_original_trigger_and_native_run() {
++    let (context, central, config, _) = fixture();
++    let identity = Identity::verified(&central, &config).unwrap();
++    identity
++        .bind(&context, context.project_id, &context.intent)
++        .unwrap();
++    let original = serde_json::to_value(&context).unwrap();
++    for (path, replacement) in [
++        ("/projectId", json!(Uuid::new_v4())),
++        ("/runId", json!(Uuid::new_v4())),
++        ("/chatId", json!(Uuid::new_v4())),
++        ("/machineSubject", json!("another-machine")),
++        ("/triggerId", json!(Uuid::new_v4())),
++        ("/variablesSha256", json!("c".repeat(64))),
++        ("/intent/repositoryId", json!(Uuid::new_v4())),
++        ("/intent/sourceCommit", json!("c".repeat(40))),
++        ("/intent/role", json!("devops")),
++        ("/intent/agentId", json!(Uuid::new_v4())),
++        ("/intent/trackerLeaseId", json!(Uuid::new_v4())),
++        ("/intent/holderSubject", json!("another")),
++        ("/intent/expectedLeaseVersion", json!(3)),
++        ("/intent/operationKey", json!("other:key")),
++        ("/intent/binding/assignmentId", json!(Uuid::new_v4())),
++        ("/intent/binding/executionId", json!(Uuid::new_v4())),
++        ("/intent/binding/fencingToken", json!(4)),
++        ("/intent/binding/assignmentHash", json!("c".repeat(64))),
++        ("/intent/binding/trackerInstanceId", json!(Uuid::new_v4())),
++        ("/intent/binding/trackerProjectId", json!(Uuid::new_v4())),
++        ("/intent/binding/routingSnapshotId", json!(Uuid::new_v4())),
++        ("/intent/binding/requirementRevision", json!(2)),
++        ("/intent/binding/workflowTaskRef", json!("SDLC-28")),
++    ] {
++        let mut changed = original.clone();
++        *changed.pointer_mut(path).unwrap() = replacement;
++        let changed: TaskCredentialContext = serde_json::from_value(changed).unwrap();
++        assert!(
++            identity
++                .bind(&changed, changed.project_id, &changed.intent)
++                .is_err(),
++            "{path}"
++        );
++    }
++    let mut changed = context;
++    changed.intent.binding.task_id = Uuid::new_v4();
++    changed.intent.binding.root_task_id = changed.intent.binding.task_id;
++    assert!(
++        identity
++            .bind(&changed, changed.project_id, &changed.intent)
++            .is_err()
++    );
++}
++
++#[test]
++fn root_human_session_foreign_subject_malformed_and_ambiguous_grants_fail_closed() {
++    let (context, central, config, _) = fixture();
++    for scopes in [
++        ["ci-cd:read".into(), "ci-cd:write".into()]
++            .into_iter()
++            .collect(),
++        [context.grant().unwrap(), "ci-cd:write".into()]
++            .into_iter()
++            .collect(),
++        [
++            "ci-cd:sdlc:task:v1:not-a-hash".into(),
++            "ci-cd:read".into(),
++            "ci-cd:write".into(),
++        ]
++        .into_iter()
++        .collect(),
++        [
++            context.grant().unwrap(),
++            format!("{GRANT_PREFIX}{}", "c".repeat(64)),
++            "ci-cd:read".into(),
++            "ci-cd:write".into(),
++        ]
++        .into_iter()
++        .collect(),
++    ] {
++        let mut changed = central.clone();
++        changed.scopes = scopes;
++        assert!(Identity::verified(&changed, &config).is_err());
++    }
++    for extra in [
++        "git:write",
++        "api:write",
++        "ci-cd:admin",
++        "task-tracker:read",
++        "ci-cd:sdlc:unknown:abc",
++    ] {
++        let mut changed = central.clone();
++        changed.scopes.insert(extra.into());
++        assert!(Identity::verified(&changed, &config).is_err());
++    }
++    let mut changed = central.clone();
++    changed.user_id = Uuid::new_v4().to_string();
++    assert!(Identity::verified(&changed, &config).is_err());
++    let mut changed = central.clone();
++    changed.session_id = Some(Uuid::new_v4().to_string());
++    assert!(Identity::verified(&changed, &config).is_err());
++    let mut changed = central.clone();
++    changed.role = Some("admin".into());
++    assert!(Identity::verified(&changed, &config).is_err());
++    let mut changed = central.clone();
++    changed.token = "human-jwt".into();
++    assert!(Identity::verified(&changed, &config).is_err());
++    let mut changed = config.clone();
++    changed.operation_subject = changed.delegated_subject;
++    assert!(Identity::verified(&central, &changed).is_err());
++}
++
++#[test]
++fn only_task_trigger_and_exact_task_readback_routes_no_git_admin_or_delivery() {
++    let (_, central, config, _) = fixture();
++    let identity = Identity::verified(&central, &config).unwrap();
++    let p = Uuid::new_v4();
++    let pipeline = Uuid::new_v4();
++    identity
++        .route("POST", &format!("/api/v1/projects/{p}/pipelines"))
++        .unwrap();
++    identity
++        .route(
++            "GET",
++            &format!("/api/v1/projects/{p}/pipelines/{pipeline}/task-workspace"),
++        )
++        .unwrap();
++    for (method, path) in [
++        ("GET", "/api/v1/projects".into()),
++        ("GET", format!("/api/v1/projects/{p}")),
++        ("GET", format!("/api/v1/pipelines/{pipeline}")),
++        ("POST", format!("/api/v1/pipelines/{pipeline}/retry")),
++        (
++            "POST",
++            format!("/api/v1/projects/{p}/sdlc/workspace-operations"),
++        ),
++        ("POST", "/api/v1/admin/service-accounts".into()),
++        ("POST", "/git/example/git-receive-pack".into()),
++        ("POST", "/api/v1/projects/../pipelines".into()),
++        ("DELETE", format!("/api/v1/projects/{p}/pipelines")),
++    ] {
++        assert!(identity.route(method, &path).is_err(), "{method} {path}");
++    }
++}
++
++#[test]
++fn encrypted_custody_is_restart_readable_and_cannot_splice_context_subject_or_child() {
++    let (context, central, config, secrets) = fixture();
++    let identity = Identity::verified(&central, &config).unwrap();
++    let stored = identity.store(context.clone(), &secrets).unwrap();
++    assert_eq!(stored.open(&secrets).unwrap(), central.token);
++    let serialized = stored.value().unwrap();
++    assert!(!serialized.to_string().contains(&central.token));
++    assert_eq!(
++        StoredCredential::from_value(&serialized)
++            .unwrap()
++            .open(&secrets)
++            .unwrap(),
++        central.token
++    );
++    for (field, value) in [
++        ("subject", json!(Uuid::new_v4())),
++        ("fingerprint", json!("c".repeat(64))),
++        ("context_hash", json!("c".repeat(64))),
++        ("encrypted_child", json!("v1:YQ==:YQ==")),
++    ] {
++        let mut changed = serialized.clone();
++        changed[field] = value;
++        assert!(
++            StoredCredential::from_value(&changed)
++                .unwrap()
++                .open(&secrets)
++                .is_err()
++        );
++    }
++    let mut changed = stored.clone();
++    changed.context.run_id = Uuid::new_v4();
++    assert!(changed.open(&secrets).is_err());
++    assert!(
++        stored
++            .open(&SecretsConfig {
++                key: Some([18; 32])
++            })
++            .is_err()
++    );
++    assert!(
++        identity
++            .store(context, &SecretsConfig { key: None })
++            .is_err()
++    );
++}
++
++#[tokio::test]
++async fn async_verifier_reintrospects_same_child_each_time_and_never_uses_cached_grant() {
++    use std::sync::{
++        Arc,
++        atomic::{AtomicUsize, Ordering},
++    };
++    let (context, central, config, secrets) = fixture();
++    let stored = Identity::verified(&central, &config)
++        .unwrap()
++        .store(context.clone(), &secrets)
++        .unwrap();
++    let calls = Arc::new(AtomicUsize::new(0));
++    for _ in 0..2 {
++        let calls = calls.clone();
++        let central = central.clone();
++        stored
++            .verify_with(
++                &config,
++                &secrets,
++                context.project_id,
++                &context.intent,
++                move |token| async move {
++                    calls.fetch_add(1, Ordering::SeqCst);
++                    assert_eq!(token, central.token);
++                    Ok(Some(central))
++                },
++            )
++            .await
++            .unwrap();
++    }
++    assert_eq!(calls.load(Ordering::SeqCst), 2);
++    for status in [401, 503] {
++        assert!(
++            stored
++                .verify_with(
++                    &config,
++                    &secrets,
++                    context.project_id,
++                    &context.intent,
++                    move |_| async move {
++                        if status == 401 {
++                            Err(ApiError::unauthorized())
++                        } else {
++                            Err(ApiError::service_unavailable("Base unavailable"))
++                        }
++                    }
++                )
++                .await
++                .is_err()
++        );
++    }
++    let mut changed = central.clone();
++    changed.scopes = HashSet::from(["ci-cd:read".into(), "ci-cd:write".into()]);
++    assert!(
++        stored
++            .verify_with(
++                &config,
++                &secrets,
++                context.project_id,
++                &context.intent,
++                move |_| async move { Ok(Some(changed)) }
++            )
++            .await
++            .is_err()
++    );
++    assert!(
++        stored
++            .verify_with(
++                &config,
++                &secrets,
++                context.project_id,
++                &context.intent,
++                |_| async { Ok(None) }
++            )
++            .await
++            .is_err()
++    );
++}
++
++#[test]
++fn native_context_requires_original_run_and_chat_not_only_well_formed_ids() {
++    let (context, _, _, _) = fixture();
++    let value = json!({"receipt":{"binding":{"run_id":context.run_id,"chat_id":context.chat_id,"machine_subject":context.machine_subject}}});
++    assert!(context.native_matches(&value));
++    for field in ["run_id", "chat_id", "machine_subject"] {
++        let mut changed = value.clone();
++        changed["receipt"]["binding"][field] = json!(Uuid::new_v4());
++        assert!(!context.native_matches(&changed));
++    }
++}
++
++#[test]
++fn canonical_digest_is_key_order_independent_and_unknown_context_fields_rejected() {
++    assert_eq!(
++        digest(&json!({"z":1,"a":{"d":2,"b":3}})).unwrap(),
++        digest(&json!({"a":{"b":3,"d":2},"z":1})).unwrap()
++    );
++    let (context, _, _, _) = fixture();
++    let mut value = serde_json::to_value(context).unwrap();
++    value["admin"] = json!(true);
++    assert!(serde_json::from_value::<TaskCredentialContext>(value).is_err());
++}
++
++#[test]
++fn trigger_binds_original_uuid_exact_source_and_all_variables() {
++    let (context, _, _, _) = fixture();
++    context
++        .bind_trigger(
++            &context.trigger_id.to_string(),
++            Some(&context.intent.source_commit),
++            &json!({}),
++        )
++        .unwrap();
++    assert!(
++        context
++            .bind_trigger(
++                &Uuid::new_v4().to_string(),
++                Some(&context.intent.source_commit),
++                &json!({})
++            )
++            .is_err()
++    );
++    assert!(
++        context
++            .bind_trigger(&context.trigger_id.to_string(), Some("main"), &json!({}))
++            .is_err()
++    );
++    assert!(
++        context
++            .bind_trigger(&context.trigger_id.to_string(), None, &json!({}))
++            .is_err()
++    );
++    assert!(
++        context
++            .bind_trigger(
++                &context.trigger_id.to_string(),
++                Some(&context.intent.source_commit),
++                &json!({"PRIVILEGED":"yes"})
++            )
++            .is_err()
++    );
++}
++
++#[test]
++fn replay_fingerprint_preserves_legacy_and_binds_child_not_random_cipher_nonce() {
++    let (context, central, config, secrets) = fixture();
++    let identity = Identity::verified(&central, &config).unwrap();
++    let a = identity.store(context.clone(), &secrets).unwrap();
++    let b = identity.store(context.clone(), &secrets).unwrap();
++    assert_ne!(a.encrypted_child, b.encrypted_child);
++    assert_eq!(
++        trigger_fingerprint("legacy-exact".into(), None).unwrap(),
++        "legacy-exact"
++    );
++    let original = trigger_fingerprint("trigger".into(), Some(&a)).unwrap();
++    assert_eq!(
++        original,
++        trigger_fingerprint("trigger".into(), Some(&b)).unwrap()
++    );
++    let mut foreign = central;
++    foreign.token = "sdlc_pat_other_child".into();
++    let foreign = Identity::verified(&foreign, &config)
++        .unwrap()
++        .store(context, &secrets)
++        .unwrap();
++    assert_ne!(
++        original,
++        trigger_fingerprint("trigger".into(), Some(&foreign)).unwrap()
++    );
++    let mut changed = a;
++    changed.context_hash = "c".repeat(64);
++    assert_ne!(
++        original,
++        trigger_fingerprint("trigger".into(), Some(&changed)).unwrap()
++    );
++}
++
++#[tokio::test]
++async fn expired_revoked_or_replaced_child_cannot_refresh_saved_command_authority() {
++    let (context, central, config, secrets) = fixture();
++    let stored = Identity::verified(&central, &config)
++        .unwrap()
++        .store(context.clone(), &secrets)
++        .unwrap();
++    for phase in ["queued-spawn", "preparation", "artifact-publication"] {
++        for reason in ["expired-child", "revoked-child", "revoked-parent"] {
++            let result = stored
++                .verify_with(
++                    &config,
++                    &secrets,
++                    context.project_id,
++                    &context.intent,
++                    |_| async { Err(ApiError::unauthorized()) },
++                )
++                .await;
++            assert!(
++                result.is_err(),
++                "{phase}: {reason} cannot authorize a new effect"
++            );
++        }
++    }
++    // Even a live replacement with identical context is not the original child.
++    let mut replacement = central;
++    replacement.token = "sdlc_pat_renewed_fixture".into();
++    assert!(
++        stored
++            .verify_with(
++                &config,
++                &secrets,
++                context.project_id,
++                &context.intent,
++                move |_| async { Ok(Some(replacement)) }
++            )
++            .await
++            .is_err()
++    );
++    assert!(stored.context == context);
++}
+diff --git a/backend/src/lib.rs b/backend/src/lib.rs
+index c1cc905..8d9e7de 100644
+--- a/backend/src/lib.rs
++++ b/backend/src/lib.rs
+@@ -6,6 +6,7 @@ mod authz_route_coverage;
+ pub(crate) mod body_limits;
+ pub mod central_auth;
+ pub mod config;
++pub mod delegated_credentials;
+ pub mod dispatch_signal;
+ pub mod metrics;
+ pub mod outbox;
+diff --git a/backend/src/namespace.rs b/backend/src/namespace.rs
+index 125ed95..b8e047d 100644
+--- a/backend/src/namespace.rs
++++ b/backend/src/namespace.rs
+@@ -47,6 +47,7 @@ async fn machine_auth(req: Request, next: Next, key: &str) -> Result<Response, A
+         .map(str::trim)
+         .any(|s| !s.is_empty() && s == ctx.user_id);
+     if ctx.session_id.is_some()
++        || crate::delegated_credentials::has_grant(&ctx)
+         || !registered
+         || !ctx.allows_service("ci-cd", req.method().as_str())
+     {
+diff --git a/backend/src/platform.rs b/backend/src/platform.rs
+index b363cee..8868e31 100644
+--- a/backend/src/platform.rs
++++ b/backend/src/platform.rs
+@@ -2967,7 +2967,7 @@ fn sha256(value: &str) -> String {
+     sha256_bytes(value.as_bytes())
+ }
+ 
+-fn decrypt_secret(stored: &str, secrets: &SecretsConfig) -> Result<String, String> {
++pub(crate) fn decrypt_secret(stored: &str, secrets: &SecretsConfig) -> Result<String, String> {
+     let key = secret_key(secrets)?;
+     let cipher =
+         Aes256Gcm::new_from_slice(&key).map_err(|_| "invalid CICD_SECRETS_KEY".to_owned())?;
+@@ -3039,7 +3039,7 @@ fn schedule_next_fire_at(cron: &str, enabled: bool) -> Result<Option<DateTime<Ut
+         .map(Some)
+         .map_err(ApiError::bad_request)
+ }
+-fn encrypt_secret(value: &str, secrets: &SecretsConfig) -> Result<String, String> {
++pub(crate) fn encrypt_secret(value: &str, secrets: &SecretsConfig) -> Result<String, String> {
+     let key = secret_key(secrets)?;
+     let cipher =
+         Aes256Gcm::new_from_slice(&key).map_err(|_| "invalid CICD_SECRETS_KEY".to_owned())?;
+diff --git a/backend/src/runner.rs b/backend/src/runner.rs
+index 17e18d1..e0f9eb5 100644
+--- a/backend/src/runner.rs
++++ b/backend/src/runner.rs
+@@ -1448,6 +1448,7 @@ async fn run_job_inner(
+         job.pipeline_id,
+         attempt_id,
+         &config.sdlc_workspace,
++        &config.secrets,
+     )
+     .await;
+     let task_until = match task_until {
+@@ -1614,6 +1615,18 @@ async fn run_job_inner(
+     let mut final_status = final_status;
+     let mut exit_code = exit_code;
+     let mut error_tail = error_tail;
++    if image_build.is_none()
++        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
++            &pool,
++            job.pipeline_id,
++            attempt_id,
++            &config,
++        )
++        .await
++        .is_err()
++    {
++        return Ok(ExecutionOutcome::Held);
++    }
+     if let Some(remote) = &mut remote_job {
+         if let Err(error) = remote.copy_back(&workspace).await {
+             final_status = "failed";
+@@ -1666,6 +1679,7 @@ async fn run_job_inner(
+             job.pipeline_id,
+             attempt_id,
+             &config.sdlc_workspace,
++            &config.secrets,
+         )
+         .await
+         {
+@@ -1682,6 +1696,18 @@ async fn run_job_inner(
+     let artifact_root = completed_build
+         .as_ref()
+         .map_or(workspace.as_path(), |b| b.artifact_root.as_path());
++    if image_build.is_none()
++        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
++            &pool,
++            job.pipeline_id,
++            attempt_id,
++            &config,
++        )
++        .await
++        .is_err()
++    {
++        return Ok(ExecutionOutcome::Held);
++    }
+     let artifact_error = collect_declared_artifacts(
+         &pool,
+         &config.artifacts,
+@@ -1729,6 +1755,18 @@ async fn run_job_inner(
+         }
+         return Ok(outcome);
+     }
++    if image_build.is_none()
++        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
++            &pool,
++            job.pipeline_id,
++            attempt_id,
++            &config,
++        )
++        .await
++        .is_err()
++    {
++        return Ok(ExecutionOutcome::Held);
++    }
+     let updated = sqlx::query(
+         "UPDATE jobs SET status = $2, finished_at = now() \
+          WHERE id = $1 AND status='running' \
+diff --git a/backend/tests/integration_db.rs b/backend/tests/integration_db.rs
+index 4ea13b9..31c5889 100644
+--- a/backend/tests/integration_db.rs
++++ b/backend/tests/integration_db.rs
+@@ -9064,7 +9064,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
+     let catalog = cicd::migrations().await.unwrap();
+     assert_eq!(
+         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
+-        (1..=40).chain([90, 91, 92]).collect::<Vec<_>>()
++        (1..=40).chain([90, 91, 92, 93]).collect::<Vec<_>>()
+     );
+     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
+         let migration = catalog
+@@ -9097,7 +9097,10 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
+                 .fetch_all(&pool)
+                 .await
+                 .unwrap();
+-        assert_eq!(versions, (1..=40).chain([90, 91, 92]).collect::<Vec<_>>());
++        assert_eq!(
++            versions,
++            (1..=40).chain([90, 91, 92, 93]).collect::<Vec<_>>()
++        );
+         let history = migration_catalog_history(&pool).await;
+         catalog.run(&pool).await.unwrap();
+         assert_eq!(migration_catalog_history(&pool).await, history);
+diff --git a/backend/tests/support/task_pipeline.rs b/backend/tests/support/task_pipeline.rs
+index 244eda0..ccdcfab 100644
+--- a/backend/tests/support/task_pipeline.rs
++++ b/backend/tests/support/task_pipeline.rs
+@@ -2,6 +2,207 @@ use super::*;
+ use cicd::store::sdlc_workspace as ledger;
+ use serde_json::json;
+ 
++#[tokio::test]
++#[ignore = "requires disposable CICD_TEST_DATABASE_URL; credential custody only, no runner"]
++async fn delegated_task_credential_variant_preserves_sat_fks_and_immutable_custody() {
++    let mut f = Fixture::new().await;
++    f.request.binding.tracker_instance_id = Uuid::new_v4().to_string();
++    f.request.binding.root_task_id = f.request.binding.task_id;
++    let intent = TaskWorkspaceIntent {
++        operation_key: f.request.operation_key.clone(),
++        binding: f.request.binding.clone(),
++        repository_id: f.request.repository_id,
++        source_commit: f.request.source_commit.clone(),
++        role: f.request.role,
++        agent_id: Uuid::new_v4(),
++        tracker_lease_id: Uuid::new_v4(),
++        holder_subject: "fixture-scheduler".into(),
++        expected_lease_version: 1,
++    };
++    let (job,pipeline):(Uuid,Uuid)=sqlx::query_as("SELECT j.id,s.pipeline_id FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id WHERE l.id=$1")
++        .bind(f.request.lease_id).fetch_one(&f.pool).await.unwrap();
++    sqlx::query("UPDATE job_leases SET runner_name='embedded' WHERE id=$1")
++        .bind(f.request.lease_id)
++        .execute(&f.pool)
++        .await
++        .unwrap();
++    let subject = Uuid::new_v4();
++    let context = cicd::delegated_credentials::TaskCredentialContext {
++        version: 1,
++        project_id: f.project,
++        intent: intent.clone(),
++        run_id: Uuid::new_v4(),
++        chat_id: Uuid::new_v4(),
++        machine_subject: "fixture-native-machine".into(),
++        trigger_id: Uuid::new_v4(),
++        variables_sha256: "a".repeat(64),
++    };
++    let request =
++        cicd::delegated_credentials::delegation_request(&context, "fixture:command", 900).unwrap();
++    let hash = request["scopes"][2]
++        .as_str()
++        .unwrap()
++        .strip_prefix("ci-cd:sdlc:task:v1:")
++        .unwrap();
++    // Synthetic ciphertext exercises DB shapes only; it is NOT a live Base credential.
++    let credential = json!({"subject":subject,"fingerprint":"b".repeat(64),"context_hash":hash,
++        "context":context,"encrypted_child":"v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA=="});
++    for (field, value) in [
++        ("subject", json!(Uuid::nil())),
++        ("fingerprint", json!("invalid")),
++        ("context", json!({})),
++        ("encrypted_child", json!("sdlc_pat_raw")),
++    ] {
++        let mut invalid = credential.clone();
++        invalid[field] = value;
++        let mut tx = f.pool.begin().await.unwrap();
++        let result = ledger::append_delegated_task_pipeline(
++            &mut tx, pipeline, f.project, &invalid, job, &intent,
++        )
++        .await;
++        assert!(result.is_err(), "invalid {field} must fail");
++        tx.rollback().await.unwrap();
++    }
++    let mut tx = f.pool.begin().await.unwrap();
++    let error=sqlx::query("INSERT INTO task_pipeline_intents(pipeline_id,project_id,service_account_id,api_token_id,delegated_credential,preparation_job_id,operation_key,intent) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
++        .bind(pipeline).bind(f.project).bind(f.subject).bind(f.token_id).bind(&credential).bind(job).bind(&intent.operation_key).bind(serde_json::to_value(&intent).unwrap())
++        .execute(&mut *tx).await.unwrap_err();
++    assert_eq!(
++        error.as_database_error().unwrap().code().as_deref(),
++        Some("23514")
++    );
++    tx.rollback().await.unwrap();
++    let mut tx = f.pool.begin().await.unwrap();
++    let error = ledger::append_task_pipeline(
++        &mut tx,
++        pipeline,
++        f.project,
++        f.subject,
++        Uuid::new_v4(),
++        job,
++        &intent,
++    )
++    .await
++    .unwrap_err();
++    assert_eq!(
++        error.as_database_error().unwrap().code().as_deref(),
++        Some("23503"),
++        "legacy token FK remains"
++    );
++    tx.rollback().await.unwrap();
++    let mut conn = f.pool.acquire().await.unwrap();
++    ledger::append_delegated_task_pipeline(
++        &mut conn,
++        pipeline,
++        f.project,
++        &credential,
++        job,
++        &intent,
++    )
++    .await
++    .unwrap();
++    let saved = ledger::find_task_pipeline(&mut conn, pipeline, false)
++        .await
++        .unwrap()
++        .unwrap();
++    assert!(saved.service_account_id.is_none() && saved.api_token_id.is_none());
++    assert_eq!(saved.delegated_credential.unwrap().0, credential);
++    assert!(
++        ledger::claim_task_preparation(&mut conn, pipeline, &f.request)
++            .await
++            .unwrap()
++    );
++    let receipt = WorkspaceOperationReceipt {
++        schema: "forge/workspace-operation-receipt/v1".into(),
++        operation_id: Uuid::new_v4(),
++        project_id: f.project,
++        request_hash: format!(
++            "{:x}",
++            Sha256::digest(serde_json::to_vec(&f.request).unwrap())
++        ),
++        request: f.request.clone(),
++        recorded_at: Utc::now(),
++        status: WorkspaceOperationStatus::Blocked,
++        blockers: vec![
++            WorkspaceOperationBlocker::TrackerAdmissionUnavailable,
++            WorkspaceOperationBlocker::TrackerWorkspaceBindingUnavailable,
++        ],
++        physical_source_observed: false,
++        dispatch_allowed: false,
++    };
++    drop(conn);
++    let mut tx = f.pool.begin().await.unwrap();
++    assert!(
++        ledger::append_delegated_receipt(&mut tx, Uuid::new_v4(), hash, &receipt)
++            .await
++            .is_err()
++    );
++    tx.rollback().await.unwrap();
++    let mut conn = f.pool.acquire().await.unwrap();
++    ledger::append_delegated_receipt(&mut conn, subject, hash, &receipt)
++        .await
++        .unwrap();
++    assert!(
++        ledger::claim_task_submission(&mut conn, pipeline, f.request.attempt_id)
++            .await
++            .unwrap(),
++        "central receipt matches original attempt guard"
++    );
++    assert!(
++        !ledger::claim_task_submission(&mut conn, pipeline, f.request.attempt_id)
++            .await
++            .unwrap()
++    );
++    assert!(
++        ledger::find_delegated_receipt(
++            &mut conn,
++            f.project,
++            Uuid::new_v4(),
++            hash,
++            &intent.operation_key
++        )
++        .await
++        .unwrap()
++        .is_none()
++    );
++    assert!(
++        ledger::find_delegated_receipt(
++            &mut conn,
++            f.project,
++            subject,
++            &"c".repeat(64),
++            &intent.operation_key
++        )
++        .await
++        .unwrap()
++        .is_none()
++    );
++    assert_eq!(
++        ledger::find_delegated_receipt(&mut conn, f.project, subject, hash, &intent.operation_key)
++            .await
++            .unwrap()
++            .unwrap(),
++        receipt
++    );
++    drop(conn);
++    for sql in [
++        "UPDATE task_pipeline_intents SET delegated_credential=jsonb_set(delegated_credential,'{fingerprint}',to_jsonb(repeat('c',64))) WHERE pipeline_id=$1",
++        "UPDATE task_pipeline_intents SET preparation_request=NULL WHERE pipeline_id=$1",
++        "UPDATE task_pipeline_intents SET submitted_attempts='{}' WHERE pipeline_id=$1",
++        "DELETE FROM task_pipeline_intents WHERE pipeline_id=$1",
++    ] {
++        let mut tx = f.pool.begin().await.unwrap();
++        assert!(
++            sqlx::query(sql)
++                .bind(pipeline)
++                .execute(&mut *tx)
++                .await
++                .is_err()
++        );
++        tx.rollback().await.unwrap();
++    }
++}
++
+ /// Journal/HTTP locator fixture, not a claimed Tracker-admitted production runner execution.
+ #[tokio::test]
+ #[ignore = "requires disposable CICD_TEST_DATABASE_URL and MAIN task_pipeline_intents migration"]
+diff --git a/backend/tests/support/task_pipeline_migration.rs b/backend/tests/support/task_pipeline_migration.rs
+index a2d6254..ba65736 100644
+--- a/backend/tests/support/task_pipeline_migration.rs
++++ b/backend/tests/support/task_pipeline_migration.rs
+@@ -28,7 +28,8 @@ const SNAPSHOT: &str = "SELECT jsonb_build_object(
+ #[tokio::test]
+ #[ignore = "requires disposable CICD_TEST_DATABASE_URL; no Git, runner or stand needed"]
+ async fn populated_0091_to_0092_preserves_workspace_pipeline_history_and_old_guards() {
+-    let catalog = cicd::migrations().await.unwrap();
++    // This regression owns the historical 0091 -> 0092 transition, not later additions.
++    let catalog = migration_catalog_subset(&cicd::migrations().await.unwrap(), 92);
+     assert_eq!(
+         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
+         (1..=40).chain([90, 91, 92]).collect::<Vec<_>>()
+@@ -271,5 +272,87 @@ async fn populated_0091_to_0092_preserves_workspace_pipeline_history_and_old_gua
+             .unwrap(),
+         0
+     );
++    let token_id = Uuid::new_v4();
++    sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,project_id,scopes,principal_type,service_account_id) VALUES($1,'legacy-custody',$2,'fixture',$3,ARRAY['api:write'],'service_account',$4)")
++        .bind(token_id).bind(cicd::auth::hash_token("forge_sat_fixture_legacy")).bind(project).bind(subject).execute(&pool).await.unwrap();
++    let mut binding = receipt.request.binding.clone();
++    binding.tracker_instance_id = Uuid::new_v4().to_string();
++    binding.root_task_id = binding.task_id;
++    let legacy_intent = cicd::domain::sdlc_workspace::TaskWorkspaceIntent {
++        operation_key: "legacy:before-0093".into(),
++        binding,
++        repository_id: repository,
++        source_commit: receipt.request.source_commit.clone(),
++        role: WorkspaceRole::Analyst,
++        agent_id: Uuid::new_v4(),
++        tracker_lease_id: Uuid::new_v4(),
++        holder_subject: "legacy-fixture".into(),
++        expected_lease_version: 1,
++    };
++    let mut conn = pool.acquire().await.unwrap();
++    ledger::append_task_pipeline(
++        &mut conn,
++        pipeline,
++        project,
++        subject,
++        token_id,
++        job,
++        &legacy_intent,
++    )
++    .await
++    .unwrap();
++    drop(conn);
++    let task_before_93: serde_json::Value =
++        sqlx::query_scalar("SELECT to_jsonb(t) FROM task_pipeline_intents t WHERE pipeline_id=$1")
++            .bind(pipeline)
++            .fetch_one(&pool)
++            .await
++            .unwrap();
++    let current = cicd::migrations().await.unwrap();
++    current.run(&pool).await.unwrap();
++    let mut task_after_93: serde_json::Value =
++        sqlx::query_scalar("SELECT to_jsonb(t) FROM task_pipeline_intents t WHERE pipeline_id=$1")
++            .bind(pipeline)
++            .fetch_one(&pool)
++            .await
++            .unwrap();
++    assert_eq!(
++        task_after_93
++            .as_object_mut()
++            .unwrap()
++            .remove("delegated_credential"),
++        Some(serde_json::Value::Null)
++    );
++    assert_eq!(
++        task_after_93, task_before_93,
++        "populated legacy SAT task custody is byte-identical"
++    );
++    let mut after_93: serde_json::Value =
++        sqlx::query_scalar(SNAPSHOT).fetch_one(&pool).await.unwrap();
++    for row in after_93["receipts"].as_array_mut().unwrap() {
++        let row = row.as_object_mut().unwrap();
++        assert_eq!(
++            row.remove("delegated_subject"),
++            Some(serde_json::Value::Null)
++        );
++        assert_eq!(
++            row.remove("delegated_context_hash"),
++            Some(serde_json::Value::Null)
++        );
++    }
++    assert_eq!(
++        after_93, before,
++        "0093 adds only nullable custody columns; old receipt/data bytes remain"
++    );
++    let fks: i64=sqlx::query_scalar("SELECT count(*) FROM pg_constraint WHERE connamespace=current_schema()::regnamespace AND contype='f' AND conname IN ('task_pipeline_intents_service_account_id_fkey','task_pipeline_intents_api_token_id_fkey','sdlc_workspace_operations_service_account_id_fkey')")
++        .fetch_one(&pool).await.unwrap();
++    assert_eq!(fks, 3, "all original SAT FKs remain installed");
++    let history_93 = migration_catalog_history(&pool).await;
++    current.run(&pool).await.unwrap();
++    assert_eq!(
++        migration_catalog_history(&pool).await,
++        history_93,
++        "0093 restart does not rewrite history"
++    );
+     migration_catalog_cleanup(pool, admin, schema).await;
+ }
+diff --git a/docs/API.md b/docs/API.md
+index 526319c..d113c25 100644
+--- a/docs/API.md
++++ b/docs/API.md
+@@ -1,5 +1,12 @@
+ # API v1 Specification — Forge CI/CD
+ 
++Source-only opt-in delegated task credential добавляет optional
++`TaskTriggerPipeline.credential_context` и отдельную child identity только для
++task-trigger/task-workspace readback. Legacy SAT и default auth не меняются;
++Git/delivery/admin права child закрыты. Exact scope/wire и private async custody:
++[delegated task credential](FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).
++Rust/PG qualification и installation этого slice не заявлены.
++
+ PR `action=merge` использует только branch refs и фиксированные SHA для pipeline
+ gate и native merge. Короткие и `refs/heads/...` имена эквивалентны; tag/HEAD/revision
+ expressions не заменяют отсутствующую ветку. Stale source/target возвращает 409,
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index ecbf2a7..66eaf93 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -1,5 +1,10 @@
+ # Архитектура Forge CI/CD
+ 
++Opt-in central child для existing task pipeline отделён от legacy SAT identity
++и хранится в прежнем journal с live reauthorization перед effects, без нового
++issuer/controller. [ADR-0030](adr/0030-delegated-task-credential-custody.md).
++Это source slice, не установленный credential/Git write capability.
++
+ Typed task image-build source использует existing embedded runner и backend
+ Docker/TLS authority без передачи её jobs/agents. Exact Git export и generated
+ OCI descriptor отделены от mutable job checkout. Source не заменяет actual
+diff --git a/docs/DATA_MODEL.md b/docs/DATA_MODEL.md
+index 725f725..574ac65 100644
+--- a/docs/DATA_MODEL.md
++++ b/docs/DATA_MODEL.md
+@@ -1,5 +1,11 @@
+ # Дата-модель Forge CI/CD
+ 
++Source additive0093 вводит disjoint encrypted central-child custody в existing
++task pipeline/workspace journals. Legacy SAT rows, original FK/checksum history,
++unique operation keys и immutable receipt/attempt guards сохранены. Новой
++очереди/issuer таблицы нет. [Контракт](FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).
++Миграция здесь не применялась; actual PG qualification pending.
++
+ PR actions получают namespace admission перед `pull_requests FOR UPDATE`.
+ Merge/close/reopen читают актуальное состояние под одной row lock; Git publication
+ подтверждается до `status=merged`/`merge_commit_sha`. Branch SHA фиксируется
+diff --git a/docs/FORGE_DELEGATED_CREDENTIAL_CONTRACT.md b/docs/FORGE_DELEGATED_CREDENTIAL_CONTRACT.md
+new file mode 100644
+index 0000000..a3fb8d2
+--- /dev/null
++++ b/docs/FORGE_DELEGATED_CREDENTIAL_CONTRACT.md
+@@ -0,0 +1,157 @@
++# Delegated Forge task credential
++
++Source slice от Forge `e5d04caf94d8809184e554532efb2f87243e90c8`, SDK
++`2ad0834d06d3aa703fa1791a932bfc76650c8e42` без изменений. Rust/PG qualification,
++image build, installation и live issuance не заявлены. Default выключен.
++
++## Producer и private publication
++
++Используется существующий Base `POST /auth/tokens/delegate`, service `ci-cd`.
++Base issuer, SDK, token namespace, max1800s/parent expiry, replay и revoke прежние.
++Нового SAT issuer, MCP, controller, очереди или admin fallback нет.
++
++Серверный producer берёт ТОЛЬКО подтверждённые retained/current Fleet/Tracker
++данные. `delegated_credentials::delegation_request(context,key,ttl)` строит пять
++existing Base fields: service, постоянный non-secret label, scopes,
++idempotency_key и expires_in_seconds. Это pure request builder, не mint action.
++Fleet caller/root custody/publication не реализуются внутри Forge или CLI.
++Root, human token и Forge server readback credential не передаются agent.
++
++Child содержит ровно scopes:
++
++```text
++ci-cd:read
++ci-cd:write
++ci-cd:sdlc:task:v1:<canonical-context-sha256>
++```
++
++Настроенная Base policy разрешает этот extra prefix только выделенному central
++machine subject/service. Обычный root без grant не даёт task authority. Этот
++механизм соответствует Tracker delivery grants; Base не проверяет assignment.
++TTL должен укладываться в существующий budget producer; replay не продлевает его.
++Новый parent/key или другой context не заменяют первоначальный child operation.
++
++`TaskCredentialContext` — закрытый camelCase JSON:
++
++```text
++version: 1
++projectId: <Forge CI-configuration UUID, не Tracker project UUID>
++intent: <полный existing TaskWorkspaceIntent без изменения его wire>
++runId: <точный retained native run UUID>
++chatId: <точный retained native chat UUID>
++machineSubject: <точный retained native machine subject>
++triggerId: <original UUID из Idempotency-Key>
++variablesSha256: <canonical SHA256 полного variables object; {} если variables нет>
++```
++
++Hash: UTF-8 JSON, keys рекурсивно sorted, без whitespace, lowercase SHA и canonical
++UUID, без ASCII-escaping Unicode. `intent` уже связывает repository/source SHA,
++task/root, Tracker instance/project, routing snapshot/revision, assignment/hash,
++execution/role/agent, lease/holder/version/fence и original workspace key.
++Grant hash охватывает ВСЕ поля context. В body передаётся тот же context, но body
++не является authority: hash должен совпасть с live Base scopes.
++
++## Consumer и разрешённые действия
++
++Отдельная typed identity, без поддельных local SAT UUID/service-account name или
++human/admin role. Только opaque PAT без browser SID/role, exact configured central
++subject, один валидный task grant и ровно три разрешённых scope. Malformed,
++ambiguous, cross-service/admin/git scopes не попадают в legacy/human fallback.
++Namespace auth отдельно отвергает task grant.
++
++Только existing routes:
++
++- `POST /api/v1/projects/{project_id}/pipelines` с обязательными task_intent,
++  credential_context, exact source SHA в git_ref и original Idempotency-Key.
++- `GET /api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace` для
++  исходного child fingerprint/context/project. Null означает pending, не PASS.
++
++Это project-bound task readback, НЕ список проектов/чужих pipelines. Delivery,
++retry/cancel, secrets/admin, namespace, runner protocol и Git credential права
++не открыты. Legacy local SAT routes/scopes/FKs остаются отдельной веткой.
++
++Перед admission, enqueue, replay после ожидания lock, async prepare, spawn и
++submission readback проверяется ТОТ ЖЕ child через live Base introspection.
++Ordinary runner также перечитывает child перед copy-back, artifact collection и
++terminal publication; local SAT ветка этих guards не получает новой authority.
++Current Tracker lifecycle дополнительно сравнивает task/root, role/stage,
++assignment/hash, routing, exact native run/chat/machine, holder/lease/version/fence.
++Прежний <=30s Tracker lease budget/monotonic deadline/CAS не увеличен.
++Expired/revoked child/parent, Base unavailable или сменившийся task/run дают
++deny/hold; cached grant/server token не подставляется.
++
++### Lifetime: явная граница
++
++Base replay не продлевает expiry. Credential file refresh у caller НЕ заменяет
++child в immutable async journal. Renewal для той же сохранённой command в этом
++slice НЕ поддержан: другой live child, даже с тем же assignment/run/fence/context,
++не пройдёт original fingerprint. Это release gap для queue+build+publication,
++выходящих за child/parent lifetime. Новый key/parent автоматически не выдаётся.
++
++Прежний runner не обрывает уже admitted opaque process через30s: Tracker permit
++проверяется перед spawn; долгий job ограничен своим существующим timeout. После
++завершения новый effect требует свежих child и Tracker readbacks. Непрерывное
++прерывание уже запущенной команды по PAT revoke здесь не добавлено; child не
++публикуется в job env и не превращается в бессрочный grant.
++
++## Хранение и совместимость
++
++Единственная additive SQLx migration `0093_delegated_task_credentials.sql`
++выбрана после fresh main history, заканчивающейся0092. Автоматическая регистрация
++через existing SQLx migrations directory. Исторические файлы не изменены.
++
++Existing task_pipeline_intents получает private delegated_credential JSONB:
++subject, child SHA256 fingerprint, canonical context/hash и encrypted_child.
++AES-GCM использует прежний CICD_SECRETS_KEY. Внутри authenticated envelope также
++subject/context; splice или смена key закрывает доступ. Raw child не хранится в
++receipt, variables, job env, project secrets, Debug или HTTP output.
++
++Local SAT columns nullable только для disjoint central variant; прежние FK
++сохранены, смешанный/пустой variant запрещён CHECK. Original task custody trigger
++не меняет lease/attempt/append-only guards: расширено только owner receipt match.
++Workspace receipts получают nullable central subject/context hash; original
++unique project/key и immutable bytes остаются. Central receipt требует уже
++сохранённую matching task preparation. Restart/replay используют existing row,
++не сбрасывают custody. Random encryption nonce не меняет replay fingerprint;
++другой child/context с тем же trigger key409.
++
++Включение: явный optional `CICD_SDLC_DELEGATED_SUBJECT` — canonical central UUID,
++отдельный от local `CICD_SDLC_WORKSPACE_SUBJECT`, namespace owner/readers и human
++subjects. Default unset не включает consumer. Нужны existing Base policy/root
++custody и действующий SecretsConfig key; это не автоматическая публикация config.
++
++## Existing CLI
++
++Private credential input остаётся `CICD_API_URL`/`CICD_API_TOKEN` или существующий
++private profile. Parent/server bearer не публикуется и не передаётся в argv.
++Команда не выдаёт token и не добавляет retries:
++
++```bash
++cicd-cli pipeline run --project <FORGE_PROJECT_UUID> --git-ref <FULL_SOURCE_SHA> \
++  --idempotency-key <ORIGINAL_TRIGGER_UUID> --task-intent <INTENT_JSON> \
++  --credential-context <RETAINED_CONTEXT_JSON>
++cicd-cli pipeline task-workspace --project <FORGE_PROJECT_UUID> --id <PIPELINE_UUID>
++```
++
++Оба JSON inputs ограничены16KiB; context требует intent/key, совместное чтение
++двух объектов из одного stdin запрещено. Legacy CLI invocation не меняется.
++
++## Git остаётся закрыт
++
++Dependency: `fleet-forge-devops-readiness-20261017/GIT_OWN_REF_PRODUCER_CONTRACT.md`.
++Tracker пока не производит owner-pinned candidate_ref/base; PR task link не даёт
++authority для первого push. Здесь НЕТ Git grant или branch-prefix эвристики.
++Main согласовал для будущего Tracker producer fixed `refs/heads/sdlc/<task UUID>`;
++этот prefix/UUID сам по себе не authority и здесь не вычисляется как permission.
++Task child не проходит Git bearer identity и не получает `git:write`.
++Будущие Tracker source binding, exact old/new/ref и per-push checked producer —
++отдельный пакет; текущий task credential их не подменяет.
++
++## Проверки
++
++Добавлены focused server units (grant fields, identity/routes, encrypted restart/
++splice, repeated live verifier denial, trigger/replay/native binding), HTTP Tracker
++peer regression, CLI wire/negative cases и PG custody variant regression.
++Historical0091→0092 regression сохраняет исходную границу и дополнительно проверяет
++0093 nullable-only legacy data/receipt projection, прежние3SAT FK и replay catalog.
++Existing catalog tests требуют точно093. Это source tests, не заявленный PASS.
+diff --git a/docs/adr/0030-delegated-task-credential-custody.md b/docs/adr/0030-delegated-task-credential-custody.md
+new file mode 100644
+index 0000000..e4301fd
+--- /dev/null
++++ b/docs/adr/0030-delegated-task-credential-custody.md
+@@ -0,0 +1,34 @@
++# ADR-0030: Delegated task credential custody
++
++## Status
++
++Proposed source slice. Main review, Rust/PG qualification и rollout отдельно.
++
++## Context
++
++Existing Base выдаёт bounded/revocable delegated PAT с product grants, но Forge
++workspace/task pipeline сохраняет local SAT FK и перечитывает SAT перед spawn.
++Простая замена bearer parser потеряет именно child revoke/expiry authority.
++
++## Decision
++
++Разделить local SAT и central child identity. Существующий Base issuer и SDK
++оставить прежними. Закрытый context grant связывает exact project/typed intent,
++native tuple, original trigger UUID и variables; HTTP body не источник authority.
++Открыть только existing task-trigger и original task-workspace readback.
++
++Одной additive0093 расширить existing custody journals, сохранив SAT FK и
++immutable/unique/append-only semantics. Child держать в private encrypted envelope
++под прежним SecretsConfig, не подменять server SAT и не хранить в job env/receipts.
++Live Base introspection и current Tracker fence обязательны перед async effects.
++
++Альтернативы отвергнуты: новый SAT issuer, human/admin identity mapping, server
++credential у agent, scope-only cached ACK или новый scheduler/controller.
++
++## Consequences
++
++Consumer opt-in, default disabled; accepted runtime/pins не меняются автоматически.
++Нужны server-side producer custody/config и квалификация до публикации child.
++После expiry/revoke/Base failure gate закрыт без reset/remint native operation.
++Git write не включён: owner-pinned source/ref producer — отдельная зависимость.
++Wire, env и границы: [контракт](../FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).

@@ -1,0 +1,312 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 947d9e8..46748e4 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -5,7 +5,7 @@
+ - **Путь**: `/opt/dev/CI-CD`.
+ - **GitHub**: `git@github.com:FerrPOINT/CI-CD.git`.
+ - **Назначение**: self-hosted CI/CD control plane. В MVP jobs выполняет embedded runner (Docker/shell) с `job_queue` + `job_leases` ledger/reconciliation; внешний runner protocol MVP покрывает register/heartbeat/poll с bounded `waitSeconds` wakeup через in-process signal + PostgreSQL `LISTEN/NOTIFY`/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic runner tag + executor capability matching, ack-timeout requeue, queue-timeout diagnostic для отсутствующего compatible runner-а, cancel signal delivery и stale-runner offline reconciliation, а `forge-runner` даёт отдельный shell-runner process поверх этого protocol с active-lease heartbeat. Production-grade dispatch policy/fairness, richer log chunks, resumable artifact sessions и sandbox hardening остаются target.
+-- **Стек**: Rust 2024, Axum 0.8, SQLx 0.8, PostgreSQL 17; React 19, Vite 6, Tailwind CSS 4, shadcn/ui.
++- **Стек**: Rust 2024, Axum 0.8, SQLx 0.8, PostgreSQL 17; React 19, Vite 6, Tailwind CSS 4, Base `@sdlc/ui`.
+ - **Env prefix**: `CICD_`.
+ - **Порты**: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
+ 
+@@ -14,7 +14,10 @@
+ 1. Работать из `/opt/dev/CI-CD`; перед изменениями читать `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/API.md` и релевантный ADR.
+ 2. До начала проверять `git status`. Не отменять и не перезаписывать чужие изменения; при неожиданном изменении во время работы остановиться и запросить указания.
+ 3. Backend сохраняет слои `api -> domain -> store`. `JobStatus::transition_to()` — единственный источник правил перехода статусов. SQL-запросы параметризуются через SQLx.
+-4. Frontend использует React, Tailwind и shadcn/ui; новые API-клиенты и DTO остаются типизированными. Vite dev proxy направляет `/api` на `http://localhost:22801`.
++4. Shell, controls, states и композиции страниц принадлежат `@sdlc/ui` и
++   [Base UI/UX Standard](../services-base/docs/platform/UI_UX_STANDARD.md).
++   Продукт задаёт доменные slots и типизированные API-клиенты/DTO, не второй UI-kit.
++   Vite proxy проверять по выбранному стенду, не предполагать standalone ports.
+ 5. Все секреты передаются только через `CICD_` переменные или secret manager. Не коммитить `.env`, токены, пароли и реальные данные.
+ 
+ ## Коммиты и документация
+@@ -27,34 +30,27 @@
+ 
+ ## Docker и команды проверки
+ 
+-```bash
+-# Запуск и управление локальным окружением.
+-cp .env.example .env
+-docker compose up --build -d
+-docker compose ps
+-docker compose logs -f
+-docker compose down
++Постоянный workspace запускается корневым `start-local.ps1`; Compose grouping,
++защита runtime и owned QA lifecycle принадлежат
++[Base LOCAL_GROUPS](../services-base/deploy/LOCAL_GROUPS.md).
++Перед изменением pinned images обязательны candidate build, migration/data,
++health и product/Base fingerprint checks. Секреты, ключи и volumes сохраняются.
+ 
+-# Backend: запуск через Docker, если cargo нет на хосте.
+-docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" \
+-  -w /workspace rust:1.88.0-bookworm \
+-  -lc '/usr/local/cargo/bin/cargo test'
+-
+-# Frontend.
+-cd frontend && pnpm test
+-cd frontend && pnpm build
+-```
+-
+-Для полного backend gate использовать также `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` и `cargo build --release --workspace` в том же Rust-контейнере. `justfile` дублирует основные операции: `just up`, `just down`, `just test-backend`, `just test-frontend`, `just build-frontend`, `just health`.
+-
+-Не использовать `docker compose restart` для применения нового образа или env: пересоздавать сервисы через `docker compose up -d` либо `docker compose up --build -d`.
++Host frontend использует locked Node/pnpm из package metadata: frozen install,
++tests, typecheck/lint/format/OpenAPI, build и общий Base UI gate. Backend gate:
++fmt/clippy/workspace tests/release build плюс actual PostgreSQL suites.
++Отсутствующий host runtime не разрешает прямой container launch: helper тоже
++является сервисом собственного временного Compose project с task/purpose.
++Legacy just/standalone scripts без явного project name не запускать до миграции.
++Приёмка локальная; hosted checks не являются обязательным условием этой задачи.
+ 
+ ## Checklist перед завершением
+ 
+ - [ ] Изменения соответствуют существующей архитектуре и не затёрли чужую работу.
+ - [ ] Backend-проверки проходят: fmt, clippy, test, release build.
+ - [ ] Frontend-проверки проходят: `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm test`, `pnpm build`.
+-- [ ] `docker compose config` и `docker compose build` успешны при изменении контейнеров.
++- [ ] Compose validation/candidate build выполнены с явным project name;
++  own QA cleanup проверен, чужой runtime/volumes сохранены.
+ - [ ] Для новых endpoint выполнена curl-проверка; для UI-изменений сделаны актуальные screenshots при необходимости.
+ - [ ] Документация, `.env.example` и ADR обновлены, если изменились контракт, конфигурация или решение.
+ - [ ] В diff отсутствуют credentials, токены, `.env` и другие чувствительные данные.
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index c61e1a1..aef8f12 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,11 @@
+ 
+ ## [Unreleased]
+ 
++- AGENTS/DEVELOPMENT_GUIDE согласованы с Base UI/UX и owned Compose QA:
++  удалены standalone/direct launch и массовое удаление volumes, toolchain
++  соответствует pinned metadata. Приёмка локальная; legacy helper migration
++  не объявлена выполненной. API, runner protocol, locks и runtime не менялись.
++
+ - Base notification ownership gate закреплён единым snapshot. OpenAPI alias
+   передаёт явные параметры в Base; без параметров сравнивает с origin/main.
+ 
+diff --git a/docs/DEVELOPMENT_GUIDE.md b/docs/DEVELOPMENT_GUIDE.md
+index de857fb..bc63567 100644
+--- a/docs/DEVELOPMENT_GUIDE.md
++++ b/docs/DEVELOPMENT_GUIDE.md
+@@ -23,36 +23,34 @@ gitignored каталог; `SDLC_HEADER_EVIDENCE_DIR` переопределяе
+ 
+ ### Требования
+ 
+-Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88+ и Node.js 22 с pnpm 11. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
++Текущий toolchain: Rust1.88.0, Node22.20.0, pnpm10.28.1; фактические версии
++проверять по Cargo/package metadata и lockfiles. Docker использует Compose plugin.
++UI/UX принадлежит [Base Standard](../../services-base/docs/platform/UI_UX_STANDARD.md),
++а workspace/QA lifecycle — [Base LOCAL_GROUPS](../../services-base/deploy/LOCAL_GROUPS.md).
++Не создавать отдельный постоянный CI/CD стенд рядом с sdlc1/sdlc2.
+ 
+-Перед первым запуском создайте только локальный файл конфигурации:
++Постоянный workspace запускается из его корня через PowerShell7:
+ 
+-```bash
+-cd /opt/dev/CI-CD
+-cp .env.example .env
+-# Замените development-only значения перед общим или удалённым запуском.
+-docker compose config -q
+-just up
+-just health
+-just readiness
++```powershell
++./start-local.ps1 -Workspace sdlc1
+ ```
+ 
+-`just up` выполняет `docker compose up --build -d`. После изменения Dockerfile, образа или env пересоздавайте сервисы командой `docker compose up -d` (с `--build`, если менялся образ); не используйте `docker compose restart` для применения этих изменений.
++Не подменять защищённый runtime development `.env`, пустыми ключами/volumes или
++свежими непроверенными images. Candidate build и миграционные проверки отделены
++от принятого runtime; promotion выполняется защищённой процедурой Base.
+ 
+-Полезные текущие recipes из `justfile`:
++Host recipes для проверки frontend:
+ 
+ ```bash
+-just                 # список recipes
+-just up              # собрать и запустить весь stack
+-just logs            # docker compose logs -f
+-just health          # GET /api/v1/health
+-just readiness       # GET /api/v1/readiness (PostgreSQL + SQLx migrations)
+-just down            # остановить stack
+-just test-backend    # cargo test в rust:1.88-bookworm
+ just test-frontend   # Vitest на хосте
+ just build-frontend  # TypeScript check и Vite build на хосте
+ ```
+ 
++`just up/down/logs/test-backend` и standalone Compose являются legacy execution
++paths: не запускать их без миграции на explicit project и owner/purpose. Health
++и readiness читать на выбранном workspace URL. Таблица ниже описывает defaults
++standalone конфигурации, не фактические host ports sdlc1/sdlc2.
++
+ ### Адреса и порты
+ 
+ | Сервис | Адрес по умолчанию | Источник настройки | Статус |
+@@ -82,17 +80,17 @@ Vite proxy направляет `/api` на `http://localhost:22801`; отдел
+ 
+ ### Локальный режим без контейнеров приложения
+ 
+-Поднимите только БД и запустите два процесса в отдельных terminals:
++Используйте собственную изолированную QA database с реальными fixture roles;
++не подключайте development backend к постоянной workspace DB. Адреса задаются
++локальной конфигурацией выбранного QA, а не таблицей standalone defaults.
++Host процессы запускаются в отдельных terminals:
+ 
+ ```bash
+ cd /opt/dev/CI-CD
+-docker compose up -d postgres
+-
+ # Terminal 1
+ cd backend
+-CICD_DATABASE_URL='postgresql://cicd:<password>@127.0.0.1:22543/cicd' \
+-  CICD_BIND=127.0.0.1:22801 \
+-  cargo run --bin cicd-server
++# CICD_DATABASE_URL/CICD_BIND уже заданы для owned QA fixture.
++cargo run --bin cicd-server
+ 
+ # Terminal 2
+ cd frontend
+@@ -114,11 +112,10 @@ CICD_API_URL=http://127.0.0.1:22801 \
+   cargo run --bin forge-runner -- --once
+ ```
+ 
+-В Compose доступен профиль `external-runner`:
+-
+-```bash
+-CICD_EMBEDDED_RUNNER_ENABLED=false docker compose --profile external-runner up --build
+-```
++Standalone Compose содержит профиль `external-runner`, но его проверка требует
++собственного временного QA manifest/project и finally cleanup по Base правилам.
++Не менять зарегистрированные rootless runners и credentials постоянных workspace
++для такого smoke. Доменный protocol и host команды выше остаются неизменными.
+ 
+ Current `forge-runner` регистрируется или использует `CICD_RUNNER_CREDENTIAL`, heartbeat-ит capacity/tags/capabilities, получает compatible `LeaseOffer` через durable `job_queue` claim с `required_tags ⊆ runner.tags`, current `shell` executor compatibility и bounded `waitSeconds` long-poll wakeup через process-local signal + PostgreSQL `LISTEN/NOTIFY`, клонирует `workspace.checkoutUrl`, после ack получает only declared `attempt.secrets`, держит active-lease heartbeat во время выполнения, выполняет команды shell с secret env, загружает only declared `attempt.artifacts` files, отправляет stdout/stderr в attempt-owned `job_logs` с masking, poll-ит cancel control signal и отправляет terminal result. Когда embedded runner выключен, backend всё равно запускает maintenance loop для ack-timeout requeue, expiry/missing lease и stale-runner offline reconciliation. Idempotent chunked logs, Kubernetes isolation, pool/protected-tag policy and advanced capability matching remain target; resumable artifact sessions, per-project dispatch cap and Docker seccomp/resource classes are current.
+ 
+@@ -151,7 +148,7 @@ Current `forge-runner` регистрируется или использует
+ | CLI contract | `cicd-cli --help`, public command groups, auth/output flags, pagination и ключевые platform mutations | `cargo test -p cicd-cli --test cli_contract` | Current verified |
+ | Frontend unit | Components, pages, i18n contract и UI behavior через Vitest/Testing Library | `pnpm test` | Current verified |
+ | Dependency/SBOM security | Rust/Node advisories, committed-secret baseline и SBOM drift | Локально: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check` | Local verification |
+-| Compose smoke | Запуск образов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | Локально: `just up && just health && just readiness` | Local verification |
++| Compose smoke | Candidate images, health/readiness и frontend nginx | Штатный Base launcher/owned QA manifest; совпадение product/Base fingerprints | Local verification, legacy just up не является текущим launcher |
+ | API + PostgreSQL | CRUD, constraints, migrations/readiness, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo clippy --locked -p cicd-server --features integration --test integration_db -- -D warnings`, затем `cargo test --locked --features integration --test integration_db -- --test-threads=1` с PostgreSQL service в CI | Feature gate проверяется отдельно от default workspace; isolated owner/runtime matrix всё ещё target |
+ | Scheduler/outbox/approval policy + PostgreSQL | UTC/DST, misfire, outbox ledger, повторный голос и окончательное отклонение deployment | `cargo test --locked --features integration --test integration_target_policy -- --test-threads=1` с `CICD_TEST_DATABASE_URL` | Отдельный локальный gate; защищённые API используют JWT тестовых учёток, не anonymous bypass |
+ | CLI + real API | Current smoke: project create/list, idempotent pipeline run, attempts, protected deployment approval, env/flag config precedence, bounded HTTP timeout, JWT/PAT auth-mode, RBAC denial, project-scoped read-only PAT, token redaction на CLI failure, JSON output и non-zero API error exit; target hardening: expanded redaction fixtures, OS keyring and request tracing; profiles/NDJSON/completions/stable exit codes are current | `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1` с `CICD_TEST_DATABASE_URL`; CI backend job | Current verified MVP |
+@@ -174,70 +171,65 @@ Current `forge-runner` регистрируется или использует
+ 
+ ## Команды локальной проверки
+ 
+-### Backend в Rust Docker image
++### Backend На Host Или В Owned QA
+ 
+-Команда ниже повторяет текущий backend CI набор в pinned image и сохраняет artifacts в `backend/target/`:
++Pinned Rust runtime запускается на host либо как сервис собственного временного
++Compose project с отдельными fixture networks/database и finally cleanup. Не
++использовать прямой launch. Внутри выбранного runtime выполнить:
+ 
+ ```bash
+-cd /opt/dev/CI-CD
+-docker run --rm --entrypoint /bin/bash \
+-  -v "$PWD/backend:/workspace" \
+-  -w /workspace \
+-  -e CARGO_TARGET_DIR=/workspace/target \
+-  rust:1.88-bookworm \
+-  -lc '/usr/local/cargo/bin/cargo fmt --all -- --check && \
+-       /usr/local/cargo/bin/cargo clippy --workspace --all-targets -- -D warnings && \
+-       /usr/local/cargo/bin/cargo test --workspace && \
+-       /usr/local/cargo/bin/cargo build --release --workspace'
++cd backend
++cargo fmt --all -- --check
++cargo clippy --locked --workspace --all-targets -- -D warnings
++cargo test --locked --workspace
++cargo build --locked --release --workspace
+ ```
+ 
+ Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. CLI real-API smoke запускается тем же PostgreSQL service командой `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1`. Backend release build входит в current CI gate.
+ 
+-### Frontend через Node Docker image
++### Frontend
+ 
+-Текущий `just test-frontend` и `just build-frontend` используют host pnpm. Если host Node/pnpm отсутствуют, запускайте эквивалент в pinned Node image:
++Host Node/pnpm версии определены metadata. При отсутствии host runtime используйте
++тот же набор в сервисе owned QA Compose, не прямой container launch:
+ 
+ ```bash
+-cd /opt/dev/CI-CD
+-docker run --rm -it \
+-  -v "$PWD/frontend:/workspace" \
+-  -w /workspace \
+-  node:22-bookworm-slim \
+-  bash -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm test && pnpm build'
++cd frontend
++pnpm install --frozen-lockfile
++pnpm test
++pnpm exec tsc --noEmit
++pnpm lint
++pnpm format:check
++pnpm openapi:check
++pnpm build
+ ```
+ 
+-Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; CI устанавливает его только с `--frozen-lockfile`. Current GitHub Actions frontend job запускает generated-client drift gate, `pnpm lint`, `pnpm test` и `pnpm build`.
++При изменении dependencies обновляйте lock штатным package manager и проверяйте
++clean frozen install/Base fingerprint. Локальная приёмка не зависит от hosted CI;
++описание workflow ниже не заменяет фактический local gate и не разрешает non-frozen
++install для acceptance.
+ 
+-Для браузерной проверки нужен поднятый disposable Compose stack и synthetic `CICD_SECRETS_KEY` для seeded secrets:
++Для no-mock browser acceptance нужен собственный disposable Compose project
++с согласованными candidate images, безопасными fixture credentials и реальными
++API/PostgreSQL. Seed не выполняется на постоянном runtime. Подготовка/cleanup
++принадлежит Base LOCAL_GROUPS; host frontend после health/fingerprint checks:
+ 
+ ```bash
+-cd /opt/dev/CI-CD
+-export CICD_SECRETS_KEY="$(openssl rand -base64 32)"
+-docker compose up --build -d
+ cd frontend
+ pnpm install --frozen-lockfile
+ pnpm e2e:install
+ pnpm seed:evidence
+ pnpm e2e
+-cd ..
+-docker compose down -v --remove-orphans
+ ```
+ 
+-### Compose и документация
++### Compose И Документация
+ 
+-```bash
+-cd /opt/dev/CI-CD
+-docker compose config -q
+-docker compose build
+-docker compose up --build -d
+-docker compose ps
+-curl -fsS http://127.0.0.1:22801/api/v1/health
+-curl -fsS http://127.0.0.1:22801/api/v1/readiness
+-docker compose down
+-
+-# Удаляет локальные volumes и все данные Compose; используйте только для disposable dev data.
+-docker compose down -v
++Compose validation/build/cleanup используют exact manifest/project по Base.
++Удалять можно только собственные disposable ресурсы по точному перечню;
++shared caches, backups и runtime volumes сохраняются. Общий prune запрещён.
++Legacy helper migration остаётся отдельной работой; эта документация не заявляет
++исправление его implementation.
+ 
++```bash
+ python3 scripts/generate_sbom.py --check
+ python3 scripts/verify_docs.py --all
+ ```
+@@ -276,7 +268,7 @@ python3 scripts/verify_docs.py --all
+ 
+ ## Стиль, review и зависимости
+ 
+-Код и комментарии пишутся на английском; документация и пользовательские строки -- на русском. Rust форматируется `rustfmt`; production Rust не использует `unwrap()`/`expect()` и обращается к PostgreSQL только parameterized SQL. TypeScript не использует `any`; React использует function components, typed API boundary, Tailwind/shadcn UI и i18n. Полные правила именования, import order, errors, SQL и accessibility -- в [CODE STYLE](DEVELOPMENT_GUIDE.md).
++Код и комментарии пишутся на английском; документация и пользовательские строки -- на русском. Rust форматируется `rustfmt`; production Rust не использует `unwrap()`/`expect()` и обращается к PostgreSQL только parameterized SQL. TypeScript не использует `any`; React использует function components, typed API boundary, Base UI и i18n. Полные правила именования, import order, errors и SQL -- в [CODE STYLE](CODE_STYLE.md); общая UI/UX политика принадлежит Base, продуктовая карта -- [UI/UX Map](UI_UX_MAP.md).
+ 
+ Перед PR выполните self-review, добавьте tests для изменённого поведения и проверьте, что нет secrets в diff. Один PR содержит одну логическую задачу; обычный предел -- 400--500 строк без tests и generated files. Коммиты следуют Conventional Commits (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`). Процесс, роли, SLA и escalation принадлежат `docs/REVIEW.md`, а проверяемый checklist -- [CODE REVIEW](DEVELOPMENT_GUIDE.md).
+ 

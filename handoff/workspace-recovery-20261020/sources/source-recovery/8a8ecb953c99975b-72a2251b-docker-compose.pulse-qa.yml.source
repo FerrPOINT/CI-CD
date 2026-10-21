@@ -1,0 +1,42 @@
+services:
+  backend:
+    image: sdlc-cicd-qa-backend:latest
+    environment:
+      CICD_RUNNER_MODE: docker
+      CICD_RUNNER_DOCKER_NETWORK: pulse-forge-qa_default
+      CICD_RUNNER_WORKSPACE_VOLUME: pulse-forge-qa_workspaces
+      CICD_RUNNER_SHARED_SOURCES_VOLUME: pulse-forge-qa_sources
+      CICD_GIT_INTERNAL_TOKEN: pulse-qa-internal-only
+      CICD_GIT_TOKEN: pulse-qa-git-only
+      CICD_AUTH_SECRET: pulse-qa-auth-only
+    volumes:
+      - workspaces:/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./deploy/forge-job-seccomp.json:/seccomp/forge-job-seccomp.json:ro
+    ports: !override
+      - "127.0.0.1:22801:22801"
+
+  frontend:
+    image: sdlc-cicd-qa-frontend:latest
+    ports: !override
+      - "127.0.0.1:22802:80"
+
+  sources:
+    image: alpine:3.21
+    profiles: [maintenance]
+    network_mode: none
+    command:
+      - sh
+      - -ceu
+      - |
+        mkdir -p /sources/services-base
+        tar -C /source --exclude=.git --exclude=target --exclude=node_modules --exclude=dist --exclude=.local --exclude=.artifacts -cf - . | tar -C /sources/services-base -xf -
+        chown -R 10001:10001 /sources/services-base
+        chmod -R a-w /sources/services-base
+    volumes:
+      - ../services-base:/source:ro
+      - sources:/sources
+
+volumes:
+  workspaces:
+  sources:

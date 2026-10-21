@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, History, Search, X } from "lucide-react";
 
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-import { InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
+import { Select, InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
 import {
   Button,
   Card,
@@ -224,11 +224,11 @@ export function AuditLogPage() {
                   <Label htmlFor="audit-action" className="sr-only">
                     {t("auditLog.actionFilter")}
                   </Label>
-                  <select
+                  <Select
                     id="audit-action"
                     value={action}
                     onChange={(event) => changeAction(event.target.value)}
-                    className="min-h-10 w-full min-w-0 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-primary outline-none focus-visible:border-accent"
+                    className="w-full min-w-0"
                   >
                     <option value="">{t("auditLog.allActions")}</option>
                     {actionOptions.map((value) => (
@@ -238,7 +238,7 @@ export function AuditLogPage() {
                         })}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
 

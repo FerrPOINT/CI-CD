@@ -1,0 +1,345 @@
+//! Real synthetic-PG constraints/transaction tests. Owner HTTP/Git qualification
+//! is separate; inserting a fixture intent is not an execution or deployment proof.
+use super::*;
+use cicd::{domain::bug_work_publication::*, store::bug_work_publication as ledger};
+use sha2::{Digest, Sha256};
+fn request(f: &Fixture, key: &str) -> BugWorkOperationRequest {
+    let golden: serde_json::Value = serde_json::from_str(include_str!(
+        "../../domain/tests/fixtures/bug-work-delivery-v1.json"
+    ))
+    .unwrap();
+    BugWorkOperationRequest {
+        contract_version: 1,
+        operation_key: key.into(),
+        project: serde_json::from_value(golden["proof"]["project"].clone()).unwrap(),
+        bug_work: serde_json::from_value(golden["proof"]["bugWork"].clone()).unwrap(),
+        repository_id: f.request.repository_id,
+        candidate_tree_id: "c".repeat(40),
+        bundle_sha256: "d".repeat(64),
+        bundle_size_bytes: 1024,
+    }
+}
+fn intent(f: &Fixture, key: &str) -> BugWorkOperationIntent {
+    let request = request(f, key);
+    let value = serde_json::to_value(&request).unwrap();
+    BugWorkOperationIntent {
+        schema: "forge/bug-work-operation-intent/v1".into(),
+        operation_id: Uuid::new_v4(),
+        configuration_id: f.project,
+        request_sha256: format!("{:x}", Sha256::digest(serde_json::to_vec(&value).unwrap())),
+        request,
+        recorded_at: chrono::Utc::now(),
+    }
+}
+#[tokio::test]
+async fn bug_work_0092_legacy_constraints_exact_original_and_repository_mapping() {
+    let f = Fixture::new().await;
+    let (status, legacy) = call(
+        &f.app,
+        "POST",
+        &format!("/api/v1/projects/{}/sdlc/workspace-operations", f.project),
+        &f.token,
+        serde_json::to_string(&f.request).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{legacy}");
+    let original: serde_json::Value = sqlx::query_scalar(
+        "SELECT receipt FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2",
+    )
+    .bind(f.project)
+    .bind(&f.request.operation_key)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(original, legacy);
+    let old_nulls:bool=sqlx::query_scalar("SELECT task_id IS NOT NULL AND root_task_id IS NOT NULL AND lease_id IS NOT NULL AND execution_id IS NOT NULL AND repository_id IS NOT NULL AND purpose='task' AND operation_phase='task' AND parent_intent_id IS NULL AND bug_id IS NULL AND bug_work_repository_id IS NULL AND pipeline_id IS NULL FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2").bind(f.project).bind(&f.request.operation_key).fetch_one(&f.pool).await.unwrap();
+    assert!(old_nulls);
+    let mut tx = f.pool.begin().await.unwrap();
+    ledger::lock_operation(&mut tx, f.project, &f.request.operation_key)
+        .await
+        .unwrap();
+    assert!(
+        ledger::logical_key_exists(&mut tx, f.project, &f.request.operation_key)
+            .await
+            .unwrap()
+    );
+    let collision = intent(&f, &f.request.operation_key);
+    assert!(
+        ledger::append_intent(&mut tx, f.subject, &collision)
+            .await
+            .is_err()
+    );
+    tx.rollback().await.unwrap();
+    let foreign = Fixture::new().await;
+    let mut bad = intent(&f, "foreign-repository");
+    bad.request.repository_id = foreign.request.repository_id;
+    let mut tx = f.pool.begin().await.unwrap();
+    assert!(
+        ledger::append_intent(&mut tx, f.subject, &bad)
+            .await
+            .is_err()
+    );
+    tx.rollback().await.unwrap();
+    let good = intent(&f, "actual-bug-intent");
+    let mut tx = f.pool.begin().await.unwrap();
+    ledger::append_intent(&mut tx, f.subject, &good)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let row:(bool,serde_json::Value)=sqlx::query_as("SELECT task_id IS NULL AND root_task_id IS NULL AND execution_id IS NULL AND lease_id IS NULL AND attempt_id IS NULL AND workspace_generation IS NULL AND repository_id IS NULL,receipt FROM sdlc_workspace_operations WHERE id=$1").bind(good.operation_id).fetch_one(&f.pool).await.unwrap();
+    assert!(row.0);
+    assert_eq!(row.1, serde_json::to_value(&good).unwrap());
+    let old_again: serde_json::Value = sqlx::query_scalar(
+        "SELECT receipt FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2",
+    )
+    .bind(f.project)
+    .bind(&f.request.operation_key)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(old_again, original);
+    assert!(
+        sqlx::query("UPDATE sdlc_workspace_operations SET task_id=NULL WHERE project_id=$1")
+            .bind(f.project)
+            .execute(&f.pool)
+            .await
+            .is_err()
+    );
+    for field in ["project", "bugWork", "bundleSha256"] {
+        let mut altered = serde_json::to_value(&good).unwrap();
+        altered["operationId"] = Uuid::new_v4().to_string().into();
+        let changed_key = format!("null-field-{field}");
+        altered["request"]["operationKey"] = changed_key.clone().into();
+        altered["request"][field] = serde_json::Value::Null;
+        let mut tx = f.pool.begin().await.unwrap();
+        let result=sqlx::query("INSERT INTO sdlc_workspace_operations(id,project_id,service_account_id,operation_key,request_hash,assignment_id,fencing_token,source_commit,receipt,recorded_at,purpose,operation_phase,bug_id,bug_work_repository_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),'bug_work','intent',$10,$11)")
+            .bind(Uuid::parse_str(altered["operationId"].as_str().unwrap()).unwrap()).bind(f.project).bind(f.subject).bind(&changed_key).bind(&good.request_sha256).bind(good.request.bug_work.assignment_id).bind(good.request.bug_work.fence).bind(&good.request.bug_work.candidate_commit_sha).bind(sqlx::types::Json(altered)).bind(good.request.bug_work.bug_id).bind(good.request.repository_id).execute(&mut *tx).await;
+        assert!(result.is_err(), "missing {field}");
+        tx.rollback().await.unwrap();
+    }
+}
+#[tokio::test]
+async fn bug_work_0092_accepted_pipeline_same_transaction_no_orphan_build_or_duplicate_ack() {
+    let f = Fixture::new().await;
+    let original = intent(&f, "atomic-build");
+    let mut tx = f.pool.begin().await.unwrap();
+    ledger::append_intent(&mut tx, f.subject, &original)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let pipeline = Uuid::new_v4();
+    let config = "a".repeat(64);
+    let plan = "b".repeat(64);
+    let make = || BugWorkOperationAccepted {
+        schema: "forge/bug-work-operation-accepted/v1".into(),
+        operation: BugWorkOperationIdentity {
+            operation_id: Uuid::new_v4(),
+            operation_key: original.request.operation_key.clone(),
+            request_sha256: original.request_sha256.clone(),
+        },
+        intent_operation_id: original.operation_id,
+        configuration_id: f.project,
+        request: original.request.clone(),
+        candidate_ref: original.request.candidate_ref(),
+        pipeline: BugWorkPipelineIdentity {
+            pipeline_id: pipeline,
+            config_sha256: config.clone(),
+            plan_sha256: plan.clone(),
+        },
+        accepted_at: chrono::Utc::now(),
+    };
+    let mut tx = f.pool.begin().await.unwrap();
+    let missing = make();
+    assert!(
+        ledger::append_accepted(&mut tx, f.subject, &missing)
+            .await
+            .is_err()
+    );
+    tx.rollback().await.unwrap();
+    let mut tx = f.pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status) VALUES($1,$2,$3,$4,'queued')").bind(pipeline).bind(f.project).bind(original.request.candidate_ref()).bind(&original.request.bug_work.candidate_commit_sha).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO pipeline_plans(pipeline_id,config_source,parser_version,git_ref,resolved_commit_sha,config_sha256,plan_sha256,raw_config,plan) VALUES($1,'repository','legacy-linear-v1',$2,$3,$4,$5,'fixture','{}'::jsonb)").bind(pipeline).bind(original.request.candidate_ref()).bind(&original.request.bug_work.candidate_commit_sha).bind(&config).bind(&plan).execute(&mut *tx).await.unwrap();
+    let accepted = make();
+    ledger::append_accepted(&mut tx, f.subject, &accepted)
+        .await
+        .unwrap();
+    // Simulate transaction loss: neither Accepted nor its real pipeline can escape.
+    tx.rollback().await.unwrap();
+    assert!(
+        !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM pipelines WHERE id=$1)")
+            .bind(pipeline)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap()
+    );
+    let mut c = f.pool.acquire().await.unwrap();
+    assert!(
+        ledger::accepted(&mut c, f.project, &original.request.operation_key)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        ledger::intent(&mut c, f.project, &original.request.operation_key)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    drop(c);
+    let mut tx = f.pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status) VALUES($1,$2,$3,$4,'queued')").bind(pipeline).bind(f.project).bind(original.request.candidate_ref()).bind(&original.request.bug_work.candidate_commit_sha).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO pipeline_plans(pipeline_id,config_source,parser_version,git_ref,resolved_commit_sha,config_sha256,plan_sha256,raw_config,plan) VALUES($1,'repository','legacy-linear-v1',$2,$3,$4,$5,'fixture','{}'::jsonb)").bind(pipeline).bind(original.request.candidate_ref()).bind(&original.request.bug_work.candidate_commit_sha).bind(&config).bind(&plan).execute(&mut *tx).await.unwrap();
+    let accepted = make();
+    ledger::append_accepted(&mut tx, f.subject, &accepted)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut conn = f.pool.acquire().await.unwrap();
+    let replay = ledger::accepted(&mut conn, f.project, &original.request.operation_key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(replay.1).unwrap(),
+        serde_json::to_value(&accepted).unwrap()
+    );
+    drop(conn);
+    let mut tx = f.pool.begin().await.unwrap();
+    let duplicate = make();
+    assert!(
+        ledger::append_accepted(&mut tx, f.subject, &duplicate)
+            .await
+            .is_err()
+    );
+    tx.rollback().await.unwrap();
+    let count:i64=sqlx::query_scalar("SELECT count(*) FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2 AND operation_phase='accepted'").bind(f.project).bind(&original.request.operation_key).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn bug_work_http_default_off_original_custody_replay_closed_dto_and_machine_scope() {
+    let mut f = Fixture::new().await;
+    let mut config = cicd::config::RuntimeConfig::test_default()
+        .with_auth_secret(Some("workspace-test-secret".into()));
+    config.sdlc_workspace.bug_work.producer_subject = Some(f.subject);
+    f.app = cicd::api::app_with_git_and_config(
+        Some(f.pool.clone()),
+        cicd::git_host::GitConfig::default(),
+        None,
+        config,
+    )
+    .unwrap();
+    let good = intent(&f, "original-http");
+    let path = format!("/api/v1/projects/{}/bug-work-operations", f.project);
+    let (status, _) = call(
+        &f.app,
+        "POST",
+        &path,
+        &f.token,
+        serde_json::to_string(&good.request).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let mut conn = f.pool.acquire().await.unwrap();
+    ledger::append_intent(&mut conn, f.subject, &good)
+        .await
+        .unwrap();
+    drop(conn);
+    let (status, body) = call(
+        &f.app,
+        "POST",
+        &path,
+        &f.token,
+        serde_json::to_string(&good.request).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["intent"], serde_json::to_value(&good).unwrap());
+    assert!(body["accepted"].is_null());
+    let b = &good.request.bug_work;
+    let url = format!(
+        "{}/{}?request_sha256={}&assignment_id={}&assignment_sha256={}&expected_fence={}&candidate_commit_sha={}",
+        path,
+        good.request.operation_key,
+        good.request_sha256,
+        b.assignment_id,
+        b.assignment_sha256,
+        b.fence,
+        b.candidate_commit_sha
+    );
+    assert_eq!(
+        call(&f.app, "GET", &url, &f.read_token, String::new())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &f.app,
+            "GET",
+            &url.replace(&good.request_sha256, &"0".repeat(64)),
+            &f.token,
+            String::new()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(
+            &f.app,
+            "GET",
+            &format!("{url}&verified=true"),
+            &f.token,
+            String::new()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    for key in ["verified", "taskId", "candidateUrl"] {
+        let mut unknown = serde_json::to_value(&good.request).unwrap();
+        unknown[key] = true.into();
+        assert_eq!(
+            call(&f.app, "POST", &path, &f.token, unknown.to_string())
+                .await
+                .0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let mut changed = good.request.clone();
+    changed.candidate_tree_id = "f".repeat(40);
+    assert_eq!(
+        call(
+            &f.app,
+            "POST",
+            &path,
+            &f.token,
+            serde_json::to_string(&changed).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let other = Fixture::new().await;
+    assert_eq!(
+        call(&f.app, "GET", &url, &other.token, String::new())
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(&f.app, "GET", &url, "", String::new()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(
+        ledger::accepted(
+            &mut *f.pool.acquire().await.unwrap(),
+            f.project,
+            &good.request.operation_key
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+}

@@ -1,0 +1,491 @@
+//! Actual CI HTTP admission/import -> runner -> artifact -> privileged static
+//! publisher -> serving proof. Only the external Tracker103/104 peer is synthetic.
+//! No intent/Accepted/pipeline/artifact for the checked operation is seeded.
+use super::*;
+use axum::{Json, Router, extract::State, http::HeaderMap, routing::get};
+use cicd::domain::bug_work_publication::*;
+use cicd::domain::delivered_target::DeliveredProjectRef;
+use serde_json::{Value, json};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+
+fn canonical(v: &Value) -> String {
+    fn sorted(v: &Value) -> Value {
+        match v {
+            Value::Object(m) => Value::Object(
+                m.iter()
+                    .map(|(key, value)| (key.clone(), sorted(value)))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+                    .into_iter()
+                    .collect(),
+            ),
+            Value::Array(a) => Value::Array(a.iter().map(sorted).collect()),
+            _ => v.clone(),
+        }
+    }
+    hash(&serde_json::to_vec(&sorted(v)).unwrap())
+}
+
+struct Tracker {
+    grant: Value,
+    origin: Value,
+    reads: AtomicUsize,
+}
+async fn grant(State(s): State<Arc<Tracker>>, headers: HeaderMap) -> Json<Value> {
+    assert_eq!(headers["authorization"], "Bearer synthetic-tracker-reader");
+    s.reads.fetch_add(1, Ordering::SeqCst);
+    Json(s.grant.clone())
+}
+async fn source_origin(State(s): State<Arc<Tracker>>, headers: HeaderMap) -> Json<Value> {
+    assert_eq!(headers["authorization"], "Bearer synthetic-tracker-reader");
+    s.reads.fetch_add(1, Ordering::SeqCst);
+    Json(s.origin.clone())
+}
+struct Peer(tokio::task::JoinHandle<()>);
+impl Drop for Peer {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn serve_tracker(
+    t: &ActualDelivery,
+    tracker: Uuid,
+    project: Uuid,
+    repository: Uuid,
+    base: &str,
+    clone_url: &str,
+) -> (
+    Arc<Tracker>,
+    Peer,
+    String,
+    PathBuf,
+    BugWorkPublicationBinding,
+) {
+    let mut vector: Value = serde_json::from_str(include_str!(
+        "../../domain/tests/fixtures/bug-work-delivery-v1.json"
+    ))
+    .unwrap();
+    let a = &mut vector["state"]["assignment"];
+    a["tracker_instance_uuid"] = json!(tracker);
+    a["project_id"] = json!(project);
+    a["machine_subject"] = json!(t.f.subject);
+    a["source_identity"]["repository_id"] = json!(repository);
+    a["source_sha256"] = json!(canonical(&a["source_identity"]));
+    a["verification_basis"]["checked_version"] = json!(base);
+    a["verification_basis_sha256"] = json!(canonical(&a["verification_basis"]));
+    let source = &mut vector["source"];
+    source["project"]["project_id"] = json!(project);
+    source["scope"] = json!(["."]);
+    source["targets"][0]["commit_sha"] = json!(base);
+    let pin = &mut source["targets"][0]["source"];
+    pin["project"] = json!({"tracker_instance_id":tracker,"project_id":project});
+    pin["configuration_id"] = json!(t.f.project);
+    pin["repository_id"] = json!(repository);
+    pin["observed_head_sha"] = json!(base);
+    pin["clone_url_sha256"] = json!(hash(clone_url.as_bytes()));
+    let source_sha = canonical(source);
+    vector["state"]["assignment"]["origin"]["source_context_sha256"] = json!(source_sha);
+    let assignment_sha = canonical(&vector["state"]["assignment"]);
+    vector["state"]["assignment_sha256"] = json!(assignment_sha);
+    let a = &vector["state"]["assignment"];
+    let binding = BugWorkPublicationBinding {
+        bug_id: serde_json::from_value(a["bug_id"].clone()).unwrap(),
+        assignment_id: serde_json::from_value(a["assignment_id"].clone()).unwrap(),
+        assignment_sha256: assignment_sha,
+        fence: a["fence"].as_i64().unwrap(),
+        owner_subject: a["owner_subject"].as_str().unwrap().into(),
+        runtime_binding_sha256: canonical(&vector["state"]["binding"]),
+        source_context_sha256: source_sha,
+        verification_basis_sha256: a["verification_basis_sha256"].as_str().unwrap().into(),
+        canonical_basis_sha256: a["canonical_basis_sha256"].as_str().unwrap().into(),
+        base_commit_sha: base.into(),
+        // The caller replaces this only after creating the actual descendant B.
+        candidate_commit_sha: "b".repeat(40),
+    };
+    let origin = json!({"contract_version":1,"assignment_id":binding.assignment_id,
+        "assignment_sha256":binding.assignment_sha256,"origin":a["origin"],
+        "source_context":vector["source"]});
+    let state = Arc::new(Tracker {
+        grant: vector["state"].clone(),
+        origin,
+        reads: AtomicUsize::new(0),
+    });
+    let prefix = format!(
+        "/api/v1/projects/{project}/sdlc/bug-intake/assignments/{}",
+        binding.assignment_id
+    );
+    let app = Router::new()
+        .route(&format!("{prefix}/grant"), get(grant))
+        .route(&format!("{prefix}/origin"), get(source_origin))
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let peer = Peer(tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    }));
+    let credential = t.temp.join("synthetic-tracker-reader.token");
+    std::fs::write(&credential, "synthetic-tracker-reader").unwrap();
+    (state, peer, origin, credential, binding)
+}
+
+fn original_url(
+    t: &ActualDelivery,
+    request: &BugWorkOperationRequest,
+    bundle: bool,
+) -> reqwest::Url {
+    let mut url = reqwest::Url::parse(&format!(
+        "http://{}/api/v1/projects/{}/bug-work-operations/{}{}",
+        t.address,
+        t.f.project,
+        request.operation_key,
+        if bundle { "/source-bundle" } else { "" }
+    ))
+    .unwrap();
+    url.query_pairs_mut()
+        .append_pair("request_sha256", &canonical(&json!(request)))
+        .append_pair("assignment_id", &request.bug_work.assignment_id.to_string())
+        .append_pair("assignment_sha256", &request.bug_work.assignment_sha256)
+        .append_pair("expected_fence", &request.bug_work.fence.to_string())
+        .append_pair(
+            "candidate_commit_sha",
+            &request.bug_work.candidate_commit_sha,
+        );
+    url
+}
+async fn json_response(response: reqwest::Response) -> Value {
+    let status = response.status();
+    let raw: Value = response.json().await.unwrap();
+    assert!(status.is_success(), "synthetic CI response {status}: {raw}");
+    raw
+}
+
+#[tokio::test]
+async fn bug_work_actual_http_import_runner_publish_proof_and_original_replay_without_ledger_seed()
+{
+    let (mut t, tracker, project, repository) = bug_work_publisher::fixture().await;
+    let reader = Uuid::new_v4();
+    let reader_token = format!("forge_sat_{}", Uuid::new_v4().simple());
+    sqlx::query("INSERT INTO service_accounts(id,name) VALUES($1,$2)")
+        .bind(reader)
+        .bind(format!("actual-bug-chain-{reader}"))
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,project_id,scopes,principal_type,service_account_id) VALUES($1,'actual chain read',$2,'qa-only',$3,ARRAY['api:read'],'service_account',$4)")
+        .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&reader_token)).bind(t.f.project).bind(reader)
+        .execute(&t.f.pool).await.unwrap();
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap();
+    // Read the genuine original A and clone URL through the configured source
+    // reader, before B is created or imported. No caller URL becomes authority.
+    let mut config = cicd::config::RuntimeConfig::test_default()
+        .with_auth_secret(Some("workspace-test-secret".into()));
+    config.sdlc_workspace.operation_subject = Some(t.f.subject);
+    config.sdlc_workspace.source_reader_subject = Some(reader);
+    config.sdlc_workspace.delivered_target_subject = Some(reader);
+    config.sdlc_workspace.delivered_targets = Some(t.temp.join("delivered-targets.json"));
+    config.sdlc_workspace.local_delivery_root = Some(t.target_root.clone());
+    config.sdlc_workspace.local_delivery_policy = Some(t.policy_file.clone());
+    config.artifacts.root = t.artifact_root.clone();
+    let replace_app = |config| {
+        cicd::api::app_with_git_and_config(
+            Some(t.f.pool.clone()),
+            cicd::git_host::GitConfig {
+                root: t.git_root.clone(),
+                token: None,
+                internal_token: None,
+            },
+            None,
+            config,
+        )
+        .unwrap()
+    };
+    t.f.app = replace_app(config.clone());
+    t.server.abort();
+    let _ = (&mut t.server).await;
+    let listener = tokio::net::TcpListener::bind(t.address).await.unwrap();
+    let app = t.f.app.clone();
+    t.server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let source = json_response(
+        http.get(format!(
+            "http://{}/api/v1/projects/{}/source-snapshot",
+            t.address, t.f.project
+        ))
+        .query(&[
+            ("tracker_instance_id", tracker.to_string()),
+            ("project_id", project.to_string()),
+            ("repository_id", repository.to_string()),
+            ("branch_ref", "refs/heads/main".into()),
+        ])
+        .bearer_auth(&reader_token)
+        .send()
+        .await
+        .unwrap(),
+    )
+    .await;
+    let base = source["commitSha"].as_str().unwrap().to_owned();
+    assert_eq!(base, physical_git(&t.source, &["rev-parse", "HEAD"]));
+    let (peer_state, _peer, tracker_origin, credential, mut binding) = serve_tracker(
+        &t,
+        tracker,
+        project,
+        repository,
+        &base,
+        source["cloneUrl"].as_str().unwrap(),
+    )
+    .await;
+    let controller = t.temp.join("actual-bug-import-controller");
+    std::fs::create_dir(&controller).unwrap();
+    config.sdlc_workspace.bug_work = cicd::config::BugWorkPublicationConfig {
+        enabled: true,
+        producer_subject: Some(t.f.subject),
+        tracker_origin: Some(tracker_origin),
+        tracker_reader_token_file: Some(credential),
+        controller_root: Some(controller),
+    };
+    t.f.app = replace_app(config);
+    t.server.abort();
+    let _ = (&mut t.server).await;
+    let listener = tokio::net::TcpListener::bind(t.address).await.unwrap();
+    let app = t.f.app.clone();
+    t.server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let payload = b"version=B\nhealth=ok\nacceptance=ok\n";
+    let yaml = serde_yaml::to_string(&json!({"version":1,"jobs":{"build":{"tags":[t.tag],"commands":["printf 'version=B\\nhealth=ok\\nacceptance=ok\\n' > product.txt"],"artifacts":{"paths":["product.txt"]}}}})).unwrap();
+    std::fs::write(t.source.join(".forge-ci.yml"), yaml).unwrap();
+    physical_git(&t.source, &["add", "."]);
+    physical_git(
+        &t.source,
+        &[
+            "-c",
+            "user.name=QA",
+            "-c",
+            "user.email=qa@example.invalid",
+            "commit",
+            "-m",
+            "actual Bug B",
+        ],
+    );
+    binding.candidate_commit_sha = physical_git(&t.source, &["rev-parse", "HEAD"]);
+    let candidate_ref = format!(
+        "refs/fleet/bug-work/{}/{}",
+        binding.assignment_id, binding.candidate_commit_sha
+    );
+    physical_git(
+        &t.source,
+        &["update-ref", &candidate_ref, &binding.candidate_commit_sha],
+    );
+    let bundle_path = t.temp.join("actual-bug-source.bundle");
+    physical_git(
+        &t.source,
+        &[
+            "bundle",
+            "create",
+            bundle_path.to_str().unwrap(),
+            &candidate_ref,
+            &format!("^{base}"),
+        ],
+    );
+    let bundle = std::fs::read(bundle_path).unwrap();
+    let request = BugWorkOperationRequest {
+        contract_version: 1,
+        operation_key: "bug:actual-http-chain".into(),
+        project: DeliveredProjectRef {
+            tracker_instance_id: tracker,
+            project_id: project,
+        },
+        bug_work: binding,
+        repository_id: repository,
+        candidate_tree_id: physical_git(&t.source, &["rev-parse", "HEAD^{tree}"]),
+        bundle_sha256: hash(&bundle),
+        bundle_size_bytes: bundle.len() as u64,
+    };
+    request.validate().unwrap();
+    let count_before: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pipelines WHERE project_id=$1")
+            .bind(t.f.project)
+            .fetch_one(&t.f.pool)
+            .await
+            .unwrap();
+    let prepare = format!(
+        "http://{}/api/v1/projects/{}/bug-work-operations",
+        t.address, t.f.project
+    );
+    let intent = json_response(
+        http.post(&prepare)
+            .bearer_auth(&t.f.token)
+            .json(&request)
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(intent["accepted"].is_null());
+    assert_eq!(
+        intent["intent"]["requestSha256"],
+        canonical(&json!(request))
+    );
+    let original = original_url(&t, &request, false);
+    assert_eq!(
+        json_response(
+            http.get(original.clone())
+                .bearer_auth(&t.f.token)
+                .send()
+                .await
+                .unwrap()
+        )
+        .await,
+        intent
+    );
+    let imported = json_response(
+        http.put(original_url(&t, &request, true))
+            .bearer_auth(&t.f.token)
+            .header("content-type", "application/octet-stream")
+            .body(bundle.clone())
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    let accepted: BugWorkOperationAccepted =
+        serde_json::from_value(imported["accepted"].clone()).unwrap();
+    accepted.validate().unwrap();
+    assert_eq!(
+        accepted.intent_operation_id,
+        serde_json::from_value::<Uuid>(intent["intent"]["operationId"].clone()).unwrap()
+    );
+    assert_eq!(accepted.request, request);
+    assert_eq!(accepted.candidate_ref, candidate_ref);
+    // Main remains A; only the operation-scoped actual imported candidate ref is B.
+    assert_eq!(
+        physical_git(&t.bare, &["rev-parse", "refs/heads/main"]),
+        base
+    );
+    assert_eq!(
+        physical_git(&t.bare, &["rev-parse", &candidate_ref]),
+        request.bug_work.candidate_commit_sha
+    );
+    let pipeline = accepted.pipeline.pipeline_id;
+    let child = t.spawn_delivery_runner("actual-http-bug-work").await;
+    let out = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(out.status.success(), "actual runner failed: {out:?}");
+    let (artifact,digest,size):(Uuid,String,i64)=sqlx::query_as("SELECT a.id,a.sha256,a.size_bytes FROM artifacts a JOIN jobs j ON j.id=a.job_id JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 AND a.purged_at IS NULL AND a.expires_at>clock_timestamp() ORDER BY a.id LIMIT 1").bind(pipeline).fetch_one(&t.f.pool).await.unwrap();
+    assert_eq!(digest, hash(payload));
+    assert_eq!(size, payload.len() as i64);
+    let command = BugWorkPublishCommand {
+        schema: "forge/bug-work-publication-command/v1".into(),
+        operation_key: "publish:actual-http-bug".into(),
+        original_operation_key: request.operation_key.clone(),
+        original_request_sha256: canonical(&json!(request)),
+        target_ref: "qa:app".into(),
+        artifact_id: artifact,
+        expected_manifest_sha256: None,
+    };
+    let published = bug_work_publisher::execute(&t, &command, true).await;
+    assert_eq!(published["receipt"]["status"], "verified");
+    let pointer = std::fs::read(t.target_root.join("current.json")).unwrap();
+    let mut proof_url = original.clone();
+    proof_url.set_path(&format!("{}/delivery-proof/qa:app", original.path()));
+    let proof = json_response(
+        http.get(proof_url.clone())
+            .bearer_auth(&reader_token)
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(proof["status"], "confirmed");
+    assert_eq!(
+        proof["operation"]["operationId"],
+        json!(accepted.operation.operation_id)
+    );
+    assert_eq!(proof["pipeline"]["pipelineId"], json!(pipeline));
+    assert_eq!(
+        proof["delivery"]["commitSha"],
+        json!(request.bug_work.candidate_commit_sha)
+    );
+    assert_eq!(proof["artifact"]["artifactId"], json!(artifact));
+    assert_eq!(
+        proof["delivery"]["servingIdentity"]["artifactBodySha256"],
+        digest
+    );
+    assert_eq!(
+        proof["delivery"]["servingIdentity"]["versionBodySha256"],
+        proof["delivery"]["manifestSha256"]
+    );
+    // Simulate losing both HTTP acknowledgements at the consumer: original GET,
+    // POST and PUT replay must return the same actual Accepted and no new build.
+    for observed in [
+        json_response(
+            http.get(original)
+                .bearer_auth(&t.f.token)
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await,
+        json_response(
+            http.post(&prepare)
+                .bearer_auth(&t.f.token)
+                .json(&request)
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await,
+        json_response(
+            http.put(original_url(&t, &request, true))
+                .bearer_auth(&t.f.token)
+                .body(bundle)
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await,
+    ] {
+        assert_eq!(observed, imported);
+    }
+    let replay = bug_work_publisher::execute(&t, &command, true).await;
+    assert_eq!(replay["receipt"], published["receipt"]);
+    assert_eq!(
+        std::fs::read(t.target_root.join("current.json")).unwrap(),
+        pointer
+    );
+    let replay_proof = json_response(
+        http.get(proof_url)
+            .bearer_auth(&reader_token)
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        replay_proof["delivery"]["generation"],
+        proof["delivery"]["generation"]
+    );
+    let count_after: i64 = sqlx::query_scalar("SELECT count(*) FROM pipelines WHERE project_id=$1")
+        .bind(t.f.project)
+        .fetch_one(&t.f.pool)
+        .await
+        .unwrap();
+    assert_eq!(count_after, count_before + 1);
+    let phases:(i64,i64)=sqlx::query_as("SELECT count(*) FILTER (WHERE operation_phase='intent'),count(*) FILTER (WHERE operation_phase='accepted') FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2").bind(t.f.project).bind(&request.operation_key).fetch_one(&t.f.pool).await.unwrap();
+    assert_eq!(phases, (1, 1));
+    assert!(
+        peer_state.reads.load(Ordering::SeqCst) >= 8,
+        "new intent/import must actually read external103/104 authority"
+    );
+    println!(
+        "BUG_WORK_ACTUAL_HTTP_CHAIN=passed;accepted_http=true;runner_artifact=true;publisher_probes=true;one_pipeline=true;tracker_peer=synthetic"
+    );
+}

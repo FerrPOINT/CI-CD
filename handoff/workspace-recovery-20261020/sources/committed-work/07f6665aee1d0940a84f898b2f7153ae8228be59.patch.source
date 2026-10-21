@@ -1,0 +1,40 @@
+diff --git a/docs/uiux-source-evidence-2026-10-02.md b/docs/uiux-source-evidence-2026-10-02.md
+index 938d4ae..a05bc3f 100644
+--- a/docs/uiux-source-evidence-2026-10-02.md
++++ b/docs/uiux-source-evidence-2026-10-02.md
+@@ -119,3 +119,35 @@ integration и mirror не выполнены этим checkpoint. Все исх
+   gates, остальные pages, все roles/routes/states, actual images/live SSO и
+   real README остаются обязательными. Default integration и финальный mirror
+   этим source checkpoint не подтверждаются; исходные 14 findings не закрыты.
++
++## Shared URL Snapshot Checkpoint
++
++Runtime source: `962905469c985d435ac9f1dce6c3786cef2ee64a`.
++Base pin: `eb5b832ac6dace06ed9777d70ee9c6d5d186b24f`.
++Это следующий source checkpoint, не выпуск и не перенос локального URL-кода
++всех CI/CD страниц на новый helper. Base предоставляет общий hook изменения
++query с сохранением pathname/hash и Back/Forward; продуктовые допустимые
++параметры и сброс pagination остаются кодом продукта.
++
++Source/installed Base fingerprint:
++`e0b674d779b36b0fb2eb87878f471b7891dd5a67b74f922e6e1e3a831c178d7f`.
++Product fingerprint:
++`a93f1b398af44a07200813d1ff807d9cd426b22af3a509966e1cbc50b5d3fcbd`.
++After-commit runtime attestation подтвердил source SHA без расхождений.
++Frozen offline force install: 422 reused, zero downloads. CI/CD: 221 units,
++lint/semantic, typecheck/build, OpenAPI check/compat, installed 24-pattern UI
++gate, documentation validator и 14 Python script tests прошли. Base: 130 UI
++tests и 18 node script tests; contrast, lint/typecheck, README/hub прошли.
++
++Chromium: 10 passed, 39 fresh PNG. Повторены audit themes/breakpoints,
++cached 0/503/403/404/422, loading, unknown route, URL/history, keyboard drawer,
++focus/Escape и axe checks. Desktop audit capture просмотрен. Evidence:
++`audit-artifacts/base-standard-2026-10-01/cicd-base-url-source-browser-final/`
++и `cicd-base-url-source-*-final.log` в workspace. Подкаталог `evidence`
++содержит geometry, PNG и metadata с actual dimensions/digests, capture file
++mtime, viewport/theme, source SHA/fingerprints. Fixtures synthetic; runtime
++image отсутствует, README gallery и release acceptance явно pending.
++
++Ранний unit run во время force install диагностический и superseded отдельным
++final run после завершения установки. Source evidence не переносит результаты
++на фактические Docker images. Полный обязательный остаток выше сохраняется.

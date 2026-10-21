@@ -1,0 +1,172 @@
+{
+  "state": {
+    "assignment": {
+      "contract_version": 1,
+      "assignment_id": "00000000-0000-4000-8000-000000000060",
+      "tracker_instance_id": "tracker",
+      "tracker_instance_uuid": "00000000-0000-4000-8000-000000000040",
+      "project_id": "00000000-0000-4000-8000-000000000010",
+      "bug_id": "00000000-0000-4000-8000-000000000050",
+      "owner_subject": "owner",
+      "machine_subject": "fleet-bug-svc",
+      "worker_runtime": {
+        "fleet_instance_id": "00000000-0000-4000-8000-000000000070",
+        "agent_id": "00000000-0000-4000-8000-000000000080",
+        "agent_config_revision": 2
+      },
+      "fleet_journal_ref": "fleet:bug-work:claim:1",
+      "preference_revision": 1,
+      "fence": 9,
+      "purpose": "bug_fix",
+      "role": "developer",
+      "mode": "initial",
+      "source_identity": {
+        "schema_version": 1,
+        "producer": "BUG_SEARCHER",
+        "rule_key": "save",
+        "stable_defect_key": "portal:save",
+        "repository_id": "00000000-0000-4000-8000-000000000020"
+      },
+      "source_sha256": "cb09c26d2e82ce1098c27b418fc0e204dc397e33e204524b647f1270a85bc916",
+      "verification_basis": {
+        "title": "Ошибка сохранения",
+        "basis": "Контракт формы",
+        "expected": "Сохранено",
+        "actual": "Ошибка",
+        "reproducer": "Открыть форму и сохранить корректные данные",
+        "checked_version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "evidence_refs": [
+          "evidence:original"
+        ]
+      },
+      "verification_basis_sha256": "3a63dfbd5a694dbcea169e6bfcaef8718fcf7e757df721727bbfb2460ba065b1",
+      "canonical_basis_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "origin": {
+        "contract_version": 1,
+        "execution_id": "00000000-0000-4000-8000-000000000090",
+        "finding_id": "00000000-0000-4000-8000-000000000091",
+        "snapshot_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "source_context_sha256": "d1dbc81421e4bb096cca4591eb8b2e264851b227287b2913c7103f69287593e7"
+      },
+      "created_at": "2026-10-18T12:00:00Z"
+    },
+    "assignment_sha256": "cf5eabcb8e7afbbf082eac033bc2e258854ec9285609de4cfa81b2883e8f24db",
+    "binding": {
+      "runtime_context_id": "00000000-0000-4000-8000-000000000100",
+      "runtime_generation": "00000000-0000-4000-8000-000000000101",
+      "session_id": "00000000-0000-4000-8000-000000000102",
+      "session_run_id": "00000000-0000-4000-8000-000000000103",
+      "hermes_run_ref": "hermes:actual:103",
+      "workflow_task_id": 1,
+      "workflow_assignment_revision": 1,
+      "workflow_operation_key": "bind:1",
+      "workflow_binding_ref": "workflow:binding:1"
+    },
+    "closure": null,
+    "capacity_held": true,
+    "can_take_bugs": false,
+    "blocked_reasons": []
+  },
+  "source": {
+    "contract_version": 1,
+    "project": {
+      "tracker_instance_id": "tracker",
+      "project_id": "00000000-0000-4000-8000-000000000010"
+    },
+    "mode": "source_only",
+    "targets": [
+      {
+        "repository_ref": "repo:app",
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target_ref": null,
+        "deployment_ref": null,
+        "source": {
+          "contract_version": 1,
+          "schema": "forge/source-snapshot/v1",
+          "producer_version": "fixture-v1",
+          "project": {
+            "tracker_instance_id": "00000000-0000-4000-8000-000000000040",
+            "project_id": "00000000-0000-4000-8000-000000000010"
+          },
+          "configuration_id": "00000000-0000-4000-8000-000000000030",
+          "repository_id": "00000000-0000-4000-8000-000000000020",
+          "branch_ref": "refs/heads/main",
+          "observed_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "clone_url_sha256": "d48b555539a54a65d97774dba06be0ae1e0f0fa16e29e7bb972706d5960a85f9"
+        }
+      }
+    ],
+    "scope": [
+      "src"
+    ],
+    "excluded_paths": []
+  },
+  "locator": {
+    "operation_key": "fix:1",
+    "request_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "assignment_id": "00000000-0000-4000-8000-000000000060",
+    "assignment_sha256": "cf5eabcb8e7afbbf082eac033bc2e258854ec9285609de4cfa81b2883e8f24db",
+    "expected_fence": 9,
+    "candidate_commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "binding_sha256": "f3387b0b579330fbec8fb5e40e2c6f3596e30dc2a447ddd86b1a7e1c665221c5",
+  "proof": {
+    "schema": "forge/bug-work-delivery-proof/v1",
+    "producerVersion": "fixture-owner-v1",
+    "observedAt": "2026-10-18T12:01:00Z",
+    "project": {
+      "trackerInstanceId": "00000000-0000-4000-8000-000000000040",
+      "projectId": "00000000-0000-4000-8000-000000000010"
+    },
+    "configurationId": "00000000-0000-4000-8000-000000000030",
+    "repositoryId": "00000000-0000-4000-8000-000000000020",
+    "environmentId": "00000000-0000-4000-8000-000000000110",
+    "targetRef": "qa:portal",
+    "operation": {
+      "operationId": "00000000-0000-4000-8000-000000000120",
+      "operationKey": "fix:1",
+      "requestSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "bugWork": {
+      "bugId": "00000000-0000-4000-8000-000000000050",
+      "assignmentId": "00000000-0000-4000-8000-000000000060",
+      "assignmentSha256": "cf5eabcb8e7afbbf082eac033bc2e258854ec9285609de4cfa81b2883e8f24db",
+      "fence": 9,
+      "ownerSubject": "owner",
+      "runtimeBindingSha256": "f3387b0b579330fbec8fb5e40e2c6f3596e30dc2a447ddd86b1a7e1c665221c5",
+      "sourceContextSha256": "d1dbc81421e4bb096cca4591eb8b2e264851b227287b2913c7103f69287593e7",
+      "verificationBasisSha256": "3a63dfbd5a694dbcea169e6bfcaef8718fcf7e757df721727bbfb2460ba065b1",
+      "canonicalBasisSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "baseCommitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "candidateCommitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "pipeline": {
+      "pipelineId": "00000000-0000-4000-8000-000000000130",
+      "configSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "planSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "artifact": {
+      "artifactId": "00000000-0000-4000-8000-000000000140",
+      "jobId": "00000000-0000-4000-8000-000000000141",
+      "attemptId": "00000000-0000-4000-8000-000000000142",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "sizeBytes": 1024
+    },
+    "delivery": {
+      "deliveryRef": "forge:delivered:fixed-b",
+      "operationKey": "publish:fix:1",
+      "generation": "3",
+      "manifestSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "artifactId": "00000000-0000-4000-8000-000000000140",
+      "artifactDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "servingIdentity": {
+        "versionBodySha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "artifactBodySha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "observedAt": "2026-10-18T12:01:00Z"
+      }
+    },
+    "status": "confirmed",
+    "blockedReasons": []
+  }
+}

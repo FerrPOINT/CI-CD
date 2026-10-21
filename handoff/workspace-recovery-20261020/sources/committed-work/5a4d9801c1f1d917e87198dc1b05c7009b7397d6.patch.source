@@ -1,0 +1,10 @@
+diff --git a/.gitattributes b/.gitattributes
+index 0d050b8..b0c8107 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -25,3 +25,5 @@ Cargo.toml text eol=lf
+ Cargo.lock text eol=lf
+ # Shell maintenance helpers must execute identically in Windows build contexts and Linux.
+ *.sh text eol=lf
++# Generated OpenAPI must compare identically on Windows and Linux.
++openapi/openapi.yaml text eol=lf

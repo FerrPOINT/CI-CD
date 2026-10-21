@@ -1,0 +1,43 @@
+# ADR-0025: точное чтение обслуживаемой QA-цели
+
+Статус: согласовано для реализации исходников, 2026-10-18. Runtime enable и rollout
+не выполняются; результаты проверок публикуются отдельно.
+
+Для перепроверки Bug необходима фактически доставленная версия. Pipeline success,
+commit, generic deployment status и исторический verified receipt не показывают,
+что обслуживается сейчас. Existing static delivery уже владеет sealed manifests,
+artifact bytes, publication lock/journal и bounded owner HTTP probes.
+
+Добавляем один read-only endpoint поверх этих механизмов. Operator-only mapping
+выбирает существующий target и environment; dedicated machine subject/project token
+и свежая DB связка configuration → repository → active namespace → Tracker project
+отделяют authority от caller locator. Исходники target подтверждаются immutable
+operation и existing pipeline/plan/artifact rows. Task ID новой проверки не нужен;
+старый task-bound workspace receipt остаётся внутренней provenance исходного build.
+
+Существующий static current pointer получает optional generation/operationKey.
+Каждый реальный publish/rollback под прежним lock атомарно увеличивает generation,
+включая тот же digest. Reconciliation/readback сохраняют его. Старый протокол читает
+legacy pointers; новый reader не выдаёт их за подтверждённое поколение. Новый SQL
+ledger, scheduler, registry или общий proof engine не создаются.
+
+Readback выбирает exact journal без сканирования истории, проверяет current и
+confirmed identity, заново наблюдает owner version/artifact/health/acceptance и
+сравнивает полный pointer до/после. `servingIdentity` происходит из свежих HTTP body
+hashes. Полная успешная связка получает opaque `deliveryRef`; unstable/unavailable
+не содержит target. Consumer повторяет чтение до/после verification и сравнивает
+ref; сам reader не объявляет Bug fixed и не выдаёт business transition authority.
+
+SQL authorization locks освобождаются перед filesystem preparation и всеми
+owner HTTP probes. Короткие свежие транзакции до/после полного probe flow
+повторяют current token, exact Namespace binding и manifest provenance checks.
+Отзыв токена или архивирование Namespace не ждут сети; изменившаяся authority
+не возвращает confirmed target. Actual publication fixture отдельно приостанавливает
+health probe и проверяет, что token revoke успевает commit, а чтение отклоняется.
+
+Поддержка ограничена static artifact protocol и trusted owner filesystem/network
+существующего executor. Это не OS sandbox, native attestation или доказательство
+непрерывной доступности между двумя чтениями. OCI/PostgreSQL CLI и general service
+deployments остаются отдельными протоколами; их history не маркируется deployed
+через новый endpoint. Credentials, pins, target policy и установленный runtime
+этот source slice не меняет. Temporary actual QA app возможен следующим gate.

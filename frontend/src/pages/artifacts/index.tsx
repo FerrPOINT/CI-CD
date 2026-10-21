@@ -7,6 +7,7 @@ import { downloadArtifact, saveDownloadedArtifact } from "@/api/client";
 import { useArtifacts } from "@/api/hooks";
 import type { Artifact } from "@/api/types";
 import {
+  Select,
   Loader,
   Button,
   Input,
@@ -117,9 +118,9 @@ export function ArtifactsPage() {
                   }}
                 />
               </div>
-              <select
+              <Select
                 aria-label={t("artifacts.status")}
-                className="min-h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-text-primary"
+                className="w-auto"
                 value={status}
                 onChange={(event) => {
                   setStatus(event.target.value as StatusFilter);
@@ -130,7 +131,7 @@ export function ArtifactsPage() {
                 <option value="available">{t("artifacts.available")}</option>
                 <option value="expired">{t("artifacts.expired")}</option>
                 <option value="purged">{t("artifacts.purged")}</option>
-              </select>
+              </Select>
             </div>
             <p className="text-xs text-text-muted">
               {t("artifacts.shown", {

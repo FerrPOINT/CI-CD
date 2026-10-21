@@ -1,0 +1,113 @@
+//! Operator-owned locators. Configuration never asserts owner authority or delivery.
+use super::{ConfigError, bool_from_env, optional_trimmed};
+use std::path::PathBuf;
+use uuid::Uuid;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BugWorkPublicationConfig {
+    /// Gates new intent/import/build effects only; original custody reads remain available.
+    pub enabled: bool,
+    pub producer_subject: Option<Uuid>,
+    pub tracker_origin: Option<String>,
+    pub tracker_reader_token_file: Option<PathBuf>,
+    pub controller_root: Option<PathBuf>,
+}
+impl BugWorkPublicationConfig {
+    pub(super) fn from_source(
+        get: &mut impl FnMut(&str) -> Option<String>,
+    ) -> Result<Self, ConfigError> {
+        let subject = optional_trimmed(get("CICD_BUG_WORK_PRODUCER_SUBJECT"))
+            .map(|v| {
+                v.parse::<Uuid>()
+                    .ok()
+                    .filter(|v| !v.is_nil())
+                    .ok_or_else(|| {
+                        ConfigError::invalid(
+                            "CICD_BUG_WORK_PRODUCER_SUBJECT",
+                            "expected non-nil UUID",
+                        )
+                    })
+            })
+            .transpose()?;
+        let origin = optional_trimmed(get("CICD_BUG_WORK_TRACKER_ORIGIN"));
+        if let Some(value) = &origin {
+            let url = reqwest::Url::parse(value).map_err(|_| {
+                ConfigError::invalid("CICD_BUG_WORK_TRACKER_ORIGIN", "expected fixed HTTP origin")
+            })?;
+            if !matches!(url.scheme(), "http" | "https")
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || url.path() != "/"
+            {
+                return Err(ConfigError::invalid(
+                    "CICD_BUG_WORK_TRACKER_ORIGIN",
+                    "expected credential-free HTTP origin without path",
+                ));
+            }
+        }
+        fn path(
+            get: &mut impl FnMut(&str) -> Option<String>,
+            name: &'static str,
+        ) -> Result<Option<PathBuf>, ConfigError> {
+            optional_trimmed(get(name))
+                .map(|v| {
+                    let p = PathBuf::from(v);
+                    if !p.is_absolute() {
+                        return Err(ConfigError::invalid(
+                            name,
+                            "expected protected absolute path",
+                        ));
+                    }
+                    Ok(p)
+                })
+                .transpose()
+        }
+        let result = Self {
+            enabled: bool_from_env("CICD_BUG_WORK_ENABLED", get("CICD_BUG_WORK_ENABLED"), false)?,
+            producer_subject: subject,
+            tracker_origin: origin,
+            tracker_reader_token_file: path(get, "CICD_BUG_WORK_TRACKER_READER_TOKEN_FILE")?,
+            controller_root: path(get, "CICD_BUG_WORK_CONTROLLER_ROOT")?,
+        };
+        if result.enabled
+            && (result.producer_subject.is_none()
+                || result.tracker_origin.is_none()
+                || result.tracker_reader_token_file.is_none()
+                || result.controller_root.is_none())
+        {
+            return Err(ConfigError::invalid(
+                "CICD_BUG_WORK_ENABLED",
+                "new effects require all explicit producer/owner/controller locators",
+            ));
+        }
+        Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn absent_defaults_and_partial_or_caller_url_configuration_fail_closed() {
+        let mut empty = |_: &str| None;
+        assert_eq!(
+            BugWorkPublicationConfig::from_source(&mut empty).unwrap(),
+            BugWorkPublicationConfig::default()
+        );
+        let mut enabled = |name: &str| (name == "CICD_BUG_WORK_ENABLED").then(|| "true".into());
+        assert!(BugWorkPublicationConfig::from_source(&mut enabled).is_err());
+        for origin in [
+            "https://u:p@tracker/",
+            "https://tracker/api/",
+            "https://tracker/?url=x",
+            "file:///tmp/x",
+        ] {
+            let mut get =
+                |name: &str| (name == "CICD_BUG_WORK_TRACKER_ORIGIN").then(|| origin.to_owned());
+            assert!(BugWorkPublicationConfig::from_source(&mut get).is_err());
+        }
+    }
+}

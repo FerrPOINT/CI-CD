@@ -1,0 +1,26 @@
+{
+  "status": "unqualified source experiment; not installed",
+  "base": "305f6e0371d6e23df571cd878bd6401940629cac",
+  "candidate_tree": "3255a5ef33e928279b6cb82357eec874562f1721",
+  "sdk": "2ad0834d06d3aa703fa1791a932bfc76650c8e42",
+  "rust": "1.88.0",
+  "server_lib": {
+    "passed": 391,
+    "failed": 2,
+    "ignored": 6,
+    "failed_tests": [
+      "config::tests::runtime_config_rejects_dangerous_or_invalid_values",
+      "task_delivery::owner_evidence::tests::read_lock_does_not_write_and_excludes_inflight_publication"
+    ]
+  },
+  "clippy": "failed: nonminimal_bool in bug_work_publication validation",
+  "postgres": "unqualified: five cases rejected test harness setup (disposable DB guard / missing owned public Git origin), not a live application acceptance result",
+  "openapi_generation": "passed",
+  "migration": "0096 only; historical released migrations retained",
+  "temporary_resources_cleaned": true,
+  "integration_risks": [
+    "Static pointer generation fields require compatibility with current owner evidence reader; do not apply this artifact wholesale",
+    "Configuration rejection contract needs reconciliation against current main"
+  ],
+  "runtime_changed": false
+}

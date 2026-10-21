@@ -1,0 +1,36 @@
+# ADR-0027: private Git для служебного чтения закреплённых исходников
+
+Статус: кандидат исходников, 2026-10-18; runtime qualification впереди.
+
+Source-snapshot выдаёт версию и credential-free URL, но обычная Git-проверка
+project membership предполагает человеческий UserId. Service-account UUID
+не является пользователем. Публичный synthetic repository в тесте публикации
+не доказывает доступ баг-серчера к настоящему private repository.
+
+Для одного явно настроенного `CICD_SOURCE_READER_SUBJECT` private Smart HTTP
+разрешает только чтение при fresh project-bound Forge SAT с обеими scopes
+`api:read` и `git:read`. Короткая транзакция проверяет актуальные token/service
+account, configuration → hosted repository → managed group → active namespace
+и workspace project. Human membership не подделывается. Общие каталоги,
+остальные service accounts, Git write и legacy human policy не расширяются.
+DB locks освобождаются до запуска Git. Каждый HTTP запрос проверяется заново.
+
+Проверять нужно доставленный SHA, даже если ветка продвинулась. Поэтому только
+`upload-pack` advertisement/RPC используют `uploadpack.allowReachableSHA1InWant=true`.
+Разрешается достижимая история всего repository, включая hidden refs; hidden refs
+не являются отдельной ACL-границей внутри одного repository. Для секретной
+истории нужен отдельный repository с собственной привязкой и доступом.
+`allowAnySHA1InWant=false` и `allowTipSHA1InWant=false` заданы явно перед
+`allowReachableSHA1InWant=true`, перекрывая более широкие stored/global настройки.
+Удалённая force-push история или dangling SHA могут остаться недоступными —
+consumer удерживает/отменяет поиск, не подменяет версию текущей HEAD.
+
+Existing actual publication regression дополнен private download: branch B
+впереди serving A, недостаточная scope, успешный exact A, чужой machine subject,
+dangling commit и архивирование namespace. Credentials передаются процессу Git
+через environment и не сохраняются в URL/argv/config/FETCH_HEAD.
+Это отдельный source candidate после gate261be7; его результаты туда не входят.
+
+Остальные service accounts получают отказ до human membership lookup: UUID
+машинного субъекта не может унаследовать доступ одноимённого UserId. Для private
+Git write машинного субъекта отдельный owner contract здесь не добавляется.

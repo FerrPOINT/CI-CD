@@ -12,7 +12,7 @@ import {
   useNotificationEvents,
   useSaveNotifications,
 } from "@/api/hooks";
-import { Card, ResourceList, ResourceListRow } from "@pdlc/ui/ui";
+import { Select, Card, ResourceList, ResourceListRow } from "@pdlc/ui/ui";
 import { Button } from "@pdlc/ui/ui";
 import { Input } from "@pdlc/ui/ui";
 import { Label } from "@pdlc/ui/ui";
@@ -450,13 +450,13 @@ function DeliveryHistorySection() {
                   <Label htmlFor="delivery-status" className="sr-only">
                     {t("deliveries.statusFilter")}
                   </Label>
-                  <select
+                  <Select
                     id="delivery-status"
                     value={status}
                     onChange={(event) =>
                       changeFilter("status", event.target.value)
                     }
-                    className="min-h-10 w-full rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus-visible:border-accent"
+                    className="w-full"
                   >
                     <option value="all">{t("deliveries.allStatuses")}</option>
                     {deliveryStatuses.map((value) => (
@@ -468,19 +468,19 @@ function DeliveryHistorySection() {
                         )}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <Label htmlFor="delivery-channel" className="sr-only">
                     {t("deliveries.channelFilter")}
                   </Label>
-                  <select
+                  <Select
                     id="delivery-channel"
                     value={channel}
                     onChange={(event) =>
                       changeFilter("channel", event.target.value)
                     }
-                    className="min-h-10 w-full rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus-visible:border-accent"
+                    className="w-full"
                   >
                     <option value="all">{t("deliveries.allChannels")}</option>
                     {deliveryChannels.map((value) => (
@@ -488,7 +488,7 @@ function DeliveryHistorySection() {
                         {t(`deliveries.channel_${value}`)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
               <p

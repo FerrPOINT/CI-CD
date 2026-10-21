@@ -1,0 +1,3687 @@
+use std::{
+    path::{Path as FsPath, PathBuf},
+    sync::Arc,
+    time::Duration as StdDuration,
+};
+
+use aes_gcm::{
+    Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
+};
+use axum::{
+    Json, Router,
+    body::Bytes,
+    extract::{DefaultBodyLimit, Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, patch, post},
+};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use sqlx::{FromRow, PgPool};
+use uuid::Uuid;
+
+use crate::{
+    api::{ApiError, AppState, pool},
+    body_limits,
+    config::{ArtifactsConfig, SecretsConfig},
+};
+
+pub(crate) const MAX_ARTIFACT_BYTES: usize = body_limits::ARTIFACT_UPLOAD_BYTES;
+const ARTIFACT_RETENTION_BATCH_LIMIT: i64 = 100;
+const ARTIFACT_RETENTION_INTERVAL_SECONDS: u64 = 60;
+const DEFAULT_TOKEN_LIFETIME_DAYS: i32 = 30;
+const MAX_TOKEN_LIFETIME_DAYS: i32 = 365;
+const DEFAULT_TOKEN_SCOPES: &[&str] = &["api:read", "api:write", "git:read", "git:write"];
+
+type ApiResult<T> = Result<Json<T>, ApiError>;
+
+pub fn routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/v1/runners", get(list_runners).post(register_runner))
+        .route(
+            "/api/v1/runners/{runner_id}",
+            axum::routing::delete(delete_runner),
+        )
+        .route(
+            "/api/v1/runners/{runner_id}/heartbeat",
+            post(runner_heartbeat),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/secrets",
+            get(list_secrets).post(create_secret),
+        )
+        .route(
+            "/api/v1/secrets/{secret_id}",
+            axum::routing::delete(delete_secret),
+        )
+        .route(
+            "/api/v1/jobs/{job_id}/artifacts",
+            get(list_artifacts)
+                .post(upload_artifact)
+                .layer(DefaultBodyLimit::max(body_limits::ARTIFACT_UPLOAD_BYTES)),
+        )
+        .route(
+            "/api/v1/artifacts/{artifact_id}/download",
+            get(download_artifact),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/environments",
+            get(list_environments).post(create_environment),
+        )
+        .route(
+            "/api/v1/environments/{environment_id}",
+            patch(update_environment).delete(delete_environment),
+        )
+        .route(
+            "/api/v1/environments/{environment_id}/deployments",
+            get(list_deployments).post(create_deployment),
+        )
+        .route(
+            "/api/v1/deployments/{deployment_id}/approvals",
+            get(list_deployment_approvals).post(record_deployment_approval),
+        )
+        .route(
+            "/api/v1/deployments/{deployment_id}/rollback",
+            post(rollback_deployment),
+        )
+        .route(
+            "/api/v1/deployments/{deployment_id}/cancel",
+            post(cancel_deployment),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/schedules",
+            get(list_schedules).post(create_schedule),
+        )
+        .route(
+            "/api/v1/schedules/{schedule_id}",
+            patch(update_schedule).delete(delete_schedule),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/webhooks",
+            get(list_webhooks).post(create_webhook),
+        )
+        .route(
+            "/api/v1/webhooks/{webhook_id}",
+            axum::routing::delete(delete_webhook),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/outbox-deliveries",
+            get(list_outbox_deliveries),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/outbox-deliveries/page",
+            get(list_outbox_delivery_page),
+        )
+        .route(
+            "/api/v1/outbox-deliveries/{delivery_id}",
+            get(get_outbox_delivery),
+        )
+        .route(
+            "/api/v1/outbox-deliveries/{delivery_id}/requeue",
+            post(requeue_outbox_delivery),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notifications",
+            get(list_notifications).put(replace_notifications),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notification-events",
+            get(list_notification_events),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notification-rules",
+            get(list_notification_rules).put(replace_notification_rules),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/destination-alerts",
+            get(list_destination_alerts),
+        )
+        .route(
+            "/api/v1/destination-alerts/{alert_id}/acknowledge",
+            post(acknowledge_destination_alert),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notification-preferences",
+            get(get_notification_preferences).put(put_notification_preferences),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notification-templates",
+            get(list_notification_templates).put(replace_notification_templates),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notifications/stream",
+            get(notification_stream),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/reports/summary",
+            get(project_report),
+        )
+        .route("/api/v1/audit-log", get(list_audit_log))
+        .route("/api/v1/audit-log/page", get(list_audit_log_page))
+        .route("/api/v1/users", get(list_users).post(create_user))
+        .route("/api/v1/users/{user_id}", patch(update_user))
+        .route("/api/v1/api-tokens", get(list_tokens).post(create_token))
+        .route(
+            "/api/v1/api-tokens/{token_id}",
+            axum::routing::delete(delete_token),
+        )
+        .route(
+            "/api/v1/admin/tenants",
+            get(list_tenants).post(create_tenant),
+        )
+        .route("/api/v1/admin/tenants/{tenant_id}", get(get_tenant))
+        .route(
+            "/api/v1/admin/tenants/{tenant_id}/memberships",
+            post(add_tenant_membership),
+        )
+        .route(
+            "/api/v1/admin/tenants/{tenant_id}/memberships/{user_id}",
+            axum::routing::delete(remove_tenant_membership),
+        )
+        .route(
+            "/api/v1/admin/service-accounts",
+            get(list_service_accounts).post(create_service_account),
+        )
+        .route(
+            "/api/v1/admin/service-accounts/{account_id}",
+            patch(update_service_account),
+        )
+        .route(
+            "/api/v1/admin/service-accounts/{account_id}/tokens",
+            post(issue_service_account_token),
+        )
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Runner {
+    id: Uuid,
+    name: String,
+    tags: Vec<String>,
+    status: String,
+    last_seen_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct RegisterRunner {
+    name: String,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+#[utoipa::path(get, path = "/api/v1/runners", tag = "runners", responses((status = 200, body = [Runner])))]
+async fn list_runners(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Runner>> {
+    Ok(Json(sqlx::query_as("SELECT id, name, tags, status, last_seen_at, created_at FROM runners ORDER BY created_at DESC")
+        .fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(post, path = "/api/v1/runners", tag = "runners", request_body = RegisterRunner, responses((status = 200, body = Runner), (status = 400)))]
+async fn register_runner(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<RegisterRunner>,
+) -> ApiResult<Runner> {
+    if input.name.trim().is_empty() {
+        return Err(ApiError::bad_request("runner name is required"));
+    }
+    let runner = sqlx::query_as::<_, Runner>("INSERT INTO runners (id, name, tags) VALUES ($1, $2, $3) RETURNING id, name, tags, status, last_seen_at, created_at")
+        .bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.tags).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+    audit(
+        pool(&state)?,
+        "runner.registered",
+        "runner",
+        runner.id,
+        None,
+    )
+    .await?;
+    Ok(Json(runner))
+}
+#[utoipa::path(post, path = "/api/v1/runners/{runner_id}/heartbeat", tag = "runners", params(("runner_id" = Uuid, Path)), responses((status = 410, description = "Legacy heartbeat is disabled; use the credential-authenticated runner protocol")))]
+async fn runner_heartbeat() -> Result<StatusCode, ApiError> {
+    Err(ApiError::gone(
+        "legacy heartbeat is disabled; use /api/v1/runner/heartbeat",
+    ))
+}
+#[utoipa::path(delete, path = "/api/v1/runners/{runner_id}", tag = "runners", params(("runner_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
+async fn delete_runner(
+    State(state): State<Arc<AppState>>,
+    Path(runner_id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    let id: Uuid = sqlx::query_scalar("DELETE FROM runners WHERE id = $1 RETURNING id")
+        .bind(runner_id)
+        .fetch_optional(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    audit(pool(&state)?, "runner.deleted", "runner", id, None).await?;
+    Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct SecretMetadata {
+    id: Uuid,
+    project_id: Uuid,
+    key: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateSecret {
+    key: String,
+    value: String,
+}
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/secrets", tag = "secrets", params(("project_id" = Uuid, Path)), responses((status = 200, body = [SecretMetadata])))]
+async fn list_secrets(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<SecretMetadata>> {
+    Ok(Json(sqlx::query_as("SELECT id, project_id, key, created_at, updated_at FROM project_secrets WHERE project_id = $1 ORDER BY key")
+        .bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(post, path = "/api/v1/projects/{project_id}/secrets", tag = "secrets", request_body = CreateSecret, params(("project_id" = Uuid, Path)), responses((status = 200, body = SecretMetadata), (status = 400)))]
+async fn create_secret(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(input): Json<CreateSecret>,
+) -> ApiResult<SecretMetadata> {
+    if input.key.trim().is_empty() || input.value.is_empty() {
+        return Err(ApiError::bad_request("secret key and value are required"));
+    }
+    let encrypted_value =
+        encrypt_secret(&input.value, &state.config.secrets).map_err(ApiError::bad_request)?;
+    let secret = sqlx::query_as::<_, SecretMetadata>("INSERT INTO project_secrets (id, project_id, key, encrypted_value) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, key) DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value, updated_at = now() RETURNING id, project_id, key, created_at, updated_at")
+        .bind(Uuid::new_v4()).bind(project_id).bind(input.key.trim()).bind(encrypted_value).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+    audit(
+        pool(&state)?,
+        "secret.upserted",
+        "project_secret",
+        secret.id,
+        None,
+    )
+    .await?;
+    Ok(Json(secret))
+}
+#[utoipa::path(delete, path = "/api/v1/secrets/{secret_id}", tag = "secrets", params(("secret_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
+async fn delete_secret(
+    State(state): State<Arc<AppState>>,
+    Path(secret_id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    let id: Uuid = sqlx::query_scalar("DELETE FROM project_secrets WHERE id = $1 RETURNING id")
+        .bind(secret_id)
+        .fetch_optional(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    audit(pool(&state)?, "secret.deleted", "project_secret", id, None).await?;
+    Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Artifact {
+    id: Uuid,
+    job_id: Uuid,
+    attempt_id: Option<Uuid>,
+    name: String,
+    content_type: String,
+    sha256: Option<String>,
+    size_bytes: i64,
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    purged_at: Option<DateTime<Utc>>,
+}
+
+impl Artifact {
+    pub(crate) fn id(&self) -> Uuid {
+        self.id
+    }
+}
+#[utoipa::path(get, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path)), responses((status = 200, body = [Artifact])))]
+async fn list_artifacts(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+) -> ApiResult<Vec<Artifact>> {
+    Ok(Json(sqlx::query_as("SELECT id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at, expires_at, purged_at FROM artifacts WHERE job_id = $1 ORDER BY created_at DESC")
+        .bind(job_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(post, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path), ("X-Artifact-Name" = String, Header)), request_body = Vec<u8>, responses((status = 200, body = Artifact), (status = 400), (status = 413, description = "artifact body exceeds 50 MiB")))]
+#[allow(clippy::too_many_arguments)]
+async fn upload_artifact(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> ApiResult<Artifact> {
+    let name = headers
+        .get("x-artifact-name")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("artifact.bin")
+        .trim();
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let artifact = store_job_artifact_with_config(
+        pool(&state)?,
+        &state.config.artifacts,
+        job_id,
+        None,
+        name,
+        content_type,
+        body,
+    )
+    .await?;
+    Ok(Json(artifact))
+}
+
+pub(crate) async fn store_job_artifact_with_config(
+    db: &PgPool,
+    artifacts: &ArtifactsConfig,
+    job_id: Uuid,
+    attempt_id: Option<Uuid>,
+    name: &str,
+    content_type: &str,
+    body: Bytes,
+) -> Result<Artifact, ApiError> {
+    if body.is_empty() || body.len() > MAX_ARTIFACT_BYTES {
+        return Err(ApiError::bad_request(
+            "artifact must be between 1 byte and 50 MiB",
+        ));
+    }
+    let name = name.trim();
+    if !valid_artifact_name(name) {
+        return Err(ApiError::bad_request("invalid artifact name"));
+    }
+    let content_type = content_type.trim();
+    if content_type.is_empty() {
+        return Err(ApiError::bad_request("artifact content-type is required"));
+    }
+    let attempt_id = match attempt_id {
+        Some(attempt_id) => attempt_id,
+        None => crate::store::active_or_latest_attempt_id(db, job_id)
+            .await
+            .map_err(|error| match error {
+                sqlx::Error::RowNotFound => ApiError::not_found(),
+                other => ApiError::internal(other),
+            })?,
+    };
+    let id = Uuid::new_v4();
+    let artifact_sha256 = sha256_bytes(body.as_ref());
+    let expires_at = artifact_expires_at(artifacts);
+    let path = new_artifact_path(artifacts, id)?;
+    std::fs::write(&path, &body).map_err(io_error)?;
+    let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, sha256, size_bytes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at, expires_at, purged_at")
+        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).bind(expires_at).fetch_one(db).await.map_err(ApiError::internal)?;
+    audit(db, "artifact.uploaded", "artifact", id, None).await?;
+    Ok(artifact)
+}
+#[utoipa::path(get, path = "/api/v1/artifacts/{artifact_id}/download", tag = "artifacts", params(("artifact_id" = Uuid, Path)), responses((status = 200, description = "Artifact download"), (status = 404)))]
+async fn download_artifact(
+    State(state): State<Arc<AppState>>,
+    Path(artifact_id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    let row: (String, String, String, Option<String>) = sqlx::query_as(
+        "SELECT storage_path, name, content_type, sha256 FROM artifacts WHERE id = $1 AND purged_at IS NULL AND expires_at > now()",
+    )
+    .bind(artifact_id)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    let path = contained_artifact_path(&state.config.artifacts, &row.0)?;
+    let bytes = std::fs::read(path).map_err(|_| ApiError::not_found())?;
+    if let Some(expected) = row.3.as_deref() {
+        let actual = sha256_bytes(&bytes);
+        if actual != expected {
+            return Err(ApiError::conflict("artifact checksum mismatch"));
+        }
+    }
+    Ok((
+        [
+            ("content-type", row.2),
+            ("content-disposition", artifact_content_disposition(&row.1)),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+pub fn artifact_retention_days_from_env(raw: Option<String>) -> Result<i64, std::io::Error> {
+    crate::config::artifact_retention_days_from_env(raw)
+        .map_err(crate::config::ConfigError::into_io_error)
+}
+
+fn artifact_expires_at(artifacts: &ArtifactsConfig) -> DateTime<Utc> {
+    Utc::now() + ChronoDuration::days(artifacts.retention_days)
+}
+
+#[derive(Debug, FromRow)]
+struct ExpiredArtifactCandidate {
+    id: Uuid,
+    storage_path: String,
+}
+
+pub async fn purge_expired_artifacts(db: &PgPool, batch_limit: i64) -> Result<u64, ApiError> {
+    let artifacts = crate::config::artifacts_config_from_env()
+        .map_err(|error| config_error(error.to_string()))?;
+    purge_expired_artifacts_with_config(db, &artifacts, batch_limit).await
+}
+
+pub async fn purge_expired_artifacts_with_config(
+    db: &PgPool,
+    artifacts: &ArtifactsConfig,
+    batch_limit: i64,
+) -> Result<u64, ApiError> {
+    let batch_limit = batch_limit.clamp(1, 1000);
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    let candidates = sqlx::query_as::<_, ExpiredArtifactCandidate>(
+        "SELECT id, storage_path \
+         FROM artifacts \
+         WHERE purged_at IS NULL AND expires_at <= now() \
+         ORDER BY expires_at ASC, id ASC \
+         LIMIT $1 \
+         FOR UPDATE SKIP LOCKED",
+    )
+    .bind(batch_limit)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let mut purged = 0;
+    for candidate in candidates {
+        let path = match artifact_path_for_delete(artifacts, &candidate.storage_path) {
+            Ok(path) => path,
+            Err(error) => {
+                tracing::warn!(
+                    artifact_id = %candidate.id,
+                    storage_path = %candidate.storage_path,
+                    reason = %error.message,
+                    "artifact retention skipped unsafe path"
+                );
+                continue;
+            }
+        };
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(
+                    artifact_id = %candidate.id,
+                    path = %path.display(),
+                    %error,
+                    "artifact retention failed to remove file"
+                );
+                continue;
+            }
+        }
+        let result = sqlx::query(
+            "UPDATE artifacts \
+             SET purged_at = now() \
+             WHERE id = $1 AND purged_at IS NULL AND expires_at <= now()",
+        )
+        .bind(candidate.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+        if result.rows_affected() > 0 {
+            sqlx::query(
+                "INSERT INTO audit_log (action, resource_type, resource_id, actor) \
+                 VALUES ('artifact.purged', 'artifact', $1, NULL)",
+            )
+            .bind(candidate.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+            purged += 1;
+        }
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(purged)
+}
+
+pub async fn artifact_retention_loop(pool: PgPool) {
+    let artifacts = crate::config::artifacts_config_from_env().unwrap_or_else(|error| {
+        tracing::warn!(%error, "invalid artifact retention config; using test defaults");
+        crate::config::RuntimeConfig::test_default().artifacts
+    });
+    artifact_retention_loop_with_config(pool, artifacts).await;
+}
+
+pub async fn artifact_retention_loop_with_config(pool: PgPool, artifacts: ArtifactsConfig) {
+    loop {
+        tokio::time::sleep(StdDuration::from_secs(ARTIFACT_RETENTION_INTERVAL_SECONDS)).await;
+        match purge_expired_artifacts_with_config(&pool, &artifacts, ARTIFACT_RETENTION_BATCH_LIMIT)
+            .await
+        {
+            Ok(0) => {}
+            Ok(purged) => tracing::info!(purged, "artifact retention purged expired files"),
+            Err(error) => tracing::error!(message = %error.message, "artifact retention failed"),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Environment {
+    id: Uuid,
+    project_id: Uuid,
+    name: String,
+    url: Option<String>,
+    status: String,
+    protected: bool,
+    required_approvals: i32,
+    created_at: DateTime<Utc>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateEnvironment {
+    name: String,
+    url: Option<String>,
+    #[serde(default)]
+    protected: Option<bool>,
+    #[serde(default)]
+    required_approvals: Option<i32>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct UpdateEnvironment {
+    name: Option<String>,
+    url: Option<String>,
+    status: Option<String>,
+    protected: Option<bool>,
+    required_approvals: Option<i32>,
+}
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/environments", tag = "environments", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Environment])))]
+async fn list_environments(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<Environment>> {
+    Ok(Json(sqlx::query_as("SELECT id, project_id, name, url, status, protected, required_approvals, created_at FROM environments WHERE project_id = $1 ORDER BY name").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(post, path = "/api/v1/projects/{project_id}/environments", tag = "environments", request_body = CreateEnvironment, params(("project_id" = Uuid, Path)), responses((status = 200, body = Environment), (status = 400)))]
+async fn create_environment(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(input): Json<CreateEnvironment>,
+) -> ApiResult<Environment> {
+    if input.name.trim().is_empty() {
+        return Err(ApiError::bad_request("environment name is required"));
+    }
+    let protected = input.protected.unwrap_or(false);
+    let required_approvals =
+        normalize_required_approvals(protected, input.required_approvals, None)?;
+    let value = sqlx::query_as("INSERT INTO environments (id, project_id, name, url, protected, required_approvals) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, project_id, name, url, status, protected, required_approvals, created_at")
+        .bind(Uuid::new_v4())
+        .bind(project_id)
+        .bind(input.name.trim())
+        .bind(trim_optional(input.url))
+        .bind(protected)
+        .bind(required_approvals)
+        .fetch_one(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(value))
+}
+#[utoipa::path(patch, path = "/api/v1/environments/{environment_id}", tag = "environments", request_body = UpdateEnvironment, params(("environment_id" = Uuid, Path)), responses((status = 200, body = Environment), (status = 404)))]
+async fn update_environment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<UpdateEnvironment>,
+) -> ApiResult<Environment> {
+    let name = input.name.as_deref().map(str::trim);
+    if name == Some("") {
+        return Err(ApiError::bad_request("environment name is required"));
+    }
+    if let Some(status) = &input.status {
+        if !matches!(status.as_str(), "available" | "stopped" | "degraded") {
+            return Err(ApiError::bad_request("invalid environment status"));
+        }
+    }
+    let db = pool(&state)?;
+    let current = fetch_environment_policy(db, id).await?;
+    let protected = input.protected.unwrap_or(current.protected);
+    let required_approvals =
+        normalize_required_approvals(protected, input.required_approvals, Some(&current))?;
+    let value = sqlx::query_as("UPDATE environments SET name = COALESCE($2, name), url = COALESCE($3, url), status = COALESCE($4, status), protected = $5, required_approvals = $6 WHERE id = $1 RETURNING id, project_id, name, url, status, protected, required_approvals, created_at")
+        .bind(id)
+        .bind(name)
+        .bind(trim_optional(input.url))
+        .bind(input.status)
+        .bind(protected)
+        .bind(required_approvals)
+        .fetch_optional(db)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(Json(value))
+}
+#[utoipa::path(delete, path = "/api/v1/environments/{environment_id}", tag = "environments", params(("environment_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
+async fn delete_environment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    let id: Uuid = sqlx::query_scalar("DELETE FROM environments WHERE id = $1 RETURNING id")
+        .bind(id)
+        .fetch_optional(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Deployment {
+    id: Uuid,
+    environment_id: Uuid,
+    pipeline_id: Option<Uuid>,
+    rollback_of_id: Option<Uuid>,
+    git_ref: String,
+    status: String,
+    approval_required: bool,
+    approval_state: String,
+    approval_count: i64,
+    required_approvals: i32,
+    created_at: DateTime<Utc>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateDeployment {
+    git_ref: String,
+    pipeline_id: Option<Uuid>,
+    status: Option<String>,
+    request_key: Option<Uuid>,
+}
+
+async fn insert_or_replay_deployment(
+    db: &PgPool,
+    environment_id: Uuid,
+    git_ref: &str,
+    rollback_of_id: Option<Uuid>,
+    request_key: Option<Uuid>,
+) -> Result<(Uuid, bool), ApiError> {
+    let id = Uuid::new_v4();
+    let inserted: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO deployments (id, environment_id, rollback_of_id, git_ref, status, request_key) \
+         VALUES ($1, $2, $3, $4, 'pending', $5) \
+         ON CONFLICT (environment_id, request_key) DO NOTHING RETURNING id",
+    )
+    .bind(id)
+    .bind(environment_id)
+    .bind(rollback_of_id)
+    .bind(git_ref)
+    .bind(request_key)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?;
+    if let Some(id) = inserted {
+        return Ok((id, true));
+    }
+    let existing: (Uuid, String, Option<Uuid>) = sqlx::query_as(
+        "SELECT id, git_ref, rollback_of_id FROM deployments \
+         WHERE environment_id = $1 AND request_key = $2",
+    )
+    .bind(environment_id)
+    .bind(request_key)
+    .fetch_one(db)
+    .await
+    .map_err(ApiError::internal)?;
+    if existing.1 != git_ref || existing.2 != rollback_of_id {
+        return Err(ApiError::conflict(
+            "deployment request key belongs to another release",
+        ));
+    }
+    Ok((existing.0, false))
+}
+#[utoipa::path(get, path = "/api/v1/environments/{environment_id}/deployments", tag = "environments", params(("environment_id" = Uuid, Path)), responses((status = 200, body = [Deployment])))]
+async fn list_deployments(
+    State(state): State<Arc<AppState>>,
+    Path(environment_id): Path<Uuid>,
+) -> ApiResult<Vec<Deployment>> {
+    let sql = deployment_select(
+        "d.environment_id = $1",
+        "ORDER BY d.created_at DESC, d.id DESC LIMIT 50",
+    );
+    Ok(Json(
+        sqlx::query_as(sql.as_str())
+            .bind(environment_id)
+            .fetch_all(pool(&state)?)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}
+#[utoipa::path(post, path = "/api/v1/environments/{environment_id}/deployments", tag = "environments", request_body = CreateDeployment, params(("environment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 400)))]
+async fn create_deployment(
+    State(state): State<Arc<AppState>>,
+    Path(environment_id): Path<Uuid>,
+    Json(input): Json<CreateDeployment>,
+) -> ApiResult<Deployment> {
+    if input.git_ref.trim().is_empty() {
+        return Err(ApiError::bad_request("git_ref is required"));
+    }
+    let db = pool(&state)?;
+    let policy = fetch_environment_policy(db, environment_id).await?;
+    crate::api::validate_deployment_target(
+        db,
+        policy.project_id,
+        input.git_ref.trim(),
+        &state.config.git.root,
+    )
+    .await?;
+    if input.pipeline_id.is_some()
+        || input
+            .status
+            .as_deref()
+            .is_some_and(|status| status != "pending")
+    {
+        return Err(ApiError::bad_request(
+            "deployment pipeline and terminal status are assigned by Forge",
+        ));
+    }
+    let approval_required = policy.requires_approval();
+    let (id, created) = insert_or_replay_deployment(
+        db,
+        environment_id,
+        input.git_ref.trim(),
+        None,
+        input.request_key,
+    )
+    .await?;
+    let current = fetch_deployment(db, id).await?;
+    if !approval_required && current.pipeline_id.is_none() {
+        if let Err(error) = start_deployment_pipeline(
+            db,
+            DeploymentPipelineStart {
+                deployment_id: id,
+                project_id: policy.project_id,
+                environment_id,
+                git_ref: input.git_ref.trim().to_owned(),
+                rollback_of_id: None,
+                source: "deployment-direct",
+                git_root: &state.config.git.root,
+            },
+        )
+        .await
+        {
+            if created {
+                sqlx::query("DELETE FROM deployments WHERE id = $1 AND pipeline_id IS NULL")
+                    .bind(id)
+                    .execute(db)
+                    .await
+                    .map_err(ApiError::internal)?;
+            }
+            return Err(error);
+        }
+    }
+    if created {
+        audit(db, "deployment.created", "deployment", id, None).await?;
+    }
+    let value = fetch_deployment(db, id).await?;
+    Ok(Json(value))
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct DeploymentApproval {
+    id: Uuid,
+    deployment_id: Uuid,
+    decision: String,
+    actor: String,
+    comment: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct RecordDeploymentApproval {
+    decision: String,
+    actor: Option<String>,
+    comment: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct RollbackDeployment {
+    git_ref: Option<String>,
+    request_key: Option<Uuid>,
+}
+
+#[utoipa::path(post, path = "/api/v1/deployments/{deployment_id}/cancel", tag = "environments", params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 404), (status = 409)))]
+async fn cancel_deployment(
+    State(state): State<Arc<AppState>>,
+    Path(deployment_id): Path<Uuid>,
+) -> ApiResult<Deployment> {
+    let db = pool(&state)?;
+    let deployment = fetch_deployment(db, deployment_id).await?;
+    if !matches!(deployment.status.as_str(), "pending" | "running") {
+        return Err(ApiError::conflict("deployment is not active"));
+    }
+    if let Some(pipeline_id) = deployment.pipeline_id {
+        let _ = crate::api::cancel_pipeline(State(state.clone()), Path(pipeline_id)).await?;
+    }
+    sqlx::query("UPDATE deployments SET status = 'failed' WHERE id = $1 AND status IN ('pending', 'running')")
+        .bind(deployment_id)
+        .execute(db)
+        .await
+        .map_err(ApiError::internal)?;
+    audit(db, "deployment.canceled", "deployment", deployment_id, None).await?;
+    Ok(Json(fetch_deployment(db, deployment_id).await?))
+}
+
+#[utoipa::path(get, path = "/api/v1/deployments/{deployment_id}/approvals", tag = "environments", params(("deployment_id" = Uuid, Path)), responses((status = 200, body = [DeploymentApproval]), (status = 404)))]
+async fn list_deployment_approvals(
+    State(state): State<Arc<AppState>>,
+    Path(deployment_id): Path<Uuid>,
+) -> ApiResult<Vec<DeploymentApproval>> {
+    let db = pool(&state)?;
+    ensure_deployment_exists(db, deployment_id).await?;
+    Ok(Json(sqlx::query_as("SELECT id, deployment_id, decision, actor, comment, created_at FROM deployment_approvals WHERE deployment_id = $1 ORDER BY created_at ASC, id ASC")
+        .bind(deployment_id)
+        .fetch_all(db)
+        .await
+        .map_err(ApiError::internal)?))
+}
+
+#[utoipa::path(post, path = "/api/v1/deployments/{deployment_id}/approvals", tag = "environments", request_body = RecordDeploymentApproval, params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 400), (status = 404), (status = 409)))]
+async fn record_deployment_approval(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(deployment_id): Path<Uuid>,
+    Json(input): Json<RecordDeploymentApproval>,
+) -> ApiResult<Deployment> {
+    let db = pool(&state)?;
+    let decision = normalize_approval_decision(&input.decision)?;
+    let actor = approval_actor(input.actor.as_deref(), claims.as_ref().map(|c| c.0.sub))?;
+    let comment = trim_optional(input.comment);
+    if comment.as_ref().is_some_and(|value| value.len() > 1000) {
+        return Err(ApiError::bad_request("approval comment is too long"));
+    }
+
+    let target = record_approval_decision(db, deployment_id, &decision, &actor, comment).await?;
+    if target.should_start_pipeline {
+        start_deployment_pipeline(
+            db,
+            DeploymentPipelineStart {
+                deployment_id,
+                project_id: target.project_id,
+                environment_id: target.environment_id,
+                git_ref: target.git_ref,
+                rollback_of_id: target.rollback_of_id,
+                source: "deployment-approval",
+                git_root: &state.config.git.root,
+            },
+        )
+        .await?;
+    }
+    let value = fetch_deployment(db, deployment_id).await?;
+    Ok(Json(value))
+}
+
+#[utoipa::path(post, path = "/api/v1/deployments/{deployment_id}/rollback", tag = "environments", request_body = RollbackDeployment, params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 400), (status = 404), (status = 409)))]
+async fn rollback_deployment(
+    State(state): State<Arc<AppState>>,
+    Path(deployment_id): Path<Uuid>,
+    Json(input): Json<RollbackDeployment>,
+) -> ApiResult<Deployment> {
+    let db = pool(&state)?;
+    let source = fetch_rollback_source(db, deployment_id).await?;
+    if source.status != "success" {
+        return Err(ApiError::conflict(
+            "only successful deployments can be rollback targets",
+        ));
+    }
+    let git_ref = input
+        .git_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(source.git_ref.as_str())
+        .to_owned();
+    if git_ref != source.git_ref {
+        return Err(ApiError::bad_request(
+            "rollback must use the selected successful deployment commit",
+        ));
+    }
+    let (new_id, created) = insert_or_replay_deployment(
+        db,
+        source.environment_id,
+        &git_ref,
+        Some(deployment_id),
+        input.request_key,
+    )
+    .await?;
+    let current = fetch_deployment(db, new_id).await?;
+    if !source.requires_approval() && current.pipeline_id.is_none() {
+        start_deployment_pipeline(
+            db,
+            DeploymentPipelineStart {
+                deployment_id: new_id,
+                project_id: source.project_id,
+                environment_id: source.environment_id,
+                git_ref,
+                rollback_of_id: Some(deployment_id),
+                source: "deployment-rollback",
+                git_root: &state.config.git.root,
+            },
+        )
+        .await?;
+    }
+    if created {
+        audit(
+            db,
+            "deployment.rollback.created",
+            "deployment",
+            new_id,
+            None,
+        )
+        .await?;
+    }
+    Ok(Json(fetch_deployment(db, new_id).await?))
+}
+
+#[derive(Debug, FromRow)]
+struct EnvironmentPolicy {
+    project_id: Uuid,
+    protected: bool,
+    required_approvals: i32,
+}
+
+impl EnvironmentPolicy {
+    fn requires_approval(&self) -> bool {
+        self.protected && self.required_approvals > 0
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ApprovalTarget {
+    environment_id: Uuid,
+    project_id: Uuid,
+    git_ref: String,
+    status: String,
+    pipeline_id: Option<Uuid>,
+    rollback_of_id: Option<Uuid>,
+    protected: bool,
+    required_approvals: i32,
+}
+
+impl ApprovalTarget {
+    fn requires_approval(&self) -> bool {
+        self.protected && self.required_approvals > 0
+    }
+}
+
+#[derive(Debug)]
+struct RecordedApprovalTarget {
+    environment_id: Uuid,
+    project_id: Uuid,
+    git_ref: String,
+    rollback_of_id: Option<Uuid>,
+    should_start_pipeline: bool,
+}
+
+#[derive(Debug)]
+struct DeploymentPipelineStart<'a> {
+    deployment_id: Uuid,
+    project_id: Uuid,
+    environment_id: Uuid,
+    git_ref: String,
+    rollback_of_id: Option<Uuid>,
+    source: &'a str,
+    git_root: &'a FsPath,
+}
+
+#[derive(Debug, FromRow)]
+struct RollbackSource {
+    environment_id: Uuid,
+    project_id: Uuid,
+    git_ref: String,
+    status: String,
+    protected: bool,
+    required_approvals: i32,
+}
+
+impl RollbackSource {
+    fn requires_approval(&self) -> bool {
+        self.protected && self.required_approvals > 0
+    }
+}
+
+async fn fetch_environment_policy(
+    db: &PgPool,
+    environment_id: Uuid,
+) -> Result<EnvironmentPolicy, ApiError> {
+    sqlx::query_as(
+        "SELECT project_id, protected, required_approvals FROM environments WHERE id = $1",
+    )
+    .bind(environment_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)
+}
+
+async fn ensure_deployment_exists(db: &PgPool, deployment_id: Uuid) -> Result<(), ApiError> {
+    let exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM deployments WHERE id = $1)")
+            .bind(deployment_id)
+            .fetch_one(db)
+            .await
+            .map_err(ApiError::internal)?;
+    if exists {
+        Ok(())
+    } else {
+        Err(ApiError::not_found())
+    }
+}
+
+fn deployment_select(where_clause: &str, tail_clause: &str) -> String {
+    format!(
+        "SELECT d.id, d.environment_id, d.pipeline_id, d.rollback_of_id, d.git_ref, d.status, d.created_at, \
+                (e.protected AND e.required_approvals > 0) AS approval_required, \
+                e.required_approvals, \
+                COALESCE(COUNT(a.id) FILTER (WHERE a.decision = 'approved'), 0)::bigint AS approval_count, \
+                CASE \
+                    WHEN NOT (e.protected AND e.required_approvals > 0) THEN 'not_required' \
+                    WHEN COALESCE(COUNT(a.id) FILTER (WHERE a.decision = 'rejected'), 0) > 0 THEN 'rejected' \
+                    WHEN COALESCE(COUNT(a.id) FILTER (WHERE a.decision = 'approved'), 0) >= e.required_approvals THEN 'approved' \
+                    ELSE 'pending' \
+                END AS approval_state \
+         FROM deployments d \
+         JOIN environments e ON e.id = d.environment_id \
+         LEFT JOIN deployment_approvals a ON a.deployment_id = d.id \
+         WHERE {where_clause} \
+         GROUP BY d.id, e.protected, e.required_approvals \
+         {tail_clause}"
+    )
+}
+
+async fn fetch_deployment(db: &PgPool, deployment_id: Uuid) -> Result<Deployment, ApiError> {
+    let sql = deployment_select("d.id = $1", "");
+    sqlx::query_as(sql.as_str())
+        .bind(deployment_id)
+        .fetch_optional(db)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)
+}
+
+async fn record_approval_decision(
+    db: &PgPool,
+    deployment_id: Uuid,
+    decision: &str,
+    actor: &str,
+    comment: Option<String>,
+) -> Result<RecordedApprovalTarget, ApiError> {
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    let target: ApprovalTarget = sqlx::query_as(
+        "SELECT d.environment_id, e.project_id, d.git_ref, d.status, d.pipeline_id, d.rollback_of_id, e.protected, e.required_approvals \
+         FROM deployments d \
+         JOIN environments e ON e.id = d.environment_id \
+         WHERE d.id = $1 \
+         FOR UPDATE OF d",
+    )
+    .bind(deployment_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    if !target.requires_approval() {
+        return Err(ApiError::bad_request(
+            "deployment does not require environment approval",
+        ));
+    }
+    if target.status != "pending" || target.pipeline_id.is_some() {
+        return Err(ApiError::conflict("deployment is not pending approval"));
+    }
+    let existing_by_actor: Option<String> = sqlx::query_scalar(
+        "SELECT decision FROM deployment_approvals WHERE deployment_id = $1 AND actor = $2",
+    )
+    .bind(deployment_id)
+    .bind(actor)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+    let (approved_count, rejected_count): (i64, i64) = sqlx::query_as(
+        "SELECT \
+            COALESCE(COUNT(*) FILTER (WHERE decision = 'approved'), 0)::bigint, \
+            COALESCE(COUNT(*) FILTER (WHERE decision = 'rejected'), 0)::bigint \
+         FROM deployment_approvals WHERE deployment_id = $1",
+    )
+    .bind(deployment_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+    if rejected_count == 0
+        && approved_count >= i64::from(target.required_approvals)
+        && decision == "approved"
+        && existing_by_actor.as_deref() == Some("approved")
+    {
+        tx.commit().await.map_err(ApiError::internal)?;
+        return Ok(RecordedApprovalTarget {
+            environment_id: target.environment_id,
+            project_id: target.project_id,
+            git_ref: target.git_ref,
+            rollback_of_id: target.rollback_of_id,
+            should_start_pipeline: true,
+        });
+    }
+    if existing_by_actor.is_some()
+        || rejected_count > 0
+        || approved_count >= i64::from(target.required_approvals)
+    {
+        return Err(ApiError::conflict("deployment approval is already decided"));
+    }
+    sqlx::query("INSERT INTO deployment_approvals (id, deployment_id, decision, actor, comment) VALUES ($1, $2, $3, $4, $5)")
+        .bind(Uuid::new_v4())
+        .bind(deployment_id)
+        .bind(decision)
+        .bind(actor)
+        .bind(comment)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    let should_start_pipeline =
+        decision == "approved" && approved_count + 1 >= i64::from(target.required_approvals);
+    if decision == "rejected" {
+        sqlx::query(
+            "UPDATE deployments SET status = 'failed' WHERE id = $1 AND status = 'pending'",
+        )
+        .bind(deployment_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    audit(
+        db,
+        "deployment.approval.recorded",
+        "deployment",
+        deployment_id,
+        None,
+    )
+    .await?;
+    Ok(RecordedApprovalTarget {
+        environment_id: target.environment_id,
+        project_id: target.project_id,
+        git_ref: target.git_ref,
+        rollback_of_id: target.rollback_of_id,
+        should_start_pipeline,
+    })
+}
+
+async fn start_deployment_pipeline(
+    db: &PgPool,
+    start: DeploymentPipelineStart<'_>,
+) -> Result<Uuid, ApiError> {
+    let deployment_id = start.deployment_id;
+    let outcome = crate::api::create_pipeline_with_vars_idempotent(
+        db,
+        start.project_id,
+        start.git_ref,
+        serde_json::json!({
+            "deployment_id": deployment_id.to_string(),
+            "environment_id": start.environment_id.to_string(),
+            "rollback_of_deployment_id": start.rollback_of_id.map(|id| id.to_string()),
+        }),
+        start.source,
+        Some(&format!("{}:{deployment_id}", start.source)),
+        start.git_root,
+    )
+    .await?;
+    let deployment_status = deployment_status_from_pipeline(outcome.pipeline.status.as_str());
+    sqlx::query(
+        "UPDATE deployments SET pipeline_id = $2, status = $3 \
+         WHERE id = $1 AND pipeline_id IS NULL AND status = 'pending' \
+           AND NOT EXISTS (SELECT 1 FROM deployment_approvals WHERE deployment_id = $1 AND decision = 'rejected')",
+    )
+    .bind(deployment_id)
+    .bind(outcome.pipeline.id)
+    .bind(deployment_status)
+    .execute(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(outcome.pipeline.id)
+}
+
+async fn fetch_rollback_source(
+    db: &PgPool,
+    deployment_id: Uuid,
+) -> Result<RollbackSource, ApiError> {
+    sqlx::query_as(
+        "SELECT d.environment_id, e.project_id, d.git_ref, d.status, e.protected, e.required_approvals \
+         FROM deployments d \
+         JOIN environments e ON e.id = d.environment_id \
+         WHERE d.id = $1 AND d.pipeline_id IS NOT NULL \
+           AND EXISTS (SELECT 1 FROM pipelines p WHERE p.id = d.pipeline_id AND p.status = 'success')",
+    )
+    .bind(deployment_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)
+}
+
+fn normalize_required_approvals(
+    protected: bool,
+    requested: Option<i32>,
+    current: Option<&EnvironmentPolicy>,
+) -> Result<i32, ApiError> {
+    if !protected {
+        if requested.is_some_and(|value| value != 0) {
+            return Err(ApiError::bad_request(
+                "required_approvals must be 0 for unprotected environments",
+            ));
+        }
+        return Ok(0);
+    }
+    let value = requested
+        .or_else(|| {
+            current
+                .filter(|policy| policy.protected)
+                .map(|policy| policy.required_approvals)
+        })
+        .unwrap_or(1);
+    if !(1..=10).contains(&value) {
+        return Err(ApiError::bad_request(
+            "required_approvals must be between 1 and 10",
+        ));
+    }
+    Ok(value)
+}
+
+fn deployment_status_from_pipeline(status: &str) -> &'static str {
+    match status {
+        "running" => "running",
+        "success" => "success",
+        "failed" | "canceled" => "failed",
+        _ => "pending",
+    }
+}
+
+fn normalize_approval_decision(raw: &str) -> Result<String, ApiError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "approved" | "approve" => Ok("approved".to_owned()),
+        "rejected" | "reject" => Ok("rejected".to_owned()),
+        _ => Err(ApiError::bad_request(
+            "approval decision must be approved or rejected",
+        )),
+    }
+}
+
+fn approval_actor(raw: Option<&str>, claims_user_id: Option<Uuid>) -> Result<String, ApiError> {
+    let actor = claims_user_id
+        .map(|id| id.to_string())
+        .or_else(|| {
+            raw.map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "trusted-network".to_owned());
+    if actor.len() > 128 {
+        return Err(ApiError::bad_request("approval actor is too long"));
+    }
+    Ok(actor)
+}
+
+fn trim_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Schedule {
+    id: Uuid,
+    project_id: Uuid,
+    cron: String,
+    git_ref: String,
+    enabled: bool,
+    next_fire_at: Option<DateTime<Utc>>,
+    last_fired_at: Option<DateTime<Utc>>,
+    last_fire_error: Option<String>,
+    created_at: DateTime<Utc>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ScheduleInput {
+    cron: String,
+    git_ref: String,
+    enabled: Option<bool>,
+}
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/schedules", tag = "schedules", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Schedule])))]
+async fn list_schedules(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<Schedule>> {
+    Ok(Json(sqlx::query_as("SELECT id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at FROM schedules WHERE project_id = $1 ORDER BY created_at DESC").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(post, path = "/api/v1/projects/{project_id}/schedules", tag = "schedules", request_body = ScheduleInput, params(("project_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400)))]
+async fn create_schedule(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(input): Json<ScheduleInput>,
+) -> ApiResult<Schedule> {
+    let cron = input.cron.trim();
+    let git_ref = input.git_ref.trim();
+    let enabled = input.enabled.unwrap_or(true);
+    if git_ref.is_empty() {
+        return Err(ApiError::bad_request("git_ref is required"));
+    }
+    let next_fire_at = schedule_next_fire_at(cron, enabled)?;
+    Ok(Json(sqlx::query_as("INSERT INTO schedules (id, project_id, cron, git_ref, enabled, next_fire_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(Uuid::new_v4()).bind(project_id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(patch, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", request_body = ScheduleInput, params(("schedule_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400), (status = 404)))]
+async fn update_schedule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<ScheduleInput>,
+) -> ApiResult<Schedule> {
+    let cron = input.cron.trim();
+    let git_ref = input.git_ref.trim();
+    let enabled = input.enabled.unwrap_or(true);
+    if git_ref.is_empty() {
+        return Err(ApiError::bad_request("git_ref is required"));
+    }
+    let next_fire_at = schedule_next_fire_at(cron, enabled)?;
+    Ok(Json(sqlx::query_as("UPDATE schedules SET cron = $2, git_ref = $3, enabled = $4, next_fire_at = $5, last_fire_error = NULL WHERE id = $1 RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
+}
+#[utoipa::path(delete, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", params(("schedule_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
+async fn delete_schedule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    let id: Uuid = sqlx::query_scalar("DELETE FROM schedules WHERE id = $1 RETURNING id")
+        .bind(id)
+        .fetch_optional(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Webhook {
+    id: Uuid,
+    project_id: Uuid,
+    url: String,
+    events: Vec<String>,
+    enabled: bool,
+    created_at: DateTime<Utc>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateWebhook {
+    url: String,
+    #[serde(default)]
+    events: Vec<String>,
+    enabled: Option<bool>,
+    /// Optional HMAC-SHA256 signing secret; deliveries carry
+    /// `X-Forge-Signature: sha256=<hex>`.
+    #[serde(default)]
+    secret: Option<String>,
+}
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/webhooks", tag = "webhooks", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Webhook])))]
+async fn list_webhooks(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<Webhook>> {
+    Ok(Json(sqlx::query_as("SELECT id, project_id, url, events, enabled, created_at FROM webhooks WHERE project_id = $1 ORDER BY created_at DESC").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(post, path = "/api/v1/projects/{project_id}/webhooks", tag = "webhooks", request_body = CreateWebhook, params(("project_id" = Uuid, Path)), responses((status = 200, body = Webhook), (status = 400)))]
+async fn create_webhook(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(input): Json<CreateWebhook>,
+) -> ApiResult<Webhook> {
+    if !input.url.starts_with("http://") && !input.url.starts_with("https://") {
+        return Err(ApiError::bad_request("webhook url must be http(s)"));
+    }
+    Ok(Json(sqlx::query_as("INSERT INTO webhooks (id, project_id, url, events, enabled, secret) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, project_id, url, events, enabled, created_at").bind(Uuid::new_v4()).bind(project_id).bind(input.url.trim()).bind(input.events).bind(input.enabled.unwrap_or(true)).bind(input.secret.as_deref().map(str::trim).filter(|s| !s.is_empty())).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(delete, path = "/api/v1/webhooks/{webhook_id}", tag = "webhooks", params(("webhook_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
+async fn delete_webhook(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    let id: Uuid = sqlx::query_scalar("DELETE FROM webhooks WHERE id = $1 RETURNING id")
+        .bind(id)
+        .fetch_optional(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct OutboxDeliveriesParams {
+    /// Maximum number of recent deliveries to return.
+    #[param(nullable = true, default = 50, minimum = 1, maximum = 200)]
+    limit: Option<i64>,
+    /// Number of matching deliveries to skip.
+    #[param(default = 0, minimum = 0)]
+    offset: Option<i64>,
+    /// Optional status filter: pending, retry_scheduled, delivered or failed.
+    #[param(nullable = true)]
+    status: Option<String>,
+    /// Optional channel filter: webhook, notification or sse.
+    #[param(nullable = true)]
+    channel: Option<String>,
+}
+
+struct NormalizedOutboxDeliveriesParams {
+    limit: u32,
+    offset: u32,
+    status: Option<String>,
+    channel: Option<String>,
+}
+
+impl OutboxDeliveriesParams {
+    fn normalize(self) -> Result<NormalizedOutboxDeliveriesParams, ApiError> {
+        let limit = self.limit.unwrap_or(50);
+        if !(1..=200).contains(&limit) {
+            return Err(ApiError::bad_request("limit must be between 1 and 200"));
+        }
+        let offset = self.offset.unwrap_or(0);
+        if !(0..=i64::from(u32::MAX)).contains(&offset) {
+            return Err(ApiError::bad_request(
+                "offset must be between 0 and 4294967295",
+            ));
+        }
+        let status = optional_allowlisted(
+            &self.status,
+            &["pending", "retry_scheduled", "delivered", "failed"],
+        )?;
+        let channel = optional_allowlisted(&self.channel, &["webhook", "notification", "sse"])?;
+        Ok(NormalizedOutboxDeliveriesParams {
+            limit: limit as u32,
+            offset: offset as u32,
+            status,
+            channel,
+        })
+    }
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct OutboxDelivery {
+    id: Uuid,
+    project_id: Option<Uuid>,
+    event_id: Uuid,
+    replay_of_id: Option<Uuid>,
+    generation: i32,
+    subscription_id: String,
+    channel: String,
+    destination: String,
+    event_type: String,
+    aggregate_type: String,
+    aggregate_id: Uuid,
+    status: String,
+    attempts: i32,
+    next_attempt_at: DateTime<Utc>,
+    delivered_at: Option<DateTime<Utc>>,
+    failed_at: Option<DateTime<Utc>>,
+    last_error: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct OutboxDeliveryPage {
+    items: Vec<OutboxDelivery>,
+    total: i64,
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+    offset: u32,
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct OutboxDeliveryAttempt {
+    id: i64,
+    message_id: Uuid,
+    attempt_number: i32,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    outcome: String,
+    http_status: Option<i32>,
+    error_message: Option<String>,
+    duration_ms: i32,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct OutboxDeliveryDetail {
+    delivery: OutboxDelivery,
+    attempts: Vec<OutboxDeliveryAttempt>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct RequeuedOutboxDelivery {
+    id: Uuid,
+    replay_of_id: Uuid,
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/outbox-deliveries", tag = "outbox", params(("project_id" = Uuid, Path), OutboxDeliveriesParams), responses((status = 200, body = [OutboxDelivery]), (status = 400)))]
+pub(crate) async fn list_outbox_deliveries(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<OutboxDeliveriesParams>,
+) -> ApiResult<Vec<OutboxDelivery>> {
+    let params = params.normalize()?;
+    Ok(Json(
+        project_outbox_deliveries(
+            pool(&state)?,
+            project_id,
+            params.limit,
+            params.offset,
+            params.status.as_deref(),
+            params.channel.as_deref(),
+        )
+        .await
+        .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/outbox-deliveries/page",
+    tag = "outbox",
+    params(("project_id" = Uuid, Path), OutboxDeliveriesParams),
+    responses((status = 200, body = OutboxDeliveryPage), (status = 400)),
+)]
+pub(crate) async fn list_outbox_delivery_page(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<OutboxDeliveriesParams>,
+) -> ApiResult<OutboxDeliveryPage> {
+    let db = pool(&state)?;
+    let params = params.normalize()?;
+    let total = project_outbox_delivery_count(
+        db,
+        project_id,
+        params.status.as_deref(),
+        params.channel.as_deref(),
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    let items = project_outbox_deliveries(
+        db,
+        project_id,
+        params.limit,
+        params.offset,
+        params.status.as_deref(),
+        params.channel.as_deref(),
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(OutboxDeliveryPage {
+        items,
+        total,
+        limit: params.limit,
+        offset: params.offset,
+    }))
+}
+
+#[utoipa::path(get, path = "/api/v1/outbox-deliveries/{delivery_id}", tag = "outbox", params(("delivery_id" = Uuid, Path)), responses((status = 200, body = OutboxDeliveryDetail), (status = 404)))]
+pub(crate) async fn get_outbox_delivery(
+    State(state): State<Arc<AppState>>,
+    Path(delivery_id): Path<Uuid>,
+) -> ApiResult<OutboxDeliveryDetail> {
+    let db = pool(&state)?;
+    let delivery = outbox_delivery_by_id(db, delivery_id)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    let attempts = sqlx::query_as::<_, OutboxDeliveryAttempt>(
+        "SELECT id, message_id, attempt_number, started_at, finished_at, outcome, \
+            http_status, error_message, duration_ms, created_at \
+         FROM outbox_delivery_attempts \
+         WHERE message_id = $1 \
+         ORDER BY attempt_number DESC",
+    )
+    .bind(delivery_id)
+    .fetch_all(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(OutboxDeliveryDetail { delivery, attempts }))
+}
+
+#[utoipa::path(post, path = "/api/v1/outbox-deliveries/{delivery_id}/requeue", tag = "outbox", params(("delivery_id" = Uuid, Path)), responses((status = 200, body = RequeuedOutboxDelivery), (status = 400), (status = 404)))]
+pub(crate) async fn requeue_outbox_delivery(
+    State(state): State<Arc<AppState>>,
+    Path(delivery_id): Path<Uuid>,
+) -> ApiResult<RequeuedOutboxDelivery> {
+    let db = pool(&state)?;
+    match crate::outbox::requeue_failed_delivery(db, delivery_id)
+        .await
+        .map_err(ApiError::internal)?
+    {
+        Ok(id) => {
+            audit(db, "outbox.requeue", "outbox_delivery", id, None).await?;
+            Ok(Json(RequeuedOutboxDelivery {
+                id,
+                replay_of_id: delivery_id,
+            }))
+        }
+        Err(crate::outbox::RequeueDeliveryError::NotFound) => Err(ApiError::not_found()),
+        Err(crate::outbox::RequeueDeliveryError::NotFailed) => Err(ApiError::bad_request(
+            "only failed deliveries can be requeued",
+        )),
+    }
+}
+
+fn optional_allowlisted(
+    value: &Option<String>,
+    allowed: &[&str],
+) -> Result<Option<String>, ApiError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim().to_ascii_lowercase();
+    if allowed.contains(&value.as_str()) {
+        Ok(Some(value))
+    } else {
+        Err(ApiError::bad_request("unsupported filter value"))
+    }
+}
+
+async fn project_outbox_deliveries(
+    pool: &PgPool,
+    project_id: Uuid,
+    limit: u32,
+    offset: u32,
+    status: Option<&str>,
+    channel: Option<&str>,
+) -> Result<Vec<OutboxDelivery>, sqlx::Error> {
+    sqlx::query_as::<_, OutboxDelivery>(
+        "SELECT * FROM ( \
+            SELECT m.id, m.project_id, m.event_id, m.replay_of_id, m.generation, \
+                m.subscription_id, m.channel, m.destination, e.event_type, e.aggregate_type, e.aggregate_id, \
+                CASE \
+                    WHEN m.delivered_at IS NOT NULL THEN 'delivered' \
+                    WHEN m.failed_at IS NOT NULL THEN 'failed' \
+                    WHEN m.attempts > 0 THEN 'retry_scheduled' \
+                    ELSE 'pending' \
+                END AS status, \
+                m.attempts, m.next_attempt_at, m.delivered_at, m.failed_at, m.last_error, m.created_at \
+             FROM outbox_messages m \
+             JOIN domain_events e ON e.id = m.event_id \
+             WHERE m.project_id = $1 AND ($2::text IS NULL OR m.channel = $2) \
+         ) deliveries \
+         WHERE $3::text IS NULL OR status = $3 \
+         ORDER BY created_at DESC, id DESC LIMIT $4 OFFSET $5",
+    )
+    .bind(project_id)
+    .bind(channel)
+    .bind(status)
+    .bind(i64::from(limit))
+    .bind(i64::from(offset))
+    .fetch_all(pool)
+    .await
+}
+
+async fn project_outbox_delivery_count(
+    pool: &PgPool,
+    project_id: Uuid,
+    status: Option<&str>,
+    channel: Option<&str>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM ( \
+            SELECT CASE \
+                WHEN delivered_at IS NOT NULL THEN 'delivered' \
+                WHEN failed_at IS NOT NULL THEN 'failed' \
+                WHEN attempts > 0 THEN 'retry_scheduled' \
+                ELSE 'pending' \
+            END AS status \
+            FROM outbox_messages \
+            WHERE project_id = $1 AND ($2::text IS NULL OR channel = $2) \
+         ) deliveries \
+         WHERE $3::text IS NULL OR status = $3",
+    )
+    .bind(project_id)
+    .bind(channel)
+    .bind(status)
+    .fetch_one(pool)
+    .await
+}
+
+async fn outbox_delivery_by_id(
+    pool: &PgPool,
+    delivery_id: Uuid,
+) -> Result<Option<OutboxDelivery>, sqlx::Error> {
+    sqlx::query_as::<_, OutboxDelivery>(
+        "SELECT m.id, m.project_id, m.event_id, m.replay_of_id, m.generation, \
+            m.subscription_id, m.channel, m.destination, e.event_type, e.aggregate_type, e.aggregate_id, \
+            CASE \
+                WHEN m.delivered_at IS NOT NULL THEN 'delivered' \
+                WHEN m.failed_at IS NOT NULL THEN 'failed' \
+                WHEN m.attempts > 0 THEN 'retry_scheduled' \
+                ELSE 'pending' \
+            END AS status, \
+            m.attempts, m.next_attempt_at, m.delivered_at, m.failed_at, m.last_error, m.created_at \
+         FROM outbox_messages m \
+         JOIN domain_events e ON e.id = m.event_id \
+         WHERE m.id = $1",
+    )
+    .bind(delivery_id)
+    .fetch_optional(pool)
+    .await
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Notification {
+    id: Uuid,
+    project_id: Uuid,
+    channel: String,
+    target: String,
+    enabled: bool,
+    created_at: DateTime<Utc>,
+    aggregation_window_secs: i32,
+    quiet_start_min: i32,
+    quiet_end_min: i32,
+    quiet_action: String,
+    quiet_bypass_statuses: Vec<String>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct NotificationInput {
+    /// One of: in_app, sse, slack_webhook, generic_webhook, email.
+    channel: String,
+    /// Local target name or an https:// URL for external channels.
+    target: String,
+    enabled: Option<bool>,
+    /// Collapse repeats of the same status within N seconds (0 = off, max 3600).
+    aggregation_window_secs: Option<i32>,
+    /// Quiet window start (minutes since midnight, -1 = disabled).
+    quiet_start_min: Option<i32>,
+    /// Quiet window end (minutes since midnight, -1 = disabled).
+    quiet_end_min: Option<i32>,
+    /// Quiet window behaviour: 'hold' (default) or 'drop'.
+    quiet_action: Option<String>,
+    /// Statuses that bypass quiet hours (default ['failed']).
+    quiet_bypass_statuses: Option<Vec<String>>,
+}
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub(crate) struct NotificationEventsParams {
+    /// Maximum number of recent notification events to return.
+    limit: Option<i64>,
+}
+impl NotificationEventsParams {
+    fn bounded_limit(&self) -> Result<i64, ApiError> {
+        let limit = self.limit.unwrap_or(50);
+        if !(1..=200).contains(&limit) {
+            return Err(ApiError::bad_request("limit must be between 1 and 200"));
+        }
+        Ok(limit)
+    }
+}
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct NotificationEvent {
+    id: Uuid,
+    event_id: Uuid,
+    subscription_id: String,
+    channel: String,
+    target: String,
+    event_type: String,
+    pipeline_id: Uuid,
+    status: String,
+    message: String,
+    attempts: i32,
+    delivered_at: Option<DateTime<Utc>>,
+    last_error: Option<String>,
+    created_at: DateTime<Utc>,
+}
+// --- Notification rules / preferences / templates (stage 4 item 1) ---
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct NotificationRule {
+    id: Uuid,
+    project_id: Uuid,
+    event_types: Vec<String>,
+    statuses: Vec<String>,
+    channels: Vec<String>,
+    enabled: bool,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct NotificationRuleInput {
+    /// Event types to match; empty = all events.
+    event_types: Vec<String>,
+    /// Pipeline statuses to match; empty = all statuses.
+    statuses: Vec<String>,
+    /// Channel kinds; empty = all channels.
+    channels: Vec<String>,
+    enabled: Option<bool>,
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct NotificationPreference {
+    id: Uuid,
+    user_id: Uuid,
+    project_id: Uuid,
+    muted_channels: Vec<String>,
+    verbosity: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct NotificationPreferenceInput {
+    muted_channels: Vec<String>,
+    /// 'all' or 'failures_only'.
+    verbosity: Option<String>,
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct NotificationTemplate {
+    id: Uuid,
+    project_id: Uuid,
+    channel: String,
+    subject_template: String,
+    body_template: String,
+    enabled: bool,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct NotificationTemplateInput {
+    /// in_app | sse | slack_webhook | generic_webhook | email
+    channel: String,
+    /// {{event}}/{{pipeline_id}}/{{project_id}}/{{status}} placeholders.
+    subject_template: Option<String>,
+    body_template: String,
+    enabled: Option<bool>,
+}
+
+fn validate_channel_kind(channel: &str) -> Result<(), ApiError> {
+    const KNOWN: [&str; 5] = [
+        crate::outbox::NOTIFICATION_CHANNEL_IN_APP,
+        crate::outbox::NOTIFICATION_CHANNEL_SSE,
+        crate::outbox::NOTIFICATION_CHANNEL_SLACK_WEBHOOK,
+        crate::outbox::NOTIFICATION_CHANNEL_GENERIC_WEBHOOK,
+        crate::outbox::NOTIFICATION_CHANNEL_EMAIL,
+    ];
+    if KNOWN.iter().any(|k| k.eq_ignore_ascii_case(channel)) {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "unknown notification channel kind: {channel}"
+        )))
+    }
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct DestinationAlert {
+    id: Uuid,
+    project_id: Uuid,
+    channel: String,
+    destination: String,
+    last_error: String,
+    state: String,
+    opened_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/destination-alerts", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [DestinationAlert])))]
+async fn list_destination_alerts(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<DestinationAlert>> {
+    Ok(Json(
+        sqlx::query_as("SELECT id, project_id, channel, destination, last_error, state, opened_at, updated_at FROM notification_destination_alerts WHERE project_id = $1 AND state <> 'resolved' ORDER BY updated_at DESC")
+            .bind(project_id)
+            .fetch_all(pool(&state)?)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(post, path = "/api/v1/destination-alerts/{alert_id}/acknowledge", tag = "notifications", params(("alert_id" = Uuid, Path)), responses((status = 200, body = DestinationAlert), (status = 404)))]
+async fn acknowledge_destination_alert(
+    State(state): State<Arc<AppState>>,
+    Path(alert_id): Path<Uuid>,
+) -> ApiResult<DestinationAlert> {
+    let row: DestinationAlert = sqlx::query_as(
+        "UPDATE notification_destination_alerts SET state = 'acknowledged', updated_at = now() \
+         WHERE id = $1 AND state = 'open' \
+         RETURNING id, project_id, channel, destination, last_error, state, opened_at, updated_at",
+    )
+    .bind(alert_id)
+    .fetch_one(pool(&state)?)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::not_found(),
+        other => ApiError::internal(other),
+    })?;
+    Ok(Json(row))
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notification-rules", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [NotificationRule])))]
+async fn list_notification_rules(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<NotificationRule>> {
+    Ok(Json(
+        sqlx::query_as("SELECT id, project_id, event_types, statuses, channels, enabled, created_at, updated_at FROM notification_rules WHERE project_id = $1 ORDER BY created_at")
+            .bind(project_id)
+            .fetch_all(pool(&state)?)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(put, path = "/api/v1/projects/{project_id}/notification-rules", tag = "notifications", request_body = [NotificationRuleInput], params(("project_id" = Uuid, Path)), responses((status = 200, body = [NotificationRule]), (status = 400)))]
+async fn replace_notification_rules(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(inputs): Json<Vec<NotificationRuleInput>>,
+) -> ApiResult<Vec<NotificationRule>> {
+    if inputs.len() > 100 {
+        return Err(ApiError::bad_request("too many rules (max 100)"));
+    }
+    let db = pool(&state)?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    sqlx::query("DELETE FROM notification_rules WHERE project_id = $1")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    for input in inputs {
+        for channel in &input.channels {
+            validate_channel_kind(channel)?;
+        }
+        for verbosity in input.statuses.iter().chain(input.event_types.iter()) {
+            if verbosity.trim().is_empty() {
+                return Err(ApiError::bad_request(
+                    "rule event types and statuses must be non-empty strings",
+                ));
+            }
+        }
+        sqlx::query("INSERT INTO notification_rules (id, project_id, event_types, statuses, channels, enabled) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(Uuid::new_v4())
+            .bind(project_id)
+            .bind(&input.event_types)
+            .bind(&input.statuses)
+            .bind(&input.channels)
+            .bind(input.enabled.unwrap_or(true))
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    list_notification_rules(State(state), Path(project_id)).await
+}
+
+#[utoipa::path(put, path = "/api/v1/projects/{project_id}/notification-preferences", tag = "notifications", request_body = NotificationPreferenceInput, params(("project_id" = Uuid, Path)), responses((status = 200, body = NotificationPreference), (status = 400)))]
+async fn put_notification_preferences(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    claims: axum::Extension<crate::auth::AccessClaims>,
+    Json(input): Json<NotificationPreferenceInput>,
+) -> ApiResult<NotificationPreference> {
+    for channel in &input.muted_channels {
+        validate_channel_kind(channel)?;
+    }
+    let verbosity = input.verbosity.unwrap_or_else(|| "all".to_string());
+    if verbosity != "all" && verbosity != "failures_only" {
+        return Err(ApiError::bad_request(
+            "verbosity must be 'all' or 'failures_only'",
+        ));
+    }
+    let db = pool(&state)?;
+    let row: NotificationPreference = sqlx::query_as(
+        "INSERT INTO notification_preferences (id, user_id, project_id, muted_channels, verbosity) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (user_id, project_id) DO UPDATE SET \
+           muted_channels = EXCLUDED.muted_channels, verbosity = EXCLUDED.verbosity, \
+           updated_at = now() \
+         RETURNING id, user_id, project_id, muted_channels, verbosity, created_at, updated_at",
+    )
+    .bind(Uuid::new_v4())
+    .bind(claims.sub)
+    .bind(project_id)
+    .bind(&input.muted_channels)
+    .bind(&verbosity)
+    .fetch_one(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(row))
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notification-preferences", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = Option<NotificationPreference>)))]
+async fn get_notification_preferences(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    claims: axum::Extension<crate::auth::AccessClaims>,
+) -> ApiResult<Option<NotificationPreference>> {
+    let row = sqlx::query_as::<_, NotificationPreference>(
+        "SELECT id, user_id, project_id, muted_channels, verbosity, created_at, updated_at \
+         FROM notification_preferences WHERE user_id = $1 AND project_id = $2",
+    )
+    .bind(claims.sub)
+    .bind(project_id)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(row))
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notification-templates", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [NotificationTemplate])))]
+async fn list_notification_templates(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<NotificationTemplate>> {
+    Ok(Json(
+        sqlx::query_as("SELECT id, project_id, channel, subject_template, body_template, enabled, created_at, updated_at FROM notification_templates WHERE project_id = $1 ORDER BY channel, created_at")
+            .bind(project_id)
+            .fetch_all(pool(&state)?)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(put, path = "/api/v1/projects/{project_id}/notification-templates", tag = "notifications", request_body = [NotificationTemplateInput], params(("project_id" = Uuid, Path)), responses((status = 200, body = [NotificationTemplate]), (status = 400)))]
+async fn replace_notification_templates(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(inputs): Json<Vec<NotificationTemplateInput>>,
+) -> ApiResult<Vec<NotificationTemplate>> {
+    if inputs.len() > 20 {
+        return Err(ApiError::bad_request(
+            "too many templates (max 20, one per channel is used)",
+        ));
+    }
+    let db = pool(&state)?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    sqlx::query("DELETE FROM notification_templates WHERE project_id = $1")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    for input in inputs {
+        let channel = input.channel.trim().to_ascii_lowercase();
+        validate_channel_kind(&channel)?;
+        if input.body_template.trim().is_empty() {
+            return Err(ApiError::bad_request("template body_template is required"));
+        }
+        sqlx::query("INSERT INTO notification_templates (id, project_id, channel, subject_template, body_template, enabled) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(Uuid::new_v4())
+            .bind(project_id)
+            .bind(&channel)
+            .bind(input.subject_template.unwrap_or_default())
+            .bind(input.body_template.trim())
+            .bind(input.enabled.unwrap_or(true))
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    list_notification_templates(State(state), Path(project_id)).await
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notifications", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Notification])))]
+async fn list_notifications(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<Notification>> {
+    Ok(Json(sqlx::query_as("SELECT id, project_id, channel, target, enabled, created_at, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses FROM notification_configs WHERE project_id = $1 ORDER BY channel").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(put, path = "/api/v1/projects/{project_id}/notifications", tag = "notifications", request_body = [NotificationInput], params(("project_id" = Uuid, Path)), responses((status = 200, body = [Notification]), (status = 400)))]
+async fn replace_notifications(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(inputs): Json<Vec<NotificationInput>>,
+) -> ApiResult<Vec<Notification>> {
+    struct PreparedNotification {
+        channel: String,
+        target: String,
+        enabled: bool,
+        aggregation_window_secs: i32,
+        quiet_start_min: i32,
+        quiet_end_min: i32,
+        quiet_action: String,
+        quiet_bypass_statuses: Vec<String>,
+    }
+
+    let prepared = inputs
+        .into_iter()
+        .map(|input| {
+            let channel = input.channel.trim().to_ascii_lowercase();
+            let target = input.target.trim().to_string();
+            if channel.is_empty() || target.is_empty() {
+                return Err(ApiError::bad_request(
+                    "notification channel and target are required",
+                ));
+            }
+            // Fail closed on unknown channels (docs/AUTOMATION_ARCHITECTURE.md §9):
+            // in_app/sse are local, slack_webhook/generic_webhook use the shared
+            // HTTP delivery subsystem.
+            if !matches!(
+                channel.as_str(),
+                "in_app" | "sse" | "slack_webhook" | "generic_webhook" | "email"
+            ) {
+                return Err(ApiError::bad_request(
+                    "unsupported notification channel: must be one of in_app, sse, slack_webhook, generic_webhook, email",
+                ));
+            }
+            if (channel == "slack_webhook" || channel == "generic_webhook")
+                && !target.starts_with("https://")
+            {
+                return Err(ApiError::bad_request(
+                    "external notification targets must be https URLs",
+                ));
+            }
+            if channel == "email" && !target.contains('@') {
+                return Err(ApiError::bad_request(
+                    "email notification target must be an email address",
+                ));
+            }
+            let quiet_action = input.quiet_action.unwrap_or_else(|| "hold".to_string());
+            if quiet_action != "hold" && quiet_action != "drop" {
+                return Err(ApiError::bad_request(
+                    "quiet_action must be 'hold' or 'drop'",
+                ));
+            }
+            let quiet_start = input.quiet_start_min.unwrap_or(-1);
+            let quiet_end = input.quiet_end_min.unwrap_or(-1);
+            if (quiet_start == -1) != (quiet_end == -1) {
+                return Err(ApiError::bad_request(
+                    "quiet_start_min and quiet_end_min must be configured together",
+                ));
+            }
+            if !(-1..=1439).contains(&quiet_start) || !(-1..=1439).contains(&quiet_end) {
+                return Err(ApiError::bad_request(
+                    "quiet_start_min and quiet_end_min must be -1 or between 0 and 1439",
+                ));
+            }
+            let window = input.aggregation_window_secs.unwrap_or(0);
+            if !(0..=3600).contains(&window) {
+                return Err(ApiError::bad_request(
+                    "aggregation_window_secs must be between 0 and 3600",
+                ));
+            }
+            Ok(PreparedNotification {
+                channel,
+                target,
+                enabled: input.enabled.unwrap_or(true),
+                aggregation_window_secs: window,
+                quiet_start_min: quiet_start,
+                quiet_end_min: quiet_end,
+                quiet_action,
+                quiet_bypass_statuses: input
+                    .quiet_bypass_statuses
+                    .unwrap_or_else(|| vec!["failed".to_string()]),
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    let db = pool(&state)?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    sqlx::query("DELETE FROM notification_configs WHERE project_id = $1")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    for input in prepared {
+        sqlx::query("INSERT INTO notification_configs (id, project_id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
+            .bind(Uuid::new_v4())
+            .bind(project_id)
+            .bind(&input.channel)
+            .bind(&input.target)
+            .bind(input.enabled)
+            .bind(input.aggregation_window_secs)
+            .bind(input.quiet_start_min)
+            .bind(input.quiet_end_min)
+            .bind(&input.quiet_action)
+            .bind(&input.quiet_bypass_statuses)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    list_notifications(State(state), Path(project_id)).await
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notification-events", tag = "notifications", params(("project_id" = Uuid, Path), NotificationEventsParams), responses((status = 200, body = [NotificationEvent]), (status = 400)))]
+pub(crate) async fn list_notification_events(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<NotificationEventsParams>,
+) -> ApiResult<Vec<NotificationEvent>> {
+    let limit = params.bounded_limit()?;
+    Ok(Json(
+        recent_notification_events(pool(&state)?, project_id, limit)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notifications/stream", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, description = "text/event-stream of project notification events")))]
+pub(crate) async fn notification_stream(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> Result<
+    axum::response::Sse<
+        tokio_stream::wrappers::UnboundedReceiverStream<
+            Result<axum::response::sse::Event, std::convert::Infallible>,
+        >,
+    >,
+    ApiError,
+> {
+    let pool = pool(&state)?.clone();
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut after_created_at = Utc::now();
+        let mut after_id = Uuid::nil();
+        loop {
+            if sender.is_closed() {
+                return;
+            }
+            let rows = notification_events_after(&pool, project_id, after_created_at, after_id, 50)
+                .await
+                .unwrap_or_default();
+            for event in rows {
+                after_created_at = event.created_at;
+                after_id = event.id;
+                let data = serde_json::to_string(&event).unwrap_or_default();
+                if sender
+                    .send(Ok(axum::response::sse::Event::default()
+                        .event("notification")
+                        .id(event.id.to_string())
+                        .data(data)))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        }
+    });
+    Ok(axum::response::Sse::new(
+        tokio_stream::wrappers::UnboundedReceiverStream::new(receiver),
+    ))
+}
+
+async fn recent_notification_events(
+    pool: &PgPool,
+    project_id: Uuid,
+    limit: i64,
+) -> Result<Vec<NotificationEvent>, sqlx::Error> {
+    sqlx::query_as::<_, NotificationEvent>(
+        "SELECT id, event_id, subscription_id, \
+            COALESCE(payload->>'channel', '') AS channel, \
+            COALESCE(payload->>'target', '') AS target, \
+            COALESCE(payload->>'event', '') AS event_type, \
+            (payload->>'pipeline_id')::uuid AS pipeline_id, \
+            COALESCE(payload->>'status', '') AS status, \
+            COALESCE(payload->>'message', '') AS message, \
+            attempts, delivered_at, last_error, created_at \
+         FROM outbox_messages \
+         WHERE channel = 'notification' AND destination = $1 \
+         ORDER BY created_at DESC, id DESC LIMIT $2",
+    )
+    .bind(crate::outbox::notification_destination(project_id))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+async fn notification_events_after(
+    pool: &PgPool,
+    project_id: Uuid,
+    after_created_at: DateTime<Utc>,
+    after_id: Uuid,
+    limit: i64,
+) -> Result<Vec<NotificationEvent>, sqlx::Error> {
+    sqlx::query_as::<_, NotificationEvent>(
+        "SELECT id, event_id, subscription_id, \
+            COALESCE(payload->>'channel', '') AS channel, \
+            COALESCE(payload->>'target', '') AS target, \
+            COALESCE(payload->>'event', '') AS event_type, \
+            (payload->>'pipeline_id')::uuid AS pipeline_id, \
+            COALESCE(payload->>'status', '') AS status, \
+            COALESCE(payload->>'message', '') AS message, \
+            attempts, delivered_at, last_error, created_at \
+         FROM outbox_messages \
+         WHERE channel = 'notification' AND destination = $1 \
+           AND (created_at, id) > ($2, $3) \
+         ORDER BY created_at ASC, id ASC LIMIT $4",
+    )
+    .bind(crate::outbox::notification_destination(project_id))
+    .bind(after_created_at)
+    .bind(after_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Report {
+    total_pipelines: i64,
+    successful_pipelines: i64,
+    failed_pipelines: i64,
+    success_rate: f64,
+    average_duration_seconds: f64,
+}
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/reports/summary", tag = "reports", params(("project_id" = Uuid, Path)), responses((status = 200, body = Report)))]
+async fn project_report(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Report> {
+    Ok(Json(sqlx::query_as("SELECT count(*)::bigint AS total_pipelines, count(*) FILTER (WHERE status = 'success')::bigint AS successful_pipelines, count(*) FILTER (WHERE status = 'failed')::bigint AS failed_pipelines, COALESCE(count(*) FILTER (WHERE status = 'success')::float8 / NULLIF(count(*) FILTER (WHERE status IN ('success', 'failed', 'canceled')), 0), 0)::float8 AS success_rate, COALESCE(avg(EXTRACT(EPOCH FROM (finished_at - started_at))) FILTER (WHERE finished_at IS NOT NULL AND started_at IS NOT NULL), 0)::float8 AS average_duration_seconds FROM pipelines WHERE project_id = $1").bind(project_id).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct AuditEvent {
+    id: i64,
+    action: String,
+    resource_type: String,
+    resource_id: Option<Uuid>,
+    actor: Option<String>,
+    created_at: DateTime<Utc>,
+}
+#[utoipa::path(get, path = "/api/v1/audit-log", tag = "audit", responses((status = 200, body = [AuditEvent])))]
+async fn list_audit_log(State(state): State<Arc<AppState>>) -> ApiResult<Vec<AuditEvent>> {
+    Ok(Json(sqlx::query_as("SELECT id, action, resource_type, resource_id, actor, created_at FROM audit_log ORDER BY created_at DESC LIMIT 200").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct AuditLogParams {
+    /// Maximum number of events to return.
+    #[param(nullable = true, default = 20, minimum = 1, maximum = 200)]
+    limit: Option<i64>,
+    /// Number of matching events to skip.
+    #[param(default = 0, minimum = 0, maximum = 2147483647)]
+    offset: Option<i64>,
+    /// Optional exact action filter.
+    #[param(nullable = true, max_length = 128)]
+    action: Option<String>,
+    /// Optional case-insensitive literal search across raw event fields.
+    #[param(nullable = true, max_length = 128)]
+    q: Option<String>,
+}
+
+struct NormalizedAuditLogParams {
+    limit: u32,
+    offset: u32,
+    action: Option<String>,
+    search_pattern: Option<String>,
+}
+
+impl AuditLogParams {
+    fn normalize(self) -> Result<NormalizedAuditLogParams, ApiError> {
+        let limit = self.limit.unwrap_or(20);
+        if !(1..=200).contains(&limit) {
+            return Err(ApiError::bad_request("limit must be between 1 and 200"));
+        }
+        let offset = self.offset.unwrap_or(0);
+        if !(0..=i64::from(i32::MAX)).contains(&offset) {
+            return Err(ApiError::bad_request(
+                "offset must be between 0 and 2147483647",
+            ));
+        }
+        let action = trim_optional(self.action);
+        if action
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > 128)
+        {
+            return Err(ApiError::bad_request(
+                "action must not exceed 128 characters",
+            ));
+        }
+        let query = trim_optional(self.q);
+        if query
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > 128)
+        {
+            return Err(ApiError::bad_request("q must not exceed 128 characters"));
+        }
+        let search_pattern = query.map(|value| format!("%{}%", escape_audit_like(&value)));
+
+        Ok(NormalizedAuditLogParams {
+            limit: limit as u32,
+            offset: offset as u32,
+            action,
+            search_pattern,
+        })
+    }
+}
+
+fn escape_audit_like(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AuditLogPage {
+    items: Vec<AuditEvent>,
+    total: i64,
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+    #[schema(minimum = 0, maximum = 2147483647)]
+    offset: i64,
+    actions: Vec<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/audit-log/page",
+    tag = "audit",
+    params(AuditLogParams),
+    responses((status = 200, body = AuditLogPage), (status = 400)),
+)]
+pub(crate) async fn list_audit_log_page(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<AuditLogParams>,
+) -> ApiResult<AuditLogPage> {
+    let db = pool(&state)?;
+    let params = params.normalize()?;
+    let action = params.action.as_deref();
+    let search_pattern = params.search_pattern.as_deref();
+    let (items, total, actions) = tokio::try_join!(
+        audit_log_items(db, params.limit, params.offset, action, search_pattern,),
+        audit_log_count(db, action, search_pattern),
+        audit_log_actions(db),
+    )
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(AuditLogPage {
+        items,
+        total,
+        limit: params.limit,
+        offset: i64::from(params.offset),
+        actions,
+    }))
+}
+
+async fn audit_log_items(
+    db: &PgPool,
+    limit: u32,
+    offset: u32,
+    action: Option<&str>,
+    search_pattern: Option<&str>,
+) -> Result<Vec<AuditEvent>, sqlx::Error> {
+    sqlx::query_as::<_, AuditEvent>(
+        "SELECT id, action, resource_type, resource_id, actor, created_at \
+         FROM audit_log \
+         WHERE ($1::text IS NULL OR action = $1) \
+           AND ($2::text IS NULL \
+             OR action ILIKE $2 ESCAPE '\\' \
+             OR resource_type ILIKE $2 ESCAPE '\\' \
+             OR COALESCE(actor, '') ILIKE $2 ESCAPE '\\' \
+             OR COALESCE(resource_id::text, '') ILIKE $2 ESCAPE '\\') \
+         ORDER BY created_at DESC, id DESC \
+         LIMIT $3 OFFSET $4",
+    )
+    .bind(action)
+    .bind(search_pattern)
+    .bind(i64::from(limit))
+    .bind(i64::from(offset))
+    .fetch_all(db)
+    .await
+}
+
+async fn audit_log_count(
+    db: &PgPool,
+    action: Option<&str>,
+    search_pattern: Option<&str>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM audit_log \
+         WHERE ($1::text IS NULL OR action = $1) \
+           AND ($2::text IS NULL \
+             OR action ILIKE $2 ESCAPE '\\' \
+             OR resource_type ILIKE $2 ESCAPE '\\' \
+             OR COALESCE(actor, '') ILIKE $2 ESCAPE '\\' \
+             OR COALESCE(resource_id::text, '') ILIKE $2 ESCAPE '\\')",
+    )
+    .bind(action)
+    .bind(search_pattern)
+    .fetch_one(db)
+    .await
+}
+
+async fn audit_log_actions(db: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT DISTINCT action FROM audit_log ORDER BY action")
+        .fetch_all(db)
+        .await
+}
+
+pub(crate) async fn audit(
+    db: &PgPool,
+    action: &str,
+    resource_type: &str,
+    resource_id: Uuid,
+    actor: Option<&str>,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO audit_log (action, resource_type, resource_id, actor) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(action)
+    .bind(resource_type)
+    .bind(resource_id)
+    .bind(actor)
+    .execute(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct User {
+    id: Uuid,
+    username: String,
+    role: String,
+    enabled: bool,
+    created_at: DateTime<Utc>,
+}
+#[derive(Debug, Deserialize)]
+struct CentralDirectoryUser {
+    id: String,
+    email: String,
+    status: String,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct UserInput {
+    username: String,
+    role: String,
+    enabled: Option<bool>,
+    /// Optional argon2id password; enables interactive login (AUTHZ_CONTRACT).
+    password: Option<String>,
+}
+#[utoipa::path(get, path = "/api/v1/users", tag = "users", responses((status = 200, body = [User])))]
+async fn list_users(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResult<Vec<User>> {
+    if let Ok(jwks) = std::env::var("CICD_AUTH__CENTRAL_JWKS_URI") {
+        let token = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .ok_or_else(ApiError::unauthorized)?;
+        let mut url = reqwest::Url::parse(&jwks)
+            .map_err(|_| ApiError::service_unavailable("Central Auth URL is invalid"))?;
+        url.set_path("/auth/users");
+        let client = reqwest::Client::builder()
+            .timeout(StdDuration::from_secs(5))
+            .build()
+            .map_err(|_| ApiError::service_unavailable("Central Auth is unavailable"))?;
+        let mut users = Vec::new();
+        for page in 0..100 {
+            let response = client
+                .get(url.clone())
+                .query(&[("offset", page * 100)])
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(|_| ApiError::service_unavailable("Central Auth is unavailable"))?;
+            if !response.status().is_success() {
+                return Err(ApiError::service_unavailable(
+                    "Central Auth directory is unavailable",
+                ));
+            }
+            let batch = response
+                .json::<Vec<CentralDirectoryUser>>()
+                .await
+                .map_err(|_| ApiError::service_unavailable("Central Auth directory is invalid"))?;
+            let count = batch.len();
+            for entry in batch {
+                if entry.status == "disabled" {
+                    continue;
+                }
+                let id = Uuid::new_v4();
+                let mut user: User = sqlx::query_as(
+                    "INSERT INTO users (id, username, role, enabled, central_sub) \
+                     VALUES ($1, $2, 'developer', true, $3) \
+                     ON CONFLICT (central_sub) WHERE central_sub IS NOT NULL DO UPDATE SET enabled = true \
+                     RETURNING id, username, role, enabled, created_at"
+                ).bind(id).bind(format!("central-{}", id.simple())).bind(&entry.id)
+                    .fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+                user.username = entry.email;
+                users.push(user);
+            }
+            if count < 100 {
+                return Ok(Json(users));
+            }
+        }
+        return Err(ApiError::service_unavailable(
+            "Central Auth directory is too large",
+        ));
+    }
+    Ok(Json(
+        sqlx::query_as(
+            "SELECT id, username, role, enabled, created_at FROM users ORDER BY username",
+        )
+        .fetch_all(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?,
+    ))
+}
+#[utoipa::path(post, path = "/api/v1/users", tag = "users", request_body = UserInput, responses((status = 200, body = User), (status = 400)))]
+async fn create_user(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<UserInput>,
+) -> ApiResult<User> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
+    if input.username.trim().is_empty() || !valid_role(&input.role) {
+        return Err(ApiError::bad_request(
+            "username and role (admin, maintainer, developer, viewer) are required",
+        ));
+    }
+    let pool = pool(&state)?;
+    let user: User = sqlx::query_as("INSERT INTO users (id, username, role, enabled) VALUES ($1, $2, $3, $4) RETURNING id, username, role, enabled, created_at").bind(Uuid::new_v4()).bind(input.username.trim()).bind(input.role).bind(input.enabled.unwrap_or(true)).fetch_one(pool).await.map_err(ApiError::internal)?;
+    if let Some(password) = input.password.as_deref().filter(|p| !p.is_empty()) {
+        let hash = crate::auth::hash_password(password)
+            .map_err(|_| ApiError::bad_request("password hashing failed"))?;
+        sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+            .bind(user.id)
+            .bind(hash)
+            .execute(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    Ok(Json(user))
+}
+#[utoipa::path(patch, path = "/api/v1/users/{user_id}", tag = "users", request_body = UserInput, params(("user_id" = Uuid, Path)), responses((status = 200, body = User), (status = 400), (status = 404)))]
+async fn update_user(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<UserInput>,
+) -> ApiResult<User> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
+    if input.username.trim().is_empty() || !valid_role(&input.role) {
+        return Err(ApiError::bad_request("username and role are required"));
+    }
+    let pool = pool(&state)?;
+    if let Some(password) = input.password.as_deref().filter(|p| !p.is_empty()) {
+        let hash = crate::auth::hash_password(password)
+            .map_err(|_| ApiError::bad_request("password hashing failed"))?;
+        sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = now()")
+            .bind(id)
+            .bind(hash)
+            .execute(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    Ok(Json(sqlx::query_as("UPDATE users SET username = $2, role = $3, enabled = $4 WHERE id = $1 RETURNING id, username, role, enabled, created_at").bind(id).bind(input.username.trim()).bind(input.role).bind(input.enabled.unwrap_or(true)).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct ApiToken {
+    id: Uuid,
+    name: String,
+    token_hint: String,
+    user_id: Option<Uuid>,
+    #[sqlx(default)]
+    principal_type: String,
+    #[sqlx(default)]
+    service_account_id: Option<Uuid>,
+    project_id: Option<Uuid>,
+    scopes: Vec<String>,
+    expires_at: Option<DateTime<Utc>>,
+    revoked_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    last_used_at: Option<DateTime<Utc>>,
+}
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct CreatedToken {
+    #[serde(flatten)]
+    token: ApiToken,
+    value: String,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateToken {
+    name: String,
+    user_id: Option<Uuid>,
+    /// Required in auth mode; omitted only for trusted-network legacy tokens.
+    #[serde(default)]
+    project_id: Option<Uuid>,
+    /// Explicit token scopes. Defaults to project API/Git read-write scopes.
+    #[serde(default = "default_token_scope_strings")]
+    scopes: Vec<String>,
+    /// Optional lifetime in days; defaults to 30 days in auth mode.
+    #[serde(default)]
+    expires_in_days: Option<i32>,
+}
+#[utoipa::path(get, path = "/api/v1/api-tokens", tag = "tokens", responses((status = 200, body = [ApiToken])))]
+async fn list_tokens(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ApiToken>> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
+    Ok(Json(sqlx::query_as("SELECT id, name, token_hint, user_id, principal_type, service_account_id, project_id, scopes, expires_at, revoked_at, created_at, last_used_at FROM api_tokens WHERE revoked_at IS NULL ORDER BY created_at DESC").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+}
+#[utoipa::path(post, path = "/api/v1/api-tokens", tag = "tokens", request_body = CreateToken, responses((status = 200, body = CreatedToken), (status = 400)))]
+async fn create_token(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Json(input): Json<CreateToken>,
+) -> ApiResult<CreatedToken> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
+    let auth_enabled = state.auth_secret.is_some();
+    let requester = claims.map(|c| c.0);
+    let user_id = input
+        .user_id
+        .or_else(|| requester.as_ref().map(|claims| claims.sub));
+    if input.name.trim().is_empty() {
+        return Err(ApiError::bad_request("token name is required"));
+    }
+    if auth_enabled && input.project_id.is_none() {
+        return Err(ApiError::bad_request(
+            "project_id is required for scoped tokens",
+        ));
+    }
+    let scopes = normalize_token_scopes(input.scopes)?;
+    let db = pool(&state)?;
+    validate_token_owner_and_project(db, user_id, input.project_id).await?;
+    let value = format!(
+        "cicd_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    let token_hash = sha256(&value);
+    let hint = format!("{}...{}", &value[..9], &value[value.len() - 4..]);
+    let expires_at = token_expires_at(input.expires_in_days, auth_enabled)?;
+    let token = sqlx::query_as::<_, ApiToken>("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id, project_id, scopes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, token_hint, user_id, principal_type, service_account_id, project_id, scopes, expires_at, revoked_at, created_at, last_used_at")
+        .bind(Uuid::new_v4())
+        .bind(input.name.trim())
+        .bind(token_hash)
+        .bind(hint)
+        .bind(user_id)
+        .bind(input.project_id)
+        .bind(scopes)
+        .bind(expires_at)
+        .fetch_one(db)
+        .await
+        .map_err(ApiError::internal)?;
+    audit(db, "token.created", "api_token", token.id, None).await?;
+    Ok(Json(CreatedToken { token, value }))
+}
+#[utoipa::path(delete, path = "/api/v1/api-tokens/{token_id}", tag = "tokens", params(("token_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
+async fn delete_token(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
+    let id: Uuid = sqlx::query_scalar(
+        "UPDATE api_tokens SET revoked_at = now() \
+         WHERE id = $1 AND revoked_at IS NULL RETURNING id",
+    )
+    .bind(id)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    audit(pool(&state)?, "token.revoked", "api_token", id, None).await?;
+    Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+fn default_token_scope_strings() -> Vec<String> {
+    DEFAULT_TOKEN_SCOPES
+        .iter()
+        .map(|scope| (*scope).to_string())
+        .collect()
+}
+
+fn normalize_token_scopes(scopes: Vec<String>) -> Result<Vec<String>, ApiError> {
+    let mut normalized = Vec::new();
+    for scope in scopes {
+        let scope = scope.trim();
+        if scope.is_empty() {
+            continue;
+        }
+        if !DEFAULT_TOKEN_SCOPES.contains(&scope) {
+            return Err(ApiError::bad_request("unsupported token scope"));
+        }
+        if !normalized.iter().any(|existing| existing == scope) {
+            normalized.push(scope.to_string());
+        }
+    }
+    if normalized.is_empty() {
+        return Err(ApiError::bad_request(
+            "at least one token scope is required",
+        ));
+    }
+    Ok(normalized)
+}
+
+fn token_expires_at(
+    expires_in_days: Option<i32>,
+    auth_enabled: bool,
+) -> Result<Option<DateTime<Utc>>, ApiError> {
+    let Some(days) = expires_in_days.or(auth_enabled.then_some(DEFAULT_TOKEN_LIFETIME_DAYS)) else {
+        return Ok(None);
+    };
+    if !(1..=MAX_TOKEN_LIFETIME_DAYS).contains(&days) {
+        return Err(ApiError::bad_request(
+            "expires_in_days must be between 1 and 365",
+        ));
+    }
+    Ok(Some(
+        chrono::Utc::now() + chrono::Duration::days(days as i64),
+    ))
+}
+
+async fn validate_token_owner_and_project(
+    pool: &PgPool,
+    user_id: Option<Uuid>,
+    project_id: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let Some(project_id) = project_id else {
+        return Ok(());
+    };
+    let exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    if !exists {
+        return Err(ApiError::not_found());
+    }
+    let Some(user_id) = user_id else {
+        return Err(ApiError::bad_request(
+            "user_id is required for scoped tokens",
+        ));
+    };
+    let role = sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = $1 AND enabled")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    if role == crate::authz::Role::Admin.as_str() {
+        return Ok(());
+    }
+    if crate::api::project_membership_role(pool, user_id, project_id)
+        .await?
+        .is_some()
+    {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "token owner must be a member of the scoped project",
+        ))
+    }
+}
+
+fn new_artifact_path(artifacts: &ArtifactsConfig, id: Uuid) -> Result<PathBuf, ApiError> {
+    let root = artifacts.root.clone();
+    std::fs::create_dir_all(&root).map_err(io_error)?;
+    let root = root.canonicalize().map_err(io_error)?;
+    Ok(root.join(format!("{id}.bin")))
+}
+
+fn contained_artifact_path(
+    artifacts: &ArtifactsConfig,
+    raw_path: &str,
+) -> Result<PathBuf, ApiError> {
+    let root = canonical_artifacts_root(artifacts)?;
+    let path = FsPath::new(raw_path)
+        .canonicalize()
+        .map_err(|_| ApiError::not_found())?;
+    if !path.starts_with(&root) {
+        return Err(ApiError::not_found());
+    }
+    Ok(path)
+}
+
+fn artifact_path_for_delete(
+    artifacts: &ArtifactsConfig,
+    raw_path: &str,
+) -> Result<PathBuf, ApiError> {
+    let root = canonical_artifacts_root(artifacts)?;
+    let path = FsPath::new(raw_path);
+    let parent = path.parent().ok_or_else(ApiError::not_found)?;
+    let parent = parent.canonicalize().map_err(|_| ApiError::not_found())?;
+    if !parent.starts_with(&root) {
+        return Err(ApiError::not_found());
+    }
+    Ok(path.to_path_buf())
+}
+
+fn canonical_artifacts_root(artifacts: &ArtifactsConfig) -> Result<PathBuf, ApiError> {
+    artifacts
+        .root
+        .clone()
+        .canonicalize()
+        .map_err(|_| ApiError::not_found())
+}
+fn io_error(error: std::io::Error) -> ApiError {
+    ApiError::internal(sqlx::Error::Io(error))
+}
+fn config_error(message: impl Into<String>) -> ApiError {
+    ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: message.into(),
+    }
+}
+fn valid_artifact_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('"')
+        && !name.chars().any(char::is_control)
+}
+fn artifact_content_disposition(name: &str) -> String {
+    let fallback = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        fallback,
+        percent_encode_utf8(name)
+    )
+}
+fn percent_encode_utf8(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-') {
+                (*byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+fn sha256(value: &str) -> String {
+    sha256_bytes(value.as_bytes())
+}
+
+fn decrypt_secret(stored: &str, secrets: &SecretsConfig) -> Result<String, String> {
+    let key = secret_key(secrets)?;
+    let cipher =
+        Aes256Gcm::new_from_slice(&key).map_err(|_| "invalid CICD_SECRETS_KEY".to_owned())?;
+    let parts: Vec<&str> = stored.splitn(3, ':').collect();
+    if parts.len() != 3 || parts[0] != "v1" {
+        return Err("unsupported secret format".to_owned());
+    }
+    let nonce_bytes = BASE64
+        .decode(parts[1])
+        .map_err(|_| "corrupt secret nonce".to_owned())?;
+    let ciphertext = BASE64
+        .decode(parts[2])
+        .map_err(|_| "corrupt secret payload".to_owned())?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let plain = cipher
+        .decrypt(nonce, ciphertext.as_ref())
+        .map_err(|_| "unable to decrypt secret".to_owned())?;
+    String::from_utf8(plain).map_err(|_| "secret is not valid utf-8".to_owned())
+}
+
+pub(crate) async fn project_secret_pairs_for_names_with_config(
+    pool: &PgPool,
+    project_id: Uuid,
+    names: &[String],
+    secrets: &SecretsConfig,
+) -> Result<Vec<(String, String)>, ApiError> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let requested: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+    let requested_vec: Vec<String> = requested.iter().map(|name| (*name).to_string()).collect();
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT key, encrypted_value \
+         FROM project_secrets \
+         WHERE project_id = $1 AND key = ANY($2::text[]) \
+         ORDER BY key",
+    )
+    .bind(project_id)
+    .bind(&requested_vec)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    let found: std::collections::BTreeSet<&str> =
+        rows.iter().map(|(name, _)| name.as_str()).collect();
+    if found.len() != requested.len() || requested.iter().any(|name| !found.contains(*name)) {
+        return Err(ApiError::not_found_named(
+            "declared project secret is missing",
+        ));
+    }
+    let mut pairs = Vec::with_capacity(rows.len());
+    for (name, stored) in rows {
+        let value = decrypt_secret(&stored, secrets).map_err(|msg| ApiError {
+            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            message: msg,
+        })?;
+        pairs.push((name, value));
+    }
+    Ok(pairs)
+}
+
+fn valid_role(role: &str) -> bool {
+    matches!(role, "admin" | "maintainer" | "developer" | "viewer")
+}
+fn schedule_next_fire_at(cron: &str, enabled: bool) -> Result<Option<DateTime<Utc>>, ApiError> {
+    if !enabled {
+        return Ok(None);
+    }
+    crate::schedule::next_fire_after_expr(cron, Utc::now())
+        .map(Some)
+        .map_err(ApiError::bad_request)
+}
+fn encrypt_secret(value: &str, secrets: &SecretsConfig) -> Result<String, String> {
+    let key = secret_key(secrets)?;
+    let cipher =
+        Aes256Gcm::new_from_slice(&key).map_err(|_| "invalid CICD_SECRETS_KEY".to_owned())?;
+    let source = Uuid::new_v4();
+    let nonce = Nonce::from_slice(&source.as_bytes()[..12]);
+    let ciphertext = cipher
+        .encrypt(nonce, value.as_bytes())
+        .map_err(|_| "unable to encrypt secret".to_owned())?;
+    Ok(format!(
+        "v1:{}:{}",
+        BASE64.encode(nonce),
+        BASE64.encode(ciphertext)
+    ))
+}
+fn secret_key(secrets: &SecretsConfig) -> Result<[u8; 32], String> {
+    secrets
+        .key
+        .ok_or_else(|| "CICD_SECRETS_KEY must be configured before storing secrets".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cron_requires_five_fields() {
+        assert!(crate::schedule::parse_cron("0 4 * * 1").is_ok());
+        assert!(crate::schedule::parse_cron("not cron").is_err());
+    }
+    #[test]
+    fn roles_are_allowlisted() {
+        assert!(valid_role("admin"));
+        assert!(!valid_role("owner"));
+    }
+    #[test]
+    fn approval_actor_uses_authenticated_subject_over_body_actor() {
+        let user_id = Uuid::parse_str("018f3c59-38f6-7c2a-bc55-081eb78cbf17").unwrap();
+        assert_eq!(
+            approval_actor(Some("release-manager"), Some(user_id)).unwrap(),
+            user_id.to_string()
+        );
+        assert_eq!(
+            approval_actor(Some("release-manager"), None).unwrap(),
+            "release-manager"
+        );
+    }
+    #[test]
+    fn deployment_status_maps_pipeline_domain_to_deployment_domain() {
+        assert_eq!(deployment_status_from_pipeline("queued"), "pending");
+        assert_eq!(deployment_status_from_pipeline("running"), "running");
+        assert_eq!(deployment_status_from_pipeline("success"), "success");
+        assert_eq!(deployment_status_from_pipeline("failed"), "failed");
+        assert_eq!(deployment_status_from_pipeline("canceled"), "failed");
+    }
+    #[test]
+    fn artifact_names_reject_path_and_header_breakers() {
+        assert!(valid_artifact_name("report.txt"));
+        assert!(valid_artifact_name("отчёт.txt"));
+        assert!(!valid_artifact_name("../report.txt"));
+        assert!(!valid_artifact_name("bad\"name.txt"));
+        assert!(!valid_artifact_name("bad\nname.txt"));
+    }
+    #[test]
+    fn artifact_content_disposition_is_header_safe() {
+        let header = artifact_content_disposition("отчёт final.txt");
+        assert!(header.is_ascii());
+        assert!(header.contains("filename=\""));
+        assert!(header.contains("filename*=UTF-8''"));
+        assert!(header.contains("%D0%BE%D1%82%D1%87"));
+    }
+    #[test]
+    fn artifact_retention_env_defaults_and_bounds() {
+        assert_eq!(artifact_retention_days_from_env(None).unwrap(), 30);
+        assert_eq!(
+            artifact_retention_days_from_env(Some(" 45 ".to_string())).unwrap(),
+            45
+        );
+        assert!(artifact_retention_days_from_env(Some("0".to_string())).is_err());
+        assert!(artifact_retention_days_from_env(Some("3651".to_string())).is_err());
+        assert!(artifact_retention_days_from_env(Some("soon".to_string())).is_err());
+    }
+    #[test]
+    fn audit_log_params_are_normalized_and_escape_literal_search() {
+        let params = AuditLogParams {
+            limit: Some(25),
+            offset: Some(50),
+            action: Some(" auth.login_failed ".to_string()),
+            q: Some(r" actor_%\name ".to_string()),
+        }
+        .normalize()
+        .unwrap();
+
+        assert_eq!(params.limit, 25);
+        assert_eq!(params.offset, 50);
+        assert_eq!(params.action.as_deref(), Some("auth.login_failed"));
+        assert_eq!(params.search_pattern.as_deref(), Some(r"%actor\_\%\\name%"));
+    }
+    #[test]
+    fn audit_log_params_reject_invalid_bounds() {
+        assert!(
+            AuditLogParams {
+                limit: Some(0),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            AuditLogParams {
+                offset: Some(-1),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            AuditLogParams {
+                offset: Some(i64::from(i32::MAX) + 1),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            AuditLogParams {
+                action: Some("a".repeat(129)),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            AuditLogParams {
+                q: Some("я".repeat(129)),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+    }
+    #[test]
+    fn outbox_delivery_params_are_normalized() {
+        let params = OutboxDeliveriesParams {
+            limit: Some(25),
+            offset: Some(50),
+            status: Some(" FAILED ".to_string()),
+            channel: Some(" Notification ".to_string()),
+        }
+        .normalize()
+        .unwrap();
+
+        assert_eq!(params.limit, 25);
+        assert_eq!(params.offset, 50);
+        assert_eq!(params.status.as_deref(), Some("failed"));
+        assert_eq!(params.channel.as_deref(), Some("notification"));
+    }
+    #[test]
+    fn outbox_delivery_params_reject_invalid_values() {
+        assert!(
+            OutboxDeliveriesParams {
+                limit: Some(0),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            OutboxDeliveriesParams {
+                status: Some("unknown".to_string()),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            OutboxDeliveriesParams {
+                offset: Some(-1),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            OutboxDeliveriesParams {
+                offset: Some(i64::from(u32::MAX) + 1),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+    }
+}
+
+// --- Service accounts (AUTHORIZATION target: machine principals) ---
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct ServiceAccount {
+    id: Uuid,
+    name: String,
+    description: String,
+    enabled: bool,
+    created_by: Option<Uuid>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Tenant {
+    id: Uuid,
+    slug: String,
+    display_name: String,
+    status: String,
+    created_by: Option<Uuid>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateTenantInput {
+    slug: String,
+    display_name: String,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct TenantMembershipInput {
+    user_id: Uuid,
+    #[serde(default = "default_member_role")]
+    role: String,
+}
+
+fn default_member_role() -> String {
+    "member".to_string()
+}
+
+fn require_admin_claims(
+    claims: &Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> Result<(), ApiError> {
+    match claims {
+        Some(axum::Extension(c)) if c.role == crate::authz::Role::Admin.as_str() => Ok(()),
+        Some(_) => Err(ApiError::forbidden()),
+        None => Ok(()), // trusted-network mode (no auth secret): open access
+    }
+}
+
+#[utoipa::path(get, path = "/api/v1/admin/tenants", tag = "tenants", responses((status = 200, body = [Tenant])))]
+async fn list_tenants(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> ApiResult<Vec<Tenant>> {
+    require_admin_claims(&claims)?;
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    Ok(Json(
+        sqlx::query_as(
+            "SELECT id, slug, display_name, status, created_by, created_at \
+                 FROM tenants ORDER BY created_at DESC",
+        )
+        .fetch_all(db)
+        .await
+        .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(post, path = "/api/v1/admin/tenants", tag = "tenants", request_body = CreateTenantInput, responses((status = 201, body = Tenant)))]
+async fn create_tenant(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    axum::Json(input): axum::Json<CreateTenantInput>,
+) -> Result<(StatusCode, Json<Tenant>), ApiError> {
+    require_admin_claims(&claims)?;
+    let creator = claims.as_ref().map(|axum::Extension(c)| c.sub);
+    let slug = input.slug.trim().to_lowercase();
+    if slug.is_empty()
+        || slug.len() > 64
+        || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(ApiError::bad_request(
+            "slug must be 1-64 chars of [a-z0-9-]",
+        ));
+    }
+    if input.display_name.trim().is_empty() || input.display_name.len() > 200 {
+        return Err(ApiError::bad_request("display_name must be 1-200 chars"));
+    }
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let tenant: Tenant = sqlx::query_as(
+        "INSERT INTO tenants (id, slug, display_name, created_by) \
+             VALUES ($1, $2, $3, $4) \
+             RETURNING id, slug, display_name, status, created_by, created_at",
+    )
+    .bind(Uuid::new_v4())
+    .bind(&slug)
+    .bind(input.display_name.trim())
+    .bind(creator)
+    .fetch_one(db)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
+            ApiError::bad_request("slug already exists")
+        }
+        other => ApiError::internal(other),
+    })?;
+    Ok((StatusCode::CREATED, Json(tenant)))
+}
+
+#[utoipa::path(get, path = "/api/v1/admin/tenants/{tenant_id}", tag = "tenants", responses((status = 200, body = Tenant)))]
+async fn get_tenant(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(tenant_id): Path<Uuid>,
+) -> ApiResult<Tenant> {
+    require_admin_claims(&claims)?;
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let tenant: Tenant = sqlx::query_as(
+        "SELECT id, slug, display_name, status, created_by, created_at FROM tenants WHERE id = $1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    Ok(Json(tenant))
+}
+
+#[utoipa::path(post, path = "/api/v1/admin/tenants/{tenant_id}/memberships", tag = "tenants", request_body = TenantMembershipInput, responses((status = 201)))]
+async fn add_tenant_membership(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(tenant_id): Path<Uuid>,
+    axum::Json(input): axum::Json<TenantMembershipInput>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    require_admin_claims(&claims)?;
+    if !matches!(input.role.as_str(), "owner" | "member") {
+        return Err(ApiError::bad_request("role must be owner|member"));
+    }
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    sqlx::query(
+        "INSERT INTO tenant_memberships (tenant_id, user_id, role) VALUES ($1, $2, $3) \
+             ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role",
+    )
+    .bind(tenant_id)
+    .bind(input.user_id)
+    .bind(&input.role)
+    .execute(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            serde_json::json!({"tenant_id": tenant_id, "user_id": input.user_id, "role": input.role}),
+        ),
+    ))
+}
+
+#[utoipa::path(delete, path = "/api/v1/admin/tenants/{tenant_id}/memberships/{user_id}", tag = "tenants", responses((status = 204)))]
+async fn remove_tenant_membership(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    require_admin_claims(&claims)?;
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    sqlx::query("DELETE FROM tenant_memberships WHERE tenant_id = $1 AND user_id = $2")
+        .bind(tenant_id)
+        .bind(user_id)
+        .execute(db)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(get, path = "/api/v1/admin/service-accounts", tag = "service-accounts", responses((status = 200, body = [ServiceAccount])))]
+async fn list_service_accounts(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> ApiResult<Vec<ServiceAccount>> {
+    require_admin_claims(&claims)?;
+    Ok(Json(
+        sqlx::query_as(
+            "SELECT id, name, description, enabled, created_by, created_at \
+             FROM service_accounts ORDER BY created_at DESC",
+        )
+        .fetch_all(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?,
+    ))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateServiceAccount {
+    name: String,
+    #[serde(default)]
+    description: String,
+}
+
+#[utoipa::path(post, path = "/api/v1/admin/service-accounts", tag = "service-accounts", request_body = CreateServiceAccount, responses((status = 201, body = ServiceAccount), (status = 400), (status = 403)))]
+async fn create_service_account(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Json(input): Json<CreateServiceAccount>,
+) -> Result<(StatusCode, Json<ServiceAccount>), ApiError> {
+    require_admin_claims(&claims)?;
+    let name = input.name.trim();
+    if name.is_empty() || name.len() > 64 {
+        return Err(ApiError::bad_request(
+            "service account name is required (1-64 chars)",
+        ));
+    }
+    let created_by = claims.as_ref().map(|axum::Extension(c)| c.sub);
+    let account = sqlx::query_as::<_, ServiceAccount>(
+        "INSERT INTO service_accounts (id, name, description, enabled, created_by) \
+         VALUES ($1, $2, $3, TRUE, $4) \
+         RETURNING id, name, description, enabled, created_by, created_at",
+    )
+    .bind(Uuid::new_v4())
+    .bind(name)
+    .bind(input.description.trim())
+    .bind(created_by)
+    .fetch_one(pool(&state)?)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            ApiError::bad_request("service account name already exists")
+        }
+        other => ApiError::internal(other),
+    })?;
+    audit(
+        pool(&state)?,
+        "service_account.created",
+        "service_account",
+        account.id,
+        None,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(account)))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct UpdateServiceAccount {
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+#[utoipa::path(patch, path = "/api/v1/admin/service-accounts/{account_id}", tag = "service-accounts", request_body = UpdateServiceAccount, params(("account_id" = Uuid, Path)), responses((status = 200, body = ServiceAccount), (status = 404), (status = 403)))]
+async fn update_service_account(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(account_id): Path<Uuid>,
+    Json(input): Json<UpdateServiceAccount>,
+) -> Result<Json<ServiceAccount>, ApiError> {
+    require_admin_claims(&claims)?;
+    let account = sqlx::query_as::<_, ServiceAccount>(
+        "UPDATE service_accounts \
+         SET description = COALESCE($2, description), \
+             enabled = COALESCE($3, enabled) \
+         WHERE id = $1 \
+         RETURNING id, name, description, enabled, created_by, created_at",
+    )
+    .bind(account_id)
+    .bind(input.description.as_deref().map(str::trim))
+    .bind(input.enabled)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    audit(
+        pool(&state)?,
+        "service_account.updated",
+        "service_account",
+        account_id,
+        None,
+    )
+    .await?;
+    Ok(Json(account))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct IssueServiceAccountToken {
+    name: String,
+    #[serde(default)]
+    project_id: Option<Uuid>,
+    #[serde(default = "default_token_scope_strings")]
+    scopes: Vec<String>,
+    #[serde(default)]
+    expires_in_days: Option<i32>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct IssuedServiceAccountToken {
+    id: Uuid,
+    name: String,
+    token: String,
+    token_hint: String,
+    project_id: Option<Uuid>,
+    scopes: Vec<String>,
+    expires_at: Option<DateTime<Utc>>,
+}
+
+#[utoipa::path(post, path = "/api/v1/admin/service-accounts/{account_id}/tokens", tag = "service-accounts", request_body = IssueServiceAccountToken, params(("account_id" = Uuid, Path)), responses((status = 201, body = IssuedServiceAccountToken), (status = 404), (status = 403)))]
+async fn issue_service_account_token(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(account_id): Path<Uuid>,
+    Json(input): Json<IssueServiceAccountToken>,
+) -> Result<(StatusCode, Json<IssuedServiceAccountToken>), ApiError> {
+    require_admin_claims(&claims)?;
+    if input.name.trim().is_empty() {
+        return Err(ApiError::bad_request("token name is required"));
+    }
+    let scopes = normalize_token_scopes(input.scopes)?;
+    let value = format!(
+        "forge_sat_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    let token_hash = sha256(&value);
+    let hint = format!("{}...{}", &value[..13], &value[value.len() - 4..]);
+    let expires_at = token_expires_at(input.expires_in_days, state.auth_secret.is_some())?;
+    let db = pool(&state)?;
+    let exists: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM service_accounts WHERE id = $1 AND enabled")
+            .bind(account_id)
+            .fetch_optional(db)
+            .await
+            .map_err(ApiError::internal)?;
+    if exists.is_none() {
+        return Err(ApiError::not_found());
+    }
+    if let Some(project_id) = input.project_id {
+        let project_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
+                .bind(project_id)
+                .fetch_one(db)
+                .await
+                .map_err(ApiError::internal)?;
+        if !project_exists {
+            return Err(ApiError::bad_request("project not found"));
+        }
+    }
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Option<Uuid>,
+            Vec<String>,
+            Option<DateTime<Utc>>,
+        ),
+    >(
+        "INSERT INTO api_tokens \
+         (id, name, token_hash, token_hint, principal_type, service_account_id, \
+          user_id, project_id, scopes, expires_at) \
+         VALUES ($1, $2, $3, $4, 'service_account', $5, NULL, $6, $7, $8) \
+         RETURNING id, name, token_hint, project_id, scopes, expires_at",
+    )
+    .bind(Uuid::new_v4())
+    .bind(input.name.trim())
+    .bind(token_hash)
+    .bind(hint)
+    .bind(account_id)
+    .bind(input.project_id)
+    .bind(scopes)
+    .bind(expires_at)
+    .fetch_one(db)
+    .await
+    .map_err(ApiError::internal)?;
+    audit(db, "service_account.token_issued", "api_token", row.0, None).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(IssuedServiceAccountToken {
+            id: row.0,
+            name: row.1,
+            token: value,
+            token_hint: row.2,
+            project_id: row.3,
+            scopes: row.4,
+            expires_at: row.5,
+        }),
+    ))
+}
+
+#[utoipa::path(get, path = "/api/v1/auth/principal", tag = "auth", responses((status = 200), (status = 401)))]
+pub(crate) async fn auth_principal(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> ApiResult<serde_json::Value> {
+    let _ = &state;
+    let Some(axum::Extension(claims)) = claims else {
+        return Err(ApiError::unauthorized());
+    };
+    if claims.role == "service_account" {
+        Ok(Json(serde_json::json!({
+            "principal_type": "service_account",
+            "sub": claims.sub,
+            "service_account": {
+                "id": claims.sub,
+                "name": claims.service_account_name,
+            },
+            "project_id": claims.token_project_id,
+            "scopes": claims.token_scopes,
+        })))
+    } else {
+        Ok(Json(serde_json::json!({
+            "principal_type": "user",
+            "sub": claims.sub,
+            "scopes": claims.token_scopes,
+        })))
+    }
+}

@@ -1,0 +1,22 @@
+diff --git a/.base-revision b/.base-revision
+index d53a43f..783f253 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-9fb8444cd7cd7479cc17a881a6e45fbe6441b35b
++a434ee2226ee0532367e86ea0196441444239139
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 207137b..4c3d489 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,10 @@
+ 
+ ## [Unreleased]
+ 
++- Общий Base snapshot обновлён до a434ee2 с исправлением SSR states.
++  Геометрия shell, доменные API и принятый runtime не меняются.
++
++
+ - ADR-0002 и индекс отделяют исторический выбор React/Vite от текущего Base
+   ownership: локальные копии общих UI-компонентов не являются действующей
+   политикой. Исходные alternatives и decision сохранены; runtime не меняется.

@@ -1,0 +1,23 @@
+# ADR-0018: атомарный факт завершения и межсервисный outbox
+
+Дата: 2026-10-02. Статус: принято; пилот реализован и проверен автоматическими сценариями. Рабочий rollout отдельно.
+
+Завершение пайплайна сериализуется блокировкой его строки. Status,
+finished_at, completion sequence, domain event, прежний webhook/email/SSE
+fanout и безопасный NATS envelope фиксируются одной транзакцией.
+Refresh после завершения ничего не меняет; retry явно открывает новый запуск,
+чьё завершение увеличивает sequence и получает новый UUID. Cancel использует
+ту же транзакционную ветку, сохраняя управление активными leases.
+
+SDK Base `sdlc-messaging` используется напрямую. Отдельная таблица
+`messaging_outbox` следует его стандартной миграции и отделяет transport
+lease/fencing от legacy HTTP/SMTP retry ledger. Legacy dispatcher не видит
+её записей; кастомный адаптер прежнего outbox для NATS не требуется.
+Завершение не вызывает брокер. Feature off сохраняет legacy fanout без NATS;
+исторические терминальные pipelines не импортируются после включения.
+
+Reconciler каждые 5 секунд пересчитывает активные пайплайны из committed jobs.
+Worker роль publisher независима от embedded/external runners. Диагностика
+показывает безопасные агрегаты и закрыта отдельной mounted credential.
+Продуктовые проверки должны включать гонки, rollback, retry, cancel,
+broker outage и регрессию legacy каналов.

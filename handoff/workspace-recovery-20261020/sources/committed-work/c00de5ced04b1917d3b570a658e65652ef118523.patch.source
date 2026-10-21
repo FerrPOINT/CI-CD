@@ -1,0 +1,85 @@
+diff --git a/docs/uiux-source-evidence-2026-10-02.md b/docs/uiux-source-evidence-2026-10-02.md
+new file mode 100644
+index 0000000..be4efe1
+--- /dev/null
++++ b/docs/uiux-source-evidence-2026-10-02.md
+@@ -0,0 +1,79 @@
++# Source QA: Base Shell И Audit
++
++## Границы
++
++Это frontend/source checkpoint, не выпускная приёмка всего CI/CD.
++Изменения находятся в изолированном checkout `feat/base-ui-standard`, созданном
++от сохранённого локального `origin/main` `1e3202e1eeb938620ab0b4ed5f7514e1afbc78ba`.
++Чужой исходный checkout, Docker runtime, default refs, pins и mirror не менялись.
++GitHub не использовался; public API, DB schema, CORS и auth store не изменены.
++
++## Provenance
++
++| Поле | Значение |
++|---|---|
++| CI/CD runtime source commit | `4c2e7e192af84bef321b610a3e69baaf63f4984f` |
++| Base commit | `b8cb3da21ebd2ad9d8aa2a0b0f62513bc3a0f031` |
++| Product fingerprint | `d3ac28bdad2a1f6bc17c3b2634f347592a7b65b555167f989b3e20a6d808a421` |
++| Base source/installed fingerprint | `c2e7aff5453467668c00bbf1fe6d90a4eea0275aaa9804de32ad7e881f6dd4b7` |
++| Runtime image | Не выпускался в этом checkpoint |
++
++Fingerprint до и после commit совпадает. Common source-commit attestation
++подтвердил отсутствие runtime drift. Frozen offline force install использовал
++422 cached packages, zero downloads; lockfile/generated API content не изменились.
++
++## Изменения
++
++- Local shell/drawer/account заменены Base AppShell с сохранением mode map.
++- AuditLogView использует Base controls, states и URL codecs; сервер сохраняет
++  ownership filtering, total/actions и paging. Bound offset соответствует API.
++- Hash/unknown query context, filter reset, reload/SSO и Back/Forward сохранены.
++- Previous-filter placeholders не показываются как новые результаты; cached
++  403/404/non-repeatable failures скрывают строки и retry, временные сбои сохраняют
++  readonly rows. Terminal messages не обещают показ скрытого кеша.
++- Router loading/forbidden/unknown pages используют Base. Unknown address не
++  перенаправляется на dashboard. Legacy membership redirect сохранён.
++- Compatibility QueryState делегирует визуальные states/retry Base; пока owning
++  page не мигрирована, он не разрешает cached actions автоматически.
++- Base исправляет transport sentinel/cancellation policy, empty announcements,
++  compact partial warning и потерю deep link при canonical loopback SSO redirect.
++
++## Проверки
++
++| Gate | Результат |
++|---|---|
++| Base UI units | 109 passed, 23 files |
++| Base node scripts/contrast | 18 passed; contrast passed |
++| Base lint/typecheck/README/hub | Passed |
++| CI/CD frontend units | 221 passed, 34 files |
++| CI/CD lint/semantic + build/typecheck | Passed |
++| OpenAPI check/compat saved `origin/main` | Passed |
++| Installed Base/route gate | Passed, 24 patterns; runtime QA required |
++| Documentation validator + Python script tests | Passed, 3 tests |
++| Chromium source smoke | 10 passed, 56.8 s; 39 PNG |
++
++Browser matrix: light/gray/dark, 375/767/768/1023/1024/1279/1280/1440/1920/2560.
++Geometry/header/targets/overflow, normal console/network, URL/reload/SSO,
++drawer focus/Escape/resize, loading/empty search, cached network/403/404/422/503
++и retry recovery проверены с mocked HTTP/OIDC. Axe serious/critical: zero на
++normal shell/audit 375/1920 во всех темах и partial-error 375/1920.
++Representative normal/partial/terminal screenshots просмотрены.
++
++Evidence находится в workspace `audit-artifacts/base-standard-2026-10-01/`:
++`cicd-base-acceptance-source-{units,build,lint,ui-gate,openapi,openapi-compat,browser}.log`,
++`cicd-base-acceptance-source-browser/geometry.json`, `metadata.json` и PNG.
++Metadata содержит actual image dimensions/digests, viewport/theme и capture file
++mtime, exact source SHA/fingerprints; capture scope явно source-only.
++Ранние `source/verified/final` browser runs superseded: final evidence только
++`acceptance-source`. Diagnostic failures сохранили репродукцию canonical SSO bug
++и fixture transition race; последний исправлен ожиданием фактического route mount.
++Owned preview завершён; listener 18866 отсутствует.
++
++## Обязательный Остаток
++
++Остальные CI/CD list/form/detail/dashboard/log compositions, URL/drafts/roles и
++независимые cached-source states ещё требуют миграции. Legacy live-spec selectors
++нужно согласовать с Base shell. Backend/release gates, все route/role/state/theme
++fixtures, no-mock immutable images/live SSO, real README gallery, local default
++integration и mirror не выполнены этим checkpoint. Все исходные 14 findings
++остаются открытыми до требуемых выпускных доказательств.

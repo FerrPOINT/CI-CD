@@ -1,0 +1,22 @@
+import { Outlet, useLocation } from 'react-router'
+import { Cpu, FolderGit2, GitFork, History, LayoutDashboard, Settings, Users } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { AppShell as BaseAppShell } from '@sdlc/ui/ui'
+import { useAuth } from '@/shared/auth/auth-provider'
+
+export function AppShell() {
+  const { session, logout } = useAuth()
+  const { t } = useTranslation()
+  const { pathname } = useLocation()
+  const navigation = [
+    { to: '/', icon: LayoutDashboard, label: t('navigation.dashboard') },
+    { to: '/projects', icon: FolderGit2, label: t('navigation.projects') },
+    { to: '/repositories', icon: GitFork, label: t('navigation.repositories') },
+    { to: '/runners', icon: Cpu, label: t('navigation.runners') },
+    { to: '/users', icon: Users, label: t('navigation.users') },
+    { to: '/audit-log', icon: History, label: t('navigation.auditLog') },
+    { to: '/settings', icon: Settings, label: t('navigation.settings') },
+  ]
+  const layout = pathname === '/settings' ? 'reading' : /^\/pipelines\/[^/]+$/.test(pathname) || /^\/repositories\/[^/]+\/pulls\/[^/]+$/.test(pathname) ? 'detail-with-aside' : 'wide'
+  return <BaseAppShell currentServiceKey="ci-cd" title={t('app.name')} description={t('app.subtitle')} navigation={navigation} layout={layout} account={session ? { label: session.username ?? t('navigation.profileFallback'), onLogout: logout } : undefined}><Outlet /></BaseAppShell>
+}
