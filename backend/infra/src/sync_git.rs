@@ -636,7 +636,16 @@ mod tests {
         assert!(second.try_reserve_sync_capacity(&root, 2).unwrap());
         assert!(!waiting.try_reserve_sync_capacity(&root, 2).unwrap());
         drop(first);
-        assert!(waiting.try_reserve_sync_capacity(&root, 2).unwrap());
+        // An unrelated parallel fork may briefly retain a CLOEXEC descriptor
+        // until exec. Capacity must become available when that kernel custody
+        // ends; the orphan-child tests separately require custody to survive.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !waiting.try_reserve_sync_capacity(&root, 2).unwrap() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("capacity is released after the former descriptor owners exit");
         drop(waiting);
         drop(second);
         std::fs::remove_dir_all(root).unwrap();
