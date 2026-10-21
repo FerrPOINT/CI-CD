@@ -1015,7 +1015,8 @@ function SyncHistory({
           {refs.isPending && <p role="status">Загружаем результаты…</p>}
           {refs.data && (
             <>
-              <Table>
+              <Table className="min-w-[45rem] focus-visible:outline-2 focus-visible:outline-accent"
+                tabIndex={0} aria-label="Результаты веток и тегов">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Ref</TableHead>
@@ -1027,7 +1028,7 @@ function SyncHistory({
                 <TableBody>
                   {refs.data.items.map((reference) => (
                     <TableRow key={reference.ref_name}>
-                      <TableCell className="break-all">
+                      <TableCell className="min-w-60 break-all">
                         {reference.ref_name}
                       </TableCell>
                       <TableCell>
