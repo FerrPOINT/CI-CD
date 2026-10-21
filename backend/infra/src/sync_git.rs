@@ -1050,7 +1050,10 @@ mod tests {
         let executable = if cfg!(target_os = "linux") {
             std::path::PathBuf::from("/proc/self/exe")
         } else {
-            std::env::current_exe().unwrap()
+            let staged = root.join("cleanup-test");
+            std::fs::copy(std::env::current_exe().unwrap(), &staged).unwrap();
+            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o555)).unwrap();
+            staged
         };
         for path in [&root, &directory, &stale] {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o555)).unwrap();
