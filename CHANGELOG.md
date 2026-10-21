@@ -27,6 +27,9 @@
 
 ### Fixed
 
+- Vite обновлён до исправленной версии 6.4.4: устранены три advisory в обработке
+  запуска редактора; проверка зависимостей сохраняет прежний строгий порог.
+
 - Embedded/external runner, candidate observer и owner selector используют общее
   прежнее кодирование artifact paths (`/` и `\` → `__`). Duplicate declarations,
   encoded aliases и duplicate current observations отклоняются без переписывания
