@@ -15,6 +15,8 @@
 
 ## [Unreleased]
 
+- Подключена объединённая версия общего UI Base: адаптивная оболочка, безопасные диалоги и независимая прокрутка панелей брендинга.
+
 ### Added
 
 - Registered namespace reader получает read-only DevOps evidence: исходный
