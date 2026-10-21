@@ -1,0 +1,250 @@
+# CLI Forge CI/CD
+
+`cicd-cli` - HTTP-only утилита управления control plane. Бинарь живёт в отдельном workspace-пакете `backend/cli` (ADR-0005), общается с API через публичные routes и не линкует серверный код, SQLx, Git storage или runner implementation.
+
+## Сборка
+
+```bash
+# В Rust-контейнере, если cargo на хосте отсутствует:
+docker run --rm --entrypoint /bin/bash -v "$(dirname "$PWD"):/workspace" -w /workspace/CI-CD/backend \
+  -e CARGO_TARGET_DIR=/workspace/CI-CD/backend/target rust:1.88-bookworm \
+  -lc '/usr/local/cargo/bin/cargo build -p cicd-cli'
+
+./backend/target/debug/cicd-cli --help
+```
+
+## Конфигурация
+
+| Переменная | Default | Назначение |
+|---|---|---|
+| `CICD_API_URL` | `http://127.0.0.1:7711` | Базовый URL API локального стенда |
+| `CICD_API_TOKEN` / `SDLC_API_TOKEN` | - | Личный токен Central Auth; эквивалентно `--token` |
+| `CICD_TIMEOUT_SECONDS` | `60` | Общий timeout HTTP-запроса; эквивалентно `--timeout-seconds` |
+| `CICD_OUTPUT` | `json` | Формат вывода: `json`, `ndjson` или `table`; эквивалентно `--output` |
+| `CICD_PROFILE` | - | Имя профиля из `~/.config/forge-cli/config.toml`; эквивалентно `--profile` |
+| `CICD_CONFIG` | `~/.config/forge-cli/config.toml` | Путь к TOML-конфигу профилей |
+
+Токен обязателен: при его отсутствии CLI завершается с кодом `2` до HTTP-запроса.
+Отклонённый сервером токен или недостаточные права дают код `5` и безопасное
+сообщение `token is invalid or lacks access`, без вывода токена или тела ответа.
+Флаги `--token` и `CICD_API_TOKEN` имеют приоритет над `SDLC_API_TOKEN`.
+
+Глобальные флаги:
+
+```bash
+cicd-cli --api-url http://127.0.0.1:7711 --token "$CICD_API_TOKEN" \
+  --timeout-seconds 60 --output table project list
+```
+
+## Команды
+
+### project
+
+```bash
+cicd-cli project list --limit 50 --offset 0
+cicd-cli project create --name my-service \
+  --repository-url http://127.0.0.1:22802/git/my-service.git \
+  --branch main
+```
+
+`repository-url` может указывать на Dashboard/Git proxy `:22802` или на прямой backend Git endpoint `:22801`; CLI API base по умолчанию остаётся `http://127.0.0.1:22801`.
+
+### pipeline
+
+```bash
+cicd-cli pipeline list --project <PROJECT_UUID> --limit 50 --offset 0
+cicd-cli pipeline run --project <PROJECT_UUID> --git-ref main
+cicd-cli pipeline run --project <PROJECT_UUID> --git-ref main --idempotency-key <UUID>
+cicd-cli pipeline show --id <PIPELINE_UUID>
+```
+
+`pipeline run` автоматически создаёт UUID `Idempotency-Key`, если `--idempotency-key` не задан. Явный key нужен внешней automation, которая безопасно повторяет тот же запуск после transport error.
+
+### job
+
+```bash
+cicd-cli job start --id <JOB_UUID>   # queued -> running
+cicd-cli job pass  --id <JOB_UUID>   # -> success
+cicd-cli job fail  --id <JOB_UUID>   # -> failed
+cicd-cli job attempts --id <JOB_UUID>
+cicd-cli job logs  --id <JOB_UUID>
+cicd-cli job logs  --id <JOB_UUID> --attempt <ATTEMPT_UUID>
+cicd-cli job log   --id <JOB_UUID> --message "custom line"
+```
+
+### runner
+
+```bash
+cicd-cli runner list
+cicd-cli runner register --name shell-01 --tag shell --tag linux
+cicd-cli runner heartbeat --id <RUNNER_UUID> --status online  # завершится ошибкой миграции
+cicd-cli runner delete --id <RUNNER_UUID>
+```
+
+`runner register` создаёт только инвентарную запись со статусом offline. Heartbeat
+отправляет запущенный `forge-runner` через credential-authenticated runner protocol;
+операторская команда `runner heartbeat` сохранена для диагностики старых скриптов,
+но не отправляет запрос и завершается ошибкой миграции.
+
+### secret
+
+```bash
+cicd-cli secret list --project <PROJECT_UUID>
+cicd-cli secret set --project <PROJECT_UUID> --key NPM_TOKEN --value "$NPM_TOKEN"
+cicd-cli secret delete --id <SECRET_UUID>
+```
+
+Не передавайте production secret values через shared shell history. Для локального MVP допустим env-var input, для production target нужны protected token/secret input flows.
+
+### artifact
+
+```bash
+cicd-cli artifact list --job <JOB_UUID>
+cicd-cli artifact upload --job <JOB_UUID> --file ./build.zip --name build.zip --content-type application/zip
+cicd-cli artifact download --id <ARTIFACT_UUID> --output ./build.zip
+```
+
+### environment / deployment
+
+```bash
+cicd-cli environment list --project <PROJECT_UUID>
+cicd-cli environment create --project <PROJECT_UUID> --name staging --url https://staging.example.com
+cicd-cli environment create --project <PROJECT_UUID> --name production --protected --required-approvals 1
+cicd-cli environment update --id <ENV_UUID> --status degraded
+cicd-cli environment update --id <ENV_UUID> --protected true --required-approvals 2
+cicd-cli environment delete --id <ENV_UUID>
+
+cicd-cli deployment list --environment <ENV_UUID>
+cicd-cli deployment create --environment <ENV_UUID> --git-ref main --pipeline <PIPELINE_UUID> --status success
+cicd-cli deployment approvals --id <DEPLOYMENT_UUID>
+cicd-cli deployment approve --id <DEPLOYMENT_UUID> --comment "approved for production"
+cicd-cli deployment reject --id <DEPLOYMENT_UUID> --comment "missing evidence"
+cicd-cli deployment rollback --id <DEPLOYMENT_UUID>
+```
+
+### schedule
+
+```bash
+cicd-cli schedule list --project <PROJECT_UUID>
+cicd-cli schedule create --project <PROJECT_UUID> --cron "*/15 * * * *" --git-ref main --enabled true
+cicd-cli schedule update --id <SCHEDULE_UUID> --cron "0 2 * * *" --git-ref main --enabled false
+cicd-cli schedule delete --id <SCHEDULE_UUID>
+```
+
+### webhook / outbox / notification
+
+```bash
+cicd-cli webhook list --project <PROJECT_UUID>
+cicd-cli webhook create --project <PROJECT_UUID> --url https://example.com/hook \
+  --event pipeline.finished --secret "$WEBHOOK_SECRET"
+cicd-cli webhook delete --id <WEBHOOK_UUID>
+
+cicd-cli outbox list --project <PROJECT_UUID> --limit 50 --status failed --channel webhook
+cicd-cli outbox show --id <DELIVERY_UUID>
+cicd-cli outbox requeue --id <DELIVERY_UUID>
+
+cicd-cli notification list --project <PROJECT_UUID>
+cicd-cli notification replace --project <PROJECT_UUID> --config in_app=dashboard
+cicd-cli notification events --project <PROJECT_UUID> --limit 50
+```
+
+`notification replace` заменяет весь набор notification configs проекта. Запуск без `--config` очищает список.
+
+### report / audit
+
+```bash
+cicd-cli report summary --project <PROJECT_UUID>
+cicd-cli audit list
+```
+
+### user / member / token
+
+```bash
+cicd-cli user list
+cicd-cli user create --username alice --role developer --enabled true --password "$PASSWORD"
+cicd-cli user update --id <USER_UUID> --username alice --role maintainer --enabled true
+
+cicd-cli member list --project <PROJECT_UUID>
+cicd-cli member upsert --project <PROJECT_UUID> --user <USER_UUID> --role developer
+cicd-cli member remove --project <PROJECT_UUID> --user <USER_UUID>
+
+cicd-cli token list
+cicd-cli token create --name deploy-bot --user <USER_UUID> --project <PROJECT_UUID> \
+  --scope api:read --scope api:write --expires-in-days 30
+cicd-cli token revoke --id <TOKEN_UUID>
+```
+
+## Профили (K5)
+
+`~/.config/forge-cli/config.toml`:
+
+```toml
+default_profile = "local"
+
+[profiles.local]
+api_url = "http://127.0.0.1:22801"
+token = "forge_pat_..."   # prefer CICD_API_TOKEN env on shared hosts
+output = "table"
+
+[profiles.stage]
+api_url = "https://forge-stage.internal:22801"
+output = "json"
+```
+
+Порядок применения: явный флаг/env > значения профиля > built-in default. Флаг `--profile local` (или `CICD_PROFILE=local`) подставляет `api_url`/`token`/`output` только если соответствующая переменная окружения не задана. OS-keyring остаётся target (см. DELIVERY_ARCHITECTURE).
+
+## NDJSON (K5)
+
+`--output ndjson` печатает по одному compact-JSON документу на строку; массивы стримятся поэлементно:
+
+```bash
+cicd-cli --output ndjson project list | jq -c 'select(.name | startswith("forge"))'
+```
+
+## Stable exit codes (K5)
+
+| Код | Смысл |
+|---|---|
+| `0` | успех |
+| `2` | usage / локальная ошибка аргументов или вывода |
+| `3` | сеть или 5xx сервера (connection refused, DNS, 500) |
+| `4` | 404 / not found |
+| `5` | 401 / unauthorized |
+| `6` | 400/422 validation |
+
+Скрипты должны проверять код, а не парсить stderr.
+
+## Completions (K5)
+
+```bash
+cicd-cli completions bash > /etc/bash_completion.d/cicd-cli
+cicd-cli completions zsh > ~/.zfunc/_cicd-cli
+cicd-cli completions fish > ~/.config/fish/completions/cicd-cli.fish
+```
+
+## Контракт
+
+Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs`: control-plane groups, `--token`, `--timeout-seconds`, `--output`, pagination flags, job attempts/logs, `--idempotency-key` и ключевые platform mutations. Real HTTP/API/PostgreSQL smoke зафиксирован в `backend/cli/tests/cli_real_api.rs`: проект create/list, idempotent pipeline run, attempt history, protected deployment approval, env/flag config precedence, bounded HTTP timeout, JWT/PAT auth-mode, RBAC denial, project-scoped read-only PAT, token redaction на failure, JSON output и non-zero API error exit. Изменение публичного CLI surface требует обновления тестов и этого документа.
+
+## Границы MVP
+
+- CLI использует только публичный HTTP API и повторяет его текущие ограничения auth/RBAC, pagination и validation.
+- Stable JSON есть сейчас; `table` является lightweight TSV-like представлением для ручной работы, не production reporting format.
+- Profiles (`config.toml`), NDJSON и shell completion реализованы (K5). OS keyring для токенов, request tracing headers, YAML-вывод и расширенные token redaction fixtures остаются target из `docs/DELIVERY_ARCHITECTURE.md`.
+- External email/Slack adapters и inbound provider webhooks по-прежнему target: CLI управляет текущими local notification/outbox/webhook MVP routes.
+
+## References
+
+- `backend/cli/src/main.rs`
+- `backend/cli/tests/cli_contract.rs`
+- `backend/cli/tests/cli_real_api.rs`
+- `docs/API.md`
+- `docs/adr/0005-workspace-layered-architecture.md`
+
+## Шина: хранение и восстановление (2026-10-03)
+
+Общий профиль SDK: stream/published/feed 90 суток; failed/terminal inbox/quarantine
+180 суток. Pending сохраняется. Cleanup/progress/state принадлежат своей БД.
+Новые миграции: CI/CD `0039`, Admin `0008`; существующие версии не меняются.
+Operator replay не сбрасывает inbox. Additive status/contracts сохраняют старые
+ответы и выделяют неизвестные значения. Подробности: [документация](PLATFORM_MESSAGING.md).

@@ -1,0 +1,10 @@
+# Хранение outbox и операторское восстановление
+
+Дата: 2026-10-03. Объём — [план Base](../../../services-base/docs/plans/2026-10-03-messaging-hardening.md).
+Статус: реализация, документация и обязательные автоматические проверки завершены.
+Реализованы additive migration `0039`, общий SDK maintenance для ролей
+worker/messaging/default также при feature off, persisted diagnostics и
+CLI `cicd-messaging plan/apply/resume/status` в release image.
+Контракт, транзакционный terminal identity, первоначальный ACK и UUID сохраняются.
+Проверки и финальные image IDs — в [evidence](../../../services-base/docs/plans/2026-10-03-messaging-hardening-evidence.md).
+Основной workspace, рабочие данные, rollout и Git publishing исключены.

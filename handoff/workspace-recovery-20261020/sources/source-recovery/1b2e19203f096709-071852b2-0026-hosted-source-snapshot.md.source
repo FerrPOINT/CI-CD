@@ -1,0 +1,28 @@
+# ADR-0026: чтение версии исходников перед поиском дефектов
+
+Статус: кандидат исходников, 2026-10-18; квалификация и включение отдельно.
+
+Поиск дефектов начинается до появления Bug и не может использовать PM task lease
+как фиктивное основание для чтения исходников. Общий каталог закрыт для service
+accounts; broad human PAT для обхода этого ограничения не нужен.
+
+Добавляем read-only GET configuration/source-snapshot с точными Tracker project
+и repository UUID. Existing namespace/workspace/configuration projections и active
+project-bound SAT определяют доступ. Dedicated configured subject по умолчанию
+отсутствует. Никаких новых таблиц, queue или workspace effect.
+
+Owner читает только полный refs/heads/... в собственном hosted bare Git. Arbitrary
+revision expressions, caller URL/path и external repositories не принимаются.
+Существующие исходники не клонируются и не изменяются; commit pin сохраняется
+consumer вместе со snapshot. Ветка может двигаться после ответа: запуск должен
+использовать возвращённый commit, а не заново выбирать HEAD.
+
+Git-read ограничен пятью секундами, двумя одновременными вызовами и 128 байтами
+результата; substituted symlink directory отвергается. Git не наследует shell,
+global/system Git config или replacement objects. SQL authority повторяется после
+локального чтения, без удержания DB locks на время Git. Clone URL берётся из
+owner public Git origin и каталога; он не содержит токен и не даёт download lease.
+Private checkout отдельно требует project-scoped git:read и контроль Fleet.
+
+Это техническая версия исходников, не runtime isolation, не результат поиска,
+не доступ к QA-среде и не разрешение создать/исправить/закрыть Bug.

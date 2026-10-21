@@ -1,0 +1,203 @@
+diff --git a/docs/GIT_HOSTING.md b/docs/GIT_HOSTING.md
+index d2fe806..35da58e 100644
+--- a/docs/GIT_HOSTING.md
++++ b/docs/GIT_HOSTING.md
+@@ -97,6 +97,10 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
+ 
+ После первоначального импорта репозитория задайте защищённые ветки через `PATCH /api/v1/projects/{project_id}` с `{"protected_branches":["main"]}`. Прямой push в них запрещён; merge PR требует успешного pipeline на текущем head SHA ветки-источника. Пустой массив явно снимает защиту и должен применяться только осознанно.
+ 
++Репозиторий без связанного CI-проекта можно использовать для Git и PR; его ветки
++не получают защиту из настроек проекта. Отсутствие проекта не является ошибкой
++merge. Защищённые ветки связанных проектов по-прежнему требуют зелёный pipeline.
++
+ Основной каталог pull requests читается страницами через
+ `GET /api/v1/repos/{repo}/pulls/page`. Сервер применяет `limit`, `offset`, фильтр
+ `status` и регистронезависимый `search` до выборки; ответ возвращает `items` и
+@@ -105,6 +109,13 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
+ страницы каталога. Legacy `GET /api/v1/repos/{repo}/pulls` сохраняет прежний
+ массив целиком только для обратной совместимости; frontend его не использует.
+ 
++Вкладка изменений открытого или закрытого PR сравнивает текущие target/source
++ветки. Для слитого PR она сравнивает сохранённый `merge_commit_sha` с его первым
++родителем (`from=<SHA>^1`, `to=<SHA>` через существующий compare API): это
++изменения, действительно принятые при merge, независимо от последующих push
++и удаления веток. Отсутствующий или некорректный merge SHA показывает ошибку,
++а не пустой diff; недоступный Git-объект возвращает ошибку compare API.
++
+ `GET /api/v1/repos/{repo}/refs` сохраняет тип каждого ref: `branch`, `tag` или
+ `other`. В форме создания PR подсказки source и target ограничены `branch`;
+ ручной ввод остаётся доступен, если каталог refs временно недоступен.
+diff --git a/frontend/src/pages/pull-request-detail/diff.test.tsx b/frontend/src/pages/pull-request-detail/diff.test.tsx
+new file mode 100644
+index 0000000..285d7bb
+--- /dev/null
++++ b/frontend/src/pages/pull-request-detail/diff.test.tsx
+@@ -0,0 +1,73 @@
++import { fireEvent, render, screen } from '@testing-library/react'
++import { MemoryRouter, Route, Routes } from 'react-router'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import type { PullRequest } from '@/api/types'
++import { PullRequestDetailPage } from './index'
++
++const mocks = vi.hoisted(() => ({ pull: vi.fn(), comparison: vi.fn(), retry: vi.fn() }))
++
++vi.mock('react-i18next', () => ({
++  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
++}))
++vi.mock('@/api/hooks', () => ({ usePullRequest: mocks.pull, useRepositoryComparison: mocks.comparison }))
++vi.mock('@/pages/pull-requests/actions', () => ({ PullRequestActions: () => null }))
++vi.mock('@/shared/ui/user-avatar', () => ({ UserAvatar: () => null }))
++
++const mergeSha = '28267bbaab74de08109d49057bdd147e4c2f5be6'
++const pr: PullRequest = {
++  id: 'p1', repository_name: 'service-pulse', number: 8, title: 'PULSE-9: release identity', description: '',
++  source_branch: 'feat/pulse-release-identity', target_branch: 'main', status: 'merged', created_by: 'reviewer',
++  created_at: '2026-09-30T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
++  merged_at: '2026-10-01T00:00:00Z', merge_commit_sha: mergeSha,
++}
++
++function setup(pull = pr, options: { error?: Error; loading?: boolean } = {}) {
++  mocks.pull.mockReturnValue({ data: pull, isLoading: false, error: null })
++  mocks.comparison.mockReturnValue({
++    data: {
++      from: `${mergeSha}^1`, to: mergeSha, merge_base: '337735f23a2d255d374928eda057378e93faad76',
++      files: [{ path: 'backend/src/api.rs', status: 'modified', additions: 2, deletions: 1, binary: false }],
++      patch: '+release_sha', patch_truncated: false,
++    },
++    isLoading: options.loading ?? false, isError: Boolean(options.error), error: options.error, refetch: mocks.retry,
++  })
++  render(
++    <MemoryRouter initialEntries={['/repositories/service-pulse/pulls/8?view=diff']}>
++      <Routes><Route path="/repositories/:repo/pulls/:number" element={<PullRequestDetailPage />} /></Routes>
++    </MemoryRouter>,
++  )
++}
++
++afterEach(() => vi.clearAllMocks())
++
++describe('pull request diff', () => {
++  it('compares the accepted merge with its first parent, never current branch tips', () => {
++    setup()
++    expect(mocks.comparison).toHaveBeenCalledWith('service-pulse', `${mergeSha}^1`, mergeSha)
++    expect(screen.getByText('backend/src/api.rs')).toBeInTheDocument()
++    expect(screen.getByLabelText('compare.patch')).toHaveTextContent('+release_sha')
++    expect(screen.getByText(mergeSha)).toBeInTheDocument()
++    expect(screen.queryByText('compare.noChanges')).not.toBeInTheDocument()
++  })
++
++  it.each(['open', 'closed'] as const)('keeps branch comparison for an %s PR', (status) => {
++    setup({ ...pr, status, merge_commit_sha: null, merged_at: null })
++    expect(mocks.comparison).toHaveBeenCalledWith('service-pulse', 'main', 'feat/pulse-release-identity')
++  })
++
++  it.each([null, '', 'main', 'abc123', `${mergeSha}^1`])('rejects missing or invalid merged identity: %s', (sha) => {
++    setup({ ...pr, merge_commit_sha: sha })
++    expect(mocks.comparison).toHaveBeenCalledWith('service-pulse', '', '')
++    expect(screen.getByRole('alert')).toHaveTextContent('pulls.mergeIdentityUnavailable')
++    expect(screen.queryByText('backend/src/api.rs')).not.toBeInTheDocument()
++    expect(screen.queryByText('compare.noChanges')).not.toBeInTheDocument()
++  })
++
++  it('shows a Git error and retries without reporting an empty diff', () => {
++    setup(pr, { error: new Error('Merge object unavailable') })
++    expect(screen.getByRole('alert')).toHaveTextContent('Merge object unavailable')
++    expect(screen.queryByText('compare.noChanges')).not.toBeInTheDocument()
++    fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
++    expect(mocks.retry).toHaveBeenCalledOnce()
++  })
++})
+diff --git a/frontend/src/pages/pull-request-detail/index.tsx b/frontend/src/pages/pull-request-detail/index.tsx
+index a5aa149..3fa7522 100644
+--- a/frontend/src/pages/pull-request-detail/index.tsx
++++ b/frontend/src/pages/pull-request-detail/index.tsx
+@@ -10,8 +10,17 @@ import { QueryState } from '@/shared/ui/query-state'
+ import { PullRequestActions } from '@/pages/pull-requests/actions'
+ import { UserAvatar } from '@/shared/ui/user-avatar'
+ 
+-export function buildCompareHref(pr: Pick<PullRequest, 'repository_name' | 'source_branch' | 'target_branch'>): string {
+-  return `/repositories/${encodeURIComponent(pr.repository_name)}/compare?from=${encodeURIComponent(pr.target_branch)}&to=${encodeURIComponent(pr.source_branch)}`
++export function pullRequestComparison(pr: Pick<PullRequest, 'source_branch' | 'target_branch' | 'status' | 'merge_commit_sha'>): { from: string; to: string } | null {
++  if (pr.status !== 'merged') return { from: pr.target_branch, to: pr.source_branch }
++  const sha = pr.merge_commit_sha
++  if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) return null
++  return { from: `${sha}^1`, to: sha }
++}
++
++export function buildCompareHref(pr: Pick<PullRequest, 'repository_name' | 'source_branch' | 'target_branch' | 'status' | 'merge_commit_sha'>): string | null {
++  const refs = pullRequestComparison(pr)
++  if (!refs) return null
++  return `/repositories/${encodeURIComponent(pr.repository_name)}/compare?from=${encodeURIComponent(refs.from)}&to=${encodeURIComponent(refs.to)}`
+ }
+ 
+ export function buildPrDiffHref(pr: Pick<PullRequest, 'repository_name' | 'number'>): string {
+@@ -53,10 +62,11 @@ export function PullRequestDetailPage() {
+   const { data: pr, isLoading, error, refetch } = usePullRequest(repo, pullRequestNumber)
+ 
+   const showDiff = searchParams.get('view') === 'diff'
++  const comparisonRefs = pr ? pullRequestComparison(pr) : null
+   const { data: comparison, isLoading: diffLoading, isError: diffError, error: diffErrorValue, refetch: refetchDiff } = useRepositoryComparison(
+     repo,
+-    showDiff && pr ? pr.target_branch : '',
+-    showDiff && pr ? pr.source_branch : '',
++    showDiff && comparisonRefs ? comparisonRefs.from : '',
++    showDiff && comparisonRefs ? comparisonRefs.to : '',
+   )
+ 
+   if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
+@@ -89,11 +99,16 @@ export function PullRequestDetailPage() {
+           </div>
+           <p className="mt-2 break-all font-mono text-sm text-text-secondary">{pr.target_branch} → {pr.source_branch}</p>
+           <p className="mt-2 text-sm text-text-muted">{pr.title}</p>
++          {pr.status === 'merged' && comparisonRefs && (
++            <p className="mt-2 text-sm text-text-muted">{t('pulls.mergeCommit')}: <code className="break-all">{comparisonRefs.to}</code></p>
++          )}
+         </div>
+         <Button variant="outline" className="h-10" onClick={() => setSearchParams({}, { replace: true })}>
+           <ArrowLeft className="h-4 w-4" /> {t('common.back')}
+         </Button>
+-        {diffLoading ? (
++        {!comparisonRefs ? (
++          <p role="alert" className="border-y border-border py-4 text-sm text-danger">{t('pulls.mergeIdentityUnavailable')}</p>
++        ) : diffLoading ? (
+           <p className="text-sm text-text-muted">{t('common.loading')}</p>
+         ) : diffError ? (
+           <div role="alert" className="flex flex-wrap items-center gap-3 border-y border-border py-4 text-sm text-danger">
+diff --git a/frontend/src/pages/pull-request-detail/pull-request-detail.test.ts b/frontend/src/pages/pull-request-detail/pull-request-detail.test.ts
+index 368838d..cd3fd63 100644
+--- a/frontend/src/pages/pull-request-detail/pull-request-detail.test.ts
++++ b/frontend/src/pages/pull-request-detail/pull-request-detail.test.ts
+@@ -25,4 +25,10 @@ describe('pull request navigation', () => {
+   it('keeps the pull request context when opening its inline diff', () => {
+     expect(buildPrDiffHref(pr)).toBe('/repositories/platform-core/pulls/7?view=diff')
+   })
++
++  it('pins merged comparison links to the accepted commit and its first parent', () => {
++    const sha = '28267bbaab74de08109d49057bdd147e4c2f5be6'
++    expect(buildCompareHref({ ...pr, status: 'merged', merge_commit_sha: sha })).toBe(`/repositories/platform-core/compare?from=${sha}%5E1&to=${sha}`)
++    expect(buildCompareHref({ ...pr, status: 'merged' })).toBeNull()
++  })
+ })
+diff --git a/frontend/src/shared/i18n/locales/en.json b/frontend/src/shared/i18n/locales/en.json
+index ecd7c66..7c064ef 100644
+--- a/frontend/src/shared/i18n/locales/en.json
++++ b/frontend/src/shared/i18n/locales/en.json
+@@ -217,6 +217,7 @@
+     "previous": "Previous",
+     "next": "Next",
+     "mergeCommit": "Merge commit",
++    "mergeIdentityUnavailable": "The merge commit is missing or invalid. Historical changes are unavailable.",
+     "empty": "No pull requests yet. Create one.",
+     "status_open": "Open",
+     "status_closed": "Closed",
+diff --git a/frontend/src/shared/i18n/locales/ru.json b/frontend/src/shared/i18n/locales/ru.json
+index e6bf087..07b9850 100644
+--- a/frontend/src/shared/i18n/locales/ru.json
++++ b/frontend/src/shared/i18n/locales/ru.json
+@@ -217,6 +217,7 @@
+     "previous": "Назад",
+     "next": "Далее",
+     "mergeCommit": "Коммит слияния",
++    "mergeIdentityUnavailable": "Коммит слияния не указан или некорректен. Исторические изменения недоступны.",
+     "empty": "Pull-запросов нет. Создайте первый.",
+     "status_open": "Открыт",
+     "status_closed": "Закрыт",

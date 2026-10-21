@@ -1,0 +1,91 @@
+use axum::{
+    body::{Body, to_bytes},
+    http::{HeaderValue, Request, StatusCode, header::AUTHORIZATION},
+};
+use tower::ServiceExt;
+use uuid::Uuid;
+
+#[path = "release_repository.rs"]
+mod release_repository;
+
+pub async fn admin_authorization(pool: &sqlx::PgPool, app: axum::Router) -> HeaderValue {
+    let user_id = Uuid::new_v4();
+    let username = format!("it-api-user-{}", user_id.simple());
+    let password = "IntegrationPass1!";
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(user_id)
+        .bind(&username)
+        .execute(pool)
+        .await
+        .expect("insert API test user");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(cicd::auth::hash_password(password).expect("hash password"))
+        .execute(pool)
+        .await
+        .expect("insert API test credential");
+    let response = app
+        .oneshot(
+            Request::post("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"username": username, "password": password}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let token = body["access_token"].as_str().expect("access token");
+    HeaderValue::from_str(&format!("Bearer {token}")).expect("valid API test token")
+}
+
+pub async fn authenticated_app(pool: sqlx::PgPool) -> axum::Router {
+    authenticated_app_with_git(pool, cicd::git_host::GitConfig::default()).await
+}
+
+pub async fn authenticated_app_with_git(
+    pool: sqlx::PgPool,
+    git: cicd::git_host::GitConfig,
+) -> axum::Router {
+    let app = cicd::api::app_with_git_and_auth_secret(
+        Some(pool.clone()),
+        git,
+        Some(format!("api-test-secret-{}", Uuid::new_v4())),
+    );
+    let authorization = admin_authorization(&pool, app.clone()).await;
+    app.layer(axum::middleware::from_fn(
+        move |mut request: Request<Body>, next: axum::middleware::Next| {
+            let authorization = authorization.clone();
+            async move {
+                if !request.headers().contains_key(AUTHORIZATION) {
+                    request.headers_mut().insert(AUTHORIZATION, authorization);
+                }
+                next.run(request).await
+            }
+        },
+    ))
+}
+
+pub async fn release_test_project(
+    pool: &sqlx::PgPool,
+) -> (Uuid, axum::Router, std::path::PathBuf, String, String) {
+    let project_id = Uuid::new_v4();
+    let (root, previous, current) = release_repository::release_repository(project_id).await;
+    sqlx::query("INSERT INTO projects (id, name, repository_url, protected_branches) VALUES ($1, $2, 'http://localhost/git/service-pulse.git', $3)")
+        .bind(project_id)
+        .bind(format!("it-release-{project_id}"))
+        .bind(vec!["main"])
+        .execute(pool).await.unwrap();
+    let app = authenticated_app_with_git(
+        pool.clone(),
+        cicd::git_host::GitConfig {
+            root: root.clone(),
+            ..Default::default()
+        },
+    )
+    .await;
+    (project_id, app, root, previous, current)
+}

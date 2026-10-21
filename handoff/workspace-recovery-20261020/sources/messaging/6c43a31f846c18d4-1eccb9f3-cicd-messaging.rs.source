@@ -1,0 +1,94 @@
+//! Operator command. Product database ownership and credentials stay in CI/CD.
+use chrono::{DateTime, Utc};
+use clap::{Parser, Subcommand};
+use sdlc_messaging::{Bus, contracts::PipelineFinished, postgres::replay};
+use uuid::Uuid;
+
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+#[derive(Subcommand)]
+enum Command {
+    /// Read retained publications, validate them and persist a dry-run plan.
+    Plan {
+        #[arg(long)]
+        from: DateTime<Utc>,
+        #[arg(long)]
+        to: DateTime<Utc>,
+        #[arg(long = "event-id")]
+        event_ids: Vec<Uuid>,
+    },
+    /// Publish an unexpired plan with the original identities.
+    Apply {
+        id: Uuid,
+    },
+    /// Resume after a process crash or broker outage.
+    Resume {
+        id: Uuid,
+    },
+    Status {
+        id: Uuid,
+    },
+}
+#[tokio::main]
+async fn main() {
+    let args = Cli::parse();
+    if let Err(error) = run(args).await {
+        eprintln!("{}", error.code());
+        std::process::exit(1);
+    }
+}
+async fn run(args: Cli) -> Result<(), replay::ReplayError> {
+    let database = std::env::var("CICD_DATABASE_URL").map_err(|_| replay::ReplayError::Storage)?;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(8)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .after_connect(|connection, _| {
+            Box::pin(async move {
+                sqlx::query("SET statement_timeout='5s'")
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&database)
+        .await
+        .map_err(|_| replay::ReplayError::Storage)?;
+    let result = match args.command {
+        Command::Plan {
+            from,
+            to,
+            event_ids,
+        } => replay::plan::<PipelineFinished>(&pool, from, to, &event_ids).await?,
+        Command::Status { id } => replay::status::<PipelineFinished>(&pool, id).await?,
+        command => {
+            let (id, resume) = match command {
+                Command::Apply { id } => (id, false),
+                Command::Resume { id } => (id, true),
+                _ => unreachable!(),
+            };
+            let config = sdlc_messaging::config::operator_from_env("CICD", "cicd")
+                .map_err(|_| replay::ReplayError::Broker)?;
+            let bus = Bus::connect(config)
+                .await
+                .map_err(|_| replay::ReplayError::Broker)?;
+            let (stop, shutdown) = tokio::sync::watch::channel(false);
+            let signal = tokio::spawn(async move {
+                let _ = tokio::signal::ctrl_c().await;
+                let _ = stop.send(true);
+            });
+            let result =
+                replay::apply_with_shutdown::<PipelineFinished>(&pool, bus, id, resume, shutdown)
+                    .await;
+            signal.abort();
+            result?
+        }
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&result).map_err(|_| replay::ReplayError::Storage)?
+    );
+    Ok(())
+}

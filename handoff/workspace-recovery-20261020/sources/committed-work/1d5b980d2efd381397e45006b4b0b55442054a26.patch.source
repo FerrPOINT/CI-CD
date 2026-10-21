@@ -1,0 +1,96 @@
+diff --cc CHANGELOG.md
+index b8f3e8e,5badc09..351713f
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@@ -9,40 -9,17 +9,56 @@@
+  
+  ## [Unreleased]
+  
+++- Локальная default-ветка согласована с Base UI/UX-веткой: восстановлены
+++  исторические SQLx migrations 36–38 и тесты fresh/upgrade/replay/checksum,
+++  без замены shell, Base pin и frontend locks. Проверка кандидата отделена
+++  от принятого runtime; рабочие базы и pinned images не изменяются.
+++
+ +- ARCHITECTURE описывает фактический Base AppShell и продуктовые адаптеры,
+ +  ссылается на единый UI/UX-контракт и owned workspace launcher вместо второго
+ +  UI-kit и standalone Compose. Исторический Header plan остаётся историческим;
+ +  code/API/locks/runner/runtime и local default этим docs-only изменением не меняются.
+ +
+ +- AGENTS/DEVELOPMENT_GUIDE согласованы с Base UI/UX и owned Compose QA:
+ +  удалены standalone/direct launch и массовое удаление volumes, toolchain
+ +  соответствует pinned metadata. Приёмка локальная; legacy helper migration
+ +  не объявлена выполненной. API, runner protocol, locks и runtime не менялись.
+ +
+ +- Base notification ownership gate закреплён единым snapshot. OpenAPI alias
+ +  передаёт явные параметры в Base; без параметров сравнивает с origin/main.
+ +
+ +- Единственный notification host подключён из `@sdlc/ui/notifications`
+ +  на Base `d22ca2205f5068eba976745ed5fad93c6daacfa1`. Удалены локальные
+ +  AppToaster/theme и Sonner CSS overrides; продуктовые callbacks используют
+ +  один peer Sonner2.0.8. Добавлены bootstrap/browser regressions; actual
+ +  images, live SSO и release acceptance остаются отдельными проверками.
+ +
+ +- Отчёты проекта используют общую композицию DashboardLayout и controls Base.
+ +  Loading/403/404 больше не предлагают недоступный переход к запускам;
+ +  повторяемый сбой обновления сохраняет прочитанные данные с retry, а terminal
+ +  и неповторяемые ошибки скрывают cached данные и действия. Empty не дублирует
+ +  действия и не показывает ложные нулевые метрики при сбое обновления.
+ +  Добавлены unit и browser regressions; приёмка actual images остаётся отдельной.
+ +
+ +- Оба frontend Dockerfile используют существующий Base recorder: product/Base
+ +  SHA, fingerprints и asset digests в `/ui-build.json`, OCI labels и pinned
+ +  Node/nginx digests без смены версий. Runtime/SSO/README приёмка остаётся отдельной
+ +  обязательной проверкой; workspace candidate собирается через umbrella recipe.
+ +
+ +- Base закреплён на `193ad1e8fd6260f001640943a5ec07ff04f527d1`: общий
+ +  cross-platform fingerprint и согласованная локальная UI/UX-поставка.
+ +  Source/dependency checkpoint не заменяет приёмку фактических images и SSO.
++ - Документирована принятая поставка трёх CLI на sdlc1: backup/restore/rollback, live-проверки, Linux/WSL установка и сохранённые ограничения.
++ 
++ - Каталог SQLx сохраняет точную уже применённую migration 38 `platform messaging`
++   с историческими CRLF/checksum. Backend принимает такой ledger без удаления
++   записей; регрессия проверяет outbox, terminal event sequence и checksum mismatch.
++   API, Base pin и код messaging publisher/subscribers не менялись.
++ 
++ - Каталог SQLx включает точные ранее применённые migrations 36/37: запуск на
++   совместимой исторической БД больше не отклоняется с `VersionMissing(36)`.
++   Deployment API, роли и runner protocol не менялись; добавлены PostgreSQL
++   регрессии fresh/upgrade/replay, immutable history и checksum mismatch.
+  
+  - `pipeline wait` учитывает `--timeout-seconds` / `CICD_TIMEOUT_SECONDS` при опросе, включая чтение тела: HTTP timeout возвращает `TRANSPORT_ERROR`, истечение ожидания — `WAIT_TIMEOUT`; pipeline не отменяется.
+  
+diff --cc docs/plans/2026-10-05-local-default-integration.md
+index 0000000,0000000..6470ad9
+new file mode 100644
+--- /dev/null
++++ b/docs/plans/2026-10-05-local-default-integration.md
+@@@ -1,0 -1,0 +1,29 @@@
+++# Локальная интеграция default и Base UI/UX
+++
+++## Граница изменения
+++
+++Исходный UI/UX checkout: `92cbe691ccc17cfe71ff67af663ed37713b302d9`.
+++Интегрируемая локальная default: `f51c225378d18a2c383adfc71c93a56193b2dfe5`.
+++Base: `c0f175c67fc02ba0910a310b163b8032dac92d06`.
+++
+++Merge сохраняет общий AppShell, композиции, URL-state, безопасные page states,
+++notifications и fingerprint-проверки выбранной UI/UX-ветки. Разрешение CHANGELOG
+++сохраняет обе истории. Исторические миграции 36–38 берутся из default без
+++изменения bytes, а независимые fixtures проверяют их checksum и replay.
+++Новые доменные API, публикация outbox и специальный Pulse runner не добавляются.
+++
+++## Проверки перед фиксацией
+++
+++- Frozen offline install, frontend tests/typecheck/lint/format/OpenAPI/build,
+++  pinned Base и installed package fingerprint, документационные gates.
+++- Полный browser smoke общей UI/UX-ветки: исходные сценарии не удаляются.
+++- Свежий Rust fmt/clippy/workspace tests/release build, generated OpenAPI;
+++  actual PostgreSQL integration_db, target policy и CLI real API в owned
+++  временном Compose project. Проверки исторического ledger не наследуются
+++  от предыдущей сборки без migrations 36–38.
+++- До/после проверок сохраняются protected snapshots и чужой Task overlay;
+++  cleanup удаляет только собственный QA project, не shared cache/runtime.
+++
+++Это source-интеграция, не runtime acceptance: default ref, accepted images,
+++рабочие базы, SSO, README-галерея и product mirror остаются отдельными шагами.
+++GitHub, fetch, push и hosted CI не используются.

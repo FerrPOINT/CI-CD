@@ -1,0 +1,203 @@
+//! Fixed owner readback. Caller locators select retained evidence, never supply it.
+use super::{
+    ApiError, ApiResult, AppState,
+    bug_work_operations::{OriginalQuery, matches},
+    pool,
+};
+use crate::{
+    auth::AccessClaims,
+    domain::bug_work_publication::*,
+    store,
+    task_delivery::{bug_work_delivery as owner, delivered_target as targets},
+};
+use axum::{
+    Extension, Json,
+    extract::{Path, Query, State},
+};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Semaphore;
+use uuid::Uuid;
+async fn authorize(
+    state: &AppState,
+    claims: &AccessClaims,
+    configuration: Uuid,
+    mapping: &targets::TargetMapping,
+    original: &BugWorkOperationAccepted,
+    manifest: Option<&BugWorkStaticManifest>,
+) -> Result<serde_json::Value, ApiError> {
+    if state.config.sdlc_workspace.delivered_target_subject != Some(claims.sub)
+        || claims.role != "service_account"
+        || claims.service_account_name.is_none()
+        || claims.sid.is_some()
+        || claims.token_project_id != Some(configuration)
+    {
+        return Err(ApiError::forbidden());
+    }
+    let mut tx = pool(state)?.begin().await.map_err(ApiError::internal)?;
+    if !store::delivered_target::authorize_reader(
+        &mut tx,
+        claims.token_id,
+        claims.sub,
+        configuration,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::forbidden());
+    }
+    if mapping.repository_id != original.request.repository_id {
+        return Err(ApiError::forbidden());
+    }
+    let projection = store::delivered_target::lock_binding(
+        &mut tx,
+        configuration,
+        mapping.repository_id,
+        mapping.environment_id,
+        original.request.project.tracker_instance_id,
+        original.request.project.project_id,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::forbidden)?;
+    let command: sdlc_shared::resource_context::OwnerCommand =
+        serde_json::from_value(projection.clone()).map_err(|_| ApiError::forbidden())?;
+    crate::namespace::validate_projection(&command)?;
+    let accepted = store::bug_work_publication::accepted(
+        &mut tx,
+        configuration,
+        &original.operation.operation_key,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::forbidden)?;
+    if serde_json::to_vec(&accepted.1).ok() != serde_json::to_vec(original).ok() {
+        return Err(ApiError::forbidden());
+    }
+    if let Some(m) = manifest {
+        if !store::bug_work_publication::matches_artifact(&mut tx, m)
+            .await
+            .map_err(ApiError::internal)?
+        {
+            return Err(ApiError::conflict("Исходный артефакт изменился"));
+        }
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(projection)
+}
+#[utoipa::path(get,path="/api/v1/projects/{project_id}/bug-work-operations/{operation_key}/delivery-proof/{target_ref}",tag="Bug work publications",params(("project_id"=Uuid,Path),("operation_key"=String,Path),("target_ref"=String,Path),OriginalQuery),responses((status=200,body=BugWorkDeliveryProof),(status=400),(status=401),(status=403),(status=404),(status=409),(status=503)))]
+pub(crate) async fn read(
+    State(state): State<Arc<AppState>>,
+    claims: Option<Extension<AccessClaims>>,
+    Path((configuration, key, target)): Path<(Uuid, String, String)>,
+    Query(query): Query<OriginalQuery>,
+) -> ApiResult<BugWorkDeliveryProof> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
+    if state.config.sdlc_workspace.delivered_target_subject != Some(claims.sub)
+        || claims.role != "service_account"
+        || claims.service_account_name.is_none()
+        || claims.sid.is_some()
+        || claims.token_project_id != Some(configuration)
+    {
+        return Err(ApiError::forbidden());
+    }
+    if !operation_key(&key) || !crate::domain::delivered_target::valid_target_ref(&target) {
+        return Err(ApiError::bad_request("Некорректный локатор доставки"));
+    }
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+    if !store::delivered_target::authorize_reader(
+        &mut tx,
+        claims.token_id,
+        claims.sub,
+        configuration,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::forbidden());
+    }
+    let (_, intent) = store::bug_work_publication::intent(&mut tx, configuration, &key)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found_named("операция исправления"))?;
+    matches(&intent, &query)?;
+    let (_, original) = store::bug_work_publication::accepted(&mut tx, configuration, &key)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::service_unavailable("Исходный pipeline ещё не принят"))?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    let mapping_path = state
+        .config
+        .sdlc_workspace
+        .delivered_targets
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("Целевые среды не настроены"))?;
+    let mapping = targets::mapping(mapping_path, configuration, &target)
+        .map_err(|_| ApiError::not_found_named("настроенная среда"))?;
+    let projection = authorize(&state, &claims, configuration, &mapping, &original, None).await?;
+    static OBSERVERS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    let permit = Arc::new(
+        OBSERVERS
+            .get_or_init(|| Arc::new(Semaphore::new(2)))
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ApiError::service_unavailable("Лимит проверки доставки занят"))?,
+    );
+    let worker_permit = permit.clone();
+    let worker_state = state.clone();
+    let worker_mapping = mapping.clone();
+    let worker_original = original.clone();
+    let prepared = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::task::spawn_blocking(move || {
+            let _permit = worker_permit;
+            owner::prepare_proof(&worker_state, &worker_mapping, &worker_original)
+        }),
+    )
+    .await;
+    let (mut result, manifest) = match prepared {
+        Ok(Ok(Ok(observation))) => {
+            let manifest = observation.manifest.clone();
+            if authorize(
+                &state,
+                &claims,
+                configuration,
+                &mapping,
+                &original,
+                Some(&manifest),
+            )
+            .await?
+                != projection
+            {
+                return Err(ApiError::forbidden());
+            }
+            (
+                owner::observe_proof(&mapping, observation).await,
+                Some(manifest),
+            )
+        }
+        _ => (
+            owner::unavailable(
+                &mapping,
+                &original,
+                "versioned_candidate_delivery_unavailable",
+            ),
+            None,
+        ),
+    };
+    if authorize(
+        &state,
+        &claims,
+        configuration,
+        &mapping,
+        &original,
+        manifest.as_ref(),
+    )
+    .await?
+        != projection
+        || !targets::mapping(mapping_path, configuration, &target).is_ok_and(|m| m == mapping)
+    {
+        result = owner::unavailable(&mapping, &original, "delivery_owner_binding_changed");
+        result.status = crate::domain::delivered_target::DeliveredTargetStatus::Changed;
+    }
+    Ok(Json(result))
+}

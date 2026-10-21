@@ -1,0 +1,94 @@
+# AGENTS.md — Forge CI/CD
+
+## Репозиторий
+
+- **Путь**: `/opt/dev/CI-CD`.
+- **GitHub**: `git@github.com:FerrPOINT/CI-CD.git`.
+- **Назначение**: self-hosted CI/CD control plane. В MVP jobs выполняет embedded runner (Docker/shell) с `job_queue` + `job_leases` ledger/reconciliation; внешний runner protocol MVP покрывает register/heartbeat/poll с bounded `waitSeconds` wakeup через in-process signal + PostgreSQL `LISTEN/NOTIFY`/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic runner tag + executor capability matching, ack-timeout requeue, queue-timeout diagnostic для отсутствующего compatible runner-а, cancel signal delivery и stale-runner offline reconciliation, а `forge-runner` даёт отдельный shell-runner process поверх этого protocol с active-lease heartbeat. Production-grade dispatch policy/fairness, richer log chunks, resumable artifact sessions и sandbox hardening остаются target.
+- **Стек**: Rust 2024, Axum 0.8, SQLx 0.8, PostgreSQL 17; React 19, Vite 6, Tailwind CSS 4, shadcn/ui.
+- **Env prefix**: `CICD_`.
+- **Порты**: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
+
+## Правила работы с репозиторием
+
+1. Работать из `/opt/dev/CI-CD`; перед изменениями читать `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/API.md` и релевантный ADR.
+2. До начала проверять `git status`. Не отменять и не перезаписывать чужие изменения; при неожиданном изменении во время работы остановиться и запросить указания.
+3. Backend сохраняет слои `api -> domain -> store`. `JobStatus::transition_to()` — единственный источник правил перехода статусов. SQL-запросы параметризуются через SQLx.
+4. Frontend использует React, Tailwind и shadcn/ui; новые API-клиенты и DTO остаются типизированными. Vite dev proxy направляет `/api` на `http://localhost:22801`.
+5. Все секреты передаются только через `CICD_` переменные или secret manager. Не коммитить `.env`, токены, пароли и реальные данные.
+
+## Коммиты и документация
+
+- Использовать Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `perf:`.
+- Один коммит — одна логическая единица. Не выполнять amend/squash или push без явного запроса пользователя.
+- При изменении API обновлять `docs/API.md`; при изменении схемы — `docs/DATA_MODEL.md`; архитектурное решение фиксировать новым ADR в `docs/adr/`.
+- Изменения Git Smart HTTP, bare repository storage или post-receive hook синхронизировать с `docs/GIT_HOSTING.md`.
+- Документация проекта и пользовательские строки — на русском; код и комментарии — на английском согласно `docs/CODE_STYLE.md`.
+
+## Docker и команды проверки
+
+```bash
+# Запуск и управление локальным окружением.
+cp .env.example .env
+docker compose up --build -d
+docker compose ps
+docker compose logs -f
+docker compose down
+
+# Backend: запуск через Docker, если cargo нет на хосте.
+docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" \
+  -w /workspace rust:1.86-bookworm \
+  -lc '/usr/local/cargo/bin/cargo test'
+
+# Frontend.
+cd frontend && pnpm test
+cd frontend && pnpm build
+```
+
+Для полного backend gate использовать также `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` и `cargo build --release --workspace` в том же Rust-контейнере. `justfile` дублирует основные операции: `just up`, `just down`, `just test-backend`, `just test-frontend`, `just build-frontend`, `just health`.
+
+Не использовать `docker compose restart` для применения нового образа или env: пересоздавать сервисы через `docker compose up -d` либо `docker compose up --build -d`.
+
+## Checklist перед завершением
+
+- [ ] Изменения соответствуют существующей архитектуре и не затёрли чужую работу.
+- [ ] Backend-проверки проходят: fmt, clippy, test, release build.
+- [ ] Frontend-проверки проходят: `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm test`, `pnpm build`.
+- [ ] `docker compose config` и `docker compose build` успешны при изменении контейнеров.
+- [ ] Для новых endpoint выполнена curl-проверка; для UI-изменений сделаны актуальные screenshots при необходимости.
+- [ ] Документация, `.env.example` и ADR обновлены, если изменились контракт, конфигурация или решение.
+- [ ] В diff отсутствуют credentials, токены, `.env` и другие чувствительные данные.
+
+## References
+
+- `docs/ARCHITECTURE.md`
+- `docs/CODE_STYLE.md`
+- `docs/TESTING.md`
+- `docs/API.md`
+- `docs/DATA_MODEL.md`
+- `docs/CI_CD.md`
+
+## Обязательная группировка Docker
+
+- Любой локальный контейнер запускается через Docker Compose с явным project name.
+  Постоянные проекты: только `sdlc1`, `sdlc2`, `sdlc-common`.
+- QA, тесты, restore drills и контейнерные проверки сборки используют отдельный
+  временный проект `sdlc-qa-<task>-<unique>` или `sdlc-build-<task>-<unique>`.
+  Не помещать тестовые сервисы в постоянные группы.
+- Прямые `docker run`/`docker create`, случайные имена и контейнеры без Compose
+  project запрещены, включая одноразовые helpers. Поддельные Compose labels
+  не заменяют Compose. Docker build/BuildKit разрешены; контейнерные runners
+  должны быть Compose-сервисами временного проекта.
+- До запуска задать владельца задачи (`sdlc.task`), назначение (`sdlc.purpose`),
+  явные имена сервисов, уникальный project и отдельные тестовые сети/volumes.
+  Не публиковать secrets в labels, логах или tracked Compose.
+- После проверки и при ошибке выполнять в finally/trap `docker compose -p
+  <exact-project> -f <exact-file> down --remove-orphans`. После прерывания
+  проверить и убрать собственные остатки при следующем запуске.
+- Volumes удалять только по точному перечню собственных disposable QA-ресурсов.
+  Shared caches, runtime volumes, backups и чужие ресурсы сохранять;
+  глобальные prune и массовое удаление контейнеров запрещены.
+- Перед запуском старого QA-скрипта с docker run сначала перевести его на Compose.
+  Проверка правил: `python services-base/scripts/audit_docker_groups.py` из
+  корня workspace; ненулевой exit означает контейнеры вне разрешённых групп
+  либо отсутствие owner/purpose у временного проекта.

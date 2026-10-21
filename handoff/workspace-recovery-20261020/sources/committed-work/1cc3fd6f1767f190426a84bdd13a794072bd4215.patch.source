@@ -1,0 +1,40 @@
+diff --git a/.base-revision b/.base-revision
+index 92948e1..23c71be 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-972a901050bd5092fb9e34d3aa7c7177297a5eae
++3aa329be3039332de81db5752a01fb6dc208debe
+diff --git a/docs/BASE_INTEGRATION.md b/docs/BASE_INTEGRATION.md
+index 1d2b1d5..77fb1dd 100644
+--- a/docs/BASE_INTEGRATION.md
++++ b/docs/BASE_INTEGRATION.md
+@@ -2,14 +2,25 @@
+ 
+ Base SHA закреплён в [`.base-revision`](../.base-revision); `main` Base не является
+ воспроизводимой зависимостью. Checkout Base должен лежать соседним каталогом
+-`services-base`. Перед standalone build выполнить из корня продукта:
++`services-base`. Проверка зависимости из корня продукта:
+ 
+ ```sh
+ python3 ../services-base/scripts/verify_base_revision.py --base ../services-base --revision .base-revision
+-python3 scripts/build.py
+ ```
+ 
+-Docker standalone и umbrella используют соседние checkout как build context.
++Принимаемые workspace images собираются через Base `workspace_install.py build`
++из чистых task checkout с `--source-overrides`; приёмка свежего кандидата —
++через disposable `qa_workspace.py` обоих профилей. Используются umbrella recipes
++с проверкой tag@digest, source/lockfile fingerprints и build receipt. Эти команды
++не переключают принятый runtime автоматически.
++
++`scripts/build.py` и standalone Dockerfiles относятся к legacy development
++manifest. Проверка Base SHA в этом helper не подтверждает parent provenance
++и не является приёмкой полного workspace. Их images нельзя подставлять вместо
++проверенных canonical candidate images. Совместимость принятых snapshots
++сохраняется; восстановление использует pinned image IDs, а не пересборку.
++
++Umbrella использует соседние checkout как build context.
+ CI получает Base на том же SHA. Forge runner sources формируются штатным
+ `materialize_runner_sources.py` из чистого delivery candidate, с manifest происхождения.
+ 

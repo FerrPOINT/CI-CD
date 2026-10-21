@@ -20,12 +20,18 @@ use uuid::Uuid;
 pub struct MutationGuard {
     #[cfg(unix)]
     _file: std::fs::File,
+    #[cfg(unix)]
+    _sync_capacity: Option<std::fs::File>,
 }
 impl MutationGuard {
     #[cfg(unix)]
     fn open(root: &Path, repository: Uuid) -> Result<std::fs::File, Error> {
+        Self::open_named(root, ".forge-mutation-locks", &format!("{repository}.lock"))
+    }
+    #[cfg(unix)]
+    fn open_named(root: &Path, folder: &str, name: &str) -> Result<std::fs::File, Error> {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let directory = root.join(".forge-mutation-locks");
+        let directory = root.join(folder);
         std::fs::create_dir_all(&directory)
             .map_err(|_| Error::Unavailable("Git lock storage недоступен"))?;
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
@@ -37,7 +43,7 @@ impl MutationGuard {
             .truncate(false)
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW)
-            .open(directory.join(format!("{repository}.lock")))
+            .open(directory.join(name))
             .map_err(|_| Error::Unavailable("Git lock недоступен"))
     }
     #[cfg(unix)]
@@ -57,7 +63,10 @@ impl MutationGuard {
     #[cfg(unix)]
     pub fn try_acquire(root: &Path, repository: Uuid) -> Result<Option<Self>, Error> {
         let file = Self::open(root, repository)?;
-        Ok(Self::lock(&file)?.then_some(Self { _file: file }))
+        Ok(Self::lock(&file)?.then_some(Self {
+            _file: file,
+            _sync_capacity: None,
+        }))
     }
     #[cfg(not(unix))]
     pub fn try_acquire(_root: &Path, _repository: Uuid) -> Result<Option<Self>, Error> {
@@ -78,7 +87,10 @@ impl MutationGuard {
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        Ok(Self { _file: file })
+        Ok(Self {
+            _file: file,
+            _sync_capacity: None,
+        })
     }
     #[cfg(not(unix))]
     pub async fn acquire(_root: &Path, _repository: Uuid) -> Result<Self, Error> {
@@ -86,11 +98,41 @@ impl MutationGuard {
             "Git mutation worker требует Unix shared storage",
         ))
     }
+    /// Supplement database slots with shared-storage custody that survives a
+    /// lost PostgreSQL session and remains held by an orphan Git child. Capacity
+    /// files are persistent: unlinking them would create independently locked inodes.
+    #[cfg(unix)]
+    pub fn try_reserve_sync_capacity(&mut self, root: &Path, limit: usize) -> Result<bool, Error> {
+        if self._sync_capacity.is_some() {
+            return Ok(true);
+        }
+        for slot in 0..limit {
+            let file = Self::open_named(root, ".forge-sync-capacity", &format!("{slot}.lock"))?;
+            if Self::lock(&file)? {
+                self._sync_capacity = Some(file);
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    #[cfg(not(unix))]
+    pub fn try_reserve_sync_capacity(
+        &mut self,
+        _root: &Path,
+        _limit: usize,
+    ) -> Result<bool, Error> {
+        Err(Error::Unavailable(
+            "Git synchronization capacity требует Unix shared storage",
+        ))
+    }
     /// Duplicate only into this child. Other concurrently spawned jobs must not inherit locks.
     pub fn inherit(&self, command: &mut Command) -> Result<(), Error> {
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
+            if let Some(capacity) = &self._sync_capacity {
+                inherit_descriptor(command, capacity.as_raw_fd(), 7)?;
+            }
             inherit_descriptor(command, self._file.as_raw_fd(), 8)?;
         }
         #[cfg(not(unix))]
@@ -183,6 +225,23 @@ impl GitSession {
         generation: i64,
         canceled: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
+        Self::new_with_guard(
+            root, local, settings, token, run, generation, canceled, None,
+        )
+        .await
+    }
+    /// Install custody before the first Git process, including scratch initialization.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_with_guard(
+        root: &Path,
+        local: PathBuf,
+        settings: Settings,
+        token: String,
+        run: Uuid,
+        generation: i64,
+        canceled: Arc<AtomicBool>,
+        guard: Option<Arc<MutationGuard>>,
+    ) -> Result<Self, Error> {
         let directory = root.join(".forge-sync-scratch");
         std::fs::create_dir_all(&directory)
             .map_err(|_| Error::Unavailable("Scratch storage недоступен"))?;
@@ -194,7 +253,7 @@ impl GitSession {
             remote: Endpoint::External(settings),
             token,
             canceled,
-            guard: None,
+            guard,
         };
         #[cfg(unix)]
         {
@@ -318,7 +377,7 @@ impl GitSession {
             .stderr
             .take()
             .ok_or(Error::Unavailable("Git stderr"))?;
-        let out = tokio::spawn(async move {
+        let mut out = tokio::spawn(async move {
             let mut data = Vec::new();
             stdout
                 .take(16 * 1024 * 1024 + 1)
@@ -326,7 +385,7 @@ impl GitSession {
                 .await
                 .map(|_| data)
         });
-        let err = tokio::spawn(async move {
+        let mut err = tokio::spawn(async move {
             let mut data = Vec::new();
             stderr
                 .take(1024 * 1024 + 1)
@@ -342,12 +401,24 @@ impl GitSession {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         };
-        let status = tokio::select! {
-            value=child.wait()=>Some(value),
-            _=tokio::time::sleep(Duration::from_secs(300))=>None,
-            _=stop=>None,
+        // A Git helper can outlive its parent and retain stdout/stderr. Bound the
+        // entire exchange, including pipe draining after the Git leader exits.
+        let completed = tokio::select! {
+            value=async {
+                let status = child.wait().await
+                    .map_err(|_| Error::Unavailable("Git wait failed"))?;
+                let output = (&mut out).await
+                    .map_err(|_| Error::Unavailable("Git output task"))?
+                    .map_err(|_| Error::Unavailable("Git output read"))?;
+                let diagnostic = (&mut err).await
+                    .map_err(|_| Error::Unavailable("Git error task"))?
+                    .map_err(|_| Error::Unavailable("Git error read"))?;
+                Ok::<_, Error>((status, output, diagnostic))
+            }=>value,
+            _=tokio::time::sleep(Duration::from_secs(300))=>Err(Error::Unavailable("git_outcome_unknown")),
+            _=stop=>Err(Error::Unavailable("git_outcome_unknown")),
         };
-        if status.is_none() {
+        if completed.is_err() {
             #[cfg(unix)]
             if let Some(pid) = pid {
                 // SAFETY: only the process group created above is targeted.
@@ -357,25 +428,14 @@ impl GitSession {
             }
             let _ = child.kill().await;
             let _ = child.wait().await;
+            out.abort();
+            err.abort();
         }
-        let output = out
-            .await
-            .map_err(|_| Error::Unavailable("Git output task"))?
-            .map_err(|_| Error::Unavailable("Git output read"))?;
-        let diagnostic = err
-            .await
-            .map_err(|_| Error::Unavailable("Git error task"))?
-            .map_err(|_| Error::Unavailable("Git error read"))?;
-        let Some(status) = status else {
-            return Err(Error::Unavailable("git_outcome_unknown"));
-        };
+        let (status, output, diagnostic) = completed?;
         if output.len() > 16 * 1024 * 1024 || diagnostic.len() > 1024 * 1024 {
             return Err(Error::Unavailable("Git output limit exceeded"));
         }
-        if !status
-            .map_err(|_| Error::Unavailable("Git wait failed"))?
-            .success()
-        {
+        if !status.success() {
             // Deliberately do not return provider stderr: it can include credentials or URLs.
             let diagnostic = String::from_utf8_lossy(&diagnostic).to_ascii_lowercase();
             let reason = if diagnostic.contains("bad file descriptor")
@@ -565,6 +625,75 @@ mod tests {
                 .unwrap()
                 .success()
         );
+    }
+    #[tokio::test]
+    async fn sync_capacity_is_shared_by_repositories_and_releases_for_waiting_work() {
+        let root = std::env::temp_dir().join(format!("forge-sync-capacity-{}", Uuid::new_v4()));
+        let mut first = MutationGuard::acquire(&root, Uuid::new_v4()).await.unwrap();
+        let mut second = MutationGuard::acquire(&root, Uuid::new_v4()).await.unwrap();
+        let mut waiting = MutationGuard::acquire(&root, Uuid::new_v4()).await.unwrap();
+        assert!(first.try_reserve_sync_capacity(&root, 2).unwrap());
+        assert!(second.try_reserve_sync_capacity(&root, 2).unwrap());
+        assert!(!waiting.try_reserve_sync_capacity(&root, 2).unwrap());
+        drop(first);
+        assert!(waiting.try_reserve_sync_capacity(&root, 2).unwrap());
+        drop(waiting);
+        drop(second);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn orphan_git_helper_retains_sync_capacity_until_actual_exit() {
+        struct Release(PathBuf);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                let _ = std::fs::write(&self.0, b"release owned helper on every exit");
+            }
+        }
+        let root =
+            std::env::temp_dir().join(format!("forge-sync-orphan-capacity-{}", Uuid::new_v4()));
+        let mut guard = MutationGuard::acquire(&root, Uuid::new_v4()).await.unwrap();
+        assert!(guard.try_reserve_sync_capacity(&root, 1).unwrap());
+        let ready = root.join("ready");
+        let release = root.join("release");
+        let release_on_exit = Release(release.clone());
+        let mut command = Command::new("git");
+        command
+            .env("CAPACITY_READY", &ready)
+            .env("CAPACITY_RELEASE", &release)
+            .args([
+                "-c",
+                "alias.custody=!f() { printf ready >\"$CAPACITY_READY\"; while test ! -f \"$CAPACITY_RELEASE\"; do sleep 0.05; done; }; f",
+                "custody",
+            ])
+            .kill_on_drop(true);
+        guard.inherit(&mut command).unwrap();
+        let mut child = command.spawn().unwrap();
+        drop(command);
+        drop(guard);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !ready.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("real Git helper starts while owning inherited capacity");
+        child.kill().await.unwrap();
+        child.wait().await.unwrap();
+        let mut waiting = MutationGuard::acquire(&root, Uuid::new_v4()).await.unwrap();
+        assert!(
+            !waiting.try_reserve_sync_capacity(&root, 1).unwrap(),
+            "dead Git parent does not free its living helper's capacity"
+        );
+        drop(release_on_exit);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !waiting.try_reserve_sync_capacity(&root, 1).unwrap() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("actual helper exit lets a different repository progress");
+        drop(waiting);
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
     async fn child_retains_mutation_lock_after_supervisor_drop() {
@@ -766,6 +895,397 @@ mod tests {
         drop(session);
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[tokio::test]
+    async fn git_failures_redact_provider_output_and_precanceled_commands_do_not_start() {
+        let root = std::env::temp_dir().join(format!("forge-errors-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let canceled = Arc::new(AtomicBool::new(false));
+        let session = GitSession::new(
+            &root,
+            root.join("local.git"),
+            Settings {
+                provider: Provider::Github,
+                instance_url: "https://github.com".into(),
+                repository_path: "fixture/repository".into(),
+                direction: cicd_domain::repository_sync::Direction::Pull,
+                automatic: false,
+            },
+            "fictional-error-canary".into(),
+            Uuid::new_v4(),
+            1,
+            canceled.clone(),
+        )
+        .await
+        .unwrap();
+        let error = session
+            .command(
+                false,
+                &[],
+                Command::new("sh").args([
+                    "-c",
+                    "printf 'authentication failed: fictional-error-canary' >&2; exit 1",
+                ]),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::Unavailable("git_access_denied")));
+        assert!(!error.to_string().contains("fictional-error-canary"));
+        let output = session
+            .command(
+                false,
+                &[],
+                Command::new("sh")
+                    .env("FORGE_SYNC_TEST_SECRET", "fictional-error-canary")
+                    .args(["-c", "printf '%s' \"${FORGE_SYNC_TEST_SECRET-unset}\""]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output, b"unset");
+        let missing = session
+            .command(false, &[], &mut Command::new(root.join("missing-git")))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            missing,
+            Error::Unavailable("Git executable недоступен")
+        ));
+        canceled.store(true, Ordering::SeqCst);
+        let marker = root.join("must-not-exist");
+        let stopped = session
+            .command(false, &[], Command::new("touch").arg(&marker))
+            .await
+            .unwrap_err();
+        assert!(matches!(stopped, Error::Conflict("sync_canceled")));
+        assert!(!marker.exists());
+        drop(session);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn subprocess_output_limits_accept_boundary_and_reject_overflow() {
+        let root = std::env::temp_dir().join(format!("forge-output-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let session = GitSession::new(
+            &root,
+            root.join("local.git"),
+            Settings {
+                provider: Provider::Github,
+                instance_url: "https://github.com".into(),
+                repository_path: "fixture/repository".into(),
+                direction: cicd_domain::repository_sync::Direction::Pull,
+                automatic: false,
+            },
+            "fictional-output-canary".into(),
+            Uuid::new_v4(),
+            1,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+        for (script, size, rejected) in [
+            ("head -c 16777216 /dev/zero", 16 * 1024 * 1024, false),
+            ("head -c 16777217 /dev/zero", 0, true),
+            ("head -c 1048576 /dev/zero >&2", 0, false),
+            ("head -c 1048577 /dev/zero >&2", 0, true),
+        ] {
+            let result = tokio::time::timeout(
+                Duration::from_secs(10),
+                session.command(false, &[], Command::new("sh").args(["-c", script])),
+            )
+            .await
+            .expect("bounded output drains without a stuck child");
+            if rejected {
+                assert!(matches!(
+                    result,
+                    Err(Error::Unavailable("Git output limit exceeded"))
+                ));
+            } else {
+                assert_eq!(result.unwrap().len(), size);
+            }
+        }
+        assert_eq!(
+            session
+                .command(false, &[], Command::new("printf").arg("recovered"))
+                .await
+                .unwrap(),
+            b"recovered"
+        );
+        drop(session);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scratch_cleanup_permission_failure_is_safe_and_retry_preserves_other_runs() {
+        use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+        // The child drops root so the test exercises a real filesystem denial
+        // even in the standard root-owned Rust build container.
+        if let Ok(root) = std::env::var("CICD_SYNC_CLEANUP_CHILD_ROOT") {
+            let run =
+                Uuid::parse_str(&std::env::var("CICD_SYNC_CLEANUP_CHILD_RUN").unwrap()).unwrap();
+            let result = GitSession::clean_recovered_scratch(Path::new(&root), run);
+            assert!(matches!(
+                result,
+                Err(Error::Unavailable("Scratch cleanup failed"))
+            ));
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("forge-cleanup-{}", Uuid::new_v4()));
+        let directory = root.join(".forge-sync-scratch");
+        let run = Uuid::new_v4();
+        let stale = directory.join(format!("{run}-1-stale"));
+        let unrelated = directory.join(format!("{}-1-other", Uuid::new_v4()));
+        let outside = root.join("must-survive");
+        for path in [&stale, &unrelated, &outside] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        std::fs::write(stale.join("object"), b"disposable Git object").unwrap();
+        std::fs::write(outside.join("marker"), b"unrelated storage").unwrap();
+        std::os::unix::fs::symlink(&outside, directory.join(format!("{run}-symlink"))).unwrap();
+        let executable = root.join("cleanup-test");
+        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o555)).unwrap();
+        for path in [&root, &directory, &stale] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        let mut child = std::process::Command::new(executable);
+        child
+            .args([
+                "--exact",
+                "sync_git::tests::scratch_cleanup_permission_failure_is_safe_and_retry_preserves_other_runs",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("CICD_SYNC_CLEANUP_CHILD_ROOT", &root)
+            .env("CICD_SYNC_CLEANUP_CHILD_RUN", run.to_string());
+        // SAFETY: geteuid has no preconditions and does not mutate process state.
+        if unsafe { libc::geteuid() } == 0 {
+            child.uid(65534).gid(65534);
+        }
+        let output = child.output().unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        assert!(stale.join("object").is_file());
+        for path in [&root, &directory, &stale] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        GitSession::clean_recovered_scratch(&root, run).unwrap();
+        assert!(!stale.exists());
+        assert!(unrelated.is_dir());
+        assert!(outside.join("marker").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_repositories_import_branches_and_annotated_tags_without_changing_head() {
+        let root = std::env::temp_dir().join(format!("forge-empty-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let local = root.join("local.git");
+        let remote = root.join("remote.git");
+        for path in [&local, &remote] {
+            git(
+                &root,
+                &[
+                    "init",
+                    "--bare",
+                    "--initial-branch=main",
+                    path.to_str().unwrap(),
+                ],
+            )
+            .await;
+        }
+        let head = std::fs::read(local.join("HEAD")).unwrap();
+        let mut session = GitSession::new(
+            &root,
+            local.clone(),
+            Settings {
+                provider: Provider::Gitlab,
+                instance_url: "https://fixture.invalid".into(),
+                repository_path: "fixture/repository".into(),
+                direction: cicd_domain::repository_sync::Direction::Both,
+                automatic: false,
+            },
+            "fictional-empty-canary".into(),
+            Uuid::new_v4(),
+            1,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+        session.remote = Endpoint::Local(remote.clone());
+        assert!(session.refs(false).await.unwrap().is_empty());
+        assert!(session.refs(true).await.unwrap().is_empty());
+        session.fetch().await.unwrap();
+        let work = root.join("work");
+        git(
+            &root,
+            &[
+                "init",
+                "--initial-branch=feature/new",
+                work.to_str().unwrap(),
+            ],
+        )
+        .await;
+        git(&work, &["config", "user.name", "QA"]).await;
+        git(&work, &["config", "user.email", "qa@example.invalid"]).await;
+        git(&work, &["commit", "--allow-empty", "-m", "first"]).await;
+        git(&work, &["tag", "-a", "v1", "-m", "annotation"]).await;
+        git(
+            &work,
+            &[
+                "push",
+                remote.to_str().unwrap(),
+                "feature/new",
+                "refs/tags/v1",
+                "HEAD:refs/internal/private",
+                "HEAD:refs/pull/1/head",
+            ],
+        )
+        .await;
+        session.fetch().await.unwrap();
+        assert!(
+            session.refs(false).await.unwrap().is_empty(),
+            "fetch must not mutate live refs"
+        );
+        let refs = session.refs(true).await.unwrap();
+        assert_eq!(refs.len(), 2, "provider service refs must be excluded");
+        for (name, sha) in &refs {
+            session.apply(false, name, None, sha).await.unwrap();
+        }
+        assert_eq!(session.refs(false).await.unwrap(), refs);
+        assert_eq!(std::fs::read(local.join("HEAD")).unwrap(), head);
+        let tag = Command::new("git")
+            .arg(format!("--git-dir={}", local.display()))
+            .args(["cat-file", "-t", &refs["refs/tags/v1"]])
+            .output()
+            .await
+            .unwrap();
+        assert!(tag.status.success());
+        assert_eq!(tag.stdout, b"tag\n");
+        let scratch = session.scratch.clone();
+        drop(session);
+        assert!(!scratch.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires an owned disposable container with an isolated /dev/shm tmpfs"]
+    async fn scratch_disk_full_is_safe_and_next_attempt_recovers() {
+        use std::io::Write;
+        assert_eq!(std::env::var("FORGE_SYNC_DISK_FULL_QA").as_deref(), Ok("1"));
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let fixture = Fixture(PathBuf::from(format!(
+            "/dev/shm/forge-full-{}",
+            Uuid::new_v4()
+        )));
+        std::fs::create_dir(&fixture.0).unwrap();
+        let filler_path = fixture.0.join("owned-filler");
+        let mut filler = std::fs::File::create(&filler_path).unwrap();
+        let chunk = vec![0u8; 1024 * 1024];
+        let mut full = false;
+        for _ in 0..128 {
+            if let Err(error) = filler.write_all(&chunk) {
+                assert_eq!(error.raw_os_error(), Some(libc::ENOSPC));
+                full = true;
+                break;
+            }
+        }
+        assert!(full, "QA tmpfs must be smaller than the bounded filler");
+        let settings = Settings {
+            provider: Provider::Github,
+            instance_url: "https://github.com".into(),
+            repository_path: "fixture/repository".into(),
+            direction: cicd_domain::repository_sync::Direction::Pull,
+            automatic: false,
+        };
+        let attempt = || {
+            GitSession::new(
+                &fixture.0,
+                fixture.0.join("local.git"),
+                settings.clone(),
+                "fictional-disk-full-canary".into(),
+                Uuid::new_v4(),
+                1,
+                Arc::new(AtomicBool::new(false)),
+            )
+        };
+        let error = attempt()
+            .await
+            .err()
+            .expect("full scratch must fail safely");
+        assert!(!error.to_string().contains("fictional-disk-full-canary"));
+        assert!(
+            !fixture.0.join("local.git").exists(),
+            "no live repository mutation"
+        );
+        drop(filler);
+        std::fs::remove_file(filler_path).unwrap();
+        let session = attempt().await.expect("retry after releasing owned space");
+        assert!(session.scratch.join("HEAD").is_file());
+        drop(session);
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_git_exit_does_not_wait_for_inherited_output_pipes() {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                if let Ok(pid) = std::fs::read_to_string(self.0.join("child.pid")) {
+                    let pid: i32 = pid.trim().parse().unwrap();
+                    // SAFETY: this PID belongs to the sleep started by this fixture.
+                    unsafe { libc::kill(pid, libc::SIGKILL) };
+                }
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let fixture = Fixture(std::env::temp_dir().join(format!("forge-pipes-{}", Uuid::new_v4())));
+        std::fs::create_dir(&fixture.0).unwrap();
+        let canceled = Arc::new(AtomicBool::new(false));
+        let session = GitSession::new(
+            &fixture.0,
+            fixture.0.join("local.git"),
+            Settings {
+                provider: Provider::Github,
+                instance_url: "https://github.com".into(),
+                repository_path: "fixture/repository".into(),
+                direction: cicd_domain::repository_sync::Direction::Both,
+                automatic: false,
+            },
+            "fictional-pipes-canary".into(),
+            Uuid::new_v4(),
+            1,
+            canceled.clone(),
+        )
+        .await
+        .unwrap();
+        let cancel = async {
+            while !fixture.0.join("child.pid").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            // The shell exits while its child still holds both output pipes.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            canceled.store(true, Ordering::SeqCst);
+        };
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 30 & printf '%s' \"$!\" > \"$1\"", "fixture"]);
+        command.arg(fixture.0.join("child.pid"));
+        let result = tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(session.command(false, &[], &mut command), cancel).0
+        })
+        .await
+        .expect("cancellation must also bound inherited output pipes");
+        assert!(matches!(
+            result,
+            Err(Error::Unavailable("git_outcome_unknown"))
+        ));
+    }
+
     #[tokio::test]
     async fn actual_git_fast_forward_tag_conflict_and_cleanup() {
         let root = std::env::temp_dir().join(format!("forge-sync-test-{}", Uuid::new_v4()));

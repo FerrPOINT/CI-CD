@@ -1,0 +1,56 @@
+diff --git a/docs/uiux-source-evidence-2026-10-02.md b/docs/uiux-source-evidence-2026-10-02.md
+index be4efe1..938d4ae 100644
+--- a/docs/uiux-source-evidence-2026-10-02.md
++++ b/docs/uiux-source-evidence-2026-10-02.md
+@@ -1,5 +1,8 @@
+ # Source QA: Base Shell И Audit
+ 
++Первый checkpoint ниже сохраняет исторический snapshot `b8cb3da`.
++Текущий source checkpoint указан в разделе «Reconciled Base Snapshot».
++
+ ## Границы
+ 
+ Это frontend/source checkpoint, не выпускная приёмка всего CI/CD.
+@@ -77,3 +80,42 @@ Owned preview завершён; listener 18866 отсутствует.
+ fixtures, no-mock immutable images/live SSO, real README gallery, local default
+ integration и mirror не выполнены этим checkpoint. Все исходные 14 findings
+ остаются открытыми до требуемых выпускных доказательств.
++
++## Reconciled Base Snapshot
++
++- CI/CD runtime source: `9e8496df0a82d9dcd412c335ae6d000911879eb4`.
++- Base pin: `f5df82c20dacfd1c25a8dea8ef2128864d763f39` в `.base-revision`.
++- `pnpm ui:check` сначала проверяет точный SHA и чистоту соседнего Base checkout,
++  затем route coverage и фактически установленное содержимое пакета.
++- Frontend package manager закреплён на pnpm 10.28.1. Проверки выполнены на
++  Node 22.20.0; frozen offline force install: 422 reused, zero downloaded.
++  Lockfile и generated API content не изменились.
++- Product fingerprint:
++  `b75440305a011722b9149599182cc598c2ae3d0dda5a38c7ebf52b0631101300`.
++- Source/installed Base fingerprint:
++  `1e978a165f98801f37c95db85287fca447922dbff385aa8f1e30efa2f390eb1a`.
++- Общая аттестация теперь включает `.base-revision`; смена pin меняет product
++  fingerprint. LF/CRLF не создают расхождения. После commit подтверждён runtime
++  source attestation; source и installed Base совпадают.
++- Base объединяет сохранённый default `69bd8ef` с общими page/form/state/SSR
++  контрактами. SSO сохраняет deep link и replacement history вместе с новой
++  обработкой cancelled login/logout; внешний PKCE return address отвергается.
++- CI/CD: 221 unit tests / 34 files; lint/semantic, build/typecheck, OpenAPI
++  check/compat saved `origin/main`, docs validator / 3 script tests прошли.
++  Installed route gate охватывает 24 patterns, не объявляя runtime acceptance.
++- Chromium: 10 passed, 39 PNG. Повторена исходная theme/breakpoint/state matrix,
++  SSO/URL history, drawer keyboard/focus/Escape, loading/empty/retry и axe checks.
++  Normal desktop и mobile partial-error captures просмотрены.
++- Current evidence: `cicd-base-reconciled-source-*` logs и
++  `cicd-base-reconciled-source-browser/{geometry.json,metadata.json,*.png}`
++  в workspace `audit-artifacts/base-standard-2026-10-01/`.
++  Metadata построен из текущих PNG: actual dimensions, SHA-256, file mtime,
++  viewport/theme, exact product/Base SHA и fingerprints. Synthetic fixtures
++  помечены source-only и не входят в README gallery.
++- Первый run install без packageManager использовал global pnpm 10.23.0 и
++  superseded повторным pinned install. Диагностические invocation failures
++  OpenAPI/docs сохранены отдельно; final gates используют штатные команды.
++- Owned preview завершён, listener 18866 отсутствует. CI/CD backend/release
++  gates, остальные pages, все roles/routes/states, actual images/live SSO и
++  real README остаются обязательными. Default integration и финальный mirror
++  этим source checkpoint не подтверждаются; исходные 14 findings не закрыты.

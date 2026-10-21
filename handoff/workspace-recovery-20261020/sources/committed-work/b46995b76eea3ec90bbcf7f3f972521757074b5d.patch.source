@@ -1,0 +1,66 @@
+diff --git a/docs/uiux-source-evidence-2026-10-02.md b/docs/uiux-source-evidence-2026-10-02.md
+index a05bc3f..7ff840a 100644
+--- a/docs/uiux-source-evidence-2026-10-02.md
++++ b/docs/uiux-source-evidence-2026-10-02.md
+@@ -1,7 +1,7 @@
+ # Source QA: Base Shell И Audit
+ 
+ Первый checkpoint ниже сохраняет исторический snapshot `b8cb3da`.
+-Текущий source checkpoint указан в разделе «Reconciled Base Snapshot».
++Текущий source checkpoint указан в разделе «Default Reconciliation Snapshot».
+ 
+ ## Границы
+ 
+@@ -151,3 +151,52 @@ image отсутствует, README gallery и release acceptance явно pend
+ Ранний unit run во время force install диагностический и superseded отдельным
+ final run после завершения установки. Source evidence не переносит результаты
+ на фактические Docker images. Полный обязательный остаток выше сохраняется.
++
++## Default Reconciliation Snapshot
++
++- CI/CD runtime source: `d2dfbb5b0136e87f4b2afc9e26f9645e5fb12a62`.
++- Base: `6f63595a891f78b96b665889f80e6eb5cf34381a`; сохранённые локальные
++  defaults `365afd2` и `c708d76` интегрированы в task branches, не в default refs.
++- Product fingerprint:
++  `ff1d54c2c75294cabe0883cf426b68bfeebe288eb07f66d7cf5b4ea00c8a7167`.
++- Source/installed Base fingerprint:
++  `a383932722c73aa8ed540a416b2ec0def375d97c967ab64b23daeb9d9abf3e30`.
++- Frozen offline force install: 422 reused / zero downloads. Frontend: 226
++  tests / 35 files; lint/semantic, typecheck/build, strict Base/24-pattern UI gate,
++  OpenAPI check/compat, packed consumer, effective theme contrast, documentation
++  validator и 14 Python script tests прошли. Chunk warning >500 kB сохраняется.
++- Rust 1.88: fmt, strict workspace/all-target clippy, 149 workspace tests,
++  58 PostgreSQL integration_db + 4 target_policy и 2 real HTTP/PostgreSQL CLI
++  tests прошли. Release workspace собран; OpenAPI release binary совпадает с
++  committed YAML после нормализации CRLF. SDK MSRV 1.86 здесь не проверялся.
++- CLI fixtures исправлены под действующую security policy: реальные login JWT,
++  missing credentials exit 2, forbidden exit 5, JWT subject как audit actor.
++  Anonymous SDK draft отклонён и удалён до commit. Fail-closed HTTP 503 при
++  отсутствующей server auth configuration не ослаблен.
++- Base: 46 Rust tests passed / 5 ignored, включая 8 реальных PostgreSQL auth
++  tests; fmt/clippy прошли. Ignored live JWKS/documentation examples не являются
++  доказательством SSO в images. UI package integrity повторно подтверждён.
++- Chromium source: 10 passed, 39 PNG, 30 normal audit geometry observations,
++  light/gray/dark и 10 widths. Также проверены partial/terminal states, URL,
++  drawer focus/Escape и axe на mocked HTTP/OIDC. Это не все operational routes.
++  Metadata аттестует frontend/backend/OpenAPI/scripts и Base runtime sources,
++  реальные dimensions/digests/mtime PNG и 57 Windows source-build assets.
++  Theme для state captures без отдельного измерения оставлена null, не угадана.
++- Чистый tracked export: 2660 файлов сверены с provenance digest
++  `eaba37c57beb2b192f35997d265bbfca272c41ab898318581253c695f098ee1f`.
++  Собраны immutable candidates `uiux-cicd-web:d2dfbb5-6f63595` и
++  `uiux-cicd-api:d2dfbb5-6f63595`. Inspected image IDs:
++  `sha256:b91c900573cfd0c92abf9145606a7efa237cbc3fed97e911e12f59c3ebdf1850`
++  и `sha256:2640419132cd99d7b205ff3d61cefa296f81fe5b06b2349d8b22e60c31e318cb`.
++  Compose config, Nginx syntax, runner help и Docker CLI 29.5.0 проверены.
++  Linux image assets не подменяются Windows source-build hashes.
++- Evidence в workspace: `cicd-default-reconcile-browser-source/metadata.json`,
++  `cicd-default-reconcile-images.json` и `cicd-default-reconcile-*.log` под
++  `audit-artifacts/base-standard-2026-10-01`. Canonical runtime/pins не менялись;
++  temporary PostgreSQL/network и preview остановлены, cache volumes сохранены.
++
++Остальные list/form/detail/dashboard/log compositions, all-route/role/state
++fixtures, real image browser smoke/SSO, README gallery, default integration и
++mirror остаются обязательными. Image build не является runtime acceptance:
++`runtimeAcceptance=false`, `readmeGalleryAccepted=false`, `defaultIntegrated=false`,
++`mirrorSynced=false`. Все 14 исходных findings остаются открытыми.

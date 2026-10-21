@@ -1,0 +1,576 @@
+//! Uses the existing real runner/candidate/delivery fixture, never synthetic success metadata.
+use super::*;
+
+#[tokio::test]
+async fn delivered_target_actual_publication_scoped_authority_generation_and_legacy_readback() {
+    // The QA driver supplies this process-only origin; reserve it before the
+    // fixture creates any ephemeral servers. Never mutate process environment.
+    let origin = reqwest::Url::parse(
+        &std::env::var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN")
+            .expect("owned loopback public Git origin required"),
+    )
+    .unwrap();
+    assert_eq!(origin.scheme(), "http");
+    assert_eq!(origin.host_str(), Some("127.0.0.1"));
+    assert_eq!(origin.path(), "/");
+    assert!(origin.username().is_empty() && origin.password().is_none());
+    assert!(origin.query().is_none() && origin.fragment().is_none());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", origin.port().unwrap()))
+        .await
+        .unwrap();
+    let mut t = ActualDelivery::new().await;
+    let tracker = Uuid::new_v4();
+    t.f.request.binding.tracker_instance_id = tracker.to_string();
+    let project = t.f.request.binding.tracker_project_id;
+    let repository = t.f.request.repository_id;
+    let group = Uuid::new_v4();
+    let registry: Uuid = std::env::var("CICD_NAMESPACE__REGISTRY_INSTANCE_ID")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let namespace = Uuid::new_v4();
+    let environment = Uuid::new_v4();
+    let reader = Uuid::new_v4();
+    let token_id = Uuid::new_v4();
+    let token = format!("forge_sat_{}", Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO git_groups(id,slug,name,namespace_managed) VALUES($1,$2,'Delivered QA',true)",
+    )
+    .bind(group)
+    .bind(format!("qa-{}", group.simple()))
+    .execute(&t.f.pool)
+    .await
+    .unwrap();
+    let command = serde_json::json!({
+        "schema_version":1,"namespace":{"registry_instance_id":registry,"namespace_id":namespace},
+        "resource":{"instance_id":std::env::var("CICD_NAMESPACE__INSTANCE_ID").unwrap(),"kind":"git_group","resource_id":group},
+        "operation_id":Uuid::new_v4(),"generation":1,"state":"active","create_spec":null
+    });
+    sqlx::query("INSERT INTO forge_namespace_bindings(resource_id,registry_instance_id,namespace_id,generation,state,command) VALUES($1,$2,$3,1,'active',$4)")
+        .bind(group).bind(registry).bind(namespace).bind(command).execute(&t.f.pool).await.unwrap();
+    sqlx::query("UPDATE repository_catalog SET group_id=$2 WHERE id=$1")
+        .bind(repository)
+        .bind(group)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    // Normal public Smart HTTP checkout of synthetic source, not an auth bypass.
+    // The grouped alias resolves to the fixture's unchanged immutable storage.
+    sqlx::query("UPDATE repositories SET visibility='public' WHERE id=$1")
+        .bind(repository)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repository_aliases(alias,repository_id) SELECT g.slug||'/'||r.slug,r.id FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id WHERE r.id=$1")
+        .bind(repository).execute(&t.f.pool).await.unwrap();
+    sqlx::query("INSERT INTO forge_workspace_projects(registry_instance_id,namespace_id,tracker_instance_id,tracker_project_id,generation,name,project_key,state,observed_at) VALUES($1,$2,$3,$4,1,'Delivered QA','QA','active',now())")
+        .bind(registry).bind(namespace).bind(tracker).bind(project).execute(&t.f.pool).await.unwrap();
+    sqlx::query("INSERT INTO environments(id,project_id,name) VALUES($1,$2,'QA delivered target')")
+        .bind(environment)
+        .bind(t.f.project)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO service_accounts(id,name) VALUES($1,$2)")
+        .bind(reader)
+        .bind(format!("delivered-reader-{reader}"))
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,project_id,scopes,principal_type,service_account_id) VALUES($1,'delivered reader',$2,'qa-only',$3,ARRAY['api:read'],'service_account',$4)")
+        .bind(token_id).bind(cicd::auth::hash_token(&token)).bind(t.f.project).bind(reader).execute(&t.f.pool).await.unwrap();
+    let mapping = t.temp.join("delivered-targets.json");
+    std::fs::write(
+        &mapping,
+        serde_json::to_vec(&serde_json::json!({
+            "schema":"forge/delivered-targets-config/v1", "targets":[{
+                "configurationId":t.f.project,"repositoryId":repository,"environmentId":environment,
+                "targetRef":"qa:app","root":t.target_root,"policy":t.policy_file,
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut config = cicd::config::RuntimeConfig::test_default()
+        .with_auth_secret(Some("workspace-test-secret".into()));
+    config.sdlc_workspace.operation_subject = Some(t.f.subject);
+    config.sdlc_workspace.local_delivery_root = Some(t.target_root.clone());
+    config.sdlc_workspace.local_delivery_policy = Some(t.policy_file.clone());
+    config.sdlc_workspace.delivered_target_subject = Some(reader);
+    config.sdlc_workspace.source_reader_subject = Some(reader);
+    config.sdlc_workspace.delivered_targets = Some(mapping);
+    config.artifacts.root = t.artifact_root.clone();
+    t.f.app = cicd::api::app_with_git_and_config(
+        Some(t.f.pool.clone()),
+        cicd::git_host::GitConfig {
+            root: t.git_root.clone(),
+            token: None,
+            internal_token: None,
+        },
+        None,
+        config,
+    )
+    .unwrap();
+    // Exercise the same configured AppState through real runner HTTP and curl.
+    t.server.abort();
+    t.address = listener.local_addr().unwrap();
+    let app = t.f.app.clone();
+    t.server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let url = format!(
+        "/api/v1/projects/{}/delivered-targets/qa:app?tracker_instance_id={tracker}&project_id={project}&repository_id={repository}",
+        t.f.project
+    );
+
+    // A pipeline/candidate by itself is unavailable serving authority.
+    let (a, original) = t
+        .build(
+            "delivered-target-A",
+            "version=A\nhealth=ok\nacceptance=ok\n",
+        )
+        .await;
+    // Source authority works before publication and needs no Bug/task lease.
+    let source_url = format!(
+        "/api/v1/projects/{}/source-snapshot?tracker_instance_id={tracker}&project_id={project}&repository_id={repository}&branch_ref=refs%2Fheads%2Fmain",
+        t.f.project
+    );
+    let (source_status, source) = t.curl_with_token("GET", &source_url, None, &token).await;
+    assert_eq!(source_status, 200, "{source}");
+    assert_eq!(source["schema"], "forge/source-snapshot/v1");
+    assert_eq!(source["repositoryId"], repository.to_string());
+    assert_eq!(source["commitSha"], t.f.request.source_commit);
+    assert_eq!(source["branchRef"], "refs/heads/main");
+    assert!(
+        source["cloneUrl"]
+            .as_str()
+            .unwrap()
+            .starts_with(origin.as_str())
+    );
+    for bad in [
+        source_url.replace(&project.to_string(), &Uuid::new_v4().to_string()),
+        source_url.replace(&repository.to_string(), &Uuid::new_v4().to_string()),
+        source_url.replace(&tracker.to_string(), &Uuid::new_v4().to_string()),
+    ] {
+        assert_eq!(
+            call(&t.f.app, "GET", &bad, &token, String::new()).await.0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    for extra in ["&caller_url=http://localhost/", "&verified=true"] {
+        assert_eq!(
+            call(
+                &t.f.app,
+                "GET",
+                &format!("{source_url}{extra}"),
+                &token,
+                String::new()
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let expression = source_url.replace("refs%2Fheads%2Fmain", "HEAD%5E%7Bcommit%7D");
+    assert_eq!(
+        call(&t.f.app, "GET", &expression, &token, String::new())
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let missing = source_url.replace("refs%2Fheads%2Fmain", "refs%2Fheads%2Fmissing-qa");
+    assert_eq!(
+        call(&t.f.app, "GET", &missing, &token, String::new())
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    #[cfg(unix)]
+    {
+        let relocated = t.git_root.join("relocated-qa.git");
+        std::fs::rename(&t.bare, &relocated).unwrap();
+        std::os::unix::fs::symlink(&relocated, &t.bare).unwrap();
+        let code = call(&t.f.app, "GET", &source_url, &token, String::new())
+            .await
+            .0;
+        std::fs::remove_file(&t.bare).unwrap();
+        std::fs::rename(&relocated, &t.bare).unwrap();
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let (status, before) = call(&t.f.app, "GET", &url, &token, String::new()).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert_eq!(before["status"], "unavailable");
+    assert!(before["target"].is_null());
+    let (code, delivered) = t.execute(&a, None).await;
+    assert_eq!(code, 0, "{delivered:?}");
+    let first = t.curl_with_token("GET", &url, None, &token).await;
+    assert_eq!(first.0, 200, "{}", first.1);
+    assert_eq!(first.1["status"], "confirmed", "{}", first.1);
+    assert_eq!(first.1["target"]["generation"], "1");
+    assert_eq!(first.1["target"]["commitSha"], t.f.request.source_commit);
+    assert_eq!(
+        first.1["target"]["artifactDigest"],
+        format!("sha256:{}", hash(b"version=A\nhealth=ok\nacceptance=ok\n"))
+    );
+    assert_eq!(
+        first.1["target"]["servingIdentity"]["artifactBodySha256"],
+        hash(b"version=A\nhealth=ok\nacceptance=ok\n")
+    );
+    assert_eq!(
+        call(&t.f.app, "GET", &url, &token, String::new()).await.1["target"]["deliveryRef"],
+        first.1["target"]["deliveryRef"]
+    );
+    // Actual owner HTTP is deliberately paused. Revocation must commit while
+    // the probe is in flight, and that request must not return confirmed data.
+    let controls = t.target_root.parent().unwrap();
+    let block = controls.join("block-health");
+    let entered = controls.join("entered-block-health");
+    std::fs::write(&block, b"hold").unwrap();
+    let (probe_app, probe_url, probe_token) = (t.f.app.clone(), url.clone(), token.clone());
+    let pending = tokio::spawn(async move {
+        call(&probe_app, "GET", &probe_url, &probe_token, String::new()).await
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !entered.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "delivered read did not reach actual health probe"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let revoked = tokio::time::timeout(
+        Duration::from_secs(1),
+        sqlx::query("UPDATE api_tokens SET revoked_at=now() WHERE id=$1")
+            .bind(token_id)
+            .execute(&t.f.pool),
+    )
+    .await;
+    std::fs::remove_file(&block).unwrap();
+    let denied = tokio::time::timeout(Duration::from_secs(10), pending)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        revoked.is_ok_and(|result| result.is_ok()),
+        "reader SQL lock must not span owner HTTP probes"
+    );
+    assert_eq!(
+        denied.0,
+        StatusCode::FORBIDDEN,
+        "a mid-probe revoked read must not return confirmed target"
+    );
+    sqlx::query("UPDATE api_tokens SET revoked_at=NULL WHERE id=$1")
+        .bind(token_id)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(&t.f.app, "GET", &url, &t.f.token, String::new())
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let human = Uuid::new_v4();
+    let human_pat = format!("cicd_{}", Uuid::new_v4().simple());
+    sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,'admin')")
+        .bind(human)
+        .bind(format!("delivered-human-{human}"))
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO api_tokens(id,name,user_id,token_hash,token_hint,project_id,scopes) VALUES($1,'human reader',$2,$3,'qa-only',$4,ARRAY['api:read'])")
+        .bind(Uuid::new_v4()).bind(human).bind(cicd::auth::hash_token(&human_pat)).bind(t.f.project).execute(&t.f.pool).await.unwrap();
+    assert_eq!(
+        call(&t.f.app, "GET", &url, &human_pat, String::new())
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let global_pat = format!("forge_sat_{}", Uuid::new_v4().simple());
+    sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,scopes,principal_type,service_account_id) VALUES($1,'global reader',$2,'qa-only',ARRAY['api:read'],'service_account',$3)")
+        .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&global_pat)).bind(reader).execute(&t.f.pool).await.unwrap();
+    assert_eq!(
+        call(&t.f.app, "GET", &url, &global_pat, String::new())
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    for credential in [&human_pat, &global_pat, &t.f.token] {
+        assert_eq!(
+            call(&t.f.app, "GET", &source_url, credential, String::new())
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    assert_eq!(
+        call(
+            &t.f.app,
+            "GET",
+            &url.replace(
+                &format!("project_id={project}"),
+                &format!("project_id={}", Uuid::new_v4())
+            ),
+            &token,
+            String::new()
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &t.f.app,
+            "GET",
+            &format!("{url}&verified=true"),
+            &token,
+            String::new()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &t.f.app,
+            "GET",
+            &format!("{url}&url=http://attacker.invalid"),
+            &token,
+            String::new()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let before_pointer = std::fs::read(t.target_root.join("current.json")).unwrap();
+    assert_eq!(t.execute(&a, Some("--readback")).await.0, 0);
+    assert_eq!(t.execute(&a, None).await.0, 0);
+    assert_eq!(t.execute(&a, Some("--reconcile")).await.0, 0);
+    assert_eq!(
+        before_pointer,
+        std::fs::read(t.target_root.join("current.json")).unwrap()
+    );
+    let mut rollback = a.clone();
+    rollback.operation_key = "rollback:identical".into();
+    rollback.action = DeliveryAction::Rollback;
+    rollback.artifact_id = None;
+    rollback.expected_manifest_sha256 = first.1["target"]["manifestSha256"]
+        .as_str()
+        .map(str::to_owned);
+    assert_eq!(t.execute(&rollback, None).await.0, 0);
+    let second = call(&t.f.app, "GET", &url, &token, String::new()).await.1;
+    assert_eq!(second["status"], "confirmed", "{second}");
+    assert_eq!(second["target"]["generation"], "2");
+    assert_ne!(
+        second["target"]["deliveryRef"],
+        first.1["target"]["deliveryRef"]
+    );
+    assert_eq!(
+        second["target"]["manifestSha256"],
+        first.1["target"]["manifestSha256"]
+    );
+    let versioned_pointer = std::fs::read(t.target_root.join("current.json")).unwrap();
+    std::fs::write(
+        t.target_root.join("current.json"),
+        serde_json::to_vec(
+            &serde_json::json!({"manifestSha256":second["target"]["manifestSha256"]}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        call(&t.f.app, "GET", &url, &token, String::new()).await.1["status"],
+        "unavailable"
+    );
+    assert_eq!(
+        t.read_http(&a, &original).await["receipt"]["status"],
+        "verified"
+    );
+    std::fs::write(t.target_root.join("current.json"), versioned_pointer).unwrap();
+
+    // The serving commit stays A while the source branch advances to B. Exercise
+    // the real private Smart HTTP owner, not a fake successful checkout carrier.
+    let serving_commit = physical_git(&t.source, &["rev-parse", "HEAD"]);
+    std::fs::write(t.source.join("README.md"), "source branch ahead of QA\n").unwrap();
+    physical_git(&t.source, &["add", "README.md"]);
+    physical_git(
+        &t.source,
+        &[
+            "-c",
+            "user.name=QA",
+            "-c",
+            "user.email=qa@example.invalid",
+            "commit",
+            "-m",
+            "advance after delivery",
+        ],
+    );
+    physical_git(
+        &t.source,
+        &["push", t.bare.to_str().unwrap(), "HEAD:refs/heads/main"],
+    );
+    let advanced = call(&t.f.app, "GET", &source_url, &token, String::new())
+        .await
+        .1;
+    assert_ne!(advanced["commitSha"], serving_commit);
+    assert_eq!(
+        call(&t.f.app, "GET", &url, &token, String::new()).await.1["target"]["commitSha"],
+        serving_commit
+    );
+    sqlx::query("UPDATE repositories SET visibility='private' WHERE id=$1")
+        .bind(repository)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    let checkout = t.temp.join("private-reader-checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    physical_git(&checkout, &["init", "--quiet"]);
+    async fn fetch_pin(
+        directory: &std::path::Path,
+        clone_url: &str,
+        credential: &str,
+        commit: &str,
+    ) -> bool {
+        let mut command = tokio::process::Command::new("git");
+        command
+            .current_dir(directory)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", "/nonexistent")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "http.extraHeader")
+            .env(
+                "GIT_CONFIG_VALUE_0",
+                format!("Authorization: Bearer {credential}"),
+            )
+            .args([
+                "-c",
+                "credential.helper=",
+                "-c",
+                "http.followRedirects=false",
+                "-c",
+                "http.proxy=",
+                "fetch",
+                "--quiet",
+                "--depth=1",
+                "--no-tags",
+                "--no-recurse-submodules",
+                "--",
+                clone_url,
+                commit,
+            ])
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true);
+        let output = tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
+            .await
+            .expect("private Git fixture request exceeded bounded deadline")
+            .unwrap();
+        output.status.success()
+    }
+    let clone_url = advanced["cloneUrl"].as_str().unwrap();
+    assert!(
+        !fetch_pin(&checkout, clone_url, &token, &serving_commit).await,
+        "api:read does not authorize private Git"
+    );
+    sqlx::query("UPDATE api_tokens SET scopes=ARRAY['api:read','git:read'] WHERE id=$1")
+        .bind(token_id)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    assert!(
+        fetch_pin(&checkout, clone_url, &token, &serving_commit).await,
+        "configured project reader must fetch reachable historical SHA"
+    );
+    assert_eq!(
+        physical_git(&checkout, &["rev-parse", "FETCH_HEAD"]),
+        serving_commit
+    );
+    // Command-level policy must override even an overly broad stored setting.
+    physical_git(
+        &t.bare,
+        &["config", "uploadpack.allowAnySHA1InWant", "true"],
+    );
+    let dangling = physical_git(
+        &t.bare,
+        &[
+            "-c",
+            "user.name=QA",
+            "-c",
+            "user.email=qa@example.invalid",
+            "commit-tree",
+            "HEAD^{tree}",
+            "-p",
+            "HEAD",
+            "-m",
+            "unreachable synthetic commit",
+        ],
+    );
+    assert!(
+        !fetch_pin(&checkout, clone_url, &token, &dangling).await,
+        "reachable history support must not authorize arbitrary dangling objects"
+    );
+    assert!(
+        !std::fs::read_to_string(checkout.join(".git/config"))
+            .unwrap()
+            .contains(&token)
+    );
+    assert!(
+        !std::fs::read_to_string(checkout.join(".git/FETCH_HEAD"))
+            .unwrap()
+            .contains(&token)
+    );
+    let foreign_reader = Uuid::new_v4();
+    let foreign_token = format!("forge_sat_{}", Uuid::new_v4().simple());
+    sqlx::query("INSERT INTO service_accounts(id,name) VALUES($1,$2)")
+        .bind(foreign_reader)
+        .bind(format!("foreign-source-reader-{foreign_reader}"))
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,'admin')")
+        .bind(foreign_reader)
+        .bind(format!("colliding-human-{foreign_reader}"))
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'maintainer')",
+    )
+    .bind(t.f.project)
+    .bind(foreign_reader)
+    .execute(&t.f.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,project_id,scopes,principal_type,service_account_id) VALUES($1,'foreign source reader',$2,'qa-only',$3,ARRAY['api:read','git:read'],'service_account',$4)")
+        .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&foreign_token)).bind(t.f.project).bind(foreign_reader).execute(&t.f.pool).await.unwrap();
+    assert!(
+        !fetch_pin(&checkout, clone_url, &foreign_token, &serving_commit).await,
+        "same project scopes and a colliding human membership cannot grant source-reader identity"
+    );
+    sqlx::query("UPDATE forge_namespace_bindings SET state='archived',command=jsonb_set(command,'{state}','\"archived\"') WHERE resource_id=$1")
+        .bind(group).execute(&t.f.pool).await.unwrap();
+    assert_eq!(
+        call(&t.f.app, "GET", &url, &token, String::new()).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert!(
+        !fetch_pin(&checkout, clone_url, &token, &serving_commit).await,
+        "archived namespace closes private Git reads too"
+    );
+    sqlx::query("UPDATE api_tokens SET revoked_at=now() WHERE id=$1")
+        .bind(token_id)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(&t.f.app, "GET", &url, &token, String::new()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&t.f.app, "GET", &source_url, &token, String::new())
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+}

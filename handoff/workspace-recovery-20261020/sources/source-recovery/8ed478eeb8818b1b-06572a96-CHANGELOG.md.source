@@ -1,0 +1,360 @@
+# Changelog
+
+Все значимые изменения в этом проекте документируются в этом файле.
+
+Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
+и этот проект стремится соответствовать [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+Дата release-записей: формат ISO 8601 (`YYYY-MM-DD`).
+
+## [Unreleased]
+
+- Исправлен owner-local PostgreSQL reader fence: проверяются права views/columns,
+  sequences, MAINTAIN и large-object functions; snapshot не пропускает `pgx` и
+  unsupported storage. Drain закрывает обе роли; rollback/reconciliation не
+  открывают доступ к старым DB. Writer не может изменять SQLx history через column
+  grants, views, rewrite rules, history inheritance и изменяющие FK actions.
+  PG recovery проверяет historical proof и не
+  блокирует допустимый writer pool текущей released DB. OCI recovery сохраняет historical checks и требует fresh observation,
+  не конфликтуя с прежними probe timestamps. Production SDLC admission не меняется;
+  статус новых gate результатов указан в `docs/TASK_DELIVERY_VERIFICATION.md`.
+
+- Добавлен отдельный privileged owner-local PostgreSQL shadow executor: immutable
+  source/target catalog, bounded drain/fence/lease, dump с реальным restore drill,
+  forward migration в fresh DB и отдельные image/database/health/acceptance checks.
+  Pre-release failure допускает проверенный backup + previous image restore;
+  post-release snapshot restore запрещён, partial Unknown удерживает target.
+  Production/SDLC admission остаётся закрыт; OCI read-only путь сохранён.
+
+- Добавлен owner-local OCI CLI для immutable local image/read-only data snapshot:
+  actual container/commit/data/compatibility/acceptance, last-confirmed image
+  rollback и unknown recovery. Mutable DB/migration/restore блокируются; runtime
+  не устанавливается и SDLC admission не открывается.
+
+- Добавлена privileged owner-local manifest delivery одного verified static
+  artifact с served identity/bytes, health/acceptance probes, last-confirmed
+  rollback, immutable replay и crash reconciliation. HTTP SDLC dispatch остаётся
+  закрыт без Tracker admission; permanent runtime не обновляется.
+
+- Добавлены immutable blocked task workspace operations с original-key readback,
+  owner-local pinned preparation и bounded candidate evidence из actual Git,
+  pipeline completion и artifact bytes. Admission/write/deployment/acceptance
+  остаются закрытыми до совместимых producer contracts; migration40 следует PR87.
+
+- После отмены удаления проекта focus возвращается к его меню действий; после успешного удаления — к кнопке создания проекта.
+
+- Документирована принятая поставка трёх CLI на sdlc1: backup/restore/rollback, live-проверки, Linux/WSL установка и сохранённые ограничения.
+
+- Каталог SQLx сохраняет точную уже применённую migration 38 `platform messaging`
+  с историческими CRLF/checksum. Backend принимает такой ledger без удаления
+  записей; регрессия проверяет outbox, terminal event sequence и checksum mismatch.
+  API, Base pin и код messaging publisher/subscribers не менялись.
+
+- Каталог SQLx включает точные ранее применённые migrations 36/37: запуск на
+  совместимой исторической БД больше не отклоняется с `VersionMissing(36)`.
+  Deployment API, роли и runner protocol не менялись; добавлены PostgreSQL
+  регрессии fresh/upgrade/replay, immutable history и checksum mismatch.
+
+- Runner создаёт fresh attempt/lease-owned workspace и проверяет full pinned SHA
+  с clean detached HEAD до команд. Old workspace не удаляется при повторной попытке;
+  cleanup требует terminal acknowledgement и сохранённый owner marker. Docker-job
+  больше не получает общий volume с workspace других попыток. Это source foundation,
+  не закрытая автономная SDLC/live acceptance.
+
+- `pipeline wait` учитывает `--timeout-seconds` / `CICD_TIMEOUT_SECONDS` при опросе, включая чтение тела: HTTP timeout возвращает `TRANSPORT_ERROR`, истечение ожидания — `WAIT_TIMEOUT`; pipeline не отменяется.
+
+- CLI возвращает network exit code `3` и `TRANSPORT_ERROR` при обрыве или таймауте чтения artifact download; существующий файл сохраняется при неудачном скачивании.
+
+- Справка CLI скрывает значения token env variables, сохраняя имена переменных.
+
+- CLI поддерживает управление repositories/PR, pipeline cancel/retry/wait и variables, manual job
+  play/retry, страницы логов выбранного attempt, secret file/stdin и deployment approval/rollback.
+  Добавлены JSON errors/empty success, deadline ожидания и download без перезаписи. CLI integration
+  suite получает отдельную PostgreSQL БД; merge PR работает для repository без CI-проекта.
+  Диагностика скрывает исходные и обрезанные credentials, включая newline в secret stdin.
+
+- Rate limiter использует IP реального TCP peer вместо недоверенных forwarding
+  headers: подмена `X-Forwarded-For`/`X-Real-IP` не сбрасывает бюджет запросов.
+  За reverse proxy применяется общий бюджет его IP; правила доступа не менялись.
+
+- Central logout сохраняет in-memory API session до навигации в Central Auth:
+  незавершённые запросы не теряют Bearer token между кликом и переходом.
+  Отзыв браузерной сессии остаётся ответственностью Central Auth.
+- Повторный явный вход разрешён после отменённого перехода Central Auth;
+  автоматический guard не отменяет logout. Отмена перехода не показывает
+  ложную ошибку доступности Auth, а ошибка сервера остаётся видимой.
+- Локальный Vitest ограничен четырьмя workers, как у остальных потребителей;
+  timeout и сценарии тестов не ослаблены.
+
+- PostgreSQL policy-тесты scheduler/approval используют авторизованные тестовые
+  учётки вместо устаревших anonymous requests. Повторный голос проверяется по
+  реальному subject, разные участники имеют разные JWT; защита API не менялась.
+
+- CI/CD использует полноширинный общий PlatformHeader из Base: бренд и сервисы
+  находятся слева, тема и аккаунт справа; sidebar содержит только навигацию.
+  Полная identity и центральный выход доступны в меню аккаунта. Mobile drawer
+  закрывается при переходе на desktop и не оставляет блокировку страницы.
+
+- Frontend lockfile обновлён против текущего Base: исправлены advisories
+  brace-expansion в dev-tooling, синхронизированы общие UI-зависимости и
+  минимальная версия react-router 8.4.0 согласно peer contract `@sdlc/ui`.
+
+- Backend lockfile синхронизирован с текущим общим Base telemetry/OTLP;
+  umbrella build использует `--locked` и не обновляет зависимости незаметно.
+
+- Central logout больше не переводит frontend в локальный anonymous до перехода
+  браузера в Central Auth.
+
+- Umbrella frontend build закрепляет pnpm 10.28.1 до frozen-install, чтобы новая
+  версия package manager не ломала сборку с актуальным общим UI.
+- Имя Docker network для job-контейнеров embedded runner теперь задаётся через
+  `CICD_RUNNER_DOCKER_NETWORK`, поэтому umbrella Compose не зависит от
+  захардкоженного project name standalone-стенда.
+- Общие локальные исходники могут передаваться job через отдельный read-only
+  volume `CICD_RUNNER_SHARED_SOURCES_VOLUME`, не смешиваясь с writable checkout.
+
+### Fixed
+
+- Pipeline и inline PR diff используют широкий рабочий режим без ложного aside.
+  Обзор PR использует общий contextual rail действий 320 px от 1024 px;
+  на узких экранах действия следуют после основного содержимого.
+  Подтверждения закрытия/слияния возвращают фокус кнопке вызова, используют
+  тематический контраст и сохраняют touch-target не меньше 40 px.
+- После Escape/отмены подтверждения merge/close PR фокус возвращается
+  инициировавшей кнопке, не теряясь в документе.
+
+- Service-account token можно привязать к конкретному проекту; такой machine
+  principal видит и изменяет только его ресурсы, а токен без binding не получает
+  доступ к проектам.
+- Seccomp-профиль Docker job теперь разрешает `symlink`, `symlinkat` и
+  используемый Node.js `sendfile`, поэтому pnpm может создать project link и
+  скопировать package-файлы без снятия остальных ограничений runner sandbox.
+- Новые внутренние Git-репозитории сразу используют `main` как символический
+  `HEAD`, поэтому первый clone после push не открывает несуществующий `master`.
+- Большие наборы Git refs и tags больше не захватываются и не рендерятся
+  целиком: совместимые API-параметры включают потоковую пагинацию и поиск,
+  вкладки хранят страницу в URL, а формы ограничивают debounced-подсказки.
+- Каталоги репозитория используют bounded Git stdout, серверный поиск и
+  URL-пагинацию по 100 записей вместо неограниченного API-ответа и DOM.
+- Предпросмотр больших файлов читает из Git не больше 512 КиБ, сохраняет
+  полный размер и остаётся доступным для клавиатурной прокрутки.
+- Большие сравнения веток ограничивают текст patch первыми 512 КиБ и явно
+  сообщают об усечении, сохраняя полный список изменённых файлов и line counts.
+- История коммитов репозитория доступна дальше первых 50 записей и сохраняет
+  выбранную страницу в URL.
+- Длинные job-логи теперь открываются на последних строках, подгружают ранние
+  записи без скачка позиции и не выталкивают пользователя вниз при live-обновлении.
+- Журнал аудита больше не ограничивает поиск и навигацию последними 200
+  событиями: добавлены серверная пагинация, точный action-фильтр, literal
+  search, URL-состояние и отдельные empty/error/retry состояния.
+- Каталог pull-запросов использует серверные поиск, фильтрацию и пагинацию,
+  сохраняет состояние в URL и загружает детали PR отдельным запросом; подсказки
+  source/target больше не смешивают ветки с тегами и служебными ссылками.
+- Dashboard и каталог проектов сохраняют уже загруженные данные при частичном
+  сетевом сбое и позволяют повторить загрузку projects, runs и runners локально,
+  без полного обновления страницы.
+- В деталях pull request бинарные файлы помечаются явно и больше не выглядят
+  как текстовые изменения с выдуманными счётчиками `+0/-0`.
+- Сохранение каналов уведомлений теперь атомарно: невалидный канал не удаляет
+  действующие настройки. Форма сохраняет флаг активности и параметры политики,
+  а при ошибке загрузки не позволяет отправить пустую замену. Статусы вебхуков
+  и доставок читаются с достаточным контрастом в светлой и тёмной темах.
+
+### Added
+
+- Каталог артефактов job: компактный адаптивный список с поиском, фильтром
+  состояния, страницами, копированием SHA-256 и явными ошибками скачивания.
+- Каталог репозиториев Dashboard: компактные строки с постоянно видимыми
+  действиями, поиск, фильтр по проекту, пагинация и понятные состояния ошибок.
+- Список запусков CI/CD с серверной пагинацией и компактными строками; детали
+  выполнения с автообновлением статусов и логов, состояниями ошибок и повторной
+  загрузкой, подтверждением отмены и отдельным блоком диагностических действий.
+- Каталог проектов Dashboard: поиск, постраничный список, компактное меню действий
+  и сохранение диалога удаления при ошибке запроса.
+- Central Auth SSO для Dashboard, read-only центральный каталог пользователей,
+  локальные профили по immutable `sub`, общая CLI transport-библиотека и
+  поддержка центральных scoped personal tokens; локальные human login/user/PAT
+  mutations закрыты в центральном режиме.
+- Этап 5 масштабирования: `CICD_ROLES` (api/worker/runner); exactly-once lease-claim доставки outbox (SKIP LOCKED + 300 c); egress-allowlist `CICD_WEBHOOK_ALLOWLIST`; outbox retention-sweep (30 дней, часовой каденс); `docs/RUNBOOK.md`.
+
+### Changed
+
+- Общая оболочка Dashboard получила фиксированный header 60 px, sidebar 264 px,
+  tablet rail 72 px и доступный mobile drawer с focus trap; вложенные маршруты
+  корректно сохраняют активный раздел, а профиль и выход доступны в header.
+- Страница доставки событий разделена на вкладки webhooks, доставок и уведомлений; списки и детали адаптированы для узких экранов, действия доступны с клавиатуры, ошибки загрузки и удаления можно повторить без потери контекста.
+- История доставок получила серверную пагинацию, точный счётчик, URL-backed фильтры статуса и канала и прямые ссылки на выбранную страницу; legacy API-массив сохранён для совместимости.
+- Окружения, расписания и секреты получили компактные списки с поиском, пагинацией, явными ошибками и подтверждениями рискованных действий.
+- Отчёт проекта стал компактнее: сводка статусов, явный период и состав метрик, переход к запускам, состояния пустого результата и ошибки с повторной загрузкой.
+- Pull-запросы: компактный список с поиском, статусным фильтром и пагинацией; подтверждение merge/close с контекстом веток и адаптивные детали.
+- Метаданные релизов отображаются компактным списком; создание и изменение разделены, а подтверждение удаления остаётся открытым до успешного ответа API.
+- Браузер репозитория открывает код по умолчанию, сохраняет вкладку, ref и путь в URL, корректно показывает вложенные каталоги и файлы; ошибки загрузки изолированы по вкладкам, а ветки отделены от тегов.
+- Сравнение Git-версий: поля с явным направлением base/head и подсказками refs,
+  корректные статусы добавленных/удалённых файлов и бинарных изменений,
+  компактный адаптивный список файлов и повтор запроса после ошибки.
+- Реестр раннеров: плотный адаптивный список с поиском, фильтром статуса,
+  пагинацией и повтором запросов. Убрана ручная имитация heartbeat; новая
+  инвентарная запись остаётся offline до фактического heartbeat. Небезопасный
+  legacy heartbeat API теперь возвращает `410 Gone`, CLI-команда выдаёт
+  явную ошибку миграции вместо отправки запроса.
+- При открытии Dashboard остаточный legacy refresh token удаляется из
+  localStorage до SSO callback.
+
+## [Unreleased]
+
+### Added
+- Notification rules / preferences / template catalog (stage 4 item 1): миграция 0032, fan-out фильтрация, per-user mute/verbosity, `{{var}}`-шаблоны с воспроизводимым рендерингом.
+- Aggregation + quiet hours + destination alerts (stage 4 items 3+5): миграция 0033 — collapse повторов со счётчиком, quiet окна hold/drop с bypass-статусами, авто-алерты на dead-letter с acknowledge/авто-resolve.
+
+## [Unreleased]
+
+### Added
+- Email-канал уведомлений (AUTOMATION_ARCHITECTURE §9 этап 4): SMTP-доставка через outbox (lettre, `CICD_SMTP_*`), при disabled SMTP — локальная пометка delivered; миграция 0031 расширяет CHECK канала `email`; fail-closed валидация адреса.
+- Notifications внешний fan-out (AUTOMATION_ARCHITECTURE §9 этап 4): каналы `slack_webhook`/`generic_webhook` доставляются через общий outbox HTTP delivery subsystem (retry/backoff/dead-letter); Slack-контракт `{"text"}`, generic — event envelope; `https://`-only, fail-closed валидация (400).
+
+- Tenants, первый шаг target-модели (AUTHORIZATION): миграция 0030 (`tenants`, `tenant_memberships`, `projects.tenant_id` nullable), admin API `/api/v1/admin/tenants` (+memberships), tenant-read-видимость в `GET /api/v1/projects` (active tenant), suspended скрывает проекты; `POST /projects` принимает `tenant_id`.
+- Service accounts (AUTHORIZATION target-step): миграция 0029 (`service_accounts`, `api_tokens.principal_type`/`service_account_id`), admin API `/api/v1/admin/service-accounts` (+`/tokens` выпуск `forge_sat_…`), интроспекция `/api/v1/auth/principal`; SAT — developer-class machine principal с ограничением токен-скопами, `enabled=false` блокирует токены. Tenant-модель — отдельный инкремент.
+
+- Phase C architecture (K1): backend workspace split — new crates `cicd-app` (authz policy + token/session primitives), `cicd-infra` (SQLx store, single enqueue notify hook), `cicd-api` facade; monolithic `api.rs` (4.9k lines) decomposed into `api/{auth,projects,pipelines,jobs}_routes + dto + authz_mw + router + readiness` modules; store.rs is a pure re-export shim.
+- Frontend auth UX (K2): `AuthProvider` (restore/open-mode/anonymous states), `ProtectedRoute` layout guard with login redirect, `/forbidden` 403 page, unified `QueryState` (loading skeleton/empty/403/error) adopted across all pages, terminal-401 invalidation, AppShell logout.
+- Resumable artifact uploads (K4.1): migration 0027 + runner-protocol sessions `artifact-sessions:begin` / `chunks` / `complete` / `abort` with per-chunk and whole-file sha256 verification, sequential high-water, 8 MiB chunk cap.
+- Log windows (K4.2): `before`-cursor tail pages (DESC fetch → ascending return), `total` and `has_more_before` in the page envelope, `q` filter on both window kinds.
+- Dispatch fairness (K4.3): migration 0028 `projects.max_running_jobs`; claim CTE skips candidates whose project is at its active-lease cap; `PATCH /projects` exposes the limit.
+- Sandbox hardening (K4.4): custom seccomp profile `deploy/forge-job-seccomp.json` (180-syscall allowlist, live-tested with cargo builds), resource classes small/standard/large (`CICD_RUNNER_RESOURCE_CLASS`) capping memory/pids/tmpfs per job with hard swap==memory.
+- CLI (K5): `ndjson` output (arrays stream one compact doc per line), stable exit codes (0/2 usage, 3 network/5xx, 4 not-found, 5 unauthorized, 6 validation), config profiles `~/.config/forge-cli/config.toml` (`--profile`/`CICD_PROFILE`, flag>env>file precedence), `completions` command (bash/zsh/fish/powershell).
+- Observability (K6): `/metrics` state gauges (pipelines running/queued, jobs failed/succeeded 24h, runners online/draining) refreshed from PostgreSQL on every scrape; opt-in OTLP trace export in `sdlc-telemetry` (feature `otlp`, `SDLC_OTLP_ENDPOINT`); compose profile `observability` — Prometheus 7790 (alert rules), Grafana 7791 (provisioned dashboard), Alertmanager 7792 (`FORGE_ALERT_WEBHOOK_URL` external hook); runbook OBSERVABILITY.md.
+- Backups (K7): `forge_backup.py --retention N` prunes old timestamped backups, `FORGE_BACKUP_OFFSITE_DIR` rsyncs each backup off-site (append-only); restore drill executed and documented.
+
+- Backend runtime config: server startup теперь собирает typed `RuntimeConfig` из `CICD_` env, передаёт его в HTTP state/supervisors/runner protocol/artifact/secret paths, fail-fast валидирует bool, runner mode, artifact TTL, queue timeout и secrets key, а router construction валидирует CORS; compose/example/docs синхронизированы с `CICD_AUTH_COOKIE_SECURE` и `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS`.
+- Documentation guard: `scripts/verify_docs.py --all` now validates frontend CI script references, required dashboard package scripts/tool dependencies, frontend stack versions in `docs/ARCHITECTURE.md`, and screenshot manifest coverage for every production `appRoutes` path.
+- Documentation guard: `scripts/verify_docs.py --all` now fails when `/readiness` migration-version examples drift behind committed SQLx migrations.
+- Auth hardening: migration `0026_session_family_reuse` adds refresh session `family_id`/`replaced_by`/`reuse_detected_at` and `users.token_version`; refresh rotation is transactional and reuse of a replaced refresh token revokes the whole session family and invalidates already issued access JWTs.
+- Auth/RBAC route-policy inventory: backend now keeps executable `ROUTE_POLICIES` for every generated OpenAPI/Git/metrics operation, cross-checks router path literals against that registry, denies unpublished API/Git routes under auth middleware and has a unit gate that fails when a new route ships without policy.
+- CI reliability guard: workflow runs are concurrency-bound per ref and all jobs have `timeout-minutes`; production image build and Trivy container scan also have step-level timeouts to avoid stuck security gates.
+- Frontend API transport hardening: `ApiError` now preserves server envelope fields (`code`, `message`, `request_id`, details, status and `Retry-After`) and separates API, network and cancelled failures for UI/RBAC diagnostics.
+- Dashboard auth hardening: `/users` can create interactive users with optional password credentials, and `AppShell` restores a stored refresh session before redirecting to `/login`.
+- Git-server parity: code browsing `GET /api/v1/repos/{repo}/tree|blob` (safe bare-repository ref fallback and binary/512 KiB preview guard), tags read API, release CRUD, repository `public`/`private` visibility and Smart HTTP read access control.
+- CI parity: trigger-time pipeline variables stored in `pipelines.variables` and injected into jobs only as `CICD_VAR_<KEY>`; public SVG pipeline badge; JUnit XML report ingest/read API and dashboard summary.
+- Migration `0006_git_ci_details`: `repositories.visibility`, `releases`, `pipelines.variables`, `test_reports`.
+- Execution attempts (REQ-EXEC-004): migration `0007_execution_attempts`, attempt-owned job logs/artifact metadata, retry job/pipeline creates a new attempt without deleting previous logs, API/OpenAPI endpoints for attempts and attempt logs, Dashboard attempt switcher, CLI `job attempts` and `job logs --attempt`.
+
+- P0 (GitLab/Jenkins parity): `CICD_*` CI variables in every job (`PIPELINE_ID`, `JOB_ID/NAME`, `STAGE_NAME`, `PROJECT_ID/NAME`, `COMMIT_REF/SHA`, `ARTIFACTS_DIR`), shared per-pipeline artifacts directory passed between jobs/stages, job `timeout` DSL (default 1h, kill on expiry), merge gate on protected branches (`projects.protected_branches`, 409 without a success pipeline on the PR head).
+- P1: webhook HMAC-SHA256 signing (`webhooks.secret` → `X-Forge-Signature`), PAT expiry (`api_tokens.expires_at`, `expires_in_days`), SSE live logs `GET /api/v1/jobs/{id}/logs/stream`, DSL `allow_failure` / `when: manual` + `POST /api/v1/jobs/{id}/start` approval gate.
+- Migration 0005_execution_gaps; outbox now emits real domain events on pipeline terminal transitions (fixes dead webhook fan-out); compose passes `CICD_AUTH_SECRET` through to the backend.
+
+
+- RBAC (AUTHZ_CONTRACT §RBAC): role-политики на всех роутах (`viewer`→read, `developer`→write, `maintainer`→secrets/tokens-read/runners-read, `admin`→users/tokens/runners manage); 403 с `auth.denied` audit-событием; PAT (`cicd_…`) принимаются enforcement-слоем с ролью владельца, `last_used_at` обновляется.
+- Frontend auth: страница /login (i18n ru/en), Bearer в api-клиенте, прозрачный refresh на 401, гард-редирект при включённом auth-режиме; login/logout аудит (`auth.login_success`/`auth.login_failed`).
+- Error envelope по API_CONTRACT: `{error:{code,message,request_id}}` + `x-request-id` header (принимается входящий, генерится при отсутствии).
+- Pagination (NFR-PERF-02): `limit`/`offset` (cap 200) на GET /projects и /projects/{id}/pipelines.
+- Rate limiting (THREAT_MODEL brute-force): 30 login-попыток/мин (429 после), фиксированное окно.
+- Outbox/scheduler (ADR-0006, REQ-AUTO-003): миграция 0004 (`domain_events`, `outbox_messages`, `schedules.last_fired_at`), воркер доставки webhooks с retry/backoff (15s..1h, 8 попыток, dead-letter), cron-scheduler с атомарным claim (без double-fire), счётчики метрик.
+- Secret injection (REQ-SEC-002): project secrets расшифровываются и подаются в job как env-переменные; значения маскируются `***` в job-логах.
+- Observability floor (SLO/METRICS): `GET /metrics` (Prometheus text: http_requests, 5xx, login attempts/failures, pipelines_created, outbox delivered/dead), request_id-пропагация.
+- Outbox delivery history/requeue (REQ-AUTO-003): migration `0012_outbox_delivery_history` (`project_id`, `generation`, `replay_of_id`, `failed_at`, `outbox_delivery_attempts`), project-scoped delivery API/OpenAPI, Webhooks dashboard panel, failed delivery requeue, backend/frontend tests.
+- Backup/restore helper (NFR-REL-04): `scripts/forge_backup.py` plus `backup.sh`/`restore.sh`/`verify-backup.sh` create, verify and guarded-restore local Docker Compose backups for PostgreSQL, Git and artifact volumes; CI checks syntax, self-test and dry-run.
+- Artifact integrity MVP (REQ-ART-002): migration `0013_artifact_checksums` stores SHA-256 for new artifact uploads; download rejects checksum drift with `409`; Artifacts UI shows digest prefix.
+- Schedule fire slots (REQ-AUTO-002): migration `0014_schedule_fire_slots` adds `next_fire_at` and `schedule_fires`; scheduler evaluates strict five-field UTC cron, materializes unique fire slots and triggers pipelines idempotently; schedules with `last_fire_error` wait for an explicit PATCH instead of blocking the due batch.
+- CI: PostgreSQL service в backend-джобе — integration-тесты гоняются в CI; гейт `schema.d.ts` up-to-date; docs-джоба verify_docs.
+- Supply-chain gate (NFR-SEC-06): CI job `security` запускает SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, committed-secret baseline scan и SBOM drift check; parser compatibility dependency переведена на maintained `yaml_serde` package без deprecated `serde_yaml`/`unsafe-libyaml` в resolved Cargo graph.
+- Release/security hardening: backend CI теперь выполняет `cargo build --release --workspace`; security job строит production backend/frontend images и запускает pinned Trivy CLI (`aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969`) через `scripts/scan_container_images.sh` как blocking critical fixable CVE gate.
+- Frontend runtime image поднят до `nginx:1.31.4-alpine`, а compose-smoke frontend check теперь ждёт nginx retry-loop вместо одиночного раннего HEAD-запроса.
+- Evidence tooling: `shoot-evidence.mjs` корректно передаёт тему в browser context, frontend CI проверяет syntax evidence scripts, PR/contributor checklists синхронизированы с текущими CI gates.
+- Artifact retention MVP: migration `0023_artifact_retention` добавляет `expires_at`/`purged_at`, `CICD_ARTIFACT_RETENTION_DAYS` задаёт TTL новых uploads, download блокирует expired/purged artifacts, backend retention worker удаляет expired local files и пишет `artifact.purged` audit.
+- Protected delivery MVP: migration `0024_environment_approvals` добавляет `environments.protected/required_approvals`, append-only `deployment_approvals`, `deployments.rollback_of_id`, API/UI/CLI approval actions и rollback, который создаёт отдельную traceable deployment запись через pipeline.
+- OpenAPI compatibility gate: `pnpm openapi:compat` сравнивает bundled contract с base/default branch и блокирует удаление существующих paths/methods/responses/parameters/schema fields, смену типов/format и новые required request параметры в active compatibility surface.
+- CI actions: workflow переведён на Node 24-compatible `actions/checkout@v7`, `actions/setup-python@v7` и `pnpm/setup@v2` для pnpm v11/Node 22 runtime; target immutable digest pinning остаётся release hardening.
+- Compose smoke: CI теперь собирает production Docker images, поднимает `docker compose up --build -d`, проверяет backend health/readiness и frontend nginx; frontend Dockerfile использует frozen pnpm lockfile, а secret-scan pruning не заходит в generated dirs.
+- Browser E2E/a11y: добавлен Playwright Chromium gate против собранного Docker Compose stack с deterministic `seed:evidence`; critical journey проверяет Dashboard → project pipelines → pipeline plan/logs/artifacts, repository code browser и mobile drawer Escape/focus contract, а axe smoke падает на `serious`/`critical` violations representative pages. CI сохраняет Playwright report, traces, screenshots и video на failure через `actions/upload-artifact@v7`.
+- I18n contract: Vitest проверяет parity ключей `ru`/`en`, непустые leaf-значения, runtime language switch и динамические переводы для стабильных API contract values, включая status/action ключи.
+- Performance smoke: Playwright E2E теперь проверяет seeded API read p95 и Dashboard route ready-time против MVP regression budgets; 30-day SLO, Lighthouse и load reports остаются target.
+- Documentation cleanup: удалена лишняя служебная страница из продуктовых docs; рабочие проверки теперь ссылаются на `docs/DEVELOPMENT_GUIDE.md`.
+- CLI operational surface: `cicd-cli` теперь поддерживает `CICD_API_TOKEN`/`--token`, `CICD_OUTPUT`/`--output json|table`, pagination для projects/pipelines и HTTP-only команды для runners, secrets, artifacts, environments/deployments, schedules, webhooks/outbox, notifications, reports/audit, users, project members и API tokens.
+- Dependency review: `git2 0.21.0` remediation проверен, но отложен из-за несовместимости с закреплённым Rust 1.86; `git2 0.20.4` warnings остаются documented accepted findings.
+- SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
+- Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.
+
+### Fixed
+
+- API error envelope no longer exposes raw SQLx/internal error text to clients; internal details are logged server-side and `500` responses use a generic `internal_error` message.
+- Environments Dashboard теперь явно помечает metadata/deployment-history как MVP без protected approvals/rollback, а `deployment` action переименован в запись deployment-record; user/CLI/Git docs уточняют current artifact TTL и Git proxy/direct ports.
+- Embedded runner secret injection now reads `project_secrets.key` and `encrypted_value`, so saved project secrets are actually decrypted and passed to jobs as runtime env variables.
+- Embedded runner now drains job stdout/stderr while the process is running and serializes log append sequence per attempt, avoiding blocked jobs on large output.
+- Runner and pipeline cancel paths now finish open `execution_attempts`, avoiding stale `queued`/`running` attempts after job failure, timeout or cancel.
+
+### Added
+
+- Auth foundation (AUTHZ_CONTRACT Phase 1, REQ-AUTH-002 частично): миграция `0003_auth_foundation` (user_credentials/sessions), argon2id + JWT access 15m (HS256, CICD_AUTH_SECRET) + refresh-ротация 30d, `POST /auth/login|refresh`, Bearer-enforcement middleware (allowlist: health/openapi/login/refresh/git; без секрета — trusted-network режим), users create/update принимают password; e2e проверено на живой БД (401 без токена, 200 с токеном, 401 неверный пароль).
+- Real-DB integration-уровень (TEST_PLAN): `backend/tests/integration_db.rs` (feature `integration`): идемпотентность миграций, project CRUD, auth сессии+ротация+disable — 3/3 зелёные на test-compose PostgreSQL.
+- Strangler ADR-0005 шаг: `PipelineStatus` + `aggregate_status` перенесены в `cicd-domain` (4 unit-теста), реэкспорт через shim.
+
+### Changed
+
+- Cargo.lock: time 0.3.41 / simple_asn1 0.6.3 (rust 1.86 MSRV-совместимость).
+- CI: backend-гейт openapi drift-diff, frontend-гейт `pnpm openapi:check`.
+
+### Added
+
+- ADR-0008 реализован: `backend/migrations/` (baseline `0001_bootstrap_v1.sql` verbatim из startup bootstrap, `0002_runtime_role.sql` grants forge_runtime), crate `cicd-migrate` (dry-run/apply/verify, advisory lock `FORGE`), server стартует через embedded `sqlx::migrate!`; проверено на живой test-compose БД (apply → идемпотентный повтор).
+- Тестовый контур: cicd-migrate прогоняется в docker-сети test-compose.
+
+- ADR/API_CONTRACT реализованы частично (Current): utoipa-аннотации на контроллерах core-групп (health/projects/pipelines/jobs+logs), `GET /api/v1/openapi.json`, канонический артефакт `openapi/openapi.yaml` (546 строк, OpenAPI 3.1) через `cargo run --bin openapi-dump`, CI drift-гейт `diff` против коммита; фронт: `openapi-typescript` генерация `src/api/schema.d.ts` (`pnpm openapi:generate`), гейт `pnpm openapi:check`, DTO Project/Pipeline/Job/Stage переведены на generated-типы. Platform-группа (runners/secrets/…) — следующий шаг.
+
+### Changed
+
+- `git_host.rs`: `unwrap()` в тестах заменены на `expect` (прод-код unwrap-free и был).
+
+### Added
+
+- SDLC-набор по отраслевым стандартам (ISO/IEC/IEEE 12207/15289, IEEE 829, ASVS 4.0, CISA SBOM 2026): TEST_PLAN (уровни тестирования, SEV1–SEV4, coverage-политика), TRACEABILITY/RTM (REQ-ID ↔ контракты ↔ тесты ↔ evidence, 25 capability + NFR), THREAT_MODEL (STRIDE по границам доверия, маппинг на контракты), RISK_REGISTER, DISASTER_RECOVERY (tiers/RTO/RPO/3-2-1-1/дриллы), INCIDENT_RESPONSE (SEV-матрица, постмортемы, security-инциденты), THIRD_PARTY (инвентарь, license-политика, CycloneDX SBOM target), ACCESSIBILITY (WCAG 2.2 AA программа), SLO (SLI/SLO/error budget), METRICS (DORA + runtime).
+- PRODUCT_REQUIREMENTS: все capability и NFR получили REQ-ID/NFR-ID; RTM-строка обязательна в PR.
+- CODEOWNERS, .well-known/security.txt.
+
+- Канонический реестр имён и authority matrix: ADR-0009; устранены конфликты migration path, outbox-имён и runner namespace.
+- Нормативные контракты `docs/contracts/` (API, AUTHZ, RUNNER_PROTOCOL, PIPELINE_DSL, EVENT, DATA_LIFECYCLE, MIGRATION, UI_API) и narrative-слой `docs/architecture/` с sequence-флоу и transition map.
+- Документация по аудиториям: USER_GUIDE, DEVELOPMENT_GUIDE, OPERATIONS, PRODUCT_REQUIREMENTS; CURRENT_STATE и DOCUMENTATION_GOVERNANCE; `scripts/verify_docs.py` (ссылки/канон/статусы/дубликаты скринов).
+- Public repo surface: LICENSE (FerrPOINT proprietary source-available), CONTRIBUTING, SECURITY (NOT production-safe предупреждение), SUPPORT, issue/PR-шаблоны, Dependabot.
+- UI: мобильная навигация-drawer, карточные layout-ы (runners/users/tokens/environments), доступные confirm-диалоги вместо `window.confirm`, страница pull-запроса с «Посмотреть изменения», живые метрики дашборда.
+- Evidence pipeline: deterministic seed (`pnpm seed:evidence`) и воспроизводимые скриншоты (`pnpm shoot:evidence`), реестр `docs/assets/screens/manifest.md` (45 скринов: 20 базовых страниц, 19 состояний действий и 6 mobile states).
+- `docs/TECH_CHOICES.md` и `docs/LIBRARIES.md` восстановлены как рабочие справочники: current stack, target Rust candidates, dependency policy и список готовых CI/CD решений на Rust для reference.
+
+### Changed
+
+- README переписан: статус/границы доверия, capability matrix, тур по аудиториям.
+- 44 legacy-дока консолидированы в гайды/контракты; оставлены redirect-stub-ы на один release-цикл.
+- PostgreSQL в docker-compose публикуется только на 127.0.0.1; `CICD_RUNNER_MODE` пробрасывается в backend.
+- Из текущего frontend baseline убран статичный `/admin`; системная справка и `CICD_` переменные остались в `/settings`.
+- Скриншоты пересняты единым прогоном: desktop 1920×1080, mobile 375×812, реальные пайплайны/PR/артефакты.
+- `RUNNER_ARCHITECTURE.md` больше не использует старую терминологию для runner-а: целевая граница названа `runner process` / `forge-runner`.
+- На страницах Runners, Schedules, Webhooks и Notifications добавлены статусные capability-callout блоки, чтобы MVP/configuration-only/target возможности не выглядели завершёнными.
+
+### Planned
+
+- Baseline roadmap: immutable pipeline plan/DAG; diagnostic command spans/stream classification; external runner + durable queue/leases/fencing; schedule timezone/DST/misfire policies; production outbox lease/reconciliation/full dead-letter policy/metrics; external notification adapters/inbound provider webhooks; off-site/PITR backup platform with verified restore drill; artifact object storage/legal hold/quotas; tenant isolation/service accounts/scoped Git credentials/production session hardening.
+
+## [0.1.0] — 2026-08-26
+
+Первый публичный baseline MVP self-hosted CI/CD control plane (Rust/Axum + React).
+
+### Added
+
+- Проекты CRUD: `name` / `repository_url` / `default_branch`, удаление с CASCADE.
+- Git-хостинг: bare-репозитории, Smart HTTP (`clone`/`fetch`/`push`), опциональная token-auth, `post-receive` → автоматический пайплайн.
+- Пайплайны из `.forge-ci.yml` (stages/jobs/image/command) с fallback-шаблоном; отмена и повтор, pull requests (create/merge/close/reopen, compare).
+- Embedded runner: Docker-контейнеры (`forge-job-<id>`) или host shell, стриминг stdout в `job_logs`, отмена через PID-map.
+- Append-only логи джобов с sequence и поллингом; артефакты (upload/download до 50 MiB, локальная директория `CICD_ARTIFACTS_DIR`).
+- Секреты проектов: AES-256-GCM at rest, значение не возвращается API.
+- Environments/deployments, reports (success rate/duration), audit log (append-only, последние 200 записей).
+- Users/roles и API-токены: хранение и управление (enforcement middleware — см. Planned).
+- React Dashboard: 21 маршрут / 20 страниц + `/login` (заглушка без auth-запроса), i18n (ru/en).
+- CLI `cicd-cli` (HTTP-only): project/pipeline/job; CI-пайплайн GitHub Actions; Docker Compose окружение.
+
+### Known limitations (honestly)
+
+- Нет auth/RBAC/TLS: API и Dashboard полностью открыты, CORS permissive — только доверенные сети, не для production (см. `SECURITY.md`).
+- PostgreSQL в compose опубликован на все интерфейсы; `CICD_GIT_INTERNAL_TOKEN` обязательно менять для shared-деплоя.
+- Schedules/webhooks/notifications — конфигурация без исполнения; login — UI-заглушка.
+- Схема БД через bootstrap `store::migrate()`, versioned migrations ещё не введены.
+
+[Unreleased]: https://github.com/FerrPOINT/CI-CD/compare/0.1.0...HEAD
+[0.1.0]: https://github.com/FerrPOINT/CI-CD/releases/tag/0.1.0

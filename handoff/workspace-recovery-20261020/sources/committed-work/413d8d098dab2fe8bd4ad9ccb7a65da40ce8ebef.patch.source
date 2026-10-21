@@ -1,0 +1,96 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 947d9e8..c55fa1b 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -73,3 +73,12 @@ cd frontend && pnpm build
+ См. [BASE_INTEGRATION](docs/BASE_INTEGRATION.md). Обязательны pinned Base SHA,
+ locked/frozen зависимости и проверка актуальных checkout до сборки.
+ Rust build toolchain 1.88.0, Node 22.20.0, pnpm 10.28.1; MSRV отдельно.
++
++## Локальные Docker jobs и helpers
++
++Любой контейнер запускается настоящим Compose. Постоянные проекты только
++sdlc1, sdlc2 и sdlc-common; временные sdlc-qa-/sdlc-build- имеют owner/purpose,
++явный endpoint и scoped cleanup в finally. Прямые docker run/create, поддельные
++labels и общий prune запрещены. Rootless runner проверяет TLS и daemon ID без
++Desktop fallback. Pulse — приватный Git/pipeline только в CI/CD sdlc1.
++Подробности: [Compose runner](docs/COMPOSE_RUNNER.md).
+diff --git a/backend/src/runner.rs b/backend/src/runner.rs
+index 438dc71..3d6ad29 100644
+--- a/backend/src/runner.rs
++++ b/backend/src/runner.rs
+@@ -191,6 +191,13 @@ async fn claim_embedded_job_lease(
+     crate::store::enqueue_missing_ready_jobs(pool)
+         .await
+         .map_err(ApiError::internal)?;
++    // Match remote leasing: the cap read and lease insertion must serialize.
++    // A conflict reserves no execution; the queued job can be claimed next tick.
++    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
++    sqlx::query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
++        .execute(&mut *tx)
++        .await
++        .map_err(ApiError::internal)?;
+     let row = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
+         r#"
+         WITH queue_row AS (
+@@ -205,6 +212,7 @@ async fn claim_embedded_job_lease(
+             JOIN execution_attempts a ON a.id = q.attempt_id
+             JOIN stages s ON s.id = j.stage_id
+             JOIN pipelines p ON p.id = s.pipeline_id
++            JOIN projects pr ON pr.id = p.project_id
+             WHERE j.id = $1
+               AND q.state = 'queued'
+               AND q.not_before <= now()
+@@ -213,6 +221,12 @@ async fn claim_embedded_job_lease(
+               AND a.status = 'queued'
+               AND NOT j.manual
+               AND p.status IN ('queued','running')
++              AND (pr.max_running_jobs IS NULL OR
++                  (SELECT count(*) FROM job_leases cl
++                   JOIN jobs cj ON cj.id=cl.job_id
++                   JOIN stages cs ON cs.id=cj.stage_id
++                   JOIN pipelines cp ON cp.id=cs.pipeline_id
++                   WHERE cl.lease_status='active' AND cp.project_id=pr.id) < pr.max_running_jobs)
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM job_leases l
+@@ -284,9 +298,24 @@ async fn claim_embedded_job_lease(
+     )
+     .bind(job_id)
+     .bind(Uuid::new_v4())
+-    .fetch_optional(pool)
+-    .await
+-    .map_err(ApiError::internal)?;
++    .fetch_optional(&mut *tx)
++    .await;
++    let row = match row {
++        Ok(row) => row,
++        Err(error)
++            if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") =>
++        {
++            let _ = tx.rollback().await;
++            return Ok(None);
++        }
++        Err(error) => return Err(ApiError::internal(error)),
++    };
++    if let Err(error) = tx.commit().await {
++        if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") {
++            return Ok(None);
++        }
++        return Err(ApiError::internal(error));
++    }
+ 
+     Ok(row.map(|(id, attempt_id, generation)| EmbeddedJobLease {
+         id,
+diff --git a/docs/COMPOSE_RUNNER.md b/docs/COMPOSE_RUNNER.md
+index 6dd4e89..56162bc 100644
+--- a/docs/COMPOSE_RUNNER.md
++++ b/docs/COMPOSE_RUNNER.md
+@@ -41,3 +41,7 @@ webServer. Sources Base экспортируются из точного commit
+ `SDLC_PROJECT`, сохранённый `SDLC_SIGNING_KEY` и защищённый output archive;
+ использует полный workspace profile и согласованную остановку писателей.
+ Retention или удаление старых данных wrapper не выполняет.
++
++Лимит проекта проверяется до резервирования lease в SERIALIZABLE transaction.
++Встроенный и внешний runner учитывают активные leases, включая подготовку.
++Serialization conflict оставляет job queued без запуска; лимит Pulse равен одному.

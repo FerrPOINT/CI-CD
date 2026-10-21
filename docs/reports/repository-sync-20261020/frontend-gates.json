@@ -1,0 +1,11 @@
+{
+  "name": "frontend-canonical-final-gates",
+  "service": "node",
+  "tree": "f880819889aa544a6ead6def24cdb959429acae8",
+  "project": "sdlc-qa-sync-merge-dca3d1583b",
+  "base": "424bcc5a0f7706f48fc75210dd3fe5215acbe829",
+  "exit_code": 0,
+  "seconds": 352.88,
+  "script_sha256": "e09b19fd37d834f309c1abf6929f1102e327060056874fa524e7a18751eef755",
+  "log_sha256": "3362b38f9ca503b5016392f39a6d7c8e406476f9cdd6fb34adb1125fd9a37b44"
+}
