@@ -1,27 +1,31 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Button, Input, NamespaceLink as Link } from '@pdlc/ui/ui'
-import { withNamespaceLocation } from '@pdlc/ui/lib'
-import { api } from '@/api/client'
-import type { components } from '@/api/schema'
+import { useApplicationAccess } from "@pdlc/ui/auth";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Button, Input, NamespaceLink as Link } from "@pdlc/ui/ui";
+import { withNamespaceLocation } from "@pdlc/ui/lib";
+import { api } from "@/api/client";
+import type { components } from "@/api/schema";
 export function RepositoriesPage() {
-  const [offset, setOffset] = useState(0)
-  const [search, setSearch] = useState('')
+  const canAdmin = useApplicationAccess()?.permits([], true) === true;
+  const [offset, setOffset] = useState(0);
+  const [search, setSearch] = useState("");
   const catalog = useQuery({
-    queryKey: ['repository-catalog', offset, search],
+    queryKey: ["repository-catalog", offset, search],
     queryFn: ({ signal }) =>
-      api<components['schemas']['CatalogPage']>(
+      api<components["schemas"]["CatalogPage"]>(
         `/catalog/repositories?limit=50&offset=${offset}&search=${encodeURIComponent(search)}`,
         { signal },
       ),
-  })
+  });
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap justify-between gap-3">
         <h1 className="text-2xl font-semibold">Репозитории</h1>
-        <Link to="/projects?project_scope=all" className="text-accent">
-          Добавить репозиторий в проект
-        </Link>
+        {canAdmin && (
+          <Link to="/projects?project_scope=all" className="text-accent">
+            Добавить репозиторий в проект
+          </Link>
+        )}
       </div>
       <Input
         className="max-w-md"
@@ -29,8 +33,8 @@ export function RepositoriesPage() {
         placeholder="Поиск репозиториев…"
         value={search}
         onChange={(event) => {
-          setSearch(event.target.value)
-          setOffset(0)
+          setSearch(event.target.value);
+          setOffset(0);
         }}
       />
       {catalog.isPending ? (
@@ -52,20 +56,22 @@ export function RepositoriesPage() {
             >
               <h2 className="font-semibold">{repo.public_name}</h2>
               <p className="mt-2 text-sm text-text-muted">
-                {repo.kind === 'hosted' ? 'Git в Forge' : 'Внешний Git'} ·{' '}
+                {repo.kind === "hosted" ? "Git в Forge" : "Внешний Git"} ·{" "}
                 {repo.availability
-                  ? 'Хранилище недоступно'
+                  ? "Хранилище недоступно"
                   : !repo.namespace
-                    ? 'Не подключён к проекту'
-                    : repo.state === 'archived'
-                      ? 'В архиве'
+                    ? "Не подключён к проекту"
+                    : repo.state === "archived"
+                      ? "В архиве"
                       : repo.ready
-                        ? 'Подключён'
-                        : 'Инициализируется'}
+                        ? "Подключён"
+                        : "Инициализируется"}
               </p>
             </Link>
           ))}
-          {!catalog.data.items.length && <p className="text-text-muted">Репозиториев пока нет.</p>}
+          {!catalog.data.items.length && (
+            <p className="text-text-muted">Репозиториев пока нет.</p>
+          )}
         </div>
       )}
       <div className="flex gap-2">
@@ -85,5 +91,5 @@ export function RepositoriesPage() {
         </Button>
       </div>
     </div>
-  )
+  );
 }

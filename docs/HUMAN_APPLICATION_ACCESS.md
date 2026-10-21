@@ -48,3 +48,16 @@ Central human PAT использует `ci-cd:read/write` также для Git 
 Эти source changes ещё не квалифицированы native HTTP/PG/Git. Request/body
 checks не заменяют все DB/effect fences при independently enabled app policy,
 проверки pipeline/runner stages и полную функциональную матрицу.
+
+## Подключение общего UI допуска
+
+ProtectedRoute получает общий допуск ci-cd перед space boundary. Git/PR,
+пайплайны, отчёты и артефакты остаются рабочими маршрутами. Синхронизации,
+конфигурации, runners, secrets, environments, schedules, webhooks, настройки,
+пользователи и общий аудит требуют admin. Закрытый configuration-компонент
+не монтирует reader/mutation hooks. Навигация фильтрует административные и
+недоступные cross-app ссылки. Клиент проверяет общий контекст после headers,
+JSON/download body; потеря приложения не запускает новый SSO.
+
+Это source-реализация; полный административный matrix, серверные эффекты,
+миграционная квалификация и dev/IAB остаются отдельными этапами приёмки.

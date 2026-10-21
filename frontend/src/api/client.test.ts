@@ -1,186 +1,315 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const authMocks = vi.hoisted(() => ({
   currentSession: vi.fn(),
   refresh: vi.fn(),
-}))
+}));
 
-vi.mock('./auth', () => authMocks)
+vi.mock("./auth", () => authMocks);
 
-import { api, ApiError, apiRetry, downloadArtifact, onTerminalAuthError } from './client'
+import {
+  api,
+  ApiError,
+  apiRetry,
+  downloadArtifact,
+  onTerminalAuthError,
+} from "./client";
 
 beforeEach(() => {
-  authMocks.currentSession.mockReset()
-  authMocks.refresh.mockReset()
-  authMocks.currentSession.mockReturnValue(null)
-  authMocks.refresh.mockResolvedValue(null)
-})
+  authMocks.currentSession.mockReset();
+  authMocks.refresh.mockReset();
+  authMocks.currentSession.mockReturnValue(null);
+  authMocks.refresh.mockResolvedValue(null);
+});
 
 afterEach(() => {
-  vi.unstubAllGlobals()
-})
+  vi.unstubAllGlobals();
+});
 
-describe('api client errors', () => {
-  it('[REQ-UI-001] preserves structured API error fields from the envelope', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      error: {
-        code: 'permission_denied',
-        message: 'forbidden',
-        request_id: '11111111-1111-4111-8111-111111111111',
-        details: [
-          { field: 'role', code: 'requires_admin', message: 'admin role required' },
-          { code: 404, message: 'ignored invalid detail' },
-        ],
-      },
-    }), {
-      status: 403,
-      headers: {
-        'Content-Type': 'application/json',
-        'Retry-After': '12',
-      },
-    }))
-    vi.stubGlobal('fetch', fetchMock)
+describe("api client errors", () => {
+  it("[REQ-UI-001] preserves structured API error fields from the envelope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "permission_denied",
+            message: "forbidden",
+            request_id: "11111111-1111-4111-8111-111111111111",
+            details: [
+              {
+                field: "role",
+                code: "requires_admin",
+                message: "admin role required",
+              },
+              { code: 404, message: "ignored invalid detail" },
+            ],
+          },
+        }),
+        {
+          status: 403,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": "12",
+          },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
 
-    const error = await captureApiError(() => api('/users'))
+    const error = await captureApiError(() => api("/users"));
 
-    expect(error.kind).toBe('api')
-    expect(error.status).toBe(403)
-    expect(error.code).toBe('permission_denied')
-    expect(error.message).toBe('forbidden')
-    expect(error.requestId).toBe('11111111-1111-4111-8111-111111111111')
-    expect(error.retryAfterSeconds).toBe(12)
+    expect(error.kind).toBe("api");
+    expect(error.status).toBe(403);
+    expect(error.code).toBe("permission_denied");
+    expect(error.message).toBe("forbidden");
+    expect(error.requestId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(error.retryAfterSeconds).toBe(12);
     expect(error.details).toEqual([
-      { field: 'role', code: 'requires_admin', message: 'admin role required' },
-    ])
-    expect(apiRetry(0, error)).toBe(false)
-    expect((fetchMock.mock.calls[0][1]?.headers as Headers).get('Accept')).toBe('application/json')
-    expect((fetchMock.mock.calls[0][1]?.headers as Headers).has('Content-Type')).toBe(false)
-  })
+      { field: "role", code: "requires_admin", message: "admin role required" },
+    ]);
+    expect(apiRetry(0, error)).toBe(false);
+    expect((fetchMock.mock.calls[0][1]?.headers as Headers).get("Accept")).toBe(
+      "application/json",
+    );
+    expect(
+      (fetchMock.mock.calls[0][1]?.headers as Headers).has("Content-Type"),
+    ).toBe(false);
+  });
 
-  it('[REQ-UI-001] uses a safe fallback for non-JSON HTTP errors', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('html error', {
-      status: 503,
-      statusText: 'Service Unavailable',
-      headers: { 'x-request-id': '22222222-2222-4222-8222-222222222222' },
-    })))
+  it("[REQ-UI-001] uses a safe fallback for non-JSON HTTP errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("html error", {
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: { "x-request-id": "22222222-2222-4222-8222-222222222222" },
+        }),
+      ),
+    );
 
-    const error = await captureApiError(() => api('/projects'))
+    const error = await captureApiError(() => api("/projects"));
 
-    expect(error.kind).toBe('api')
-    expect(error.status).toBe(503)
-    expect(error.message).toBe('Service Unavailable')
-    expect(error.requestId).toBe('22222222-2222-4222-8222-222222222222')
-    expect(apiRetry(0, error)).toBe(true)
-    expect(apiRetry(2, error)).toBe(false)
-  })
+    expect(error.kind).toBe("api");
+    expect(error.status).toBe(503);
+    expect(error.message).toBe("Service Unavailable");
+    expect(error.requestId).toBe("22222222-2222-4222-8222-222222222222");
+    expect(apiRetry(0, error)).toBe(true);
+    expect(apiRetry(2, error)).toBe(false);
+  });
 
-  it('[REQ-UI-001] maps network failures separately from server responses', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+  it("[REQ-UI-001] maps network failures separately from server responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+    );
 
-    const error = await captureApiError(() => api('/projects'))
+    const error = await captureApiError(() => api("/projects"));
 
-    expect(error.kind).toBe('network')
-    expect(error.status).toBe(0)
-    expect(error.message).toBe('Failed to fetch')
-    expect(apiRetry(1, error)).toBe(true)
-  })
+    expect(error.kind).toBe("network");
+    expect(error.status).toBe(0);
+    expect(error.message).toBe("Failed to fetch");
+    expect(apiRetry(1, error)).toBe(true);
+  });
 
-  it('[REQ-UI-001] maps aborted requests as non-retryable cancellation', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('stop', 'AbortError')))
+  it("[REQ-UI-001] maps aborted requests as non-retryable cancellation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new DOMException("stop", "AbortError")),
+    );
 
-    const error = await captureApiError(() => api('/projects'))
+    const error = await captureApiError(() => api("/projects"));
 
-    expect(error.kind).toBe('cancelled')
-    expect(error.status).toBe(0)
-    expect(apiRetry(0, error)).toBe(false)
-  })
+    expect(error.kind).toBe("cancelled");
+    expect(error.status).toBe(0);
+    expect(apiRetry(0, error)).toBe(false);
+  });
 
-  it('[REQ-UI-001] downloads an authorized artifact using the central token', async () => {
-    authMocks.currentSession.mockReturnValue({ access_token: 'central-access', expires_at: Date.now() / 1000 + 3600 })
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(new Blob(['artifact bytes'], { type: 'text/plain' }), {
+  it("[REQ-UI-001] downloads an authorized artifact using the central token", async () => {
+    authMocks.currentSession.mockReturnValue({
+      access_token: "central-access",
+      expires_at: Date.now() / 1000 + 3600,
+    });
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(new Blob(["artifact bytes"], { type: "text/plain" }), {
         status: 200,
-        headers: { 'Content-Type': 'text/plain', 'Content-Disposition': 'attachment; filename="build.txt"' },
-      }))
-    vi.stubGlobal('fetch', fetchMock)
+        headers: {
+          "Content-Type": "text/plain",
+          "Content-Disposition": 'attachment; filename="build.txt"',
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
 
-    const artifact = await downloadArtifact('artifact-id')
+    const artifact = await downloadArtifact("artifact-id");
 
-    expect(authMocks.refresh).not.toHaveBeenCalled()
-    expect(fetchMock).toHaveBeenCalledOnce()
-    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get('Authorization')).toBe('Bearer central-access')
-    expect(artifact.filename).toBe('build.txt')
-    expect(artifact.blob.type).toBe('text/plain')
-  })
+    expect(authMocks.refresh).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(
+      new Headers(fetchMock.mock.calls[0][1]?.headers).get("Authorization"),
+    ).toBe("Bearer central-access");
+    expect(artifact.filename).toBe("build.txt");
+    expect(artifact.blob.type).toBe("text/plain");
+  });
 
-  it('[REQ-AUTH-002] reports a 401 as terminal session expiry', async () => {
-    const terminal = vi.fn()
-    onTerminalAuthError(terminal)
-    authMocks.currentSession.mockReturnValue({ access_token: 'expired-access', expires_at: Date.now() / 1000 + 3600 })
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('expired', { status: 401 })))
+  it("[REQ-AUTH-002] reports a 401 as terminal session expiry", async () => {
+    const terminal = vi.fn();
+    onTerminalAuthError(terminal);
+    authMocks.currentSession.mockReturnValue({
+      access_token: "expired-access",
+      expires_at: Date.now() / 1000 + 3600,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("expired", { status: 401 })),
+    );
 
-    const error = await captureApiError(() => api('/projects'))
+    const error = await captureApiError(() => api("/projects"));
 
-    expect(error.status).toBe(401)
-    expect(authMocks.refresh).not.toHaveBeenCalled()
-    expect(terminal).toHaveBeenCalledOnce()
-  })
+    expect(error.status).toBe(401);
+    expect(authMocks.refresh).not.toHaveBeenCalled();
+    expect(terminal).toHaveBeenCalledOnce();
+  });
 
-  it('[REQ-UI-001] surfaces terminal 401 instead of returning an artifact', async () => {
-    authMocks.currentSession.mockReturnValue({ access_token: 'expired-access', expires_at: Date.now() / 1000 + 3600 })
-    authMocks.refresh.mockResolvedValue(null)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('unauthorized', { status: 401 })))
+  it("[REQ-UI-001] surfaces terminal 401 instead of returning an artifact", async () => {
+    authMocks.currentSession.mockReturnValue({
+      access_token: "expired-access",
+      expires_at: Date.now() / 1000 + 3600,
+    });
+    authMocks.refresh.mockResolvedValue(null);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("unauthorized", { status: 401 })),
+    );
 
-    const error = await captureApiError(() => downloadArtifact('artifact-id'))
+    const error = await captureApiError(() => downloadArtifact("artifact-id"));
 
-    expect(error.status).toBe(401)
-    expect(authMocks.refresh).not.toHaveBeenCalled()
-  })
-})
+    expect(error.status).toBe(401);
+    expect(authMocks.refresh).not.toHaveBeenCalled();
+  });
+});
 
-async function captureApiError(action: () => Promise<unknown>): Promise<ApiError> {
+async function captureApiError(
+  action: () => Promise<unknown>,
+): Promise<ApiError> {
   try {
-    await action()
+    await action();
   } catch (error) {
-    expect(error).toBeInstanceOf(ApiError)
-    return error as ApiError
+    expect(error).toBeInstanceOf(ApiError);
+    return error as ApiError;
   }
-  throw new Error('expected ApiError')
+  throw new Error("expected ApiError");
 }
 
-describe('response ownership', () => {
-  it('rejects a previous session success instead of returning its private body', async () => {
-    const first = { access_token: 'old', expires_at: Date.now() / 1000 + 300 }
-    const next = { access_token: 'next', expires_at: Date.now() / 1000 + 300 }
-    authMocks.currentSession.mockReturnValue(first)
-    let reply!: (value: Response) => void
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { reply = resolve })))
-    const request = api('/repositories').catch(error => error)
-    authMocks.currentSession.mockReturnValue(next)
-    reply(new Response(JSON.stringify({ private: 'old' })))
-    expect(await request).toMatchObject({ status: 403, code: 'auth_context_changed' })
-  })
-  it('does not dispatch terminal logout from a previous session 401', async () => {
-    const terminal = vi.fn()
-    onTerminalAuthError(terminal)
-    authMocks.currentSession.mockReturnValue({ access_token: 'old', expires_at: Date.now() / 1000 + 300 })
-    let reply!: (value: Response) => void
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { reply = resolve })))
-    const request = api('/repositories').catch(error => error)
-    authMocks.currentSession.mockReturnValue({ access_token: 'next', expires_at: Date.now() / 1000 + 300 })
-    reply(new Response('{}', { status: 401 }))
-    expect(await request).toMatchObject({ status: 403, code: 'auth_context_changed' })
-    expect(terminal).not.toHaveBeenCalled()
-  })
-  it('rejects a body completed after the same user receives a new permission context', async () => {
-    const original = { access_token: 'same', expires_at: Date.now() / 1000 + 300 }
-    authMocks.currentSession.mockReturnValue(original)
-    let source!: ReadableStreamDefaultController<Uint8Array>
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { source = controller } }))))
-    const request = api('/repositories').catch(error => error)
-    await Promise.resolve()
-    authMocks.currentSession.mockReturnValue({ ...original })
-    source.enqueue(new TextEncoder().encode('{"private":"old"}')); source.close()
-    expect(await request).toMatchObject({ status: 403, code: 'auth_context_changed' })
-  })
-})
+describe("response ownership", () => {
+  it("rejects a previous session success instead of returning its private body", async () => {
+    const first = { access_token: "old", expires_at: Date.now() / 1000 + 300 };
+    const next = { access_token: "next", expires_at: Date.now() / 1000 + 300 };
+    authMocks.currentSession.mockReturnValue(first);
+    let reply!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            reply = resolve;
+          }),
+      ),
+    );
+    const request = api("/repositories").catch((error) => error);
+    authMocks.currentSession.mockReturnValue(next);
+    reply(new Response(JSON.stringify({ private: "old" })));
+    expect(await request).toMatchObject({
+      status: 403,
+      code: "auth_context_changed",
+    });
+  });
+  it("does not dispatch terminal logout from a previous session 401", async () => {
+    const terminal = vi.fn();
+    onTerminalAuthError(terminal);
+    authMocks.currentSession.mockReturnValue({
+      access_token: "old",
+      expires_at: Date.now() / 1000 + 300,
+    });
+    let reply!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            reply = resolve;
+          }),
+      ),
+    );
+    const request = api("/repositories").catch((error) => error);
+    authMocks.currentSession.mockReturnValue({
+      access_token: "next",
+      expires_at: Date.now() / 1000 + 300,
+    });
+    reply(new Response("{}", { status: 401 }));
+    expect(await request).toMatchObject({
+      status: 403,
+      code: "auth_context_changed",
+    });
+    expect(terminal).not.toHaveBeenCalled();
+  });
+  it("rejects a body completed after the same user receives a new permission context", async () => {
+    const original = {
+      access_token: "same",
+      expires_at: Date.now() / 1000 + 300,
+    };
+    authMocks.currentSession.mockReturnValue(original);
+    let source!: ReadableStreamDefaultController<Uint8Array>;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                source = controller;
+              },
+            }),
+          ),
+      ),
+    );
+    const request = api("/repositories").catch((error) => error);
+    await Promise.resolve();
+    authMocks.currentSession.mockReturnValue({ ...original });
+    source.enqueue(new TextEncoder().encode('{"private":"old"}'));
+    source.close();
+    expect(await request).toMatchObject({
+      status: 403,
+      code: "auth_context_changed",
+    });
+  });
+});
+
+it("does not deliver a late body after the shared application policy changes", async () => {
+  const { clearPlatformPrivateQueries } = await import("@pdlc/ui/platform");
+  authMocks.currentSession.mockReturnValue({
+    access_token: "same-token",
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+  });
+  let source!: ReadableStreamDefaultController<Uint8Array>;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              source = controller;
+            },
+          }),
+        ),
+    ),
+  );
+  const request = api("/catalog/repositories");
+  const rejection = expect(request).rejects.toMatchObject({ status: 403 });
+  await Promise.resolve();
+  clearPlatformPrivateQueries();
+  source.enqueue(new TextEncoder().encode('{"private":"old"}'));
+  source.close();
+  await rejection;
+});
