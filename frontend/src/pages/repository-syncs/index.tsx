@@ -471,6 +471,11 @@ export function RepositorySyncEditor({
   const [runUncertain, setRunUncertain] = useState(false)
   const pending = useRef<{ key: string; payload: SaveSync } | null>(null)
   const runKey = useRef<string | null>(null)
+  const activeTab = params.get('tab') === 'history' ? 'history' : 'connection'
+  const requestedTab = useRef(activeTab)
+  useEffect(() => {
+    requestedTab.current = activeTab
+  }, [activeTab])
   const writable = connection.writable && !busy && !uncertain
   const endpointChanged =
     draft.provider !== connection.settings.provider ||
@@ -564,6 +569,9 @@ export function RepositorySyncEditor({
     }
   }
   function tab(value: string) {
+    // Pointer focus and mousedown can both activate Radix before the URL commits.
+    if (requestedTab.current === value) return
+    requestedTab.current = value
     const next = new URLSearchParams(params)
     next.set('tab', value)
     setParams(next)
@@ -649,7 +657,7 @@ export function RepositorySyncEditor({
       )}
       {!connection.writable && <p role="status">Доступно только чтение.</p>}
       <Tabs
-        value={params.get('tab') === 'history' ? 'history' : 'connection'}
+        value={activeTab}
         onValueChange={tab}
       >
         <TabsList>
@@ -772,7 +780,7 @@ onValueChange={(nextValue) => patch({
             </fieldset>
             <fieldset disabled={!writable || !!connection.active_run}>
               <legend className="mb-2 font-medium">Способ запуска</legend>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {[false, true].map((automatic) => (
                   <label
                     key={String(automatic)}

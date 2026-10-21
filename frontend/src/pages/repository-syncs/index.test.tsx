@@ -8,7 +8,7 @@ import {
   cleanup,
   within,
 } from '@testing-library/react'
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router'
+import { BrowserRouter, MemoryRouter, Routes, Route, useLocation } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ApiError } from '@/api/client'
 import * as apiClient from '@/api/client'
@@ -78,6 +78,42 @@ afterEach(() => {
   context.malformed = false
 })
 describe('production repository synchronization', () => {
+  it('pushes one entry for pointer focus plus mousedown and retains browser Back/Forward', async () => {
+    vi.spyOn(repositorySync, 'runs').mockResolvedValue({ items: [], total: 0 })
+    window.history.replaceState({}, '', '/repository-syncs?project_scope=all&provider=github&search=service&tab=connection')
+    const pushes = vi.spyOn(window.history, 'pushState')
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={cache}>
+        <BrowserRouter>
+          <RepositorySyncEditor connection={connection} reload={vi.fn()} />
+          <RouterLocation />
+        </BrowserRouter>
+      </QueryClientProvider>,
+    )
+    const history = screen.getByRole('tab', { name: 'История запусков' })
+    // Radix focuses inside mousedown; automatic focus and pointer activation
+    // both report the same value before the URL-controlled value commits.
+    fireEvent.mouseDown(history, { button: 0, ctrlKey: false })
+    await screen.findByRole('navigation', { name: 'История синхронизации' })
+    expect(history).toHaveFocus()
+    expect(pushes).toHaveBeenCalledTimes(1)
+    act(() => window.history.back())
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Подключение' })).toHaveAttribute('aria-selected', 'true'))
+    expect(window.location.search).toContain('tab=connection')
+    act(() => window.history.forward())
+    await waitFor(() => expect(history).toHaveAttribute('aria-selected', 'true'))
+    expect(window.location.search).toContain('tab=history')
+    expect(pushes).toHaveBeenCalledTimes(1)
+    act(() => window.history.back())
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Подключение' })).toHaveAttribute('aria-selected', 'true'))
+    fireEvent.mouseDown(history, { button: 0, ctrlKey: false })
+    await waitFor(() => expect(history).toHaveAttribute('aria-selected', 'true'))
+    fireEvent.keyDown(history, { key: 'Enter' })
+    expect(pushes).toHaveBeenCalledTimes(2)
+    expect(window.location.search).toContain('provider=github')
+    expect(window.location.search).toContain('search=service')
+  })
   it.each(['Infinity', '-1', '1.5', 'not-a-number', '9007199254740992'])(
     'normalizes invalid list offset %s before requesting data',
     async (offset) => {
