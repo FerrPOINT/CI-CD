@@ -1043,9 +1043,15 @@ mod tests {
         std::fs::write(stale.join("object"), b"disposable Git object").unwrap();
         std::fs::write(outside.join("marker"), b"unrelated storage").unwrap();
         std::os::unix::fs::symlink(&outside, directory.join(format!("{run}-symlink"))).unwrap();
-        let executable = root.join("cleanup-test");
-        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Parallel fork-based tests can inherit the writable copy descriptor
+        // before exec closes it, causing ETXTBSY for a newly copied executable.
+        // Linux procfs executes the already loaded immutable test binary after
+        // dropping privileges, without depending on private target ancestors.
+        let executable = if cfg!(target_os = "linux") {
+            std::path::PathBuf::from("/proc/self/exe")
+        } else {
+            std::env::current_exe().unwrap()
+        };
         for path in [&root, &directory, &stale] {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o555)).unwrap();
         }
