@@ -4,6 +4,7 @@ import type { components } from './schema'
 import { api } from './client'
 
 export type Workspace = components['schemas']['WorkspaceProject']
+export const isUnarchivedWorkspace = (project: Workspace) => project.state !== 'archived'
 export type Configuration = components['schemas']['DeliveryConfig']
 export const workspaceKey = (ref: NamespaceLocation) =>
   `${ref.registry_instance_id}/${ref.namespace_id}`
@@ -20,6 +21,7 @@ export function useWorkspace(ref: NamespaceLocation | null) {
 export function useWorkspaceCatalog() {
   return useQuery({
     queryKey: ['workspace-catalog'],
+    select: (items: Workspace[]) => items.filter(isUnarchivedWorkspace),
     refetchInterval: 60000,
     queryFn: async ({ signal }) => {
       const items: Workspace[] = []

@@ -11,9 +11,14 @@ const authMod = vi.hoisted(() => ({
   authRequired: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
+  clearSession: vi.fn(),
+  rotateSessionAccess: vi.fn(),
 }))
 
 vi.mock('@/api/auth', () => authMod)
+// Auth restoration is tested independently of the owner-window wire.
+vi.mock('./space-admission-boundary', () => ({ SpaceAdmissionBoundary: ({ children }: { children: React.ReactNode }) => children }))
+
 const sso = vi.hoisted(() => ({ endSso: vi.fn(), restoreSso: vi.fn() }))
 vi.mock('@pdlc/ui/sso', async importOriginal => ({ ...await importOriginal<typeof import('@pdlc/ui/sso')>(), ...sso }))
 
@@ -26,7 +31,18 @@ describe('AuthProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     authMod.currentSession.mockReturnValue(null)
-    authMod.acceptSso.mockImplementation((token, expiresAt, username) => ({ access_token: token, expires_at: expiresAt / 1000, username }))
+    authMod.clearSession.mockImplementation(() => authMod.currentSession.mockReturnValue(null))
+    authMod.rotateSessionAccess.mockImplementation(() => {
+      const current = authMod.currentSession()
+      const next = current ? { ...(current as Record<string, unknown>) } : null
+      authMod.currentSession.mockReturnValue(next)
+      return next
+    })
+    authMod.acceptSso.mockImplementation((token, expiresAt, username) => {
+      const next = { access_token: token, expires_at: expiresAt / 1000, username }
+      authMod.currentSession.mockReturnValue(next)
+      return next
+    })
     sso.restoreSso.mockRejectedValue(Object.assign(new Error('Login required'), { name: 'SsoLoginRequiredError' }))
   })
 
@@ -73,12 +89,14 @@ describe('AuthProvider', () => {
     render(<AuthProvider><Probe /></AuthProvider>)
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('authenticated'))
 
+    const beforeNavigation = authMod.currentSession()
+    expect(beforeNavigation).toEqual(session)
     fireEvent.click(screen.getByRole('button', { name: 'Logout' }))
 
     await waitFor(() => expect(sso.endSso).toHaveBeenCalledOnce())
     expect(authMod.logout).not.toHaveBeenCalled()
-    expect(sessionAtNavigation).toBe(session)
-    expect(authMod.currentSession()).toBe(session)
+    expect(sessionAtNavigation).toBe(beforeNavigation)
+    expect(authMod.currentSession()).toBe(beforeNavigation)
     expect(screen.getByTestId('probe').textContent).toBe('authenticated')
   })
 

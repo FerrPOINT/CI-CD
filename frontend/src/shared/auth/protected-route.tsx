@@ -1,3 +1,4 @@
+import { SpaceAdmissionBoundary } from './space-admission-boundary'
 import { LoadingState } from '@pdlc/ui/ui'
 // K2: layout route guard driven by AuthProvider.
 
@@ -13,7 +14,7 @@ export function ProtectedRoute() {
     return <LoadingState />
   }
   if (status === 'authenticated') {
-    return <Outlet />
+    return <SpaceAdmissionBoundary><Outlet /></SpaceAdmissionBoundary>
   }
   if (status === 'unavailable') return <section role="alert"><p>{error}</p><button onClick={invalidate}>Повторить</button></section>
   if (getPlatformProduct()) {

@@ -2228,3 +2228,16 @@ durable workspace ACK; исторические receipts не создаются
 [Границы и доказательства](UNIFIED_SPACE_SURFACES.md) не заменяют общий admission,
 полный serving cohort, которые ещё в работе. Owner-v2 lifecycle реализован как
 [source candidate](SPACE_LIFECYCLE_V2.md); это не подтверждение установленного admission.
+
+### Human display authority
+
+Authenticated GET /api/v1/space-admission returns the shared UI freshness
+descriptor (schema_version1, enforced, remaining_millis, scope_revision).
+Activated mode uses the original catalog admission, current product role and
+native project memberships. It is not a Git/API capability.
+
+The browser anchors the original remainder before I/O. An effective scope change
+or expired owner confirmation retires private caches/forms and pending response
+ownership while preserving the central credentials. Late success/401 responses
+cannot affect a newer account. Git, PR, jobs and downloads still require their
+separate resource/native authorization at every actual boundary.
