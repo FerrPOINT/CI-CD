@@ -118,7 +118,7 @@ UI/SDK/skills pins независимы; установка и production — о
 Из корня продукта с подготовленным frontend: `pnpm --dir frontend exec pdlc-ui`.
 Сначала сверить `.base-ui-revision` и выполнить `check` один раз в начале задачи
 или после смены UI pin; затем `search "задача"` либо адресный `show`, при
-необходимости `--section props/setup`, и один `example`. Использовать точный
+необходимости `--section props` или `--section setup`, и один `example`. Использовать точный
 квалифицированный адрес из поиска; композиции доступны через `example recipes`.
 Без подготовленного frontend руководство описывает CLI из отдельного checkout
 того же UI SHA без npm install. Не загружать весь каталог в контекст и не
