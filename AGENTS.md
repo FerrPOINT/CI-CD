@@ -95,7 +95,7 @@ Desktop fallback. Pulse — приватный Git/pipeline только в CI/C
 ## Термины PDLC и общие компоненты
 
 Перед изменением платформенных имён прочитайте [интеграцию с Base](docs/PDLC_BASE_INTEGRATION.md) и канонические TERMS/BRANDING.
-Для UI: `pnpm --dir frontend exec pdlc-ui search "задача"` → `show ExportName` → один нужный `example`. В Workflow SSR используйте штатный exporter Base.
+Работа с UI описана в разделе «Разработка UI со справочником Base» ниже.
 Не переносите продуктовые запросы, DTO и права в общий UI. SDK/UI/skills pins независимы; новое имя платформы не меняет SDLC IDs/scopes или Hermes upstream.
 
 ## Общие поля выбора Base
@@ -112,10 +112,21 @@ bridge принадлежит только Base; SSR использует шта
 Правила выбора и подключения: Base docs/platform/CHOICE_CONTROLS.md.
 UI/SDK/skills pins независимы; установка и production — отдельные операции.
 
-## Единая дизайн-система Base
+## Разработка UI со справочником Base
 
-Перед созданием UI: pdlc-ui search → show → один example. Button, Input,
-Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
+Перед созданием или изменением UI читать [маршрут разработки со справочником Base](https://github.com/FerrPOINT/services-base/blob/ae2b41291eee5af752daff89f760fba5aff41783/base-modules/ui/reference/guides/agent.md).
+Из корня продукта с подготовленным frontend: `pnpm --dir frontend exec pdlc-ui`.
+Сначала сверить `.base-ui-revision` и выполнить `check` один раз в начале задачи
+или после смены UI pin; затем `search "задача"` либо адресный `show`, при
+необходимости `--section props/setup`, и один `example`. Использовать точный
+квалифицированный адрес из поиска; композиции доступны через `example recipes`.
+Без подготовленного frontend руководство описывает CLI из отдельного checkout
+того же UI SHA без npm install. Не загружать весь каталог в контекст и не
+подменять принятую версию через npx/dlx/latest или скрытый HTTP fallback.
+Проверить providers/Router/i18n/CSS и cleanup; после интеграции — scoped проверки
+продукта и IAB затронутого поведения. Источники, hosted CI и runtime — разные gates.
+
+Button, Input, Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
 Dialog и Toaster/toast использовать из публичного @pdlc/ui. Общий дефект
 исправлять в Base; продукт сохраняет данные, права и сохранение. Прямой Sonner,
 копии примитивов и продуктовые определения общих tokens не добавлять.
