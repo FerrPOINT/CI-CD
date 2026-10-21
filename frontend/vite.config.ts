@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import { createUiFontAssetsPlugin } from '@pdlc/ui/build'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -6,7 +7,7 @@ import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
   base: process.env.VITE_APP_BASE_PATH ?? '/',
-  plugins: [react(), tailwindcss()],
+  plugins: [createUiFontAssetsPlugin(), react(), tailwindcss()],
   test: {
     environment: 'jsdom',
     maxWorkers: 4,

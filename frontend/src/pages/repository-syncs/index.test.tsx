@@ -52,6 +52,10 @@ const connection: SyncConnection = {
   active_run: null,
   last_run: null,
 }
+async function choose(label: string, option: string) {
+  fireEvent.click(screen.getByRole('combobox', { name: label }))
+  fireEvent.click(await screen.findByRole('option', { name: option }))
+}
 function mount(component: React.ReactNode, location = '/') {
   const cache = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -190,13 +194,14 @@ describe('production repository synchronization', () => {
     expect(catalog).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Добавить синхронизацию' }))
     const picker = await screen.findByLabelText('Доступный hosted-репозиторий без подключения')
-    expect(within(picker).getAllByRole('option')).toHaveLength(21)
+    fireEvent.click(picker)
+    expect(screen.getAllByRole('option')).toHaveLength(21)
     const query = (index: number) => new URL(catalog.mock.calls[index][0], 'http://fixture.invalid').searchParams
     expect(query(0).get('sync_available')).toBe('true')
     expect(query(0).get('limit')).toBe('20')
     expect(query(0).get('offset')).toBe('0')
     expect(query(0).get('group_id')).toBe(all ? null : groupB)
-    fireEvent.change(picker, { target: { value: first[0].id } })
+    fireEvent.click(screen.getByRole('option', { name: first[0].public_name }))
     expect(screen.getByRole('link', { name: 'Настроить подключение' }).getAttribute('href')).toContain(first[0].id)
 
     const selector = screen.getByRole('region', { name: 'Выбор репозитория' })
@@ -206,7 +211,7 @@ describe('production repository synchronization', () => {
     expect(query(1).get('offset')).toBe('20')
     expect(query(1).get('group_id')).toBe(all ? null : groupB)
     expect(screen.queryByRole('link', { name: 'Настроить подключение' })).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Доступный hosted-репозиторий без подключения'), { target: { value: selected } })
+    await choose('Доступный hosted-репозиторий без подключения', second.public_name)
     const link = new URL(screen.getByRole('link', { name: 'Настроить подключение' }).getAttribute('href')!, 'http://fixture.invalid')
     expect(link.pathname).toBe(`/catalog/repositories/${selected}/sync`)
     expect(link.searchParams.get('registry_instance_id')).toBe(registry)
@@ -294,10 +299,10 @@ describe('production repository synchronization', () => {
     expect(check).not.toHaveBeenCalled()
     expect(start).not.toHaveBeenCalled()
   })
-  it('requires a new credential after changing provider or instance and restores the saved-provider requirement', () => {
+  it('requires a new credential after changing provider or instance and restores the saved-provider requirement', async () => {
     mount(<RepositorySyncEditor connection={connection} reload={vi.fn()} />)
     expect(screen.getByLabelText('Токен доступа')).not.toBeRequired()
-    fireEvent.change(screen.getByLabelText('Провайдер'), { target: { value: 'gitlab' } })
+    await choose('Провайдер', 'Свой GitLab')
     expect(screen.getByLabelText('Адрес инстанса GitLab')).toHaveValue('')
     expect(screen.getByLabelText('Токен доступа')).toBeRequired()
     expect(screen.getByText('Проверить доступ')).toBeDisabled()
@@ -306,7 +311,7 @@ describe('production repository synchronization', () => {
     fireEvent.change(screen.getByLabelText('Токен доступа'), { target: { value: 'fixture-rotated-credential' } })
     expect(screen.getByText('Проверить доступ')).toBeEnabled()
     fireEvent.change(screen.getByLabelText('Токен доступа'), { target: { value: '' } })
-    fireEvent.change(screen.getByLabelText('Провайдер'), { target: { value: 'github' } })
+    await choose('Провайдер', 'GitHub.com')
     expect(screen.getByLabelText('Адрес GitHub')).toHaveValue('https://github.com')
     expect(screen.getByLabelText('Токен доступа')).not.toBeRequired()
     expect(screen.getByText('Проверить доступ')).toBeEnabled()
@@ -349,7 +354,7 @@ describe('production repository synchronization', () => {
     const list = vi.spyOn(repositorySync, 'list').mockResolvedValue({ items: [], total: 0 })
     mount(<RepositorySyncsPage />, '/repository-syncs?project_scope=all&search=service&offset=40')
     await screen.findByText(/Синхронизации не найдены/)
-    fireEvent.change(screen.getByLabelText('Провайдер'), { target: { value: 'gitlab' } })
+    await choose('Провайдер', 'Свой GitLab')
     await waitFor(() => expect(list.mock.lastCall?.[0].get('provider')).toBe('gitlab'))
     expect(list.mock.lastCall?.[0].has('offset')).toBe(false)
     expect(list.mock.lastCall?.[0].get('search')).toBe('service')
@@ -399,17 +404,17 @@ describe('production repository synchronization', () => {
     await expectQuery(null, null, 'conflict')
     fireEvent.click(screen.getByRole('button', { name: 'Далее' }))
     await screen.findByText('21–40 из 41')
-    fireEvent.change(screen.getByLabelText('Состояние'), { target: { value: 'failed' } })
+    await choose('Состояние', 'Ошибка')
     await screen.findByText('1–20 из 21')
     await expectQuery(null, null, 'failed')
     fireEvent.click(screen.getByRole('button', { name: 'Далее' }))
     await screen.findByText('21–21 из 21')
-    fireEvent.change(screen.getByLabelText('Состояние'), { target: { value: '' } })
+    await choose('Состояние', 'Все подключения')
     await screen.findByText('1–20 из 41')
     await expectQuery(null, null, null)
     expect(screen.getByLabelText('Поиск')).toHaveValue('')
-    expect(screen.getByLabelText('Состояние')).toHaveValue('')
-    expect(screen.getByLabelText('Провайдер')).toHaveValue('gitlab')
+    expect(screen.getByLabelText('Состояние')).toHaveTextContent('Все подключения')
+    expect(screen.getByLabelText('Провайдер')).toHaveTextContent('Свой GitLab')
   })
   it('pages history and resets the old refs offset only when selecting another run', async () => {
     const allRuns: SyncRun[] = Array.from({ length: 21 }, (_, index) => ({

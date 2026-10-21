@@ -1,9 +1,6 @@
+import {Disclosure, NamespaceLink as Link, ResourceList, ResourceListRow, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, Button, Input, toast} from '@pdlc/ui/ui'
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  NamespaceLink as Link,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
+
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "@/api/client";
@@ -19,28 +16,12 @@ import {
   useTestReport,
   useJobAttempts,
 } from "@/api/hooks";
-import { Card } from "@pdlc/ui/ui";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@pdlc/ui/ui";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@pdlc/ui/ui";
+
+
+
 import type { Job, TestReport } from "@/api/types";
-import { Button } from "@pdlc/ui/ui";
-import { Input } from "@pdlc/ui/ui";
+
+
 import {
   ChevronRight,
   Terminal,
@@ -56,7 +37,7 @@ import {
   ArrowDownToLine,
   History,
 } from "lucide-react";
-import { toast } from "sonner";
+
 import type { PipelinePlan, Status } from "@/api/types";
 
 const statusColors: Record<string, string> = {
@@ -425,14 +406,18 @@ function JobCard({
         </Button>
       </div>
       {(job.status === "queued" || job.status === "running") && (
-        <details className="group mt-2 text-sm text-text-muted">
-          <summary className="flex min-h-10 cursor-pointer items-center gap-1">
-            <ChevronRight
-              className="h-4 w-4 transition-transform group-open:rotate-90"
-              aria-hidden
-            />
-            {t("jobs.manualStatus")}
-          </summary>
+        <Disclosure
+          className="group mt-2 text-sm text-text-muted"
+          summary={
+            <>
+              <ChevronRight
+                className="h-4 w-4 transition-transform group-open:rotate-90"
+                aria-hidden
+              />
+              {t("jobs.manualStatus")}
+            </>
+          }
+        >
           <div className="flex flex-wrap gap-2 pb-1">
             {job.status === "queued" && (
               <Button
@@ -477,7 +462,7 @@ function JobCard({
               </>
             )}
           </div>
-        </details>
+        </Disclosure>
       )}
     </div>
   );
@@ -487,22 +472,26 @@ function PipelinePlanCard({ plan }: { plan: PipelinePlan }) {
   const { t } = useTranslation();
   return (
     <Card className="min-w-0 px-4">
-      <details className="group">
-        <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 py-2">
-          <span className="flex min-w-0 items-center gap-2">
-            <FileCode2 className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-            <span className="text-sm font-semibold">
-              {t("pipelines.planTitle")}
+      <Disclosure
+        className="group"
+        summary={
+          <>
+            <span className="flex min-w-0 items-center gap-2">
+              <FileCode2 className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+              <span className="text-sm font-semibold">
+                {t("pipelines.planTitle")}
+              </span>
             </span>
-          </span>
-          <span className="flex min-w-0 items-center gap-2 text-xs text-text-muted">
-            <span className="break-all">{plan.config_source}</span>
-            <ChevronRight
-              className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90"
-              aria-hidden
-            />
-          </span>
-        </summary>
+            <span className="flex min-w-0 items-center gap-2 text-xs text-text-muted">
+              <span className="break-all">{plan.config_source}</span>
+              <ChevronRight
+                className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90"
+                aria-hidden
+              />
+            </span>
+          </>
+        }
+      >
         <dl className="grid min-w-0 gap-3 border-t border-border py-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
           <PlanFact
             label={t("pipelines.planParser")}
@@ -528,7 +517,7 @@ function PipelinePlanCard({ plan }: { plan: PipelinePlan }) {
             mono
           />
         </dl>
-      </details>
+      </Disclosure>
     </Card>
   );
 }
@@ -914,14 +903,18 @@ function JobLogPanel({
           <p className="text-sm text-text-muted">{t("jobs.noLogs")}</p>
         )}
       {canAppend && (
-        <details className="group text-sm text-text-muted">
-          <summary className="flex min-h-10 cursor-pointer items-center gap-1">
-            <ChevronRight
-              className="h-4 w-4 transition-transform group-open:rotate-90"
-              aria-hidden
-            />
-            {t("jobs.manualLog")}
-          </summary>
+        <Disclosure
+          className="group text-sm text-text-muted"
+          summary={
+            <>
+              <ChevronRight
+                className="h-4 w-4 transition-transform group-open:rotate-90"
+                aria-hidden
+              />
+              {t("jobs.manualLog")}
+            </>
+          }
+        >
           <form
             className="flex flex-wrap gap-2"
             onSubmit={(e) => {
@@ -953,7 +946,7 @@ function JobLogPanel({
               {t("jobs.append")}
             </Button>
           </form>
-        </details>
+        </Disclosure>
       )}
     </div>
   );

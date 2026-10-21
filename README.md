@@ -232,6 +232,8 @@ CI-CD/
 
 ## Документы
 
+[Общий UI и управляемый брендинг Base](docs/shared-design-system.md).
+
 Штатная регистрация, изоляция и восстановление локальных jobs описаны в
 [Compose runner](docs/COMPOSE_RUNNER.md).
 

@@ -2,18 +2,11 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { Copy, Download, Package, Search } from "lucide-react";
-import { toast } from "sonner";
+import {toast, Select, Loader, Button, Input, ResourceList, ResourceListRow} from '@pdlc/ui/ui'
 import { downloadArtifact, saveDownloadedArtifact } from "@/api/client";
 import { useArtifacts } from "@/api/hooks";
 import type { Artifact } from "@/api/types";
-import {
-  Select,
-  Loader,
-  Button,
-  Input,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
+
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
@@ -122,16 +115,20 @@ export function ArtifactsPage() {
                 aria-label={t("artifacts.status")}
                 className="w-auto"
                 value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value as StatusFilter);
+                onValueChange={(nextValue) => {
+                  setStatus(nextValue as StatusFilter);
                   setPage(1);
                 }}
-              >
-                <option value="all">{t("artifacts.all")}</option>
-                <option value="available">{t("artifacts.available")}</option>
-                <option value="expired">{t("artifacts.expired")}</option>
-                <option value="purged">{t("artifacts.purged")}</option>
-              </Select>
+                options={[
+                  { value: "all", label: String(t("artifacts.all")) },
+                  {
+                    value: "available",
+                    label: String(t("artifacts.available")),
+                  },
+                  { value: "expired", label: String(t("artifacts.expired")) },
+                  { value: "purged", label: String(t("artifacts.purged")) },
+                ]}
+              />
             </div>
             <p className="text-xs text-text-muted">
               {t("artifacts.shown", {
@@ -174,7 +171,8 @@ export function ArtifactsPage() {
                               )}
                             </div>
                             {artifact.sha256 && (
-                              <button
+                              <Button
+                                variant="ghost"
                                 type="button"
                                 aria-label={t("artifacts.copyDigestFor", {
                                   name: artifact.name,
@@ -186,10 +184,11 @@ export function ArtifactsPage() {
                                 onClick={() => void handleCopy(artifact)}
                               >
                                 <Copy className="h-4 w-4" aria-hidden />
-                              </button>
+                              </Button>
                             )}
                             {state === "available" && (
-                              <button
+                              <Button
+                                variant="ghost"
                                 type="button"
                                 aria-label={
                                   downloadingId === artifact.id
@@ -217,7 +216,7 @@ export function ArtifactsPage() {
                                 ) : (
                                   <Download className="h-4 w-4" aria-hidden />
                                 )}
-                              </button>
+                              </Button>
                             )}
                           </div>
                           <div className="ml-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">

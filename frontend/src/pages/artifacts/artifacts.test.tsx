@@ -29,7 +29,7 @@ vi.mock('@/api/hooks', () => ({
   }),
 }))
 vi.mock('@/api/client', () => clientMocks)
-vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { error: vi.fn() } }))()}))
 
 afterEach(() => {
   clientMocks.downloadArtifact.mockReset()

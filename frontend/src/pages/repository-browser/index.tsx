@@ -1,10 +1,6 @@
-import { PageNavigation } from "@pdlc/ui/ui";
+import {PageNavigation, Button, Checkbox, NamespaceLink as Link, ResourceList, ResourceListRow, toast, Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, Input, Label, Textarea, ConfirmDialog, Tabs, TabsContent, TabsList, TabsTrigger} from '@pdlc/ui/ui'
 import { useEffect, useState } from "react";
-import {
-  NamespaceLink as Link,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
+
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import {
@@ -25,7 +21,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
+
 import {
   useRepositoryCommits,
   useRepositoryRefs,
@@ -36,22 +32,16 @@ import {
   useCreateRelease,
   useDeleteRelease,
 } from "@/api/hooks";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@pdlc/ui/ui";
-import { Input } from "@pdlc/ui/ui";
-import { Label } from "@pdlc/ui/ui";
-import { Textarea } from "@pdlc/ui/ui";
-import { ConfirmDialog } from "@pdlc/ui/ui";
+
+
+
+
+
 import { QueryState } from "@/shared/ui/query-state";
 import { useDebouncedValue } from "@pdlc/ui/lib";
 import type { Release, RepositoryRef } from "@/api/types";
-import { Button } from "@pdlc/ui/ui";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@pdlc/ui/ui";
+
+
 
 const browserTabs = [
   "code",
@@ -524,7 +514,8 @@ function BranchesList({
               {items.map((ref) => (
                 <ResourceListRow asChild key={ref.name}>
                   <li className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                    <button
+                    <Button
+                      variant="ghost"
                       type="button"
                       className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
                       onClick={() => onSelect(ref)}
@@ -534,7 +525,7 @@ function BranchesList({
                         aria-hidden
                       />
                       <span className="break-all">{ref.name}</span>
-                    </button>
+                    </Button>
                     <code className="text-xs text-text-muted">
                       {ref.sha.slice(0, 7)}
                     </code>
@@ -831,7 +822,8 @@ function TreeView({
         className="flex min-w-0 flex-wrap items-center gap-1 border-b border-border px-2 py-1 text-sm"
       >
         <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-        <button
+        <Button
+          variant="ghost"
           type="button"
           className="min-h-10 min-w-10 px-2 hover:text-accent"
           onClick={() =>
@@ -844,14 +836,15 @@ function TreeView({
           }
         >
           /
-        </button>
+        </Button>
         {crumbs.map((part, index) => (
           <span
             key={`${index}-${part}`}
             className="flex min-w-0 items-center gap-1"
           >
             <span className="text-text-muted">/</span>
-            <button
+            <Button
+              variant="ghost"
               type="button"
               className="min-h-10 min-w-0 break-all px-2 text-left hover:text-accent"
               onClick={() =>
@@ -864,7 +857,7 @@ function TreeView({
               }
             >
               {part}
-            </button>
+            </Button>
           </span>
         ))}
       </nav>
@@ -932,7 +925,8 @@ function TreeView({
                   key={entry.path}
                   className="flex min-w-0 items-center gap-2 text-sm hover:bg-surface-raised"
                 >
-                  <button
+                  <Button
+                    variant="ghost"
                     type="button"
                     className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-2 text-left"
                     onClick={() =>
@@ -960,7 +954,7 @@ function TreeView({
                       />
                     )}
                     <span className="min-w-0 break-all">{entry.name}</span>
-                  </button>
+                  </Button>
                   <code className="hidden shrink-0 pr-2 text-xs text-text-muted sm:inline">
                     {entry.sha.slice(0, 7)}
                   </code>
@@ -1063,7 +1057,8 @@ function TagsList({
               {items.map((tag) => (
                 <ResourceListRow asChild key={tag.name}>
                   <li className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                    <button
+                    <Button
+                      variant="ghost"
                       type="button"
                       className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
                       onClick={() => onSelect(tag)}
@@ -1073,7 +1068,7 @@ function TagsList({
                         aria-hidden
                       />
                       <span className="break-all">{tag.name}</span>
-                    </button>
+                    </Button>
                     <code className="text-xs text-text-muted">
                       {tag.sha.slice(0, 7)}
                     </code>
@@ -1243,7 +1238,8 @@ function ReleasesList({ repo }: { repo: string }) {
                       )}
                     </div>
                     <div className="flex w-full shrink-0 items-center justify-end gap-1 sm:w-auto">
-                      <button
+                      <Button
+                        variant="ghost"
                         type="button"
                         className="inline-flex h-10 w-10 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
                         aria-label={`${t("releases.edit")} ${rel.tag_name}`}
@@ -1251,8 +1247,9 @@ function ReleasesList({ repo }: { repo: string }) {
                         onClick={() => openEdit(rel)}
                       >
                         <Pencil className="h-4 w-4" aria-hidden />
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="destructive-outline"
                         type="button"
                         className="inline-flex h-10 w-10 items-center justify-center rounded-md text-danger hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
                         aria-label={`${t("releases.deleteAction")} ${rel.tag_name}`}
@@ -1261,7 +1258,7 @@ function ReleasesList({ repo }: { repo: string }) {
                         onClick={() => setPendingDelete(rel.tag_name)}
                       >
                         <Trash2 className="h-4 w-4" aria-hidden />
-                      </button>
+                      </Button>
                     </div>
                   </li>
                 </ResourceListRow>
@@ -1366,13 +1363,11 @@ function ReleasesList({ repo }: { repo: string }) {
               />
             </div>
             <div className="flex items-center gap-2">
-              <input
+              <Checkbox
                 id="rel-pre"
-                type="checkbox"
-                className="h-4 w-4 rounded border-border bg-surface"
                 checked={form.prerelease}
-                onChange={(e) =>
-                  setForm({ ...form, prerelease: e.target.checked })
+                onCheckedChange={(checked) =>
+                  setForm({ ...form, prerelease: checked === true })
                 }
               />
               <Label htmlFor="rel-pre">{t("releases.prerelease")}</Label>

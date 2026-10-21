@@ -1,3 +1,4 @@
+import { chooseValue } from '../../test/choice'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
@@ -8,9 +9,9 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
 
-vi.mock('sonner', () => ({
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({
   toast: { error: vi.fn(), success: vi.fn() },
-}))
+}))()}))
 
 const projectId = '22222222-2222-4222-8222-222222222222'
 const pipelineId = '11111111-1111-4111-8111-111111111111'
@@ -236,8 +237,8 @@ describe('WebhooksPage', () => {
       `GET /api/v1/projects/${projectId}/outbox-deliveries/page?limit=20&offset=20&status=failed&channel=notification`,
     ))
     expect(screen.getByTestId('location')).toHaveTextContent('?view=deliveries&page=2&status=failed&channel=notification')
-    expect(await screen.findByRole('combobox', { name: 'deliveries.statusFilter' })).toHaveValue('failed')
-    expect(screen.getByRole('combobox', { name: 'deliveries.channelFilter' })).toHaveValue('notification')
+    expect(await screen.findByRole('combobox', { name: 'deliveries.statusFilter' })).toHaveAttribute('data-value', 'failed')
+    expect(screen.getByRole('combobox', { name: 'deliveries.channelFilter' })).toHaveAttribute('data-value', 'notification')
 
     fireEvent.click(screen.getByRole('button', { name: 'deliveries.next' }))
     await waitFor(() => expect(requests).toContain(
@@ -245,7 +246,7 @@ describe('WebhooksPage', () => {
     ))
     expect(screen.getByTestId('location')).toHaveTextContent('page=3')
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'deliveries.statusFilter' }), { target: { value: 'delivered' } })
+    await chooseValue(screen.getByRole('combobox', { name: 'deliveries.statusFilter' }), 'delivered')
     expect(await screen.findByText('deliveries.noMatches')).toBeInTheDocument()
     expect(screen.getByTestId('location')).toHaveTextContent('?view=deliveries&status=delivered&channel=notification')
     expect(screen.getByTestId('location')).not.toHaveTextContent('page=')

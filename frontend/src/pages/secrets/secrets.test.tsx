@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { toast } from 'sonner'
+import { toast } from '@pdlc/ui/ui'
 import { SecretsPage } from './index'
 
 const mocks = vi.hoisted(() => ({
@@ -25,7 +25,7 @@ vi.mock('@/api/hooks', () => ({
   useUpsertSecret: () => ({ mutate: mocks.upsert, isPending: mocks.upsertPending }),
   useDeleteSecret: () => ({ mutate: mocks.remove, isPending: mocks.removePending }),
 }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { success: vi.fn() } }))()}))
 
 function secret(index: number) {
   return {

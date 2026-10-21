@@ -1,7 +1,9 @@
+import {Disclosure, Select, Button, Radio, Checkbox, Input, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs, TabsContent, TabsList, TabsTrigger} from '@pdlc/ui/ui'
+
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
 import { ArrowDownToLine, ArrowUpFromLine, ArrowLeft, ArrowLeftRight, CirclePause, GitBranch, Plus, RefreshCw } from 'lucide-react'
-import { Button, Input, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs, TabsContent, TabsList, TabsTrigger } from '@pdlc/ui/ui'
+
 
 type Provider = 'gitlab' | 'github'
 type Mode = 'disabled' | 'pull' | 'push' | 'both'
@@ -18,7 +20,6 @@ const modes = [
   { value: 'push', title: 'Forge → внешний', detail: 'Отправлять ветки и теги во внешний репозиторий.', icon: ArrowUpFromLine },
   { value: 'both', title: 'В обе стороны', detail: 'Получать и отправлять изменения.', icon: ArrowLeftRight },
 ] as const
-const inputClass = 'min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent'
 const initialEntries: Entry[] = [
   { id: 'service-api', repository: 'platform / service-api', connection: { ...initial, mode: 'both' }, runs: [] },
   { id: 'web-portal', repository: 'platform / web-portal', connection: { ...initial, provider: 'github', path: 'example-team/web-portal', mode: 'push', automatic: false }, runs: [] },
@@ -117,13 +118,22 @@ export function RepositorySyncPreview() {
           <Button type="button" aria-expanded={adding} onClick={() => setAdding(current => !current)}><Plus aria-hidden className="h-4 w-4" />Добавить синхронизацию</Button>
         </div>
         {adding && <form className="flex flex-wrap items-end gap-3 border-y border-border py-4" onSubmit={event => { event.preventDefault(); add() }}>
-          {available.length ? <><div className="min-w-48 flex-1 space-y-2"><Label htmlFor="new-repository">Репозиторий Forge</Label><select id="new-repository" className={inputClass} value={available.includes(newRepository) ? newRepository : available[0]} onChange={event => setNewRepository(event.target.value)}>{available.map(id => <option key={id} value={id}>platform / {id}</option>)}</select></div><Button type="submit">Настроить подключение</Button></> : <p className="text-sm">Все демонстрационные репозитории уже подключены.</p>}
+          {available.length ? <><div className="min-w-48 flex-1 space-y-2"><Label htmlFor="new-repository">Репозиторий Forge</Label><Select id="new-repository"
+className="min-w-0"
+value={available.includes(newRepository) ? newRepository : available[0]}
+onValueChange={(nextValue) => setNewRepository(nextValue)} options={[...(available.map(id => ({ value: String(id), label: ["platform / ", id].join('') })) ?? [])]} /></div><Button type="submit">Настроить подключение</Button></> : <p className="text-sm">Все демонстрационные репозитории уже подключены.</p>}
           <Button type="button" variant="outline" onClick={() => setAdding(false)}>Отмена</Button>
         </form>}
         <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
           <div className="space-y-2"><Label htmlFor="sync-search">Поиск</Label><Input id="sync-search" type="search" placeholder="Репозиторий или внешний адрес" value={search} onChange={event => filter('search', event.target.value)} /></div>
-          <div className="space-y-2"><Label htmlFor="provider-filter">Провайдер</Label><select id="provider-filter" className={inputClass} value={provider} onChange={event => filter('provider', event.target.value)}><option value="all">Все провайдеры</option><option value="gitlab">Свой GitLab</option><option value="github">GitHub.com</option></select></div>
-          <div className="space-y-2"><Label htmlFor="state-filter">Состояние</Label><select id="state-filter" className={inputClass} value={state} onChange={event => filter('state', event.target.value)}><option value="all">Все подключения</option><option value="active">Включённые</option><option value="disabled">Отключённые</option></select></div>
+          <div className="space-y-2"><Label htmlFor="provider-filter">Провайдер</Label><Select id="provider-filter"
+className="min-w-0"
+value={provider}
+onValueChange={(nextValue) => filter('provider', nextValue)} options={[{ value: "all", label: "Все провайдеры" }, { value: "gitlab", label: "Свой GitLab" }, { value: "github", label: "GitHub.com" }]} /></div>
+          <div className="space-y-2"><Label htmlFor="state-filter">Состояние</Label><Select id="state-filter"
+className="min-w-0"
+value={state}
+onValueChange={(nextValue) => filter('state', nextValue)} options={[{ value: "all", label: "Все подключения" }, { value: "active", label: "Включённые" }, { value: "disabled", label: "Отключённые" }]} /></div>
         </div>
         <p className="text-sm text-text-muted">Показано {visible.length} из {configured.length}</p>
         {visible.length === 0 ? <section className="border-y border-border py-8"><h2 className="font-medium">Синхронизации не найдены</h2><p className="mt-2 text-sm text-text-secondary">Измените фильтры или добавьте подключение.</p></section> : <Table>
@@ -133,7 +143,7 @@ export function RepositorySyncPreview() {
             const connection = entry.connection!
             const last = entry.runs.find(run => run.remote === remoteUrl(connection))
             return <TableRow key={entry.id}>
-              <TableCell><button type="button" className="min-h-10 text-left font-medium text-accent underline-offset-4 hover:underline" onClick={() => open(entry.id)}>{entry.repository}</button></TableCell>
+              <TableCell><Button variant="link" type="button" className="min-h-10 text-left font-medium text-accent underline-offset-4 hover:underline" onClick={() => open(entry.id)}>{entry.repository}</Button></TableCell>
               <TableCell><span className="block font-medium">{connection.provider === 'gitlab' ? 'Свой GitLab' : 'GitHub.com'}</span><span className="mt-1 block max-w-72 break-all text-xs text-text-secondary">{remoteUrl(connection)}</span></TableCell>
               <TableCell>{modes.find(mode => mode.value === connection.mode)?.title}</TableCell>
               <TableCell>{connection.automatic ? 'Автоматически' : 'Вручную'}</TableCell>
@@ -255,13 +265,16 @@ function RepositorySyncEditor({ entry, retained, onRetain, onSave, onStart, onBa
           <form onSubmit={save} className="mt-3 space-y-3" aria-label="Подключение внешнего репозитория">
             <fieldset disabled={readOnly || busy} className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-2"><Label htmlFor="provider">Провайдер</Label><select id="provider" className={inputClass} value={draft.provider} onChange={event => { update('provider', event.target.value as Provider); setCredential(false); setToken('') }}><option value="gitlab">Свой GitLab</option><option value="github">GitHub.com</option></select></div>
+                <div className="space-y-2"><Label htmlFor="provider">Провайдер</Label><Select id="provider"
+className="min-w-0"
+value={draft.provider}
+onValueChange={(nextValue) => { update('provider', nextValue as Provider); setCredential(false); setToken('') }} options={[{ value: "gitlab", label: "Свой GitLab" }, { value: "github", label: "GitHub.com" }]} /></div>
                 {draft.provider === 'gitlab' ? <div className="space-y-2"><Label htmlFor="instance">Адрес инстанса GitLab</Label><Input id="instance" type="url" required value={draft.instance} onChange={event => { update('instance', event.target.value); setCredential(false) }} placeholder="https://gitlab.example.org" /></div> : <div className="space-y-2"><Label htmlFor="github-host">Адрес GitHub</Label><Input id="github-host" value="https://github.com" readOnly /></div>}
                 <div className="space-y-2"><Label htmlFor="repository">{draft.provider === 'gitlab' ? 'Группа / репозиторий' : 'Владелец / репозиторий'}</Label><Input id="repository" required value={draft.path} onChange={event => update('path', event.target.value)} placeholder="team/service-api" /><p className="text-xs text-text-muted">{draft.provider === 'gitlab' ? 'Подгруппы поддерживаются: team/backend/service-api.' : 'Личный репозиторий или репозиторий организации.'}</p></div>
                 <div className="space-y-2"><Label htmlFor="token">Токен доступа</Label><Input id="token" type="password" autoComplete="off" value={token} onChange={event => { setToken(event.target.value); setMessage(''); setError('') }} placeholder={credential ? 'Токен сохранён · введите новый для замены' : 'Вымышленный токен для предпросмотра'} /><p className="text-xs text-text-muted">{credential ? 'Текущее значение не отображается.' : 'Права должны соответствовать выбранному направлению.'}</p></div>
               </div>
-              <fieldset><legend className="mb-2 text-sm font-medium">Направление синхронизации</legend><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{modes.map(mode => <label key={mode.value} className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${draft.mode === mode.value ? 'border-accent bg-surface' : 'border-border'}`}><input className="mt-1 shrink-0 accent-accent" type="radio" name="mode" value={mode.value} checked={draft.mode === mode.value} onChange={() => update('mode', mode.value)} /><span className="min-w-0"><strong className="flex items-center gap-2 text-sm"><mode.icon aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-secondary" />{mode.title}</strong><span className="mt-1 block text-xs leading-4 text-text-secondary">{mode.detail}</span></span></label>)}</div></fieldset>
-              <fieldset disabled={draft.mode === 'disabled'} className="grid grid-cols-2 items-center gap-x-3 sm:flex sm:flex-wrap sm:gap-x-6"><legend className="sr-only">Способ запуска</legend><span aria-hidden className="col-span-2 text-sm font-medium">Способ запуска</span><label className="flex min-h-10 items-center gap-2 text-sm"><input type="radio" name={`launch-${entry.id}`} checked={!draft.automatic} onChange={() => update('automatic', false)} />Вручную</label><label className="flex min-h-10 items-center gap-2 text-sm"><input type="radio" name={`launch-${entry.id}`} checked={draft.automatic} onChange={() => update('automatic', true)} />Автоматически</label></fieldset>
+              <fieldset><legend className="mb-2 text-sm font-medium">Направление синхронизации</legend><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{modes.map(mode => <label key={mode.value} className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${draft.mode === mode.value ? 'border-accent bg-surface' : 'border-border'}`}><Radio className="mt-1 shrink-0" name="mode" value={mode.value} checked={draft.mode === mode.value} onCheckedChange={() => update('mode', mode.value)} /><span className="min-w-0"><strong className="flex items-center gap-2 text-sm"><mode.icon aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-secondary" />{mode.title}</strong><span className="mt-1 block text-xs leading-4 text-text-secondary">{mode.detail}</span></span></label>)}</div></fieldset>
+              <fieldset disabled={draft.mode === 'disabled'} className="grid grid-cols-2 items-center gap-x-3 sm:flex sm:flex-wrap sm:gap-x-6"><legend className="sr-only">Способ запуска</legend><span aria-hidden className="col-span-2 text-sm font-medium">Способ запуска</span><label className="flex min-h-10 items-center gap-2 text-sm"><Radio name={`launch-${entry.id}`} checked={!draft.automatic} onCheckedChange={() => update('automatic', false)} />Вручную</label><label className="flex min-h-10 items-center gap-2 text-sm"><Radio name={`launch-${entry.id}`} checked={draft.automatic} onCheckedChange={() => update('automatic', true)} />Автоматически</label></fieldset>
               <p className="text-xs text-text-secondary">{draft.mode === 'disabled' ? 'Отключение сохраняет подключение и историю. Ручной и автоматический запуск остановлены.' : !draft.automatic ? 'Синхронизация запускается только вручную.' : draft.mode === 'pull' ? 'Внешний репозиторий проверяется периодически.' : draft.mode === 'push' ? 'Изменения Forge отправляются после push.' : 'Изменения Forge отправляются после push; внешний репозиторий проверяется периодически.'}</p>
               <p className="text-xs text-text-secondary">Расхождение истории и несовпадающие теги требуют решения в Git. Синхронизация не перезаписывает историю принудительно и не удаляет ветки автоматически.</p>
             </fieldset>
@@ -277,7 +290,11 @@ function RepositorySyncEditor({ entry, retained, onRetain, onSave, onStart, onBa
         </TabsContent>
       </Tabs>
       {message && <p role="status" className="text-xs text-text-secondary">{message}</p>}
-      <details className="border-t border-border pt-4 text-sm"><summary className="cursor-pointer text-text-muted">Сценарии предпросмотра</summary><div className="mt-4 flex flex-wrap items-end gap-5"><div className="space-y-2"><Label htmlFor="scenario">Результат следующего запуска</Label><select id="scenario" className={inputClass} disabled={busy} value={scenario} onChange={event => setScenario(event.target.value as Scenario)}><option value="success">Успех</option><option value="auth">Ошибка доступа</option><option value="unavailable">Провайдер недоступен</option><option value="conflict">Расхождение истории</option><option value="partial">Частичный результат</option></select></div><label className="flex min-h-10 items-center gap-2"><input type="checkbox" disabled={busy} checked={readOnly} onChange={event => setReadOnly(event.target.checked)} />Только чтение</label></div></details>
+      <Disclosure className="border-t border-border pt-4 text-sm" summary={<>Сценарии предпросмотра</>}><div className="mt-4 flex flex-wrap items-end gap-5"><div className="space-y-2"><Label htmlFor="scenario">Результат следующего запуска</Label><Select id="scenario"
+className="min-w-0"
+disabled={busy}
+value={scenario}
+onValueChange={(nextValue) => setScenario(nextValue as Scenario)} options={[{ value: "success", label: "Успех" }, { value: "auth", label: "Ошибка доступа" }, { value: "unavailable", label: "Провайдер недоступен" }, { value: "conflict", label: "Расхождение истории" }, { value: "partial", label: "Частичный результат" }]} /></div><label className="flex min-h-10 items-center gap-2"><Checkbox disabled={busy} checked={readOnly} onCheckedChange={checked => setReadOnly((checked === true))} />Только чтение</label></div></Disclosure>
     </main>
   </div>
 }

@@ -561,10 +561,10 @@ impl GitSession {
         if actual.get(reference).map(String::as_str) != old {
             return Err(Error::Conflict("destination_changed"));
         }
-        if let Some(old) = old {
-            if reference.starts_with("refs/tags/") || !self.ancestor(old, new).await {
-                return Err(Error::Conflict("non_fast_forward"));
-            }
+        if let Some(old) = old
+            && (reference.starts_with("refs/tags/") || !self.ancestor(old, new).await)
+        {
+            return Err(Error::Conflict("non_fast_forward"));
         }
         let destination = if remote {
             self.remote.value()
@@ -636,7 +636,16 @@ mod tests {
         assert!(second.try_reserve_sync_capacity(&root, 2).unwrap());
         assert!(!waiting.try_reserve_sync_capacity(&root, 2).unwrap());
         drop(first);
-        assert!(waiting.try_reserve_sync_capacity(&root, 2).unwrap());
+        // An unrelated parallel fork may briefly retain a CLOEXEC descriptor
+        // until exec. Capacity must become available when that kernel custody
+        // ends; the orphan-child tests separately require custody to survive.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !waiting.try_reserve_sync_capacity(&root, 2).unwrap() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("capacity is released after the former descriptor owners exit");
         drop(waiting);
         drop(second);
         std::fs::remove_dir_all(root).unwrap();
@@ -1043,9 +1052,18 @@ mod tests {
         std::fs::write(stale.join("object"), b"disposable Git object").unwrap();
         std::fs::write(outside.join("marker"), b"unrelated storage").unwrap();
         std::os::unix::fs::symlink(&outside, directory.join(format!("{run}-symlink"))).unwrap();
-        let executable = root.join("cleanup-test");
-        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Parallel fork-based tests can inherit the writable copy descriptor
+        // before exec closes it, causing ETXTBSY for a newly copied executable.
+        // Linux procfs executes the already loaded immutable test binary after
+        // dropping privileges, without depending on private target ancestors.
+        let executable = if cfg!(target_os = "linux") {
+            std::path::PathBuf::from("/proc/self/exe")
+        } else {
+            let staged = root.join("cleanup-test");
+            std::fs::copy(std::env::current_exe().unwrap(), &staged).unwrap();
+            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o555)).unwrap();
+            staged
+        };
         for path in [&root, &directory, &stale] {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o555)).unwrap();
         }

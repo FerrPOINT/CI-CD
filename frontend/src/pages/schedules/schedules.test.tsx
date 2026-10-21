@@ -8,9 +8,9 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string, options?: { name?: string }) => options?.name ? key + ' ' + options.name : key }),
 }))
 
-vi.mock('sonner', () => ({
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({
   toast: { error: vi.fn(), success: vi.fn() },
-}))
+}))()}))
 
 const projectId = '22222222-2222-4222-8222-222222222222'
 

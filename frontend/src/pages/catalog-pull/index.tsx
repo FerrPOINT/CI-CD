@@ -1,9 +1,9 @@
-import { LoadingState } from '@pdlc/ui/ui'
+import {LoadingState, NamespaceLink as Link, Button, usePlatformServices} from '@pdlc/ui/ui'
 import { useState } from 'react'
-import { NamespaceLink as Link } from '@pdlc/ui/ui'
+
 import { useLocation, useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, usePlatformServices } from '@pdlc/ui/ui'
+
 import { withNamespaceLocation } from '@pdlc/ui/lib'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'

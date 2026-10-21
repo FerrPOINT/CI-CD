@@ -1,3 +1,4 @@
+import { chooseValue } from '../../test/choice'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { MemoryRouter, useNavigate } from 'react-router'
@@ -41,9 +42,9 @@ describe('repository synchronization preview', () => {
     expect(screen.getByRole('radio', { name: 'Вручную' })).toBeChecked()
   })
 
-  it('filters the complete list and preserves unsaved drafts when returning to it', () => {
+  it('filters the complete list and preserves unsaved drafts when returning to it', async () => {
     setup(true)
-    fireEvent.change(screen.getByLabelText('Провайдер', { selector: '#provider-filter' }), { target: { value: 'github' } })
+    await chooseValue(screen.getByLabelText('Провайдер', { selector: '#provider-filter' }), 'github')
     expect(screen.getByText('Показано 1 из 2')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'platform / web-portal' }))
     fireEvent.change(screen.getByLabelText('Владелец / репозиторий'), { target: { value: 'team/new-draft' } })
@@ -87,9 +88,9 @@ describe('repository synchronization preview', () => {
     expect(screen.getByLabelText('Токен доступа')).toHaveValue('')
   })
 
-  it('requires new credentials for a changed provider and restores the saved connection on cancel', () => {
+  it('requires new credentials for a changed provider and restores the saved connection on cancel', async () => {
     setup(); connect()
-    fireEvent.change(screen.getByLabelText('Провайдер'), { target: { value: 'github' } })
+    await chooseValue(screen.getByLabelText('Провайдер'), 'github')
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить подключение' }))
     expect(screen.getByRole('alert')).toHaveTextContent('Введите демонстрационный токен доступа.')
     fireEvent.click(screen.getByRole('button', { name: 'Отменить изменения' }))
@@ -98,11 +99,11 @@ describe('repository synchronization preview', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('clears an old success on an access failure and disables mutations for read-only access', () => {
+  it('clears an old success on an access failure and disables mutations for read-only access', async () => {
     setup(); connect()
     fireEvent.click(screen.getByRole('button', { name: 'Проверить доступ' }))
     fireEvent.click(screen.getByText('Сценарии предпросмотра'))
-    fireEvent.change(screen.getByLabelText('Результат следующего запуска'), { target: { value: 'auth' } })
+    await chooseValue(screen.getByLabelText('Результат следующего запуска'), 'auth')
     fireEvent.click(screen.getByRole('button', { name: 'Проверить доступ' }))
     expect(screen.getByRole('alert')).toHaveTextContent('Доступ отклонён')
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
