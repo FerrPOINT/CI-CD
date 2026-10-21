@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/vite-env.d.ts",
+    "e2e/fixtures/repository-sync-history.tsx",
+    "e2e/repository-sync-history.spec.ts",
+    "playwright.sync-history.config.ts"
+  ]
+}
