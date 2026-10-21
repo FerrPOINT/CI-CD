@@ -1,5 +1,15 @@
 # AGENTS.md — Forge CI/CD
 
+## Docker и Kubernetes
+
+Поддерживаются обычный Docker/Compose без Kubernetes и Kubernetes. Общие API,
+данные, настройки и правила исполнения сохраняют одинаковый смысл в обоих
+режимах; особенности оркестратора принадлежат deployment-адаптерам.
+Перед изменением runtime/config/storage/runner читать [стандарт Base](https://github.com/FerrPOINT/services-base/blob/29a709834fba54a823873b82050731333d7e3d97/docs/REPO_STANDARDS.md#поддержка-docker-и-kubernetes).
+Затронутый сценарий проверять отдельно в обоих режимах на точном кандидате;
+непроверенный режим оставлять открытым gate. Docs-only правки не требуют deploy
+или пересборки. Ссылка фиксирует решение Base, не меняя SDK/UI/skills pins.
+
 ## Репозиторий
 
 - **Путь**: `/opt/dev/CI-CD`.
