@@ -3,7 +3,7 @@
 # Stages the sibling services-base checkout so the pdlc-auth-core path
 # dependency (../../../services-base/...) resolves.
 ARG FORGE_COMPOSE_SOURCE=download
-FROM rust:1.88.0-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS dependencies
+FROM rust:1.88.0-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS manifests
 ARG PDLC_RUN_SLOT_SHARING=locked
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
@@ -24,7 +24,7 @@ COPY CI-CD/backend/infra/Cargo.toml infra/Cargo.toml
 COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
 COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
-RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src /services-base/base-modules/rust/pdlc-cli-core/src \
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src /services-base/base-modules/rust/pdlc-cli-core/src \
  && printf '%s\n' 'compile_error!("metadata-only pdlc-cli-core must not be compiled");' > /services-base/base-modules/rust/pdlc-cli-core/src/lib.rs \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
  && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs \
@@ -34,11 +34,9 @@ RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sha
  && printf '\n' > infra/src/lib.rs \
  && printf '\n' > api/src/lib.rs \
  && printf 'fn main() {}\n' > cli/src/main.rs \
- && printf 'fn main() {}\n' > migration/src/main.rs \
- && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner \
- && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
+ && printf 'fn main() {}\n' > migration/src/main.rs
 
-FROM dependencies AS unit-dependencies
+FROM manifests AS unit-dependencies
 ARG PDLC_RUN_SLOT_SHARING=locked
 # Keep both unit graphs' external compilation independent of their source files.
 COPY CI-CD/backend/tests/cache-protocol/Cargo.toml CI-CD/backend/tests/cache-protocol/Cargo.lock ./tests/cache-protocol/
@@ -49,6 +47,13 @@ RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sha
     && CARGO_TARGET_DIR=/app/target /usr/local/cargo/bin/cargo test --locked --release --manifest-path tests/cache-protocol/Cargo.toml --lib --no-run \
     && CARGO_TARGET_DIR=/app/target /usr/local/cargo/bin/cargo clean --release --manifest-path tests/cache-protocol/Cargo.toml -p forge-cache-protocol-tests \
     && rm -rf -- tests/cache-protocol/src
+
+FROM unit-dependencies AS dependencies
+ARG PDLC_RUN_SLOT_SHARING=locked
+# Production extends the same immutable unit dependency layer.
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked \
+ /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner \
+ && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
 
 FROM unit-dependencies AS unit
 ARG PDLC_RUN_SLOT_SHARING=locked
