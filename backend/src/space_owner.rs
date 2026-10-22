@@ -206,10 +206,11 @@ async fn apply_on(
         if command.desired_state != DesiredSpaceState::Active {
             return Err(ApiError::conflict("space_catalog_entry_required"));
         }
-        if legacy_archived && let Some(group) = group {
-            if !crate::namespace::confirmed_group_drain_on(&mut *tx, group).await? {
-                return Err(ApiError::conflict("legacy_archive_drain_unconfirmed"));
-            }
+        if legacy_archived
+            && let Some(group) = group
+            && !crate::namespace::confirmed_group_drain_on(&mut *tx, group).await?
+        {
+            return Err(ApiError::conflict("legacy_archive_drain_unconfirmed"));
         }
         sqlx::query("INSERT INTO forge_space_catalog(registry_instance_id,space_id,group_id,revision,state,operation_id,command) VALUES($1,$2,$3,$4,'active',$5,$6)")
             .bind(registry).bind(command.space.space_id).bind(group).bind(command.revision).bind(command.operation_id).bind(value(command)?)

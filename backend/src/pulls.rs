@@ -1001,7 +1001,7 @@ async fn pr_action_owned(
                 &["merge-tree", "--write-tree", "-z", &target.oid, &source.oid],
                 axum::body::Bytes::new(),
                 write.as_ref().map(RepositoryWrite::proof),
-                &mutation_guard,
+                mutation_guard,
             )
             .await?;
             if !merge_output.status.success() {
@@ -1035,7 +1035,7 @@ async fn pr_action_owned(
                 ],
                 axum::body::Bytes::new(),
                 write.as_ref().map(RepositoryWrite::proof),
-                &mutation_guard,
+                mutation_guard,
             )
             .await?;
             if !commit_output.status.success() {
