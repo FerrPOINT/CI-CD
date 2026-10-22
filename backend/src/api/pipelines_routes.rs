@@ -338,7 +338,7 @@ async fn create_pipeline_bound(
         &mut tx,
         pipeline.id,
         human_origin,
-        source.starts_with("deployment-"),
+        source.starts_with("deployment-") || source == super::PIPELINE_TRIGGER_SOURCE_SCHEDULE,
     )
     .await?;
     sqlx::query(

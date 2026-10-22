@@ -177,6 +177,7 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
             "CICD_SECRETS_KEY",
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         );
+        std::env::set_var("CICD_ARTIFACTS_DIR", root.join("public-artifacts"));
         std::env::set_var("CICD_NAMESPACE__REGISTRY_INSTANCE_ID", registry.to_string());
         std::env::set_var("CICD_NAMESPACE__INSTANCE_ID", instance.to_string());
         std::env::set_var("CICD_AUTH__CENTRAL_ISSUER", &issuer);
@@ -375,6 +376,122 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
         leases, 0,
         "owner admission precedes native lease/workspace allocation"
     );
+    // An admission denial does not fabricate a terminal process result. Create
+    // an actual failed native attempt before exercising the public retry rule.
+    owner.write().unwrap().applications = vec!["ci-cd".into()];
+    sqlx::query("UPDATE jobs SET command='exit 1' WHERE id=$1")
+        .bind(denied_job)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cicd::runner::run_job_with_config(
+        pool.clone(),
+        denied_job,
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        cicd::runner::RuntimeRunnerConfig::from_config(&runtime),
+    )
+    .await;
+    let failed: String = sqlx::query_scalar("SELECT status FROM pipelines WHERE id=$1")
+        .bind(api_pipeline)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(failed, "failed");
+    // A retry is a new operation by its current actor, not the pipeline's historical creator.
+    let other = Uuid::new_v4();
+    let other_local = Uuid::new_v4();
+    let other_token = "cicd_retry_actor_fixture";
+    sqlx::query("INSERT INTO users(id,username,role,enabled,central_sub) VALUES($1,'retry-actor','developer',true,$2)").bind(other_local).bind(other.to_string()).execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'developer')",
+    )
+    .bind(project)
+    .bind(other_local)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,user_id,project_id,scopes) VALUES($1,'retry-actor',$2,'fixture',$3,$4,ARRAY['api:read','api:write'])").bind(Uuid::new_v4()).bind(cicd::auth::hash_token(other_token)).bind(other_local).bind(project).execute(&pool).await.unwrap();
+    owner.write().unwrap().subject = other;
+    owner.write().unwrap().applications = vec!["ci-cd".into()];
+    let response = http
+        .post(format!("{origin}/api/v1/pipelines/{api_pipeline}/retry"))
+        .bearer_auth(other_token)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "new retry actor: {text}");
+    let retry_jobs:Vec<Uuid>=sqlx::query_scalar("SELECT j.id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 ORDER BY s.position,j.position").bind(api_pipeline).fetch_all(&pool).await.unwrap();
+    for job in &retry_jobs {
+        let (attempt,actor):(i32,Uuid)=sqlx::query_as("SELECT a.attempt_no,o.owner_subject FROM execution_attempts a JOIN execution_attempt_human_owners o ON o.attempt_id=a.id WHERE a.job_id=$1 ORDER BY a.attempt_no DESC LIMIT 1").bind(job).fetch_one(&pool).await.unwrap();
+        assert!(attempt >= 2);
+        assert_eq!(
+            actor, other,
+            "queued later stages also retain the explicit retry actor"
+        );
+        let marker = root.join(format!("retry-{job}"));
+        sqlx::query("UPDATE jobs SET command=$2 WHERE id=$1")
+            .bind(job)
+            .bind(format!("touch '{}'", marker.display()))
+            .execute(&pool)
+            .await
+            .unwrap();
+        cicd::runner::run_job_with_config(
+            pool.clone(),
+            *job,
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            cicd::runner::RuntimeRunnerConfig::from_config(&runtime),
+        )
+        .await;
+        assert!(
+            marker.exists(),
+            "authorized retry executes as its new actor"
+        );
+    }
+    let original: Uuid =
+        sqlx::query_scalar("SELECT owner_subject FROM pipeline_human_owners WHERE pipeline_id=$1")
+            .bind(api_pipeline)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        original, subject,
+        "original pipeline ownership remains history"
+    );
+    let manual:Uuid=sqlx::query_scalar("SELECT j.id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 AND j.status='queued' ORDER BY s.position,j.position LIMIT 1").bind(git_pipeline).fetch_one(&pool).await.unwrap();
+    sqlx::query("UPDATE jobs SET manual=true WHERE id=$1")
+        .bind(manual)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = http
+        .post(format!("{origin}/api/v1/jobs/{manual}/start"))
+        .bearer_auth(other_token)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "explicit manual actor: {text}");
+    let actor:Uuid=sqlx::query_scalar("SELECT o.owner_subject FROM execution_attempt_human_owners o JOIN execution_attempts a ON a.id=o.attempt_id WHERE a.job_id=$1 ORDER BY a.attempt_no DESC LIMIT 1").bind(manual).fetch_one(&pool).await.unwrap();
+    assert_eq!(actor, other);
+    let marker = root.join("manual-actor");
+    sqlx::query("UPDATE jobs SET command=$2 WHERE id=$1")
+        .bind(manual)
+        .bind(format!("touch '{}'", marker.display()))
+        .execute(&pool)
+        .await
+        .unwrap();
+    cicd::runner::run_job_with_config(
+        pool.clone(),
+        manual,
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        cicd::runner::RuntimeRunnerConfig::from_config(&runtime),
+    )
+    .await;
+    assert!(marker.exists());
+    owner.write().unwrap().subject = subject;
     // Real external runner protocol: a machine lease does not preserve revoked human access.
     owner.write().unwrap().applications = vec!["ci-cd".into()];
     let response = http
@@ -389,7 +506,7 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
     let remote_pipeline: Uuid =
         serde_json::from_value(remote_value["pipeline"]["id"].clone()).unwrap();
     let remote_job:Uuid=sqlx::query_scalar("SELECT j.id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 ORDER BY s.position,j.position LIMIT 1").bind(remote_pipeline).fetch_one(&pool).await.unwrap();
-    sqlx::query("UPDATE jobs SET required_secrets=ARRAY['FIXTURE_TOKEN'] WHERE id=$1")
+    sqlx::query("UPDATE jobs SET required_secrets=ARRAY['FIXTURE_TOKEN'],artifact_paths=ARRAY['fixture.bin'] WHERE id=$1")
         .bind(remote_job)
         .execute(&pool)
         .await
@@ -487,6 +604,161 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
         until <= chrono::Utc::now() + chrono::Duration::seconds(30),
         "secret envelope preserves original owner clock"
     );
+    // Artifact publication is a transaction, not a response-only freshness check.
+    let remote_attempt = offer["attempt"]["id"].as_str().unwrap();
+    let artifact_url = format!("{origin}/api/v1/runner/leases/{lease}/artifacts");
+    let upload = http
+        .post(&artifact_url)
+        .bearer_auth(runner_token)
+        .header("x-runner-protocol-version", "1")
+        .header("x-lease-token", credential)
+        .header("x-fencing-token", fencing.to_string())
+        .header("x-attempt-id", remote_attempt)
+        .header("x-artifact-path", "fixture.bin")
+        .header("x-artifact-name", "fixture.bin")
+        .body("fixture");
+    let response = upload.try_clone().unwrap().send().await.unwrap();
+    let status = response.status();
+    let published: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "artifact publication: {published}");
+    let before_count: i64 = sqlx::query_scalar("SELECT count(*) FROM artifacts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let before_files = std::fs::read_dir(root.join("public-artifacts"))
+        .unwrap()
+        .count();
+    sqlx::raw_sql("CREATE SEQUENCE qa_artifact_commit_seen;
+        CREATE FUNCTION qa_artifact_commit_delay() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN PERFORM nextval('qa_artifact_commit_seen'); PERFORM pg_sleep(2); RETURN NEW; END $$;
+        CREATE CONSTRAINT TRIGGER a_qa_artifact_commit_delay AFTER INSERT ON forge_request_commit_fences
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION qa_artifact_commit_delay();")
+        .execute(&pool).await.unwrap();
+    owner.write().unwrap().expires_ms = 1500;
+    assert_eq!(
+        upload.try_clone().unwrap().send().await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    let seen: bool = sqlx::query_scalar("SELECT is_called FROM qa_artifact_commit_seen")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(seen);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM artifacts")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        before_count
+    );
+    assert_eq!(
+        std::fs::read_dir(root.join("public-artifacts"))
+            .unwrap()
+            .count(),
+        before_files,
+        "failed COMMIT removes only its unpublished file"
+    );
+    sqlx::raw_sql("DROP TRIGGER a_qa_artifact_commit_delay ON forge_request_commit_fences; DROP FUNCTION qa_artifact_commit_delay(); DROP SEQUENCE qa_artifact_commit_seen;").execute(&pool).await.unwrap();
+    owner.write().unwrap().expires_ms = 30000;
+    let begin_url = format!("{origin}/api/v1/runner/leases/{lease}/artifact-sessions:begin");
+    let begin_input = json!({"protocolVersion":1,"leaseToken":credential,"fencingToken":fencing,"attemptId":remote_attempt,"artifactPath":"fixture.bin","artifactName":"session.bin","declaredSize":7});
+    let response = http
+        .post(&begin_url)
+        .bearer_auth(runner_token)
+        .json(&begin_input)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let session: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "session begin: {session}");
+    let sid = session["sessionId"].as_str().unwrap();
+    let complete_input = json!({"protocolVersion":1,"leaseToken":credential,"fencingToken":fencing,"attemptId":remote_attempt});
+    let chunk = http
+        .post(format!(
+            "{origin}/api/v1/runner/leases/{lease}/artifact-sessions/{sid}/chunks"
+        ))
+        .bearer_auth(runner_token)
+        .header("x-runner-protocol-version", "1")
+        .header("x-lease-token", credential)
+        .header("x-fencing-token", fencing.to_string())
+        .header("x-attempt-id", remote_attempt)
+        .header("x-chunk-index", "0")
+        .header(
+            "x-chunk-sha256",
+            format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(b"fixture")),
+        )
+        .body("fixture");
+    owner.write().unwrap().applications.clear();
+    assert_eq!(
+        chunk.try_clone().unwrap().send().await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    owner.write().unwrap().applications = vec!["ci-cd".into()];
+    sqlx::raw_sql("CREATE FUNCTION qa_artifact_commit_delay() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$;
+        CREATE CONSTRAINT TRIGGER a_qa_artifact_commit_delay AFTER INSERT ON forge_request_commit_fences DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION qa_artifact_commit_delay();").execute(&pool).await.unwrap();
+    owner.write().unwrap().expires_ms = 1500;
+    assert_eq!(
+        chunk.try_clone().unwrap().send().await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT received_bytes FROM artifact_upload_sessions WHERE id=$1"
+        )
+        .bind(Uuid::parse_str(sid).unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM artifact_upload_chunks WHERE session_id=$1"
+        )
+        .bind(Uuid::parse_str(sid).unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    sqlx::raw_sql("DROP TRIGGER a_qa_artifact_commit_delay ON forge_request_commit_fences; DROP FUNCTION qa_artifact_commit_delay();").execute(&pool).await.unwrap();
+    owner.write().unwrap().expires_ms = 30000;
+    let response = chunk.try_clone().unwrap().send().await.unwrap();
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "chunk: {text}");
+    let complete_url =
+        format!("{origin}/api/v1/runner/leases/{lease}/artifact-sessions/{sid}/complete");
+    let response = http
+        .post(&complete_url)
+        .bearer_auth(runner_token)
+        .json(&complete_input)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let completed: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "complete: {completed}");
+    let response = http
+        .post(&complete_url)
+        .bearer_auth(runner_token)
+        .json(&complete_input)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let repeated: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(completed["id"], repeated["id"]);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM artifacts")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        before_count + 1,
+        "session completion replay cannot create another artifact"
+    );
     owner.write().unwrap().applications.clear();
     assert_eq!(
         http.post(format!("{origin}/api/v1/runner/leases/{lease}/renew"))
@@ -520,6 +792,120 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
         StatusCode::SERVICE_UNAVAILABLE
     );
     owner.write().unwrap().unavailable = false;
+    // Administrator-owned schedule fires resolve a current role, not a saved admin bit.
+    owner.write().unwrap().role = "admin".into();
+    let schedule_input = json!({"cron":"* * * * *","git_ref":"source","enabled":true});
+    let response = http
+        .post(format!("{origin}/api/v1/projects/{project}/schedules"))
+        .bearer_auth(token)
+        .json(&schedule_input)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let value: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "schedule: {value}");
+    let schedule: Uuid = serde_json::from_value(value["id"].clone()).unwrap();
+    let actual_owner: Uuid = sqlx::query_scalar("SELECT owner_subject FROM schedules WHERE id=$1")
+        .bind(schedule)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(actual_owner, subject);
+    sqlx::query("UPDATE schedules SET next_fire_at=now()-interval '1 minute' WHERE id=$1")
+        .bind(schedule)
+        .execute(&pool)
+        .await
+        .unwrap();
+    owner.write().unwrap().unavailable = true;
+    assert_eq!(
+        cicd::outbox::fire_due_schedules_with_git_root(&pool, bare.parent().unwrap()).await,
+        0
+    );
+    let (fire, state): (Uuid, String) =
+        sqlx::query_as("SELECT id,status FROM schedule_fires WHERE schedule_id=$1")
+            .bind(schedule)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        state, "pending",
+        "Auth outage retains the original fire/key for safe retry"
+    );
+    let fire_owner: Uuid =
+        sqlx::query_scalar("SELECT owner_subject FROM schedule_fires WHERE id=$1")
+            .bind(fire)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(fire_owner, subject);
+    owner.write().unwrap().unavailable = false;
+    owner.write().unwrap().role = "user".into();
+    owner.write().unwrap().applications = vec!["ci-cd".into()];
+    assert_eq!(
+        cicd::outbox::fire_due_schedules_with_git_root(&pool, bare.parent().unwrap()).await,
+        0
+    );
+    let state: String = sqlx::query_scalar("SELECT status FROM schedule_fires WHERE id=$1")
+        .bind(fire)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        state, "failed",
+        "demoted admin cannot retain scheduled administrative execution"
+    );
+    owner.write().unwrap().role = "admin".into();
+    let response = http
+        .patch(format!("{origin}/api/v1/schedules/{schedule}"))
+        .bearer_auth(token)
+        .json(&schedule_input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    sqlx::query("UPDATE schedules SET next_fire_at=now()-interval '20 seconds' WHERE id=$1")
+        .bind(schedule)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cicd::outbox::fire_due_schedules_with_git_root(&pool, bare.parent().unwrap()).await,
+        1
+    );
+    let scheduled_pipeline: Uuid = sqlx::query_scalar(
+        "SELECT pipeline_id FROM schedule_fires WHERE schedule_id=$1 AND status='triggered'",
+    )
+    .bind(schedule)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (stored, admin): (Uuid, bool) = sqlx::query_as(
+        "SELECT owner_subject,requires_admin FROM pipeline_human_owners WHERE pipeline_id=$1",
+    )
+    .bind(scheduled_pipeline)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, subject);
+    assert!(admin);
+    let legacy = Uuid::new_v4();
+    sqlx::query("INSERT INTO schedules(id,project_id,cron,git_ref,enabled,next_fire_at) VALUES($1,$2,'* * * * *','source',true,now()-interval '40 seconds')").bind(legacy).bind(project).execute(&pool).await.unwrap();
+    assert_eq!(
+        cicd::outbox::fire_due_schedules_with_git_root(&pool, bare.parent().unwrap()).await,
+        0
+    );
+    let legacy_owner: Option<Uuid> =
+        sqlx::query_scalar("SELECT owner_subject FROM schedule_fires WHERE schedule_id=$1")
+            .bind(legacy)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        legacy_owner, None,
+        "historical automation never selects the first active administrator"
+    );
+    owner.write().unwrap().role = "user".into();
     owner.write().unwrap().applications = vec!["ci-cd".into()];
     sqlx::query("UPDATE repository_push_configs SET configuration_id=NULL WHERE repository_id=$1")
         .bind(repo.id)

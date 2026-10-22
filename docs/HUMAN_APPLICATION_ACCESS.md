@@ -160,7 +160,52 @@ poll rollback, ACK/renew/secrets при разрешённом доступе, �
 space composition и позднего SQL/Git эффекта сохранены в той же fixture.
 
 Исторические pipeline без подтверждённого owner не получают первого admin
-автоматически. При app policy новый запуск такого pipeline закрывается как
-migration pending. Владение schedules/deployments и полноценная миграция текущих
-автоматизаций должны быть подтверждены до активации; один native fixture не
-является полной квалификацией всех artifact publication/rollback/cohort paths.
+автоматически. Их старые attempts закрываются как migration pending. Полная
+миграция, artifact publication, rollback и установленный cohort проверяются
+отдельно; native fixture не заменяет dev-приёмку.
+
+### Расписания и явные новые попытки
+
+Migration0102 сохраняет центрального владельца настройки расписания и отдельно
+владельца каждого materialized fire. Последующее редактирование расписания не
+меняет владельца уже созданного fire. Перед постановкой очередного запуска Auth
+заново подтверждает ci-cd и административную роль первоначального владельца.
+Auth503 оставляет исходный fire/key для повторного подтверждения; отзыв роли
+закрывает запуск. Историческое расписание без owner остаётся migration pending,
+без выбора первого admin. Delivery approval/rollback требует текущего admin;
+reconcile результата сам по себе не создаёт нового запуска.
+
+Migration0103 отделяет инициатора повторной попытки от истории pipeline. Retry
+и ручной старт являются новой операцией текущего пользователя: новый attempt
+сохраняет его центральный UUID и исходный request clock транзакционно с queue.
+Исторический pipeline owner сохраняется. Незапущенные старые queued attempts
+при явном retry заменяются новыми, успешные результаты сохраняются. Повтор
+production delivery требует admin; generic retry native task pipeline запрещён,
+поскольку не доказывает новый Tracker/child grant.
+
+Runner preparation, lease claim, ACK/renew, secrets и publication подтверждают
+именно выбранный execution attempt. Между предварительным подтверждением и
+claim нельзя подменить attempt; COMMIT claim ограничен его исходным proof.
+Первый attempt использует owner pipeline, последующие — собственную запись.
+
+Native HTTP/PG/Git fixture проверяет Auth503 и повтор одного fire, отзыв admin,
+редактирование расписания и новый fire, historical missing owner; затем реальное
+падение shell-команды, retry другим пользователем и ручной старт с новыми owner,
+успешное исполнение команд и сохранение первоначальной истории.
+
+### Публикация артефакта и upload-сессии
+
+Публикация получает исходный clock текущего HTTP/runner этапа. Запись metadata,
+аудита и завершение resumable session выполняются в одной транзакции с deferred
+COMMIT fence. Begin/chunk/abort также сохраняют исходный clock подтверждения lease.
+Неуспешный COMMIT удаляет только свой неподтверждённый файл. При неизвестном
+результате COMMIT файл сохраняется до readback; ошибка транспорта не является
+доказательством rollback и не разрешает удалить опубликованный артефакт.
+
+Завершение сессии сериализовано по её записи и повтор возвращает прежний artifact
+ID. Публикация native job использует fresh stage confirmation и его исходный срок;
+image/deployment publication сохраняет существующий native authority deadline.
+Чтение результата не создаёт право публиковать output от имени runner.
+Native HTTP/PG fixture подтверждает разрешённую публикацию, истечение в реальном
+COMMIT без metadata/audit/file, отзыв перед chunk, откат chunk high-water mark и
+положительный повтор завершённой сессии без дублей.

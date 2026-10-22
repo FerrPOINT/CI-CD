@@ -963,6 +963,10 @@ pub(crate) async fn upload_runner_lease_artifact(
         &artifact_name,
         content_type,
         body,
+        crate::platform::ArtifactPublication {
+            clock: owner_clock,
+            session: None,
+        },
     )
     .await?;
     if let Some(clock) = owner_clock {
@@ -1357,7 +1361,8 @@ async fn claim_next_work(
             }
             Err(error) => return Err(ApiError::internal(error)),
         };
-        let owner_clock = crate::pipeline_authority::confirm(db, row.pipeline_id).await?;
+        let owner_clock =
+            crate::pipeline_authority::confirm(db, row.pipeline_id, row.attempt_id).await?;
         if let Some(clock) = owner_clock {
             clock.bind_commit_clock(&mut tx).await?;
         }
@@ -1897,7 +1902,7 @@ pub(crate) async fn begin_artifact_upload_session(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
-    let row = lease_artifact_row(
+    let (row, owner_clock) = lease_artifact_row(
         db,
         lease_id,
         runner.id,
@@ -1914,6 +1919,16 @@ pub(crate) async fn begin_artifact_upload_session(
         return Err(ApiError::forbidden());
     }
 
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    if let Some(clock) = owner_clock {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
+    sqlx::query("SELECT id FROM job_leases WHERE id=$1 FOR UPDATE")
+        .bind(lease_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+
     // Idempotent begin: an open session for the same (attempt, path) resumes.
     let existing = sqlx::query_as::<_, (Uuid, i64, i32, String)>(
         "SELECT id, received_bytes, highest_chunk, status \
@@ -1922,11 +1937,14 @@ pub(crate) async fn begin_artifact_upload_session(
     )
     .bind(input.attempt_id)
     .bind(&input.artifact_path)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
 
     if let Some((session_id, received_bytes, highest_chunk, status)) = existing {
+        if let Some(clock) = owner_clock {
+            clock.require()?;
+        }
         return Ok(Json(ArtifactSessionBeginResponse {
             session_id,
             chunk_size: body_limits::ARTIFACT_CHUNK_BYTES,
@@ -1961,10 +1979,13 @@ pub(crate) async fn begin_artifact_upload_session(
             .unwrap_or("application/octet-stream"),
     )
     .bind(input.declared_size)
-    .execute(db)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
 
+    tx.commit()
+        .await
+        .map_err(crate::git_host::GitDeadline::commit_error)?;
     Ok(Json(ArtifactSessionBeginResponse {
         session_id,
         chunk_size: body_limits::ARTIFACT_CHUNK_BYTES,
@@ -1983,7 +2004,7 @@ async fn lease_artifact_row(
     token_hash: &str,
     fencing_token: i64,
     attempt_id: Uuid,
-) -> Result<RunnerArtifactLeaseRow, ApiError> {
+) -> Result<(RunnerArtifactLeaseRow, Option<crate::git_host::GitDeadline>), ApiError> {
     let row = sqlx::query_as::<_, RunnerArtifactLeaseRow>(
         "SELECT l.job_id, l.attempt_id, j.artifact_paths \
          FROM job_leases l \
@@ -2009,12 +2030,11 @@ async fn lease_artifact_row(
     .await
     .map_err(ApiError::internal)?;
     let row = row.ok_or_else(|| ApiError::gone("lease is no longer active"))?;
-    if let Some(clock) =
-        lease_owner_clock(db, lease_id, runner_id, token_hash, fencing_token).await?
-    {
+    let clock = lease_owner_clock(db, lease_id, runner_id, token_hash, fencing_token).await?;
+    if let Some(clock) = clock {
         clock.require()?;
     }
-    Ok(row)
+    Ok((row, clock))
 }
 
 #[utoipa::path(
@@ -2083,7 +2103,7 @@ pub(crate) async fn append_artifact_upload_chunk(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(&lease_token);
-    lease_artifact_row(
+    let (_, owner_clock) = lease_artifact_row(
         db,
         lease_id,
         runner.id,
@@ -2094,6 +2114,9 @@ pub(crate) async fn append_artifact_upload_chunk(
     .await?;
 
     let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    if let Some(clock) = owner_clock {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
     let session = sqlx::query_as::<_, (i64, i32, i64, String)>(
         "SELECT declared_size, highest_chunk, received_bytes, status \
          FROM artifact_upload_sessions \
@@ -2163,7 +2186,9 @@ pub(crate) async fn append_artifact_upload_chunk(
     .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
-    tx.commit().await.map_err(ApiError::internal)?;
+    tx.commit()
+        .await
+        .map_err(crate::git_host::GitDeadline::commit_error)?;
 
     Ok(Json(ArtifactSessionStatusResponse {
         session_id,
@@ -2208,7 +2233,7 @@ pub(crate) async fn complete_artifact_upload_session(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
-    lease_artifact_row(
+    let (_, owner_clock) = lease_artifact_row(
         db,
         lease_id,
         runner.id,
@@ -2311,19 +2336,12 @@ pub(crate) async fn complete_artifact_upload_session(
         &artifact_name,
         &content_type,
         body_bytes.into(),
+        crate::platform::ArtifactPublication {
+            clock: owner_clock,
+            session: Some(session_id),
+        },
     )
     .await?;
-
-    sqlx::query(
-        "UPDATE artifact_upload_sessions \
-         SET status = 'completed', artifact_id = $2, updated_at = now() \
-         WHERE id = $1",
-    )
-    .bind(session_id)
-    .bind(artifact.id())
-    .execute(db)
-    .await
-    .map_err(ApiError::internal)?;
 
     Ok(Json(artifact))
 }
@@ -2352,7 +2370,7 @@ pub(crate) async fn abort_artifact_upload_session(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
-    lease_artifact_row(
+    let (_, owner_clock) = lease_artifact_row(
         db,
         lease_id,
         runner.id,
@@ -2361,6 +2379,10 @@ pub(crate) async fn abort_artifact_upload_session(
         input.attempt_id,
     )
     .await?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    if let Some(clock) = owner_clock {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
     let updated = sqlx::query(
         "UPDATE artifact_upload_sessions \
          SET status = 'aborted', updated_at = now() \
@@ -2369,12 +2391,15 @@ pub(crate) async fn abort_artifact_upload_session(
     .bind(session_id)
     .bind(runner.id)
     .bind(lease_id)
-    .execute(db)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
     if updated.rows_affected() == 0 {
         return Err(ApiError::not_found());
     }
+    tx.commit()
+        .await
+        .map_err(crate::git_host::GitDeadline::commit_error)?;
     Ok(Json(ArtifactSessionStatusResponse {
         session_id,
         received_bytes: 0,
@@ -2566,7 +2591,7 @@ async fn lease_owner_clock(
     if !crate::central_auth::application_policy_required()? {
         return Ok(None);
     }
-    let pipeline:Uuid=sqlx::query_scalar("SELECT s.pipeline_id FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id WHERE l.id=$1 AND l.runner_id=$2 AND l.lease_token_hash=$3 AND l.generation=$4 AND l.lease_status='active' AND l.lease_expires_at>clock_timestamp()")
+    let (pipeline,attempt):(Uuid,Uuid)=sqlx::query_as("SELECT s.pipeline_id,l.attempt_id FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id WHERE l.id=$1 AND l.runner_id=$2 AND l.lease_token_hash=$3 AND l.generation=$4 AND l.lease_status='active' AND l.lease_expires_at>clock_timestamp()")
         .bind(lease_id).bind(runner).bind(token_hash).bind(generation).fetch_optional(db).await.map_err(ApiError::internal)?.ok_or_else(||ApiError::gone("lease is no longer active"))?;
-    crate::pipeline_authority::confirm(db, pipeline).await
+    crate::pipeline_authority::confirm(db, pipeline, attempt).await
 }

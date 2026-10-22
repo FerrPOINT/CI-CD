@@ -235,6 +235,8 @@ async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiE
 async fn claim_embedded_job_lease(
     pool: &PgPool,
     job_id: Uuid,
+    admitted_attempt: Option<Uuid>,
+    owner_clock: Option<crate::git_host::GitDeadline>,
 ) -> Result<Option<EmbeddedJobLease>, ApiError> {
     crate::store::enqueue_missing_ready_jobs(pool)
         .await
@@ -262,6 +264,7 @@ async fn claim_embedded_job_lease(
             JOIN pipelines p ON p.id = s.pipeline_id
             JOIN projects pr ON pr.id = p.project_id
             WHERE j.id = $1
+              AND ($3::uuid IS NULL OR q.attempt_id=$3)
               AND q.state = 'queued'
               AND q.not_before <= now()
               AND cardinality(q.required_tags) = 0
@@ -346,6 +349,7 @@ async fn claim_embedded_job_lease(
     )
     .bind(job_id)
     .bind(Uuid::new_v4())
+    .bind(admitted_attempt)
     .fetch_optional(&mut *tx)
     .await;
     let row = match row {
@@ -358,6 +362,9 @@ async fn claim_embedded_job_lease(
         }
         Err(error) => return Err(ApiError::internal(error)),
     };
+    if let Some(clock) = owner_clock {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
     if let Err(error) = tx.commit().await {
         if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") {
             return Ok(None);
@@ -1214,9 +1221,19 @@ async fn run_job_inner(
         return Ok(ExecutionOutcome::Finished); // terminal already
     }
 
-    let owner_clock = crate::pipeline_authority::confirm(&pool, job.pipeline_id).await?;
+    let (admitted_attempt, owner_clock) = if crate::central_auth::application_policy_required()? {
+        let attempt:Uuid=sqlx::query_scalar("SELECT id FROM execution_attempts WHERE job_id=$1 AND status IN ('queued','running') ORDER BY attempt_no DESC LIMIT 1").bind(job_id).fetch_optional(&pool).await.map_err(ApiError::internal)?.ok_or_else(||ApiError::service_unavailable("Current execution attempt unavailable"))?;
+        (
+            Some(attempt),
+            crate::pipeline_authority::confirm(&pool, job.pipeline_id, attempt).await?,
+        )
+    } else {
+        (None, None)
+    };
     let lease = if job.status == "queued" {
-        let Some(lease) = claim_embedded_job_lease(&pool, job_id).await? else {
+        let Some(lease) =
+            claim_embedded_job_lease(&pool, job_id, admitted_attempt, owner_clock).await?
+        else {
             return Ok(ExecutionOutcome::Finished);
         };
         lease
@@ -1228,6 +1245,9 @@ async fn run_job_inner(
         lease
     };
     let attempt_id = lease.attempt_id;
+    if admitted_attempt.is_some_and(|admitted| admitted != attempt_id) {
+        return Ok(ExecutionOutcome::Held);
+    }
 
     if !matches!(
         crate::api::sdlc_workspace::task_pipeline::already_submitted(
@@ -1823,18 +1843,21 @@ async fn run_job_inner(
             .and_then(|remote| remote.deployment_artifacts())
             .unwrap_or(workspace.as_path())
     };
-    if image_build.is_none()
-        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
+    let artifact_clock = if let Some(until) = publication_until {
+        Some(crate::git_host::GitDeadline::native(until)?)
+    } else {
+        match crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
             &pool,
             job.pipeline_id,
             attempt_id,
             config,
         )
         .await
-        .is_err()
-    {
-        return Ok(ExecutionOutcome::Held);
-    }
+        {
+            Ok(clock) => clock,
+            Err(_) => return Ok(ExecutionOutcome::Held),
+        }
+    };
     let artifact_error = collect_declared_artifacts(
         &pool,
         &config.artifacts,
@@ -1842,6 +1865,7 @@ async fn run_job_inner(
         attempt_id,
         artifact_root,
         &job.artifact_paths,
+        artifact_clock,
     )
     .await
     .err();
@@ -2123,6 +2147,7 @@ async fn collect_declared_artifacts(
     attempt_id: Uuid,
     workspace: &Path,
     artifact_paths: &[String],
+    clock: Option<crate::git_host::GitDeadline>,
 ) -> Result<(), ApiError> {
     if artifact_paths.is_empty() {
         return Ok(());
@@ -2154,6 +2179,10 @@ async fn collect_declared_artifacts(
             &name,
             "application/octet-stream",
             Bytes::from(bytes),
+            crate::platform::ArtifactPublication {
+                clock,
+                session: None,
+            },
         )
         .await?;
         append_attempt_log(

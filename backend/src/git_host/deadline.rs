@@ -112,6 +112,16 @@ impl GitDeadline {
     pub(super) fn current(self) -> bool {
         Instant::now() < self.instant && Utc::now().timestamp() < self.until
     }
+    pub(crate) fn commit_error(error: sqlx::Error) -> ApiError {
+        if error.as_database_error().is_some_and(|db| {
+            db.code().as_deref() == Some("42501")
+                && db.message() == "forge_request_authority_expired"
+        }) {
+            ApiError::service_unavailable("Original admission proof expired before COMMIT")
+        } else {
+            ApiError::internal(error)
+        }
+    }
     pub(crate) fn require(self) -> Result<(), ApiError> {
         if self.current() {
             Ok(())

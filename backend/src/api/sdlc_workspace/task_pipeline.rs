@@ -440,8 +440,9 @@ pub(crate) async fn before_delegated_effect(
     pipeline: Uuid,
     attempt: Uuid,
     config: &crate::runner::RuntimeRunnerConfig,
-) -> Result<(), ApiError> {
-    if let Some(clock) = crate::pipeline_authority::confirm(pool, pipeline).await? {
+) -> Result<Option<crate::git_host::GitDeadline>, ApiError> {
+    let owner_clock = crate::pipeline_authority::confirm(pool, pipeline, attempt).await?;
+    if let Some(clock) = owner_clock {
         clock.require()?;
     }
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
@@ -449,11 +450,11 @@ pub(crate) async fn before_delegated_effect(
         .await
         .map_err(ApiError::internal)?
     else {
-        return Ok(());
+        return Ok(owner_clock);
     };
     if record.delegated_credential.is_none() && !crate::central_auth::application_policy_required()?
     {
-        return Ok(());
+        return Ok(owner_clock);
     }
     if !ledger::task_attempt_submitted(&mut tx, pipeline, attempt)
         .await
@@ -470,7 +471,7 @@ pub(crate) async fn before_delegated_effect(
             "Task authority expired before publication",
         ));
     }
-    Ok(())
+    Ok(Some(crate::git_host::GitDeadline::native(until)?))
 }
 
 /// Verify an already submitted task attempt without claiming or replaying it.
