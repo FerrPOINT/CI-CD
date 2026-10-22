@@ -1204,7 +1204,9 @@ pub async fn supervisor_loop_with_git_root(pool: PgPool, git_root: PathBuf) {
         .unwrap_or_default();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        let Ok(_effect) = crate::quiescence::enter(true) else { continue };
+        let Ok(_effect) = crate::quiescence::enter(true) else {
+            continue;
+        };
         let delivered = deliver_due(&pool, &client, &smtp).await;
         let fired = fire_due_schedules_with_git_root(&pool, &git_root).await;
         if delivered > 0 || fired > 0 {

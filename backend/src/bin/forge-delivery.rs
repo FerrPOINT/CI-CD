@@ -33,8 +33,18 @@ async fn run(args: Args) -> anyhow::Result<bool> {
         );
     }
     let config = RuntimeConfig::from_env()?;
-    let mut custody:Vec<_> = config.sdlc_workspace.local_delivery_root.iter().cloned().map(cicd::quiescence::CustodyRoot::delivery).collect();
-    custody.extend(std::env::var_os("CICD_LOCAL_PG_ROOT").map(std::path::PathBuf::from).map(cicd::quiescence::CustodyRoot::delivery));
+    let mut custody: Vec<_> = config
+        .sdlc_workspace
+        .local_delivery_root
+        .iter()
+        .cloned()
+        .map(cicd::quiescence::CustodyRoot::delivery)
+        .collect();
+    custody.extend(
+        std::env::var_os("CICD_LOCAL_PG_ROOT")
+            .map(std::path::PathBuf::from)
+            .map(cicd::quiescence::CustodyRoot::delivery),
+    );
     cicd::quiescence::initialize("local-delivery", custody)?;
     let _effect = cicd::quiescence::enter(true)?;
     ensure!(
@@ -129,7 +139,9 @@ async fn run(args: Args) -> anyhow::Result<bool> {
 async fn main() {
     let result = if std::env::var_os("CICD_QUIESCENCE_DIR").is_some() {
         tokio::select! { result=run(Args::parse())=>result, result=cicd::quiescence::wait_for_exit()=>result.map(|_|true) }
-    } else { run(Args::parse()).await };
+    } else {
+        run(Args::parse()).await
+    };
     let status = match result {
         Ok(true) => 0,
         Ok(false) => 2,

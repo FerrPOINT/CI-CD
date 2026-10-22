@@ -126,10 +126,17 @@ pub async fn run_job_with_config(
     config: RuntimeRunnerConfig,
 ) {
     let new_work = if std::env::var_os("CICD_QUIESCENCE_DIR").is_some() {
-        let existing = sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id=$1").bind(job_id).fetch_optional(&pool).await;
+        let existing = sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id=$1")
+            .bind(job_id)
+            .fetch_optional(&pool)
+            .await;
         !matches!(existing, Ok(Some(ref status)) if status == "running")
-    } else { true };
-    let Ok(_effect) = crate::quiescence::enter(new_work) else { return };
+    } else {
+        true
+    };
+    let Ok(_effect) = crate::quiescence::enter(new_work) else {
+        return;
+    };
     {
         let mut guard = running.lock().await;
         if guard.contains_key(&job_id) {
@@ -2406,13 +2413,17 @@ async fn poll_and_dispatch_with_config(
     running: RunningJobs,
     config: &RuntimeRunnerConfig,
 ) -> Result<(), sqlx::Error> {
-    let Ok(_effect) = crate::quiescence::enter(false) else { return Ok(()) };
+    let Ok(_effect) = crate::quiescence::enter(false) else {
+        return Ok(());
+    };
     reconcile_runtime_state_with_config(pool, config).await?;
     if config.mode == RunnerMode::Kubernetes {
         kubernetes::reconcile_terminal(pool, &running, config).await?;
     }
 
-    if !crate::quiescence::accepting() { return Ok(()) }
+    if !crate::quiescence::accepting() {
+        return Ok(());
+    }
     let enqueued = crate::store::enqueue_missing_ready_jobs(pool).await?;
     if enqueued > 0 {
         tracing::debug!(enqueued, "runner materialized missing job queue rows");

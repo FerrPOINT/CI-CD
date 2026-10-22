@@ -4,7 +4,7 @@
 //! an advisory lock so concurrent instances cannot race. `--dry-run` lists
 //! pending migrations without touching the database.
 
-#[path="../../src/quiescence/kernel.rs"]
+#[path = "../../src/quiescence/kernel.rs"]
 #[allow(dead_code)]
 mod quiescence;
 use anyhow::Context;
@@ -29,7 +29,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if std::env::var_os("CICD_QUIESCENCE_DIR").is_none() { return run_main().await }
+    if std::env::var_os("CICD_QUIESCENCE_DIR").is_none() {
+        return run_main().await;
+    }
     tokio::select! { result=run_main()=>result, result=quiescence::wait_for_exit()=>result }
 }
 async fn run_main() -> anyhow::Result<()> {

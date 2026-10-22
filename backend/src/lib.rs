@@ -10,8 +10,8 @@ pub mod delegated_credentials;
 pub mod dispatch_signal;
 pub mod metrics;
 pub mod outbox;
-pub mod rate_limit;
 pub mod quiescence;
+pub mod rate_limit;
 pub(crate) mod schedule;
 use std::path::{Path, PathBuf};
 

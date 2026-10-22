@@ -227,14 +227,19 @@ impl std::error::Error for UnconfirmedExecution {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if std::env::var_os("CICD_QUIESCENCE_DIR").is_none() { return run().await }
+    if std::env::var_os("CICD_QUIESCENCE_DIR").is_none() {
+        return run().await;
+    }
     tokio::select! { result=run()=>result, result=cicd::quiescence::wait_for_exit()=>result }
 }
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     validate_cli(&cli)?;
     let root = workspace_root(&cli);
-    cicd::quiescence::initialize("external-runner", vec![cicd::quiescence::CustodyRoot::workspace(root.clone())])?;
+    cicd::quiescence::initialize(
+        "external-runner",
+        vec![cicd::quiescence::CustodyRoot::workspace(root.clone())],
+    )?;
     if cli.inspect_workspaces {
         println!(
             "{}",
@@ -272,7 +277,11 @@ async fn run() -> anyhow::Result<()> {
         let poll_started = tokio::time::Instant::now();
         let offer = match poll_work(&client, &base, &credential, &cli).await {
             Ok(offer) => offer,
-            Err(_) if !cicd::quiescence::accepting() => { drop(_effect); tokio::time::sleep(Duration::from_secs(1)).await; continue; }
+            Err(_) if !cicd::quiescence::accepting() => {
+                drop(_effect);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
             Err(error) => return Err(error),
         };
         drop(_effect);

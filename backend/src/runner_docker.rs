@@ -763,9 +763,12 @@ async fn write_private_async(
         .fetch_add(1, Ordering::SeqCst)
         .wrapping_add(1);
     let effect = crate::quiescence::enter(false).map_err(|_| invalid("Forge backup fence held"))?;
-    tokio::task::spawn_blocking(move || { let _effect = effect; writes.write(&path, &value, sequence) })
-        .await
-        .map_err(|_| invalid("private journal write worker failed"))?
+    tokio::task::spawn_blocking(move || {
+        let _effect = effect;
+        writes.write(&path, &value, sequence)
+    })
+    .await
+    .map_err(|_| invalid("private journal write worker failed"))?
 }
 
 fn process_owner() -> String {

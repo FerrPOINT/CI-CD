@@ -40,14 +40,14 @@ pub async fn supervisor(pool: PgPool, config: crate::config::RuntimeConfig) {
             continue;
         };
         if let Ok(_producer) = crate::quiescence::enter(true) {
-        if let Err(error) = deliver_events(&store, &config).await {
-            tracing::warn!(%error,"sync pipeline delivery pending");
-        }
-        if config.git_sync.enabled {
-            if let Err(error) = store.schedule().await {
-                tracing::warn!(%error,"sync scheduling unavailable");
+            if let Err(error) = deliver_events(&store, &config).await {
+                tracing::warn!(%error,"sync pipeline delivery pending");
             }
-        }
+            if config.git_sync.enabled {
+                if let Err(error) = store.schedule().await {
+                    tracing::warn!(%error,"sync scheduling unavailable");
+                }
+            }
         }
         if let Ok(candidates) = store.candidates().await {
             for (id, repository, storage) in candidates {
@@ -112,7 +112,9 @@ async fn execute(
     storage: &str,
 ) -> Result<(), Error> {
     let new_work = store.run(repository, id).await?.state == "queued";
-    let Ok(_effect) = crate::quiescence::enter(new_work) else { return Ok(()) };
+    let Ok(_effect) = crate::quiescence::enter(new_work) else {
+        return Ok(());
+    };
     let storage = crate::git_host::validate_repo_name(storage).map_err(Error::Invalid)?;
     // Namespace admission always precedes the OS mutation guard, as in receive-pack/merge.
     let lease =

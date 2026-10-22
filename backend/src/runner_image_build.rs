@@ -1537,10 +1537,15 @@ pub(crate) async fn export_kubernetes_source(
 }
 
 /// Read-only backup closure; no Engine calls or inferred stop from process/lease expiry.
-pub(crate) fn quiescence_idle(directory:&Path)->anyhow::Result<()> {
+pub(crate) fn quiescence_idle(directory: &Path) -> anyhow::Result<()> {
     private_directory(directory)?;
-    let bytes=read_private(&directory.join("intent.json"),8192)?;
-    let intent:Intent=serde_json::from_slice(&bytes)?;
+    let bytes = read_private(&directory.join("intent.json"), 8192)?;
+    let intent: Intent = serde_json::from_slice(&bytes)?;
     intent.scope.validate()?;
-    ensure!(intent.schema=="forge/backend-image-build/v1" && cleanup_is_complete(directory,&intent,&digest(&bytes))?,"image-build custody remains unresolved");Ok(())
+    ensure!(
+        intent.schema == "forge/backend-image-build/v1"
+            && cleanup_is_complete(directory, &intent, &digest(&bytes))?,
+        "image-build custody remains unresolved"
+    );
+    Ok(())
 }
