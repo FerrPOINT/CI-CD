@@ -10,7 +10,10 @@ SDK/UI pins, публичный HTTP/OpenAPI и схема БД сохранен
 
 - CICD_QUIESCENCE_DIR — один физический private каталог общей файловой системы
   с действующими Linux flock; каталог 0700, файлы 0600, effective UID контроллера.
-  Не монтировать его в job.
+  Release owner размещает его на existing runner workspace PVC как private
+  /workspaces/.quiescence-control вне всех job subPaths, без нового claim.
+  Job не получает ни root mount PVC, ни этот каталог. Env и participant IDs
+  принадлежат private release config; source/SDK pins от этого не меняются.
 - CICD_QUIESCENCE_PARTICIPANT — уникальное стабильное имя процесса:
   A–Z, a–z, 0–9, underscore/hyphen, до 80 символов.
 
@@ -35,6 +38,10 @@ candidate image/CID, PID/start identity, roles и mount/PVC identities.
 Новые HTTP requests блокируются до auth/cache DB effects. Health/readiness/
 metrics остаются доступны. Существующие lease ACK, renew, control, receipt,
 secrets, logs, artifact sessions, complete и task credential renewal разрешены.
+Authenticated Git fetch также продолжает работу: только GET info/refs с точным
+service=git-upload-pack или POST git-upload-pack с правильным Content-Type,
+без дополнительных query aliases. Обычный Git auth по-прежнему обязателен.
+Receive-pack закрыт; fetch сохраняет native IO custody и после held ACK закрыт.
 
 Effect lease держит фактический owner до physical completion:
 
@@ -58,8 +65,8 @@ data-plane backup barriers принадлежат их owners.
 
 ## Private local control
 
-    forge-quiesce --directory /run/forge-quiescence request --operation "$OPERATION"
-    forge-quiesce --directory /run/forge-quiescence hold \
+    forge-quiesce --directory /workspaces/.quiescence-control request --operation "$OPERATION"
+    forge-quiesce --directory /workspaces/.quiescence-control hold \
       --operation "$OPERATION" --expected /private/expected-forge-participants.json
 
 request закрывает новые effects и выдаёт backupAcknowledged=false.
@@ -84,10 +91,26 @@ Queued/manual jobs, future schedules и pending notifications можно сох�
 старые ACK/cleanup продолжились. backupAcknowledged=true валиден только пока
 этот точный foreground coordinator жив и держит kernel fence. Owner наблюдает
 его identity/liveness и unchanged participant manifest в течение backup.
-Coordinator перепроверяет participants каждую секунду. Завершившаяся команда
+Coordinator перепроверяет participants каждые 100 ms. Завершившаяся команда
 не является удерживаемым barrier.
 
-Для завершения отправить в stdin живого coordinator:
+При необходимости offline backup после полного held ACK отправить в stdin
+этого же живого coordinator:
+
+    exit <тот же operation UUID>
+
+Private exit intent связан с current coordinator nonce, свежим acknowledgement
+UUID и точными participant boot identities. Server, external runner, delivery
+и migration имеют normal-return exit path: только после пустого local owner
+set под exclusive fence. Нет сигналов, job killing или timeout fallback.
+Неподдерживаемый kind — HOLD. Coordinator удерживает fence и проверяет
+исчезновение именно pinned kernel participant owners, неизменность receipts
+и отсутствие replacement writers; только затем печатает
+forge/quiescence-exited/v1. Это не Docker/CID readback: внешний owner дополнительно
+проверяет pinned process/CID disappearance и отключённую restart replacement
+policy. Новый boot, потеря coordinator или stale ACK запрещают приёмку.
+
+После backup, пока coordinator всё ещё жив, для завершения отправить:
 
     resume <тот же operation UUID>
 
@@ -95,7 +118,7 @@ EOF/crash снимает kernel fence, но admission остаётся закр�
 невалиден; получить новый hold с тем же operation. После прерванного coordinator
 explicit recovery:
 
-    forge-quiesce --directory /run/forge-quiescence resume --operation "$OPERATION"
+    forge-quiesce --directory /workspaces/.quiescence-control resume --operation "$OPERATION"
 
 Другой coordinator не получает release authority, пока первый держит
 coordinator.lock; другой operation UUID marker не принимает и не снимает.
@@ -113,8 +136,16 @@ reconciliation. Не удалять её вручную ради прохожд�
 
 Для известного idle legacy случая owner квалифицирует fixture точного старого
 image: source-owned per-writer barriers, отсутствие реальных jobs/descendants
-и unknown custody, network/origin fence, штатный idle SIGTERM, post-stop
+и unknown custody, network/origin fence, штатный idle shutdown, post-stop
 integrity. Нули DB counts диагностические, не admission fence.
+
+Exact old-image fixture уже дал TERM FAIL:
+qa/forge-legacy-idle-20261022/result.safe.json. Direct cicd-server как PID 1
+без init/handler не завершился от одного SIGTERM за наблюдаемые 5 s, без OOM.
+qa/forge-legacy-idle-20261022/crash.safe.json относится только к контролируемому
+SIGKILL пустого изолированного QA; он не квалифицирует TERM и не разрешает
+production stop. Описанный ниже legacy protocol остаётся неподтверждённым
+bootstrap gate. Новый private exit нельзя применить к старому CID.
 
 К 11 исходным диагностическим counts добавить оба запроса, включая будущие
 retry времена:
@@ -140,7 +171,7 @@ Source-owned sequence для fixture:
 4. После barriers перечитать counts и проверить already-selected/committed
    claims, notification delivery, sync events и in-flight requests. При
    active/unknown освободить locks и дать owner завершить работу.
-5. Только на квалифицированном idle fixture выполнить штатный SIGTERM,
+5. Только на квалифицированном idle fixture проверить штатный idle shutdown,
    подтвердить завершение процесса, descendants и IO workers; затем проверить
    DB, Git refs/hooks и artifact DB→file hashes перед backup.
    Fallback SIGKILL — не успешный idle shutdown.
@@ -159,12 +190,32 @@ source/CID/mount drift, disconnect, сигнал с pending IO, post-stop hash m
 исходе. Не использовать expiry-as-stop, SIGSTOP, kill активных jobs, hotpatch
 или общий DB write-lock вместо source-owned closure.
 
+## Generation handoff и restore
+
+Архив quiescence directory содержит OLD-source participants/boot IDs,
+request/held/exit markers, lock files и возможную unknown custody. Lock file
+из архива не является живым kernel lock. Их нельзя автоматически удалять,
+игнорировать или считать destination enrollment. Старый exited receipt сам
+по себе не разрешает новые writers в другой installation.
+
+До запуска первого destination writer внешний release owner должен выполнить
+явный generation handoff: связать сохранённый sourceExited receipt с точными
+OLD process/CID identities, current operation UUID и destination namespace/PVC
+UIDs; проверить retirement OLD generation и записать полный approved mapping
+на новые participant identities/roots. Unknown custody остаётся HOLD и
+сохраняется для original-owner reconciliation. Автоматического import/retire
+в этом source-срезе нет: конкретная native процедура и её restore integrity
+qualification — открытый operator gate. Не снимать request и не запускать
+destination с другим пустым directory ради обхода старой custody.
+
 ## Проверки
 
     cargo check --locked -p cicd-server -p cicd-migrate --all-targets --features integration
     cargo test --locked -p cicd-server --features integration --lib quiescence -- --test-threads=1
 
 Тесты покрывают actual kernel participant child process, cancellation waiter
-при живом blocking writer, HTTP admission/continuation и реальный PostgreSQL
+при живом blocking writer, private normal child exit и wrong-op/stale-holder/
+replacement rejection, strict Git fetch boundary с native Git IO только до
+held fence, HTTP admission/continuation и реальный PostgreSQL
 unfinished SQL/running job. Native enrollment, Compose/Kubernetes executor и
 backup/restore integrity остаются owner gates.

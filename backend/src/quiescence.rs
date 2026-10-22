@@ -13,10 +13,20 @@ async fn guarded_request(request:axum::extract::Request,next:axum::middleware::N
     use axum::response::IntoResponse;
     let path=request.uri().path();
     if matches!(path,"/health"|"/api/v1/health"|"/api/v1/readiness"|"/metrics"){return next.run(request).await}
-    let continuation=continuation(path);
+    let continuation=continuation(path) || git_fetch_continuation(&request);
     let Ok(lease)=acquire(!continuation) else{return (axum::http::StatusCode::SERVICE_UNAVAILABLE,"Forge приостановлен для резервного копирования").into_response()};
     // Client cancellation drops only this waiter. The actual handler retains its effect lease.
     match tokio::spawn(async move {let _lease=lease;next.run(request).await}).await {Ok(response)=>response,Err(_)=>(axum::http::StatusCode::SERVICE_UNAVAILABLE,"Forge: результат операции не подтверждён").into_response()}
+}
+
+fn git_fetch_continuation(request:&axum::extract::Request)->bool{
+    use axum::http::{Method,header};
+    if request.headers().get(header::AUTHORIZATION).and_then(|v|v.to_str().ok()).is_none_or(|v|!v.starts_with("Bearer ") && !v.starts_with("Basic ")){return false}
+    let parts:Vec<_>=request.uri().path().trim_start_matches('/').split('/').collect();
+    let info=matches!(parts.as_slice(),["git",repo,"info","refs"] if !repo.is_empty()) || matches!(parts.as_slice(),["git",group,repo,"info","refs"] if !group.is_empty() && !repo.is_empty());
+    if request.method()==Method::GET && info{return request.uri().query()==Some("service=git-upload-pack")}
+    let rpc=matches!(parts.as_slice(),["git",repo,"git-upload-pack"] if !repo.is_empty()) || matches!(parts.as_slice(),["git",group,repo,"git-upload-pack"] if !group.is_empty() && !repo.is_empty());
+    request.method()==Method::POST && rpc && request.uri().query().is_none() && request.headers().get(header::CONTENT_TYPE).and_then(|v|v.to_str().ok())==Some("application/x-git-upload-pack-request")
 }
 fn continuation(path:&str)->bool{
     if matches!(path,"/api/v1/runner/heartbeat"|"/api/v1/internal/git-push"){return true}
@@ -65,6 +75,52 @@ mod tests{
         child.stdin.as_mut().unwrap().write_all(b"finish\n").unwrap();loop{let mut line=String::new();assert!(output.read_line(&mut line).unwrap()>0);if line.trim()=="FINISHED"{break}}
         let fence=coordinator.try_fence().unwrap().unwrap();gate.verify_participants(std::slice::from_ref(&identity)).unwrap();drop(fence);
         child.stdin.as_mut().unwrap().write_all(b"exit\n").unwrap();assert!(child.wait().unwrap().success());assert!(gate.verify_participants(&[identity]).is_err());coordinator.resume().unwrap();fs::remove_dir_all(path).unwrap();
+    }
+    #[tokio::test]async fn authenticated_fetch_continues_until_held_fence_without_receive_pack_bypass(){
+        use axum::{Router,body::Body,http::{Request,StatusCode}};use tower::ServiceExt;use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        let(path,gate)=fixture();let coordinator=Coordinator::request(gate.clone(),Uuid::new_v4()).unwrap();let calls=Arc::new(AtomicUsize::new(0));let observed=calls.clone();let admission=gate.clone();
+        let app=Router::new().fallback(move||{let observed=observed.clone();async move{
+            // Exercise actual native IO only after the production admission boundary.
+            assert!(tokio::process::Command::new("git").arg("--version").status().await.unwrap().success());observed.fetch_add(1,Ordering::SeqCst);StatusCode::NO_CONTENT
+        }}).layer(axum::middleware::from_fn(move|request,next|{let gate=admission.clone();async move{guarded_request(request,next,|new|gate.enter(new)).await}}));
+        let request=|method:&str,uri:&str|Request::builder().method(method).uri(uri).header("authorization","Bearer fixture-token").header("content-type","application/x-git-upload-pack-request").body(Body::empty()).unwrap();
+        for uri in ["/git/repo/info/refs?service=git-upload-pack","/git/group/repo/info/refs?service=git-upload-pack"]{assert_eq!(app.clone().oneshot(request("GET",uri)).await.unwrap().status(),StatusCode::NO_CONTENT);}
+        assert_eq!(app.clone().oneshot(request("POST","/git/group/repo/git-upload-pack")).await.unwrap().status(),StatusCode::NO_CONTENT);
+        for(method,uri)in[("GET","/git/repo/info/refs?service=git-receive-pack"),("POST","/git/repo/git-receive-pack"),("POST","/git/repo/info/refs?service=git-upload-pack"),("GET","/git/repo/git-upload-pack"),("GET","/git/repo/info/refs?service=git-upload-pack&alias=yes"),("POST","/git/repo/git-upload-pack?alias=yes")]{
+            assert_eq!(app.clone().oneshot(request(method,uri)).await.unwrap().status(),StatusCode::SERVICE_UNAVAILABLE);
+        }
+        let missing_auth=Request::builder().uri("/git/repo/info/refs?service=git-upload-pack").body(Body::empty()).unwrap();assert_eq!(app.clone().oneshot(missing_auth).await.unwrap().status(),StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(calls.load(Ordering::SeqCst),3);
+        let fence=coordinator.try_fence().unwrap().unwrap();
+        assert_eq!(app.clone().oneshot(request("GET","/git/repo/info/refs?service=git-upload-pack")).await.unwrap().status(),StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(app.oneshot(request("POST","/git/repo/git-upload-pack")).await.unwrap().status(),StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(calls.load(Ordering::SeqCst),3);drop(fence);coordinator.resume().unwrap();fs::remove_dir_all(path).unwrap();
+    }
+    #[test]fn private_exit_rejects_wrong_operation_stale_holder_and_replacement(){
+        let(path,gate)=fixture();let(participant,identity)=gate.register("server","server",vec![]).unwrap();let expected=std::slice::from_ref(&identity);let operation=Uuid::new_v4();let owner=Coordinator::request(gate.clone(),operation).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+        assert!(owner.request_exit(&fence,expected).is_err());owner.publish_held(&fence,expected).unwrap();owner.request_exit(&fence,expected).unwrap();assert!(gate.exit_for(&identity).unwrap());
+        let exit=path.join("exit.json");let good=fs::read(&exit).unwrap();let mut wrong:serde_json::Value=serde_json::from_slice(&good).unwrap();wrong["operationId"]=serde_json::json!(Uuid::new_v4());fs::write(&exit,serde_json::to_vec(&wrong).unwrap()).unwrap();assert!(gate.exit_for(&identity).is_err());fs::write(&exit,&good).unwrap();
+        drop(fence);assert!(gate.exit_for(&identity).is_err());drop(owner);
+        let owner=Coordinator::request(gate.clone(),operation).unwrap();let fence=owner.try_fence().unwrap().unwrap();assert!(gate.exit_for(&identity).is_err());assert!(owner.request_exit(&fence,expected).is_err());
+        drop(participant);assert!(gate.all_exited(expected).unwrap());let(_replacement,_)=gate.register("server","server",vec![]).unwrap();assert!(gate.all_exited(expected).is_err());assert!(owner.request_exit(&fence,expected).is_err());drop(fence);drop(owner);fs::remove_dir_all(path).unwrap();
+    }
+    #[test]fn private_exit_finishes_actual_child_normally_and_retains_closed_fence(){
+        use std::io::{BufRead,Write};use std::process::{Child,Command,Stdio};
+        struct Fixture(Child);impl Drop for Fixture{fn drop(&mut self){if self.0.try_wait().ok().flatten().is_none(){let _=self.0.kill();let _=self.0.wait();}}}
+        let(path,gate)=fixture();let mut child=Fixture(Command::new(std::env::current_exe().unwrap()).args(["--exact","quiescence::tests::controlled_exit_process_fixture","--nocapture"]).env("FORGE_QUIESCENCE_EXIT_FIXTURE","1").env("CICD_QUIESCENCE_DIR",&path).env("CICD_QUIESCENCE_PARTICIPANT","server").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap());
+        let mut output=std::io::BufReader::new(child.0.stdout.take().unwrap());let identity=loop{let mut line=String::new();assert!(output.read_line(&mut line).unwrap()>0);if let Some(bytes)=line.find("IDENTITY ").map(|offset|line[offset+9..].trim()){break serde_json::from_str::<Identity>(bytes).unwrap()}};
+        let operation=Uuid::new_v4();let owner=Coordinator::request(gate.clone(),operation).unwrap();let fence=owner.try_fence().unwrap().unwrap();let expected=std::slice::from_ref(&identity);owner.publish_held(&fence,expected).unwrap();owner.request_exit(&fence,expected).unwrap();
+        // Ask the child to inspect the genuine kernel fence and exact private intent.
+        child.0.stdin.as_mut().unwrap().write_all(b"inspect\n").unwrap();
+        let mut stopped=false;for _ in 0..100{if let Some(status)=child.0.try_wait().unwrap(){assert!(status.success());stopped=true;break}std::thread::sleep(std::time::Duration::from_millis(20));}assert!(stopped,"controlled fixture did not return normally");
+        assert!(gate.all_exited(expected).unwrap());assert!(gate.enter(true).is_err());assert!(gate.enter(false).is_err());drop(fence);owner.resume().unwrap();fs::remove_dir_all(path).unwrap();
+    }
+    #[test]fn controlled_exit_process_fixture(){
+        use std::io::Write;
+        if std::env::var_os("FORGE_QUIESCENCE_EXIT_FIXTURE").is_none(){return}
+        initialize("server",vec![]).unwrap();let root=PathBuf::from(std::env::var_os("CICD_QUIESCENCE_DIR").unwrap());let identity:Identity=serde_json::from_slice(&fs::read(root.join("participants/server.json")).unwrap()).unwrap();
+        println!("IDENTITY {}",serde_json::to_string(&identity).unwrap());std::io::stdout().flush().unwrap();let mut line=String::new();std::io::stdin().read_line(&mut line).unwrap();assert_eq!(line.trim(),"inspect");
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(wait_for_exit()).unwrap();assert!(enter(false).is_err());
     }
     #[test]fn admitted_git_callback_finishes_but_unrelated_hook_cannot_submit_during_drain(){
         let(path,gate)=fixture();let owner=gate.git_hook_owner("original-storage").unwrap();let coordinator=Coordinator::request(gate.clone(),Uuid::new_v4()).unwrap();assert!(gate.require_git_hook_owner("original-storage").is_ok());assert!(gate.require_git_hook_owner("other-storage").is_err());drop(owner);assert!(gate.require_git_hook_owner("original-storage").is_err());coordinator.resume().unwrap();fs::remove_dir_all(path).unwrap();

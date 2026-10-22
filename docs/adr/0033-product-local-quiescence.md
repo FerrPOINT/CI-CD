@@ -27,3 +27,16 @@ custody closure. Unknown всегда HOLD. Истечение lease/process exi
 Первое подключение legacy runtime требует отдельной qualification точного
 старого image и original-state preservation. Новый source не доказывает старый
 CID. Контроль и legacy fixture protocol: [FORGE_QUIESCENCE](../FORGE_QUIESCENCE.md).
+
+После полного held ACK тот же private coordinator может запросить normal
+idle exit exact pinned boots. Новый nonce/ACK и живой exclusive fence защищают
+от stale intent; kernel owner disappearance и replacement проверяются без
+PID reuse assumptions. Все четыре Forge process kinds имеют этот путь.
+Authenticated upload-pack остаётся tracked continuation до fence; receive-pack
+не открывается. Old-image TERM fixture FAIL не скрывается новым source.
+
+Private directory использует existing workspace PVC вне job subPaths.
+Restore/generation retirement требует явного release-owner mapping source
+exited receipt → current operation → destination UIDs до первого нового writer;
+автоматического удаления/игнорирования unknown custody нет. Native handoff
+остаётся открытым gate.

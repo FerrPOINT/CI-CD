@@ -227,6 +227,10 @@ impl std::error::Error for UnconfirmedExecution {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::var_os("CICD_QUIESCENCE_DIR").is_none() { return run().await }
+    tokio::select! { result=run()=>result, result=cicd::quiescence::wait_for_exit()=>result }
+}
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     validate_cli(&cli)?;
     let root = workspace_root(&cli);

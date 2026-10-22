@@ -41,21 +41,37 @@ async fn main()->anyhow::Result<()> {
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             };
+            owner.publish_held(&fence,&expected)?;
             println!("{}",serde_json::json!({"schema":"forge/quiescence-held/v1","operationId":operation,"coordinatorPid":std::process::id(),"participants":expected,"backupAcknowledged":true,"validity":"only while this exact foreground coordinator retains its kernel fence"}));
             std::io::stdout().flush()?;
-            let (tx,mut rx)=tokio::sync::oneshot::channel();
-            tokio::task::spawn_blocking(move||{let mut line=String::new();let result=std::io::stdin().read_line(&mut line).map(|_|line);let _=tx.send(result);});
+            let mut rx=read_command();let mut exiting=false;let mut exited=false;
             loop {
                 tokio::select! {
                     line=&mut rx=>{
                         let line=line.context("control stdin worker unavailable")??;
-                        // EOF/crash releases the kernel fence but never silently reopens admission.
-                        ensure!(line.trim()==format!("resume {operation}"),"fence ended without authorized resume; admission remains closed");
-                        drop(fence);owner.resume()?;break;
+                        if line.trim()==format!("exit {operation}") && !exiting {
+                            owner.request_exit(&fence,&expected)?;exiting=true;rx=read_command();
+                        } else {
+                            ensure!(line.trim()==format!("resume {operation}") && (!exiting || exited),"fence ended without authorized completed resume; admission remains closed");
+                            drop(fence);owner.resume()?;break;
+                        }
                     }
-                    _=tokio::time::sleep(std::time::Duration::from_secs(1))=>owner.gate().verify_participants(&expected)?,
+                    _=tokio::time::sleep(std::time::Duration::from_millis(100))=>{
+                        if exiting {
+                            let now_exited=owner.gate().all_exited(&expected)?;
+                            if now_exited && !exited {
+                                exited=true;
+                                println!("{}",serde_json::json!({"schema":"forge/quiescence-exited/v1","operationId":operation,"participants":expected,"allPinnedKernelOwnersExited":true,"exclusiveFenceStillHeld":true}));
+                                std::io::stdout().flush()?;
+                            }
+                        } else {owner.gate().verify_participants(&expected)?;}
+                    }
                 }
             }
         }
     }Ok(())
+}
+
+fn read_command()->tokio::sync::oneshot::Receiver<std::io::Result<String>>{
+    let(tx,rx)=tokio::sync::oneshot::channel();tokio::task::spawn_blocking(move||{let mut line=String::new();let result=std::io::stdin().read_line(&mut line).map(|_|line);let _=tx.send(result);});rx
 }

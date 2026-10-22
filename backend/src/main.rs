@@ -114,10 +114,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "CI/CD API listening");
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await?;
+    let server = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>());
+    if std::env::var_os("CICD_QUIESCENCE_DIR").is_some() {
+        use std::future::IntoFuture;
+        tokio::select! {
+            result = server.into_future() => result?,
+            result = cicd::quiescence::wait_for_exit() => result?,
+        }
+    } else { server.await?; }
     Ok(())
 }

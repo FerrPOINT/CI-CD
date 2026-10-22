@@ -627,8 +627,8 @@ async fn run_git_service(
     // The owner waiter retains the guard until native Git exits, even if HTTP is cancelled.
     let path = path.to_owned();
     let service = service.to_owned();
-    let effect = crate::quiescence::enter(true).map_err(|_| ApiError::service_unavailable("Forge draining"))?;
-    let callback = storage.as_deref().map(crate::quiescence::git_hook_owner).transpose().map_err(|_| ApiError::service_unavailable("Git callback admission unavailable"))?;
+    let effect = crate::quiescence::enter(service != "upload-pack").map_err(|_| ApiError::service_unavailable("Forge draining"))?;
+    let callback = if service=="receive-pack" { storage.as_deref().map(crate::quiescence::git_hook_owner).transpose().map_err(|_| ApiError::service_unavailable("Git callback admission unavailable"))? } else { None };
     tokio::spawn(async move {
         let _effect = effect;
         let _callback = callback;
