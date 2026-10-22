@@ -1506,14 +1506,32 @@ mod tests {
 }
 
 /// Kubernetes uses the same authenticated bare-source guards and bounded sealed exporter.
-pub(crate) async fn export_kubernetes_source(source:&PreparationSource,spec:&ImageBuildSpec,workspace:&Path)->anyhow::Result<()> {
+pub(crate) async fn export_kubernetes_source(
+    source: &PreparationSource,
+    spec: &ImageBuildSpec,
+    workspace: &Path,
+) -> anyhow::Result<()> {
     spec.validate().map_err(anyhow::Error::msg)?;
-    preparation::repository_pipeline_config(&source.repository,&source.source_commit).await?;
-    let entries=tree_entries(&git_read(&source.repository,&["ls-tree","-r","-z","--full-tree",&source.source_commit],MAX_TREE).await?)?;
-    require_dockerfile(&entries,spec)?;
-    let output=workspace.join("source");create_directory(&output)?;
-    export_objects(&source.repository,&output,&entries).await?;seal_directories(&output)?;
-    let metadata=workspace.join("build-output");create_directory(&metadata)?;
-    #[cfg(unix)]{use std::os::unix::fs::PermissionsExt;fs::set_permissions(metadata,fs::Permissions::from_mode(0o770))?;}
+    preparation::repository_pipeline_config(&source.repository, &source.source_commit).await?;
+    let entries = tree_entries(
+        &git_read(
+            &source.repository,
+            &["ls-tree", "-r", "-z", "--full-tree", &source.source_commit],
+            MAX_TREE,
+        )
+        .await?,
+    )?;
+    require_dockerfile(&entries, spec)?;
+    let output = workspace.join("source");
+    create_directory(&output)?;
+    export_objects(&source.repository, &output, &entries).await?;
+    seal_directories(&output)?;
+    let metadata = workspace.join("build-output");
+    create_directory(&metadata)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(metadata, fs::Permissions::from_mode(0o770))?;
+    }
     Ok(())
 }

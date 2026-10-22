@@ -25,7 +25,7 @@ use crate::{
 #[path = "runner_image_build_admission_tests.rs"]
 mod image_build_admission_tests;
 
-#[path="runner_kubernetes.rs"]
+#[path = "runner_kubernetes.rs"]
 mod kubernetes;
 
 #[cfg(all(test, feature = "integration"))]
@@ -1033,22 +1033,40 @@ async fn image_build_input(
     let Some(spec) = planned_image_build(job, &snapshot)? else {
         return Ok(None);
     };
-    if !matches!(config.mode,RunnerMode::Docker|RunnerMode::Kubernetes) {
+    if !matches!(config.mode, RunnerMode::Docker | RunnerMode::Kubernetes) {
         return Err(ApiError::conflict(
             "Backend image builds require the configured Docker runner",
         ));
     }
-    Ok(Some((spec,task_job_source(pool,job,config).await?)))
+    Ok(Some((spec, task_job_source(pool, job, config).await?)))
 }
 
-async fn task_job_source(pool:&PgPool,job:&JobRow,config:&RuntimeRunnerConfig)->Result<crate::runner_workspace::preparation::PreparationSource,ApiError>{
-    let mut conn=pool.acquire().await.map_err(ApiError::internal)?;
-    let record=cicd_infra::sdlc_workspace::find_task_pipeline(&mut conn,job.pipeline_id,false).await.map_err(ApiError::internal)?.ok_or_else(||ApiError::conflict("Authenticated task source required"))?;
+async fn task_job_source(
+    pool: &PgPool,
+    job: &JobRow,
+    config: &RuntimeRunnerConfig,
+) -> Result<crate::runner_workspace::preparation::PreparationSource, ApiError> {
+    let mut conn = pool.acquire().await.map_err(ApiError::internal)?;
+    let record = cicd_infra::sdlc_workspace::find_task_pipeline(&mut conn, job.pipeline_id, false)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::conflict("Authenticated task source required"))?;
     drop(conn);
-    if record.project_id!=job.project_id || Some(record.intent.source_commit.as_str())!=job.commit_sha.as_deref(){return Err(ApiError::conflict("Task source differs from pipeline"));}
-    let storage=crate::repository_catalog::local_storage_for_project(pool,job.project_id).await?.ok_or_else(||ApiError::conflict("Hosted source unavailable"))?;
-    let storage=crate::git_host::validate_repo_name(&storage).map_err(ApiError::conflict)?;
-    Ok(crate::runner_workspace::preparation::PreparationSource{project_id:job.project_id,repository_id:record.intent.repository_id,repository:config.git_root.join(format!("{storage}.git")),source_commit:record.intent.source_commit.clone()})
+    if record.project_id != job.project_id
+        || Some(record.intent.source_commit.as_str()) != job.commit_sha.as_deref()
+    {
+        return Err(ApiError::conflict("Task source differs from pipeline"));
+    }
+    let storage = crate::repository_catalog::local_storage_for_project(pool, job.project_id)
+        .await?
+        .ok_or_else(|| ApiError::conflict("Hosted source unavailable"))?;
+    let storage = crate::git_host::validate_repo_name(&storage).map_err(ApiError::conflict)?;
+    Ok(crate::runner_workspace::preparation::PreparationSource {
+        project_id: job.project_id,
+        repository_id: record.intent.repository_id,
+        repository: config.git_root.join(format!("{storage}.git")),
+        source_commit: record.intent.source_commit.clone(),
+    })
 }
 
 async fn image_build_attempt_active(
@@ -1216,9 +1234,8 @@ async fn run_job_inner(
     };
     let attempt_id = lease.attempt_id;
 
-
-    if config.mode==RunnerMode::Kubernetes {
-        return kubernetes::run(&pool,&job,&lease,&running,config).await;
+    if config.mode == RunnerMode::Kubernetes {
+        return kubernetes::run(&pool, &job, &lease, &running, config).await;
     }
 
     if !matches!(
@@ -2380,7 +2397,9 @@ async fn poll_and_dispatch_with_config(
     config: &RuntimeRunnerConfig,
 ) -> Result<(), sqlx::Error> {
     reconcile_runtime_state_with_config(pool, config).await?;
-    if config.mode==RunnerMode::Kubernetes{kubernetes::reconcile_terminal(pool,&running,config).await?;}
+    if config.mode == RunnerMode::Kubernetes {
+        kubernetes::reconcile_terminal(pool, &running, config).await?;
+    }
 
     let enqueued = crate::store::enqueue_missing_ready_jobs(pool).await?;
     if enqueued > 0 {
@@ -2555,7 +2574,7 @@ struct Candidate {
 /// the shared `forge_runner_workspaces` volume rather than the container's
 /// private /tmp. Host-shell mode keeps /tmp.
 fn workspace_root(config: &RuntimeRunnerConfig) -> std::path::PathBuf {
-    if matches!(config.mode,RunnerMode::Docker|RunnerMode::Kubernetes) {
+    if matches!(config.mode, RunnerMode::Docker | RunnerMode::Kubernetes) {
         std::path::Path::new("/workspaces").to_path_buf()
     } else {
         std::env::temp_dir()

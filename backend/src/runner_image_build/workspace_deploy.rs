@@ -801,7 +801,9 @@ pub(crate) async fn prepare_requested(
     control_root: &Path,
     project_secrets: &[(String, String)],
 ) -> Result<Option<PreparedDeployment>, ApiError> {
-    let Some(_) = sealed_requested(pool,&scope).await? else {return Ok(None)};
+    let Some(_) = sealed_requested(pool, &scope).await? else {
+        return Ok(None);
+    };
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let prepared = tokio::time::timeout_at(
         tokio::time::Instant::from_std(deadline),
@@ -946,7 +948,10 @@ async fn read_completed_image(
     Ok(before)
 }
 
-pub(crate) fn upstream_jobs(plan: &serde_json::Value, current: &str) -> anyhow::Result<BTreeSet<String>> {
+pub(crate) fn upstream_jobs(
+    plan: &serde_json::Value,
+    current: &str,
+) -> anyhow::Result<BTreeSet<String>> {
     let rows = plan["jobs"]
         .as_array()
         .context("missing immutable DAG jobs")?;
@@ -1582,7 +1587,10 @@ mod tests {
 }
 
 /// Shared immutable-plan gate; no runtime, source IO or new task authority.
-pub(crate) async fn sealed_requested(pool:&PgPool,scope:&ImageBuildScope)->Result<Option<(serde_json::Value,String)>,ApiError>{
+pub(crate) async fn sealed_requested(
+    pool: &PgPool,
+    scope: &ImageBuildScope,
+) -> Result<Option<(serde_json::Value, String)>, ApiError> {
     let row = sqlx::query("SELECT pp.plan,j.name,j.command,j.image,j.required_secrets,j.artifact_paths FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE j.id=$1 AND p.id=$2 AND p.project_id=$3")
         .bind(scope.job_id).bind(scope.pipeline_id).bind(scope.project_id).fetch_optional(pool).await
         .map_err(ApiError::internal)?;
@@ -1626,6 +1634,6 @@ pub(crate) async fn sealed_requested(pool:&PgPool,scope:&ImageBuildScope)->Resul
             "Deployment job differs from immutable plan",
         ));
     }
-    let artifact=artifact.to_owned();
-    Ok(Some((plan,artifact)))
+    let artifact = artifact.to_owned();
+    Ok(Some((plan, artifact)))
 }

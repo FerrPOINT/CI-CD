@@ -24,7 +24,7 @@ use crate::{
     body_limits,
 };
 
-#[path="runner_protocol_termination.rs"]
+#[path = "runner_protocol_termination.rs"]
 mod termination;
 
 const PROTOCOL_VERSION: i32 = 1;
@@ -1091,8 +1091,10 @@ pub(crate) async fn complete_runner_lease(
 
     let Some(row) = row else {
         drop(tx);
-        if input.termination_proof.is_some() && state.config.runner.mode==crate::config::RunnerMode::Kubernetes {
-            return termination::complete(db,&runner,lease_id,&input).await;
+        if input.termination_proof.is_some()
+            && state.config.runner.mode == crate::config::RunnerMode::Kubernetes
+        {
+            return termination::complete(db, &runner, lease_id, &input).await;
         }
         return Err(lease_mutation_error(db, lease_id).await);
     };
@@ -1374,7 +1376,9 @@ async fn claim_next_work(
                 job_key: row.job_name,
                 git_ref: row.git_ref,
                 commit_sha: row.commit_sha,
-                executor: selected_executor(&runner.capabilities).ok_or_else(||ApiError::conflict("Runner executor unavailable"))?.to_string(),
+                executor: selected_executor(&runner.capabilities)
+                    .ok_or_else(|| ApiError::conflict("Runner executor unavailable"))?
+                    .to_string(),
                 image: row.image,
                 commands: vec![row.command],
                 environment: BTreeMap::new(),
@@ -1660,8 +1664,16 @@ fn validate_capabilities(value: &serde_json::Value) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn selected_executor(capabilities:&serde_json::Value)->Option<&'static str>{
-    if capabilities.get("executorKinds").is_some() && runner_supports_executor(capabilities,"kubernetes"){Some("kubernetes")}else if runner_supports_executor(capabilities,CURRENT_EXECUTOR_KIND){Some(CURRENT_EXECUTOR_KIND)}else{None}
+fn selected_executor(capabilities: &serde_json::Value) -> Option<&'static str> {
+    if capabilities.get("executorKinds").is_some()
+        && runner_supports_executor(capabilities, "kubernetes")
+    {
+        Some("kubernetes")
+    } else if runner_supports_executor(capabilities, CURRENT_EXECUTOR_KIND) {
+        Some(CURRENT_EXECUTOR_KIND)
+    } else {
+        None
+    }
 }
 
 fn runner_supports_executor(capabilities: &serde_json::Value, executor: &str) -> bool {

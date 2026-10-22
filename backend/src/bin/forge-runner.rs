@@ -84,7 +84,7 @@ struct AttemptSpec {
     id: Uuid,
     #[serde(default)]
     job_id: Uuid,
-    #[serde(default="shell_executor")]
+    #[serde(default = "shell_executor")]
     executor: String,
     #[serde(default)]
     image: String,
@@ -273,9 +273,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn workspace_root(cli: &Cli) -> PathBuf {
-    cli.work_dir
-        .clone()
-        .unwrap_or_else(|| if kubernetes_mode(){PathBuf::from("/workspaces")}else{std::env::temp_dir().join("forge-runner")})
+    cli.work_dir.clone().unwrap_or_else(|| {
+        if kubernetes_mode() {
+            PathBuf::from("/workspaces")
+        } else {
+            std::env::temp_dir().join("forge-runner")
+        }
+    })
 }
 
 fn ensure_no_unresolved_workspaces(root: &Path) -> anyhow::Result<()> {
@@ -357,14 +361,39 @@ async fn reconcile_workspaces(
 ) -> anyhow::Result<()> {
     let mut unresolved = 0;
     for record in cicd::runner_workspace::OwnedWorkspace::inventory(root)? {
-        if kubernetes_mode() && !cicd::execution::kubernetes::external_marker(root,record.attempt_id,record.generation)? {
-            let ownership=client.get(format!("{base}/api/v1/runner/leases/{}/receipt",record.lease_id)).bearer_auth(credential).send().await?;
+        if kubernetes_mode()
+            && !cicd::execution::kubernetes::external_marker(
+                root,
+                record.attempt_id,
+                record.generation,
+            )?
+        {
+            let ownership = client
+                .get(format!(
+                    "{base}/api/v1/runner/leases/{}/receipt",
+                    record.lease_id
+                ))
+                .bearer_auth(credential)
+                .send()
+                .await?;
             // Only an authenticated foreign lease with no issued external marker may be skipped.
-            if ownership.status()==reqwest::StatusCode::NOT_FOUND{continue}
+            if ownership.status() == reqwest::StatusCode::NOT_FOUND {
+                continue;
+            }
             ensure_success(ownership).await?;
         }
         let Some(outcome) = record.terminal_status.as_deref() else {
-            if kubernetes_mode(){match recover_kubernetes(client,base,credential,root,&record,keep_workspace).await{Ok(())=>continue,Err(_)=>{unresolved+=1;continue}}}
+            if kubernetes_mode() {
+                match recover_kubernetes(client, base, credential, root, &record, keep_workspace)
+                    .await
+                {
+                    Ok(()) => continue,
+                    Err(_) => {
+                        unresolved += 1;
+                        continue;
+                    }
+                }
+            }
             unresolved += 1;
             continue;
         };
@@ -380,16 +409,43 @@ async fn reconcile_workspaces(
         .await
         .is_err()
         {
-            if kubernetes_mode(){match recover_kubernetes(client,base,credential,root,&record,keep_workspace).await{Ok(())=>continue,Err(_)=>{unresolved+=1;continue}}}
+            if kubernetes_mode() {
+                match recover_kubernetes(client, base, credential, root, &record, keep_workspace)
+                    .await
+                {
+                    Ok(()) => continue,
+                    Err(_) => {
+                        unresolved += 1;
+                        continue;
+                    }
+                }
+            }
             unresolved += 1;
             continue;
         }
         let workspace = cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
         workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
-        if kubernetes_mode(){cicd::execution::kubernetes::Execution::reopen(root,record.attempt_id,record.generation)?.acknowledge().await?;}
+        if kubernetes_mode() {
+            cicd::execution::kubernetes::Execution::reopen(
+                root,
+                record.attempt_id,
+                record.generation,
+            )?
+            .acknowledge()
+            .await?;
+        }
         workspace.acknowledge_completion(outcome)?;
-        if !keep_workspace {workspace.cleanup_after_ack().await?;}
-        if kubernetes_mode(){cicd::execution::kubernetes::Execution::reopen(root,record.attempt_id,record.generation)?.finish_workspace_cleanup()?;}
+        if !keep_workspace {
+            workspace.cleanup_after_ack().await?;
+        }
+        if kubernetes_mode() {
+            cicd::execution::kubernetes::Execution::reopen(
+                root,
+                record.attempt_id,
+                record.generation,
+            )?
+            .finish_workspace_cleanup()?;
+        }
     }
     if unresolved > 0 {
         bail!("{unresolved} workspaces remain unresolved; no commands were re-executed");
@@ -864,10 +920,12 @@ async fn complete_executed_attempt(
     keep_workspace: bool,
 ) -> anyhow::Result<()> {
     let outcome = result.outcome;
-    let cleanup_root=workspace_root_for_checkout(workspace.checkout())?;
-    let mut workspace_closed=true;
-    let recovery_record=workspace.record_completion(outcome).is_err();
-    if recovery_record && (!kubernetes_mode() || !matches!(outcome,"failed"|"canceled")){bail!("workspace completion intention conflicts");}
+    let cleanup_root = workspace_root_for_checkout(workspace.checkout())?;
+    let mut workspace_closed = true;
+    let recovery_record = workspace.record_completion(outcome).is_err();
+    if recovery_record && (!kubernetes_mode() || !matches!(outcome, "failed" | "canceled")) {
+        bail!("workspace completion intention conflicts");
+    }
     let completion = complete_lease(client, base, credential, offer, result).await;
     // Never repeat the POST: a lost reply may follow a committed completion.
     let completion = match completion {
@@ -886,19 +944,34 @@ async fn complete_executed_attempt(
         }
     };
     if completion.is_ok() {
-        if recovery_record{workspace.record_recovered_termination(outcome)?;}
-        if kubernetes_mode(){
-            cicd::execution::kubernetes::Execution::reopen(&workspace_root_for_checkout(workspace.checkout())?,offer.attempt.id,offer.fencing_token)?.acknowledge().await?;
+        if recovery_record {
+            workspace.record_recovered_termination(outcome)?;
+        }
+        if kubernetes_mode() {
+            cicd::execution::kubernetes::Execution::reopen(
+                &workspace_root_for_checkout(workspace.checkout())?,
+                offer.attempt.id,
+                offer.fencing_token,
+            )?
+            .acknowledge()
+            .await?;
         }
         workspace.acknowledge_completion(outcome)?;
     }
     if completion.is_ok() && !keep_workspace {
         if let Err(error) = workspace.cleanup_after_ack().await {
-            workspace_closed=false;
+            workspace_closed = false;
             eprintln!("acknowledged workspace retained: {error:#}");
         }
     }
-    if completion.is_ok() && workspace_closed && kubernetes_mode(){cicd::execution::kubernetes::Execution::reopen(&cleanup_root,offer.attempt.id,offer.fencing_token)?.finish_workspace_cleanup()?;}
+    if completion.is_ok() && workspace_closed && kubernetes_mode() {
+        cicd::execution::kubernetes::Execution::reopen(
+            &cleanup_root,
+            offer.attempt.id,
+            offer.fencing_token,
+        )?
+        .finish_workspace_cleanup()?;
+    }
     completion
 }
 
@@ -911,9 +984,11 @@ async fn execute_attempt(
     let owned_workspace = prepare_workspace(cli, offer).await?;
     let workspace = owned_workspace.checkout();
     if kubernetes_mode() {
-        return execute_kubernetes(cli,offer,log_context,secret_env,owned_workspace).await;
+        return execute_kubernetes(cli, offer, log_context, secret_env, owned_workspace).await;
     }
-    if offer.attempt.executor!="shell" {bail!("unsupported offered executor");}
+    if offer.attempt.executor != "shell" {
+        bail!("unsupported offered executor");
+    }
     let mut last_exit_code = None;
     let mut result = ExecutionResult {
         outcome: "success",
@@ -1382,9 +1457,19 @@ async fn ensure_success(response: reqwest::Response) -> anyhow::Result<()> {
     bail!("API returned {status}: {body}");
 }
 
-fn kubernetes_mode()->bool {std::env::var("CICD_RUNNER_MODE").is_ok_and(|v|v=="kubernetes")}
-fn shell_executor()->String{"shell".into()}
-fn workspace_root_for_checkout(path:&Path)->anyhow::Result<PathBuf>{Ok(path.parent().and_then(Path::parent).context("workspace root missing")?.to_path_buf())}
+fn kubernetes_mode() -> bool {
+    std::env::var("CICD_RUNNER_MODE").is_ok_and(|v| v == "kubernetes")
+}
+fn shell_executor() -> String {
+    "shell".into()
+}
+fn workspace_root_for_checkout(path: &Path) -> anyhow::Result<PathBuf> {
+    Ok(path
+        .parent()
+        .and_then(Path::parent)
+        .context("workspace root missing")?
+        .to_path_buf())
+}
 
 fn runner_capabilities() -> serde_json::Value {
     json!({
@@ -1911,80 +1996,324 @@ mod tests {
 }
 
 async fn execute_kubernetes(
-    cli:&Cli,offer:&LeaseOffer,log:Option<LogContext>,secrets:&[(String,String)],workspace:cicd::runner_workspace::OwnedWorkspace
-)->anyhow::Result<(ExecutionResult,cicd::runner_workspace::OwnedWorkspace)>{
-    use cicd::execution::kubernetes::{Config,Execution,Scope};
-    if offer.attempt.executor!="kubernetes" {bail!("Kubernetes runner refuses shell executor");}
-    if workspace_root(cli)!=Path::new("/workspaces"){bail!("Kubernetes controller requires the /workspaces claim mount");}
-    let source=offer.attempt.commit_sha.clone().context("Kubernetes execution requires exact source pin")?;
-    let image=cicd::execution::kubernetes::resolve_image(&offer.attempt.image).await?;
-    let execution=Execution::prepare(Config::from_env()?,&workspace_root(cli),Scope{job_id:offer.attempt.job_id,attempt_id:offer.attempt.id,lease_id:offer.lease_id,generation:offer.fencing_token,source_commit:source},workspace.checkout(),&image,&kubernetes_command_vector(&offer.attempt.commands),secrets,offer.attempt.timeout_seconds as u64)?;
-    execution.save_external_recovery(&offer.lease_token,&offer.attempt.artifacts,&offer.attempt.secrets)?;
-    execution.start().await.map_err(|_|UnconfirmedExecution)?;
-    let deadline=std::time::Instant::now()+Duration::from_secs(offer.attempt.timeout_seconds as u64);
-    let mut timed_out=false;
-    let terminal=loop {
-        if let Some(terminal)=execution.observe().await.map_err(|_|UnconfirmedExecution)? {break terminal}
-        let cancel=match &log {Some(context)=>poll_lease_cancel_requested(context).await.map_err(|_|UnconfirmedExecution)?,None=>false};
-        timed_out|=std::time::Instant::now()>=deadline;
-        if cancel || timed_out {execution.cancel().await.map_err(|_|UnconfirmedExecution)?;}
+    cli: &Cli,
+    offer: &LeaseOffer,
+    log: Option<LogContext>,
+    secrets: &[(String, String)],
+    workspace: cicd::runner_workspace::OwnedWorkspace,
+) -> anyhow::Result<(ExecutionResult, cicd::runner_workspace::OwnedWorkspace)> {
+    use cicd::execution::kubernetes::{Config, Execution, Scope};
+    if offer.attempt.executor != "kubernetes" {
+        bail!("Kubernetes runner refuses shell executor");
+    }
+    if workspace_root(cli) != Path::new("/workspaces") {
+        bail!("Kubernetes controller requires the /workspaces claim mount");
+    }
+    let source = offer
+        .attempt
+        .commit_sha
+        .clone()
+        .context("Kubernetes execution requires exact source pin")?;
+    let image = cicd::execution::kubernetes::resolve_image(&offer.attempt.image).await?;
+    let execution = Execution::prepare(
+        Config::from_env()?,
+        &workspace_root(cli),
+        Scope {
+            job_id: offer.attempt.job_id,
+            attempt_id: offer.attempt.id,
+            lease_id: offer.lease_id,
+            generation: offer.fencing_token,
+            source_commit: source,
+        },
+        workspace.checkout(),
+        &image,
+        &kubernetes_command_vector(&offer.attempt.commands),
+        secrets,
+        offer.attempt.timeout_seconds as u64,
+    )?;
+    execution.save_external_recovery(
+        &offer.lease_token,
+        &offer.attempt.artifacts,
+        &offer.attempt.secrets,
+    )?;
+    execution.start().await.map_err(|_| UnconfirmedExecution)?;
+    let deadline =
+        std::time::Instant::now() + Duration::from_secs(offer.attempt.timeout_seconds as u64);
+    let mut timed_out = false;
+    let terminal = loop {
+        if let Some(terminal) = execution
+            .observe()
+            .await
+            .map_err(|_| UnconfirmedExecution)?
+        {
+            break terminal;
+        }
+        let cancel = match &log {
+            Some(context) => poll_lease_cancel_requested(context)
+                .await
+                .map_err(|_| UnconfirmedExecution)?,
+            None => false,
+        };
+        timed_out |= std::time::Instant::now() >= deadline;
+        if cancel || timed_out {
+            execution.cancel().await.map_err(|_| UnconfirmedExecution)?;
+        }
         tokio::time::sleep(Duration::from_secs(1)).await;
     };
-    if let Some(context)=&log {
-        if !execution.cancelled(){
-        execution.stream_logs(|line|{let context=context.clone();async move{append_log_lines(&context,vec![RunnerLogLine{stream:"stdout",message:protocol_log_message(&mask_secrets(&line,&context.masks))}]).await}}).await.map_err(|_|UnconfirmedExecution)?;
-        upload_declared_artifacts(context,offer,workspace.checkout()).await.map_err(|_|UnconfirmedExecution)?;
+    if let Some(context) = &log {
+        if !execution.cancelled() {
+            execution
+                .stream_logs(|line| {
+                    let context = context.clone();
+                    async move {
+                        append_log_lines(
+                            &context,
+                            vec![RunnerLogLine {
+                                stream: "stdout",
+                                message: protocol_log_message(&mask_secrets(&line, &context.masks)),
+                            }],
+                        )
+                        .await
+                    }
+                })
+                .await
+                .map_err(|_| UnconfirmedExecution)?;
+            upload_declared_artifacts(context, offer, workspace.checkout())
+                .await
+                .map_err(|_| UnconfirmedExecution)?;
         }
     }
-    let result=ExecutionResult{outcome:if timed_out{"failed"}else if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"},exit_code:Some(terminal.exit_code),diagnostic:None};
-    Ok((result,workspace))
+    let result = ExecutionResult {
+        outcome: if timed_out {
+            "failed"
+        } else if execution.cancelled() {
+            "canceled"
+        } else if terminal.exit_code == 0 {
+            "success"
+        } else {
+            "failed"
+        },
+        exit_code: Some(terminal.exit_code),
+        diagnostic: None,
+    };
+    Ok((result, workspace))
 }
 
-fn kubernetes_command_vector(commands:&[String])->Vec<String>{
-    let mut args=vec!["sh".into(),"-c".into(),"for command do sh -lc \"$command\" || exit $?; done".into(),"forge-job".into()];args.extend(commands.iter().cloned());args
+fn kubernetes_command_vector(commands: &[String]) -> Vec<String> {
+    let mut args = vec![
+        "sh".into(),
+        "-c".into(),
+        "for command do sh -lc \"$command\" || exit $?; done".into(),
+        "forge-job".into(),
+    ];
+    args.extend(commands.iter().cloned());
+    args
 }
 
-async fn recover_kubernetes(client:&reqwest::Client,base:&str,credential:&str,root:&Path,record:&cicd::runner_workspace::RetainedWorkspace,keep_workspace:bool)->anyhow::Result<()> {
+async fn recover_kubernetes(
+    client: &reqwest::Client,
+    base: &str,
+    credential: &str,
+    root: &Path,
+    record: &cicd::runner_workspace::RetainedWorkspace,
+    keep_workspace: bool,
+) -> anyhow::Result<()> {
     use cicd::execution::kubernetes::Execution;
-    let execution=Execution::reopen(root,record.attempt_id,record.generation)?;
-    let scope=execution.scope();if scope.lease_id!=record.lease_id{bail!("retained lease identity mismatch")}
-    let (token,artifacts,secrets)=execution.external_recovery()?;
-    let offer=LeaseOffer{lease_id:record.lease_id,lease_token:token,fencing_token:record.generation,attempt:AttemptSpec{id:record.attempt_id,job_id:scope.job_id,job_key:"recovery".into(),executor:"kubernetes".into(),image:execution.image().into(),git_ref:String::new(),commit_sha:Some(scope.source_commit.clone()),commands:Vec::new(),artifacts,secrets,timeout_seconds:86400,workspace:WorkspaceSpec{checkout:false,checkout_url:None}}};
-    let workspace=cicd::runner_workspace::OwnedWorkspace::reopen(root,&record.workspace_id)?;
-    let mut terminal=execution.reconcile().await?;
-    let mut renew_at=std::time::Instant::now();let mut revoked=false;
-    let mut context=LogContext{client:client.clone(),base:base.into(),credential:credential.into(),lease_id:offer.lease_id,lease_token:offer.lease_token.clone(),fencing_token:offer.fencing_token,attempt_id:offer.attempt.id,masks:execution.recovery_masks(&offer.attempt.secrets).await?};
-    while terminal.is_none(){
-        if std::time::Instant::now()>=renew_at {
-            let response=client.post(format!("{base}/api/v1/runner/leases/{}/renew",offer.lease_id)).bearer_auth(credential).json(&LeaseMutation{protocol_version:PROTOCOL_VERSION,lease_token:&offer.lease_token,fencing_token:offer.fencing_token}).send().await;
-            revoked|=!response.is_ok_and(|r|r.status().is_success());renew_at=std::time::Instant::now()+Duration::from_secs(40);
+    let execution = Execution::reopen(root, record.attempt_id, record.generation)?;
+    let scope = execution.scope();
+    if scope.lease_id != record.lease_id {
+        bail!("retained lease identity mismatch")
+    }
+    let (token, artifacts, secrets) = execution.external_recovery()?;
+    let offer = LeaseOffer {
+        lease_id: record.lease_id,
+        lease_token: token,
+        fencing_token: record.generation,
+        attempt: AttemptSpec {
+            id: record.attempt_id,
+            job_id: scope.job_id,
+            job_key: "recovery".into(),
+            executor: "kubernetes".into(),
+            image: execution.image().into(),
+            git_ref: String::new(),
+            commit_sha: Some(scope.source_commit.clone()),
+            commands: Vec::new(),
+            artifacts,
+            secrets,
+            timeout_seconds: 86400,
+            workspace: WorkspaceSpec {
+                checkout: false,
+                checkout_url: None,
+            },
+        },
+    };
+    let workspace = cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
+    let mut terminal = execution.reconcile().await?;
+    let mut renew_at = std::time::Instant::now();
+    let mut revoked = false;
+    let mut context = LogContext {
+        client: client.clone(),
+        base: base.into(),
+        credential: credential.into(),
+        lease_id: offer.lease_id,
+        lease_token: offer.lease_token.clone(),
+        fencing_token: offer.fencing_token,
+        attempt_id: offer.attempt.id,
+        masks: execution.recovery_masks(&offer.attempt.secrets).await?,
+    };
+    while terminal.is_none() {
+        if std::time::Instant::now() >= renew_at {
+            let response = client
+                .post(format!(
+                    "{base}/api/v1/runner/leases/{}/renew",
+                    offer.lease_id
+                ))
+                .bearer_auth(credential)
+                .json(&LeaseMutation {
+                    protocol_version: PROTOCOL_VERSION,
+                    lease_token: &offer.lease_token,
+                    fencing_token: offer.fencing_token,
+                })
+                .send()
+                .await;
+            revoked |= !response.is_ok_and(|r| r.status().is_success());
+            renew_at = std::time::Instant::now() + Duration::from_secs(40);
         }
-        let cancel=match poll_lease_cancel_requested(&context).await{Ok(cancel)=>cancel,Err(_)=>{revoked=true;true}};
-        if cancel||revoked{execution.cancel().await?;}
-        terminal=execution.observe().await?;if terminal.is_none(){tokio::time::sleep(Duration::from_secs(1)).await;}
+        let cancel = match poll_lease_cancel_requested(&context).await {
+            Ok(cancel) => cancel,
+            Err(_) => {
+                revoked = true;
+                true
+            }
+        };
+        if cancel || revoked {
+            execution.cancel().await?;
+        }
+        terminal = execution.observe().await?;
+        if terminal.is_none() {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
-    let terminal=terminal.context("terminal missing")?;
-    let cancel_requested=match poll_lease_cancel_requested(&context).await{Ok(cancel)=>cancel,Err(_)=>{revoked=true;false}};
+    let terminal = terminal.context("terminal missing")?;
+    let cancel_requested = match poll_lease_cancel_requested(&context).await {
+        Ok(cancel) => cancel,
+        Err(_) => {
+            revoked = true;
+            false
+        }
+    };
     // Read the original server projection; expiry alone is not an accepted ACK.
-    let response=client.get(format!("{base}/api/v1/runner/leases/{}/receipt",offer.lease_id)).bearer_auth(credential).send().await?;
-    let receipt:LeaseReceipt=response_json(response).await?;
-    let outcome=if receipt.terminal_acknowledged{receipt.terminal_status.as_deref().context("terminal status missing")?}else if matches!(receipt.terminal_status.as_deref(),Some("failed"|"canceled")){revoked=true;receipt.terminal_status.as_deref().unwrap()}else if cancel_requested{"canceled"}else if let Some(intended)=record.terminal_status.as_deref(){intended}else if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"};
+    let response = client
+        .get(format!(
+            "{base}/api/v1/runner/leases/{}/receipt",
+            offer.lease_id
+        ))
+        .bearer_auth(credential)
+        .send()
+        .await?;
+    let receipt: LeaseReceipt = response_json(response).await?;
+    let outcome = if receipt.terminal_acknowledged {
+        receipt
+            .terminal_status
+            .as_deref()
+            .context("terminal status missing")?
+    } else if matches!(
+        receipt.terminal_status.as_deref(),
+        Some("failed" | "canceled")
+    ) {
+        revoked = true;
+        receipt.terminal_status.as_deref().unwrap()
+    } else if cancel_requested {
+        "canceled"
+    } else if let Some(intended) = record.terminal_status.as_deref() {
+        intended
+    } else if execution.cancelled() {
+        "canceled"
+    } else if terminal.exit_code == 0 {
+        "success"
+    } else {
+        "failed"
+    };
     if receipt.terminal_acknowledged {
-        workspace.record_completion(outcome).or_else(|_|workspace.record_recovered_termination(outcome))?;workspace.acknowledge_completion(outcome)?;execution.acknowledge().await?;if !keep_workspace{workspace.cleanup_after_ack().await?;}execution.finish_workspace_cleanup()?;return Ok(())
+        workspace
+            .record_completion(outcome)
+            .or_else(|_| workspace.record_recovered_termination(outcome))?;
+        workspace.acknowledge_completion(outcome)?;
+        execution.acknowledge().await?;
+        if !keep_workspace {
+            workspace.cleanup_after_ack().await?;
+        }
+        execution.finish_workspace_cleanup()?;
+        return Ok(());
     }
-    if !revoked && outcome!="canceled" {
-        execution.stream_logs(|line|{let context=context.clone();async move{append_log_lines(&context,vec![RunnerLogLine{stream:"stdout",message:protocol_log_message(&mask_secrets(&line,&context.masks))}]).await}}).await?;
-        if outcome!="canceled"{upload_declared_artifacts(&context,&offer,workspace.checkout()).await?;}
+    if !revoked && outcome != "canceled" {
+        execution
+            .stream_logs(|line| {
+                let context = context.clone();
+                async move {
+                    append_log_lines(
+                        &context,
+                        vec![RunnerLogLine {
+                            stream: "stdout",
+                            message: protocol_log_message(&mask_secrets(&line, &context.masks)),
+                        }],
+                    )
+                    .await
+                }
+            })
+            .await?;
+        if outcome != "canceled" {
+            upload_declared_artifacts(&context, &offer, workspace.checkout()).await?;
+        }
     }
     context.masks.clear();
-    complete_executed_attempt(client,base,credential,&offer,(ExecutionResult{outcome:match outcome{"success"=>"success","canceled"=>"canceled",_=>"failed"},exit_code:Some(terminal.exit_code),diagnostic:Some("reconciled original Kubernetes execution; no commands replayed".into())},workspace),keep_workspace).await
+    complete_executed_attempt(
+        client,
+        base,
+        credential,
+        &offer,
+        (
+            ExecutionResult {
+                outcome: match outcome {
+                    "success" => "success",
+                    "canceled" => "canceled",
+                    _ => "failed",
+                },
+                exit_code: Some(terminal.exit_code),
+                diagnostic: Some(
+                    "reconciled original Kubernetes execution; no commands replayed".into(),
+                ),
+            },
+            workspace,
+        ),
+        keep_workspace,
+    )
+    .await
 }
 
-#[cfg(all(test,unix))]
-mod kubernetes_command_tests{
+#[cfg(all(test, unix))]
+mod kubernetes_command_tests {
     use super::*;
-    #[tokio::test]async fn first_failed_command_stops_and_successful_commands_keep_independent_shells(){
-        let args=kubernetes_command_vector(&["false".into(),"echo should-not-run".into()]);let result=Command::new(&args[0]).args(&args[1..]).output().await.unwrap();assert!(!result.status.success());assert!(result.stdout.is_empty());
-        let args=kubernetes_command_vector(&["export LOCAL_ONLY=secret; echo one".into(),"echo ${LOCAL_ONLY-unset}".into()]);let result=Command::new(&args[0]).args(&args[1..]).output().await.unwrap();assert!(result.status.success());assert_eq!(String::from_utf8(result.stdout).unwrap(),"one\nunset\n");
+    #[tokio::test]
+    async fn first_failed_command_stops_and_successful_commands_keep_independent_shells() {
+        let args = kubernetes_command_vector(&["false".into(), "echo should-not-run".into()]);
+        let result = Command::new(&args[0])
+            .args(&args[1..])
+            .output()
+            .await
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+        let args = kubernetes_command_vector(&[
+            "export LOCAL_ONLY=secret; echo one".into(),
+            "echo ${LOCAL_ONLY-unset}".into(),
+        ]);
+        let result = Command::new(&args[0])
+            .args(&args[1..])
+            .output()
+            .await
+            .unwrap();
+        assert!(result.status.success());
+        assert_eq!(String::from_utf8(result.stdout).unwrap(), "one\nunset\n");
     }
 }

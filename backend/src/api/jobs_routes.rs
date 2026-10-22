@@ -167,7 +167,9 @@ pub(crate) async fn cancel_pipeline(
 /// SIGTERM and SIGKILL the child PID as fallback.
 pub(crate) async fn kill_running_job(job_id: Uuid, pid: u32) {
     // Kubernetes workers observe cancellation in the durable ledger. Never signal a fake PID.
-    if pid==u32::MAX { return; }
+    if pid == u32::MAX {
+        return;
+    }
     let _ = tokio::time::timeout(
         Duration::from_secs(15),
         crate::runner_docker::stop_job(job_id),
@@ -315,8 +317,15 @@ async fn close_retry_leases(
     .await
     .map_err(ApiError::internal)?;
     for (job, attempt) in embedded {
-        if crate::execution::kubernetes::retry_unconfirmed(std::path::Path::new("/workspaces"),attempt).map_err(|_|ApiError::conflict("Kubernetes custody unavailable"))? {
-            return Err(ApiError::conflict("previous Kubernetes execution has not completed recovery"));
+        if crate::execution::kubernetes::retry_unconfirmed(
+            std::path::Path::new("/workspaces"),
+            attempt,
+        )
+        .map_err(|_| ApiError::conflict("Kubernetes custody unavailable"))?
+        {
+            return Err(ApiError::conflict(
+                "previous Kubernetes execution has not completed recovery",
+            ));
         }
         let pending = crate::runner_docker::retry_unconfirmed(job, attempt)
             .await
