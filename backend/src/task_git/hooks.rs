@@ -209,6 +209,10 @@ mod tests {
                     authorization: Authorization {
                         context,
                         token: "sdlc_pat_fixture_child".into(),
+                        deadline: crate::git_host::GitDeadline::native(
+                            std::time::Instant::now() + std::time::Duration::from_secs(30),
+                        )
+                        .unwrap(),
                     },
                 };
                 for args in [

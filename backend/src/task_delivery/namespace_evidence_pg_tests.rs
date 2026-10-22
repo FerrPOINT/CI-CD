@@ -192,22 +192,18 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
     query.registry_instance_id = Uuid::parse_str(REGISTRY).unwrap();
     let repository = receipt.request.repository_id;
     let pipeline = query.source_pipeline_id;
-    crate::api::sdlc_workspace::task_pipeline::renewal::pg_tests::seed(&pool, &stored, pipeline)
-        .await;
-    let (group, namespace, mut command): (Uuid, Uuid, Value) = sqlx::query_as("SELECT r.group_id,b.namespace_id,b.command FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=$1")
-        .bind(repository).fetch_one(&pool).await.unwrap();
-    command["namespace"]["registry_instance_id"] = json!(REGISTRY);
-    command["resource"]["instance_id"] = json!(INSTANCE);
-    sqlx::query(
-        "UPDATE forge_workspace_projects SET registry_instance_id=$1 WHERE namespace_id=$2",
+    // Owner identity is immutable after insertion; provision the real fixture
+    // registry/instance at creation instead of rewriting an existing binding.
+    crate::api::sdlc_workspace::task_pipeline::renewal::pg_tests::seed_with_owner(
+        &pool,
+        &stored,
+        pipeline,
+        query.registry_instance_id,
+        Uuid::parse_str(INSTANCE).unwrap(),
     )
-    .bind(query.registry_instance_id)
-    .bind(namespace)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query("UPDATE forge_namespace_bindings SET registry_instance_id=$1,command=$2 WHERE resource_id=$3")
-        .bind(query.registry_instance_id).bind(command).bind(group).execute(&pool).await.unwrap();
+    .await;
+    let namespace: Uuid = sqlx::query_scalar("SELECT b.namespace_id FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=$1 AND b.registry_instance_id=$2")
+        .bind(repository).bind(query.registry_instance_id).fetch_one(&pool).await.unwrap();
     query.namespace_id = namespace;
     sqlx::query("UPDATE projects SET name=$2 WHERE id=$1")
         .bind(query.project_id)

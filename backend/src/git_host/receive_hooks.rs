@@ -211,8 +211,67 @@ impl ReceiveHooks {
         write_private(&self.directory.join("pre-receive"), script.as_bytes()).map_err(io_error)
     }
 
+    pub(super) fn updates(&self) -> Result<Vec<(String, String, String)>, ApiError> {
+        let path = self.directory.join("updates");
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let raw = fs::read_to_string(path).map_err(io_error)?;
+        raw.lines()
+            .map(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                if fields.len() != 3
+                    || !is_probable_object_id(fields[0])
+                    || !is_probable_object_id(fields[1])
+                    || !fields[2].starts_with("refs/")
+                {
+                    return Err(ApiError::forbidden());
+                }
+                Ok((fields[0].into(), fields[1].into(), fields[2].into()))
+            })
+            .collect()
+    }
+
     pub(super) fn config(&self) -> String {
         format!("core.hooksPath={}", self.directory.display())
+    }
+
+    /// Keep custom/task transaction policy, then check the original proof
+    /// immediately before native Git prepares its reference transaction.
+    pub(super) fn proof_deadline(&self, proof: deadline::GitDeadline) -> Result<(), ApiError> {
+        let (boot_until, wall_until) = proof.hook_bounds()?;
+        let target = self.directory.join("reference-transaction");
+        let saved = self.directory.join("prior-reference-transaction");
+        let delegate = if executable(&target) {
+            fs::rename(&target, &saved).map_err(io_error)?;
+            format!(
+                "{} \"$@\" < \"$dir/proof-transaction-input\"\n",
+                quote(&saved)?
+            )
+        } else {
+            String::new()
+        };
+        let script = format!(
+            r#"#!/bin/sh
+set -eu
+umask 077
+dir={}
+cat > "$dir/proof-transaction-input"
+{delegate}if test "$1" = prepared; then
+    read -r uptime rest < /proc/uptime
+    seconds=${{uptime%%.*}}
+    wall=$(date +%s)
+    case "$seconds" in ''|*[!0-9]*) exit 1 ;; esac
+    case "$wall" in ''|*[!0-9]*) exit 1 ;; esac
+    if test "$seconds" -ge {boot_until} || test "$wall" -ge {wall_until}; then
+        printf '%s\n' 'Forge: Git proof expired before ref preparation.' >&2
+        exit 1
+    fi
+fi
+"#,
+            quote(&self.directory)?
+        );
+        write_private(&target, script.as_bytes()).map_err(io_error)
     }
 
     pub(super) fn task_candidate(

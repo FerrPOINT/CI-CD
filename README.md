@@ -275,3 +275,33 @@ slice, например `pdlc4.slice`. Transfer, job и сервисы врем�
 Из корня подготовленного React-продукта: `pnpm --dir frontend exec pdlc-ui`.
 Полный каталог и запуск Storybook/API для offline-поиска не нужны. Общие
 компоненты и брендинг исправляются в Base, данные и правила остаются у продукта.
+
+## Единое пространство PDLC
+
+[Согласованная M:N-модель и план](docs/plans/unified-spaces-20261019.md): реализация в работе. Source, tests,
+миграция, образы и live dev acceptance учитываются раздельно; документация цели
+не подтверждает установленную политику.
+
+## Единое пространство: source candidate
+
+[Human Git admission](docs/adr/0034-git-common-space-admission.md) использует Admin
+и общий SDK, сохраняет исходный deadline до native IO/ref preparation.
+Migration0097 выключена по умолчанию; partial activation запрещена.
+[Матрица](docs/UNIFIED_SPACE_SURFACES.md) отдельно показывает REST/machine/V3,
+полный cohort, миграцию, rollback и live gates. Source test не означает,
+что эти изменения уже установлены.
+
+Глобальный [repository catalog read](docs/adr/0035-repository-catalog-read-admission.md)
+также opt-in: SQL admission до count/page, original proof до body handoff.
+Detail и group repositories list также используют тот же proof.
+[Git-браузер и PR read](docs/adr/0036-repository-browse-read-admission.md) подготовлены
+отдельным source candidate; их native qualification пока остановлена resource
+preflight. PR write/merge, sync и остальные REST endpoints остаются gates.
+
+[Запись PR и original deadline](docs/adr/0037-pull-request-write-admission.md) —
+следующий opt-in source candidate: role/lifecycle locks, atomic number+PR,
+detached native owner и exact ref preparation. Native qualification в работе.
+GET task links использует repository read admission, POST — write permit;
+[Durable merge recovery](docs/adr/0038-durable-pull-merge-recovery.md) добавляет
+сохранённое намерение и readback без повторной публикации. Это source candidate.
+CI/sync/machine и полный serving cohort остаются gates.

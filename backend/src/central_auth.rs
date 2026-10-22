@@ -11,13 +11,29 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Env prefix: CICD_AUTH__CENTRAL_{JWKS_URI,ISSUER,LOGIN_URL,TIMEOUT_SECS}.
-pub static BRIDGE: ServiceBridge = ServiceBridge::new("CICD_AUTH__CENTRAL");
+pub static BRIDGE: ServiceBridge = ServiceBridge::for_application("CICD_AUTH__CENTRAL", "ci-cd");
 
 /// Central-first bearer check. `None` means the token is explicitly outside
 /// the central namespace; configured consumers still reject legacy human JWTs.
 pub async fn try_central(token: &str) -> Result<Option<AuthContext>, crate::api::ApiError> {
-    match BRIDGE.try_token(token).await {
-        BridgeOutcome::Validated(ctx) => Ok(Some(ctx)),
+    Ok(try_central_with_policy(token)
+        .await?
+        .map(|(context, _)| context))
+}
+
+pub async fn try_central_with_policy(
+    token: &str,
+) -> Result<
+    Option<(
+        AuthContext,
+        Option<pdlc_auth_core::application_access::VerifiedApplicationAccess>,
+    )>,
+    crate::api::ApiError,
+> {
+    let (outcome, _, proof) = BRIDGE.try_token_with_policy(token).await;
+    match outcome {
+        BridgeOutcome::Validated(ctx) => Ok(Some((ctx, proof))),
+        BridgeOutcome::Forbidden => Err(crate::api::ApiError::forbidden()),
         BridgeOutcome::Expired => Err(crate::api::ApiError::unauthorized()),
         BridgeOutcome::NotOurs | BridgeOutcome::NotConfigured => Ok(None),
         BridgeOutcome::Invalid(reason) => {
@@ -27,6 +43,36 @@ pub async fn try_central(token: &str) -> Result<Option<AuthContext>, crate::api:
         BridgeOutcome::Unavailable => Err(crate::api::ApiError::service_unavailable(
             "Central Auth is temporarily unavailable",
         )),
+    }
+}
+
+/// Token kind remains explicit even when synthetic local claims have no local token id.
+pub(crate) fn personal_scope_allows(token: &str, scopes: &[String], method: &str) -> bool {
+    !pdlc_auth_core::is_personal_token(token)
+        || scopes.iter().any(|scope| {
+            scope
+                == if matches!(method, "GET" | "HEAD" | "OPTIONS") {
+                    "ci-cd:read"
+                } else {
+                    "ci-cd:write"
+                }
+        })
+}
+
+/// Fresh metadata for human application/Git authentication. The old bridge
+/// remains a separate compatibility adapter for registered owner protocols.
+pub async fn try_verified_central(
+    token: &str,
+) -> Result<Option<pdlc_auth_core::service_bridge::VerifiedCentralToken>, crate::api::ApiError> {
+    use pdlc_auth_core::service_bridge::VerifiedBridgeError;
+    match BRIDGE.try_verified_token(token).await {
+        Ok(actor) => Ok(Some(actor)),
+        Err(VerifiedBridgeError::NotConfigured | VerifiedBridgeError::NotOurs) => Ok(None),
+        Err(VerifiedBridgeError::Forbidden) => Err(crate::api::ApiError::forbidden()),
+        Err(VerifiedBridgeError::Unavailable) => Err(crate::api::ApiError::service_unavailable(
+            "Central Auth confirmation unavailable",
+        )),
+        Err(_) => Err(crate::api::ApiError::unauthorized()),
     }
 }
 
@@ -154,8 +200,30 @@ async fn introspect_child(
 /// untouched even when they match a newly created central account.
 pub async fn link_central_user(
     pool: &PgPool,
-    ctx: &AuthContext,
+    verified: &pdlc_auth_core::service_bridge::VerifiedCentralToken,
 ) -> Result<AccessClaims, crate::api::ApiError> {
+    if !verified.lifetime.is_current() {
+        return Err(crate::api::ApiError::unauthorized());
+    }
+    let ctx = &verified.context;
+    if !matches!(
+        verified.subject_role.as_deref(),
+        Some(
+            "member"
+                | "user"
+                | "operator"
+                | "admin"
+                | "platform_admin"
+                | "platform_operator"
+                | "editor"
+                | "platform_editor"
+        )
+    ) || crate::namespace::registered_machine(&ctx.user_id)
+        || crate::delegated_credentials::has_grant(ctx)
+        || crate::delegated_credentials::configured_subject(&ctx.user_id)
+    {
+        return Err(crate::api::ApiError::forbidden());
+    }
     let email = ctx
         .email
         .as_deref()
@@ -168,25 +236,44 @@ pub async fn link_central_user(
     if ctx.user_id.trim().is_empty() {
         return Err(crate::api::ApiError::unauthorized());
     }
-    let id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO users (id, username, role, enabled, central_sub) \
-         VALUES ($1, $2, 'developer', true, $3) \
-         ON CONFLICT (central_sub) WHERE central_sub IS NOT NULL DO NOTHING",
-    )
-    .bind(id)
-    .bind(format!("central-{}", id.simple()))
-    .bind(&ctx.user_id)
-    .execute(pool)
-    .await
-    .map_err(crate::api::ApiError::internal)?;
-    let (user_id, _historical_role, enabled): (Uuid, String, bool) =
-        sqlx::query_as("SELECT id, role, enabled FROM users WHERE central_sub = $1")
+    // An unchanged existing profile is a read; never queue every request behind
+    // an unrelated user-row writer through INSERT ON CONFLICT.
+    let existing: Option<(Uuid, String, bool)> =
+        sqlx::query_as("SELECT id,role,enabled FROM users WHERE central_sub=$1")
             .bind(&ctx.user_id)
-            .fetch_one(pool)
+            .fetch_optional(pool)
             .await
             .map_err(crate::api::ApiError::internal)?;
-    if !enabled {
+    let (user_id, product_role, enabled) = if let Some(profile) = existing {
+        profile
+    } else {
+        let mut tx = pool.begin().await.map_err(crate::api::ApiError::internal)?;
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO users(id,username,role,enabled,central_sub) VALUES($1,$2,'developer',true,$3) ON CONFLICT(central_sub) WHERE central_sub IS NOT NULL DO NOTHING")
+            .bind(id).bind(format!("central-{}",id.simple())).bind(&ctx.user_id).execute(&mut *tx).await.map_err(crate::api::ApiError::internal)?;
+        let profile: (Uuid, String, bool) =
+            sqlx::query_as("SELECT id,role,enabled FROM users WHERE central_sub=$1")
+                .bind(&ctx.user_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(crate::api::ApiError::internal)?;
+        // A lock wait cannot turn an expired confirmation into committed JIT.
+        if !verified.lifetime.is_current() || !profile.2 {
+            return Err(crate::api::ApiError::unauthorized());
+        }
+        tx.commit().await.map_err(crate::api::ApiError::internal)?;
+        profile
+    };
+    if !enabled || !verified.lifetime.is_current() {
+        return Err(crate::api::ApiError::unauthorized());
+    }
+    if product_role == "service_account" || crate::authz::Role::parse(&product_role).is_none() {
+        return Err(crate::api::ApiError::forbidden());
+    }
+    // Historical assignments remain data; only current Auth grants human authority.
+    let effective_role =
+        effective_human_role(ctx.role.as_deref().or(verified.subject_role.as_deref())).to_owned();
+    if !verified.lifetime.is_current() {
         return Err(crate::api::ApiError::unauthorized());
     }
     let now = chrono::Utc::now();
@@ -200,10 +287,10 @@ pub async fn link_central_user(
         token_id: None,
         token_project_id: None,
         token_scopes: ctx.scopes.iter().cloned().collect(),
-        role: "admin".to_string(),
+        role: effective_role,
         ver: 0,
         iat: now.timestamp(),
-        exp: now.timestamp() + 900,
+        exp: verified.lifetime.local_valid_until(),
     })
 }
 
@@ -393,5 +480,74 @@ mod child_expiry_tests {
         );
         assert_eq!(legacy_calls.load(Ordering::SeqCst), 1);
         assert_eq!(child_calls.load(Ordering::SeqCst), 7);
+    }
+}
+
+#[cfg(test)]
+mod personal_scope_tests {
+    use super::*;
+    #[test]
+    fn synthetic_central_pat_claims_do_not_turn_missing_local_token_id_into_git_write() {
+        for token in ["sdlc_pat_synthetic", "pdlc_pat_synthetic"] {
+            assert!(personal_scope_allows(token, &["ci-cd:read".into()], "GET"));
+            assert!(!personal_scope_allows(
+                token,
+                &["ci-cd:read".into()],
+                "POST"
+            ));
+            assert!(personal_scope_allows(
+                token,
+                &["ci-cd:write".into()],
+                "POST"
+            ));
+            assert!(!personal_scope_allows(
+                token,
+                &["ci-cd:write".into()],
+                "GET"
+            ));
+            assert!(!personal_scope_allows(token, &[], "POST"));
+            assert!(!personal_scope_allows(token, &["api:write".into()], "POST"));
+        }
+        assert!(personal_scope_allows("browser-session", &[], "POST"));
+    }
+}
+
+/// Application assignment and historical product roles never create global administration.
+fn effective_human_role(current: Option<&str>) -> &'static str {
+    if current == Some("admin") {
+        "admin"
+    } else {
+        "user"
+    }
+}
+
+/// Independent from space policy; malformed deployment configuration fails closed.
+pub(crate) fn application_policy_required() -> Result<bool, crate::api::ApiError> {
+    match std::env::var("CICD_AUTH__CENTRAL_APPLICATION_ACCESS_REQUIRED") {
+        Ok(value) if value == "true" => Ok(true),
+        Ok(value) if value == "false" => Ok(false),
+        Err(std::env::VarError::NotPresent) => Ok(false),
+        _ => Err(crate::api::ApiError::service_unavailable(
+            "Invalid application access requirement",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod product_role_confirmation_tests {
+    use super::*;
+    #[test]
+    fn current_owner_role_is_independent_of_preserved_local_privileges() {
+        for role in [
+            None,
+            Some("user"),
+            Some("member"),
+            Some("operator"),
+            Some("platform_admin"),
+            Some("unknown"),
+        ] {
+            assert_eq!(effective_human_role(role), "user");
+        }
+        assert_eq!(effective_human_role(Some("admin")), "admin");
     }
 }

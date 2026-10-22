@@ -1,9 +1,26 @@
-import {AppShell as BaseAppShell, SidebarNavigationGroup, useSidebarDisclosure, NamespaceNavLink as NavLink, SidebarItem, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, PlatformHeader, PlatformMark, ThemeMenuItems} from '@pdlc/ui/ui'
+import { useApplicationAccess } from "@pdlc/ui/auth";
+import {
+  AppShell as BaseAppShell,
+  SidebarNavigationGroup,
+  useSidebarDisclosure,
+  NamespaceNavLink as NavLink,
+  SidebarItem,
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  PlatformHeader,
+  PlatformMark,
+  ThemeMenuItems,
+} from "@pdlc/ui/ui";
 
-
-import { NamespaceShellContext } from './namespace-context'
-import { useProjectDisclosures, WorkspaceNavigation } from './workspace-navigation'
-import { Outlet, useLocation } from 'react-router'
+import { NamespaceShellContext } from "./namespace-context";
+import {
+  useProjectDisclosures,
+  WorkspaceNavigation,
+} from "./workspace-navigation";
+import { Outlet, useLocation } from "react-router";
 import {
   CircleUserRound,
   Cpu,
@@ -14,18 +31,18 @@ import {
   LayoutDashboard,
   LogOut,
   Settings,
-} from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+} from "lucide-react";
+import { useTranslation } from "react-i18next";
 
-import { useAuth } from '@/shared/auth/auth-provider'
+import { useAuth } from "@/shared/auth/auth-provider";
 
 type NavigationListProps = {
-  onNavigate?: () => void
-  compact?: boolean
-  disclosures: ReturnType<typeof useProjectDisclosures>
-  utilities: ReturnType<typeof useSidebarDisclosure>
-  utilityActive: boolean
-}
+  onNavigate?: () => void;
+  compact?: boolean;
+  disclosures: ReturnType<typeof useProjectDisclosures>;
+  utilities: ReturnType<typeof useSidebarDisclosure>;
+  utilityActive: boolean;
+};
 
 function NavigationList({
   onNavigate,
@@ -41,6 +58,7 @@ function NavigationList({
       ? "?project_scope=all"
       : location.search;
 
+  const canAdmin = useApplicationAccess()?.permits([], true) === true;
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: t("navigation.dashboard") },
     { to: "/projects", icon: FolderGit2, label: t("navigation.projects") },
@@ -77,7 +95,9 @@ function NavigationList({
   );
   return (
     <div>
-      {links(navItems)}
+      {links(
+        navItems.filter((item) => canAdmin || item.to !== "/repository-syncs"),
+      )}
       {import.meta.env.VITE_NAMESPACE_ENABLED === "true" && (
         <WorkspaceNavigation
           {...disclosures}
@@ -85,33 +105,44 @@ function NavigationList({
           onNavigate={onNavigate}
         />
       )}
-      <SidebarNavigationGroup
-        label="Служебное"
-        active={utilityActive}
-        compact={compact}
-        {...utilities}
-      >
-        {links(utilityItems)}
-      </SidebarNavigationGroup>
+      {canAdmin && (
+        <SidebarNavigationGroup
+          label="Служебное"
+          active={utilityActive}
+          compact={compact}
+          {...utilities}
+        >
+          {links(utilityItems)}
+        </SidebarNavigationGroup>
+      )}
     </div>
   );
 }
 
 export function AppShell() {
-  const { session, logout } = useAuth()
-  const { t } = useTranslation()
-  const location = useLocation()
-  const disclosures = useProjectDisclosures()
-  const utilityActive = ['/runners', '/audit-log', '/settings', '/delivery-configs'].some(to => location.pathname === to || location.pathname.startsWith(to + '/'))
-  const utilities = useSidebarDisclosure(utilityActive ? location.pathname : null)
-  const username = session?.username ?? t('navigation.profileFallback')
+  const { session, logout } = useAuth();
+  const { t } = useTranslation();
+  const location = useLocation();
+  const disclosures = useProjectDisclosures();
+  const utilityActive = [
+    "/runners",
+    "/audit-log",
+    "/settings",
+    "/delivery-configs",
+  ].some(
+    (to) => location.pathname === to || location.pathname.startsWith(to + "/"),
+  );
+  const utilities = useSidebarDisclosure(
+    utilityActive ? location.pathname : null,
+  );
+  const username = session?.username ?? t("navigation.profileFallback");
   const pageLayout =
-    location.pathname === '/settings'
-      ? 'reading'
+    location.pathname === "/settings"
+      ? "reading"
       : /^\/repositories\/[^/]+\/pulls\/[^/]+$/.test(location.pathname) &&
-          new URLSearchParams(location.search).get('view') !== 'diff'
-        ? 'detail-with-aside'
-        : 'wide'
+          new URLSearchParams(location.search).get("view") !== "diff"
+        ? "detail-with-aside"
+        : "wide";
 
   return (
     <BaseAppShell

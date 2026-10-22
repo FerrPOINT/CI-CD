@@ -185,10 +185,12 @@ pub(crate) async fn require_auth(
         .and_then(|v| v.to_str().ok())
         .and_then(pdlc_auth_core::bearer_from_header);
     let mut checked_central = None;
-    if let Some(token) = bearer.filter(|token| pdlc_auth_core::is_personal_token(token))
-        && let Some(central) = crate::central_auth::try_central(token).await?
+    if let Some(token) = bearer
+        && !token.starts_with("cicd_")
+        && let Some(verified) = crate::central_auth::try_verified_central(token).await?
     {
-        if crate::delegated_credentials::has_grant(&central)
+        let central = &verified.context;
+        if crate::delegated_credentials::has_grant(central)
             || state
                 .config
                 .sdlc_workspace
@@ -196,7 +198,7 @@ pub(crate) async fn require_auth(
                 .is_some_and(|id| id.to_string() == central.user_id)
         {
             let identity = crate::delegated_credentials::Identity::verified(
-                &central,
+                central,
                 &state.config.sdlc_workspace,
             )?;
             identity.route(&method, req.uri().path())?;
@@ -204,7 +206,11 @@ pub(crate) async fn require_auth(
             req.extensions_mut().insert(identity);
             return Ok(next.run(req).await);
         }
-        checked_central = Some(central_identity(pool, &central).await?);
+        checked_central = Some(VerifiedRequestIdentity {
+            claims: central_identity(pool, &verified).await?,
+            central: Some(verified),
+            product_personal: None,
+        });
     }
     let is_platform_token = req
         .headers()
@@ -213,19 +219,26 @@ pub(crate) async fn require_auth(
         .is_some_and(|value| {
             pdlc_auth_core::bearer_from_header(value).is_some_and(pdlc_auth_core::is_personal_token)
         });
-    let claims = match checked_central {
-        Some(claims) => claims,
-        None => bearer_identity(pool, auth_secret, req.headers()).await?,
+    let identity = match checked_central {
+        Some(identity) => identity,
+        None => verified_bearer_identity(pool, auth_secret, req.headers()).await?,
     };
-    if is_platform_token {
-        let required = if matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
-            "ci-cd:read"
-        } else {
-            "ci-cd:write"
-        };
-        if !claims.token_scopes.iter().any(|scope| scope == required) {
-            return Err(ApiError::forbidden());
-        }
+    if let Some(deadline) = identity.original_deadline()? {
+        let authority = req
+            .extensions()
+            .get::<pdlc_auth_core::http_authority::RequestAuthority>()
+            .ok_or_else(|| ApiError::service_unavailable("Request authority guard missing"))?;
+        authority.restrict_to(deadline);
+    }
+    let claims = identity.claims.clone();
+    if is_platform_token
+        && !crate::central_auth::personal_scope_allows(
+            bearer.unwrap_or_default(),
+            &claims.token_scopes,
+            &method,
+        )
+    {
+        return Err(ApiError::forbidden());
     }
     // Role::parse maps machine principals ("service_account") to the
     // developer class; token scopes still constrain every route.
@@ -241,12 +254,80 @@ pub(crate) async fn require_auth(
     {
         return Err(ApiError::forbidden());
     }
+    if matches!(claims.role.as_str(), "user" | "admin")
+        && claims.service_account_name.is_none()
+        && !crate::authz::human_allows(claims.role == "admin", &method, &path)
+    {
+        return Err(ApiError::forbidden());
+    }
     let (mut parts, body) = req.into_parts();
-    parts.extensions.insert(claims.clone());
-    let req = axum::extract::Request::from_parts(parts, body);
+    let read_storage = crate::space_admission::repository_request_storage(pool, &mut parts).await?;
+    let write_route = parts
+        .extensions
+        .get::<axum::extract::MatchedPath>()
+        .is_some_and(|route| {
+            crate::space_admission::repository_write_route(&parts.method, route.as_str())
+        });
+    let mut write_permit = None;
+    let read_proof = match read_storage.as_ref() {
+        Some(storage) if crate::space_admission::active(pool).await? => {
+            identity.require_scope(if write_route {
+                "ci-cd:write"
+            } else {
+                "ci-cd:read"
+            })?;
+            let proof =
+                crate::space_admission::repository(pool, storage, &identity, write_route).await?;
+            if write_route {
+                let (_, min_role) = crate::authz::required_role(&method, &path);
+                write_permit = Some(crate::space_admission::RepositoryWrite::confirmed(
+                    proof,
+                    storage.clone(),
+                    claims.sub,
+                    min_role,
+                ));
+                None
+            } else {
+                Some(proof)
+            }
+        }
+        _ => None,
+    };
+    if let Some(authority) = parts
+        .extensions
+        .get::<pdlc_auth_core::http_authority::RequestAuthority>()
+    {
+        if let Some(proof) = read_proof.as_ref() {
+            authority.restrict_to(proof.monotonic_deadline());
+        }
+        if let Some(permit) = write_permit.as_ref() {
+            authority.restrict_to(permit.proof().monotonic_deadline());
+        }
+    }
+    let scope_ref = read_storage
+        .as_ref()
+        .map(|storage| ProjectScopeRef::Repository(storage.clone()))
+        .or_else(|| project_scope_ref(&path));
+    let scope_allowed = if read_proof.is_some() {
+        // Confirmed common visibility replaces legacy read membership, not
+        // credential assignment. An explicitly project-bound token stays bound.
+        match claims.token_project_id {
+            Some(project) => {
+                repository_linked_to_project(
+                    pool,
+                    read_storage.as_deref().ok_or_else(ApiError::forbidden)?,
+                    project,
+                )
+                .await?
+            }
+            None => true,
+        }
+    } else {
+        project_scope_allows(&state, &claims, role, &method, &path, scope_ref).await?
+    };
     let allowed = api_token_scope_allows(&claims, &method)
         && crate::authz::allows(role, &method, &path)
-        && project_scope_allows(&state, &claims, role, &method, &path).await?;
+        && scope_allowed;
     if !allowed {
         if let Some(pool) = state.pool.as_ref() {
             let _ = audit(
@@ -260,7 +341,46 @@ pub(crate) async fn require_auth(
         }
         return Err(ApiError::forbidden());
     }
-    Ok(next.run(req).await)
+    if let Some(permit) = write_permit.as_ref() {
+        parts.extensions.insert(permit.clone());
+    }
+    let pipeline_origin = crate::pipeline_authority::Origin::from_identity(&identity)?;
+    let local_user = claims.sub;
+    let central_authority = identity.central.clone();
+    let product_authority = identity.product_personal.clone();
+    parts.extensions.insert(claims);
+    parts.extensions.insert(identity);
+    let req = axum::extract::Request::from_parts(parts, body);
+    let dispatch = crate::pipeline_authority::with_origin(pipeline_origin, async {
+        let response = next.run(req).await;
+        match (read_proof, write_permit) {
+            (Some(proof), _) => crate::space_admission::read_response(proof, response),
+            (_, Some(permit)) => permit.response(response),
+            _ => Ok(response),
+        }
+    });
+    if let Some(verified) = central_authority {
+        return pdlc_auth_core::human_request::with_human_request(
+            local_user,
+            &verified.context,
+            verified.application_access.clone(),
+            dispatch,
+        )
+        .await
+        .map_err(|_| ApiError::forbidden())?;
+    }
+    if let Some(source) = product_authority {
+        let context = source.context();
+        return pdlc_auth_core::human_request::with_human_request(
+            local_user,
+            &context,
+            Some(source.owner().clone()),
+            dispatch,
+        )
+        .await
+        .map_err(|_| ApiError::forbidden())?;
+    }
+    dispatch.await
 }
 
 // This exception reaches the existing project/token checks, never the wider catalog API.
@@ -308,8 +428,9 @@ async fn project_scope_allows(
     global_role: crate::authz::Role,
     method: &str,
     path: &str,
+    scope_ref: Option<ProjectScopeRef>,
 ) -> Result<bool, ApiError> {
-    let Some(scope_ref) = project_scope_ref(path) else {
+    let Some(scope_ref) = scope_ref else {
         if claims.token_id.is_some() && claims.token_project_id.is_some() {
             return Ok(method == "GET"
                 && matches!(
@@ -690,11 +811,11 @@ pub(crate) async fn project_membership_role(
 
 /// JWT access tokens are bound to `sessions.id`; PATs (`cicd_...`) are
 /// resolved against api_tokens and carry explicit token scopes/bindings.
-pub(crate) async fn bearer_identity(
+async fn verified_bearer_identity(
     pool: &PgPool,
     auth_secret: &str,
     headers: &axum::http::HeaderMap,
-) -> Result<crate::auth::AccessClaims, ApiError> {
+) -> Result<VerifiedRequestIdentity, ApiError> {
     let value = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -702,32 +823,170 @@ pub(crate) async fn bearer_identity(
     let token = value
         .strip_prefix("Bearer ")
         .ok_or_else(ApiError::unauthorized)?;
-    identity_for_bearer_token(pool, auth_secret, token).await
+    verified_identity_for_bearer_token(pool, auth_secret, token).await
 }
 
 async fn central_identity(
     pool: &PgPool,
-    central: &pdlc_auth_core::AuthContext,
+    verified: &pdlc_auth_core::service_bridge::VerifiedCentralToken,
 ) -> Result<crate::auth::AccessClaims, ApiError> {
+    let central = &verified.context;
     if crate::namespace::registered_machine(&central.user_id)
-        || central.role.as_deref() == Some("service_account")
+        || verified.subject_role.as_deref() == Some("service_account")
         || crate::delegated_credentials::has_grant(central)
         || crate::delegated_credentials::configured_subject(&central.user_id)
     {
         return Err(ApiError::forbidden());
     }
-    crate::central_auth::link_central_user(pool, central).await
+    crate::central_auth::link_central_user(pool, verified).await
 }
 
+/// Preserve the authenticated origin in memory; central PATs have no local token ID.
+#[derive(Clone)]
+pub(crate) struct VerifiedRequestIdentity {
+    pub(crate) claims: crate::auth::AccessClaims,
+    pub(crate) central: Option<pdlc_auth_core::service_bridge::VerifiedCentralToken>,
+    pub(crate) product_personal: Option<cicd_app::product_token::ConfirmedPersonalToken>,
+}
+impl VerifiedRequestIdentity {
+    pub(crate) fn original_deadline(&self) -> Result<Option<std::time::Instant>, ApiError> {
+        if let Some(source) = &self.central {
+            if !source.lifetime.is_current() {
+                return Err(ApiError::forbidden());
+            }
+            return Ok(Some(source.lifetime.monotonic_deadline()));
+        }
+        if let Some(source) = &self.product_personal {
+            if !source.is_current() {
+                return Err(ApiError::forbidden());
+            }
+            return Ok(Some(source.owner().monotonic_deadline()));
+        }
+        Ok(None)
+    }
+    pub(crate) fn space_identity(
+        &self,
+    ) -> Result<pdlc_shared::space_access::CentralIdentity, ApiError> {
+        self.original_deadline()?;
+        if let Some(source) = &self.central {
+            return Ok(pdlc_shared::space_access::CentralIdentity {
+                issuer: source.issuer.clone(),
+                subject: source.context.user_id.clone(),
+            });
+        }
+        if let Some(source) = &self.product_personal {
+            return Ok(pdlc_shared::space_access::CentralIdentity {
+                issuer: source.owner().decision.issuer.clone(),
+                subject: source.owner().decision.subject.clone(),
+            });
+        }
+        Err(ApiError::forbidden())
+    }
+    pub(crate) async fn confirm_spaces(
+        &self,
+        client: &pdlc_auth_core::service_bridge::SpaceAdmissionClient,
+        spaces: &[pdlc_shared::space_access::SpaceRef],
+    ) -> Result<pdlc_auth_core::service_bridge::ConfirmedSpaceRead, ApiError> {
+        self.original_deadline()?;
+        let result = if let Some(source) = &self.central {
+            client
+                .confirm_many_read(&crate::central_auth::BRIDGE, source, spaces)
+                .await
+        } else if let Some(source) = &self.product_personal {
+            client
+                .confirm_owner_many_read(
+                    &crate::central_auth::BRIDGE,
+                    source.owner(),
+                    "ci-cd",
+                    spaces,
+                )
+                .await
+        } else {
+            return Err(ApiError::forbidden());
+        };
+        result.map_err(crate::space_admission::owner_error)
+    }
+    pub(crate) fn require_scope(&self, required: &str) -> Result<(), ApiError> {
+        self.original_deadline()?;
+        if let Some(source) = self.central.as_ref() {
+            if !source.lifetime.is_current() {
+                return Err(ApiError::unauthorized());
+            }
+            let required = if source.subject_role.as_deref() != Some("service_account") {
+                match required {
+                    "git:read" => "ci-cd:read",
+                    "git:write" => "ci-cd:write",
+                    other => other,
+                }
+            } else {
+                required
+            };
+            if source.context.session_id.is_none() && !source.context.has_scope(required) {
+                return Err(ApiError::forbidden());
+            }
+        } else {
+            // HTTP space adapters ask for the application service scope. Product
+            // PATs retain their independent, exact API/Git scope vocabulary.
+            let required = if self.product_personal.is_some() {
+                match required {
+                    "ci-cd:read" => "api:read",
+                    "ci-cd:write" => "api:write",
+                    other => other,
+                }
+            } else {
+                required
+            };
+            if !bearer_token_has_scope(&self.claims, required) {
+                return Err(ApiError::forbidden());
+            }
+        }
+        Ok(())
+    }
+}
+pub(crate) async fn verified_identity_for_bearer_token(
+    pool: &PgPool,
+    auth_secret: &str,
+    token: &str,
+) -> Result<VerifiedRequestIdentity, ApiError> {
+    if token.starts_with("cicd_") && crate::central_auth::application_policy_required()? {
+        let source = crate::product_tokens::authenticate(pool, token).await?;
+        return Ok(VerifiedRequestIdentity {
+            claims: source.claims().clone(),
+            central: None,
+            product_personal: Some(source),
+        });
+    }
+    if let Some(verified) = crate::central_auth::try_verified_central(token).await? {
+        let claims = central_identity(pool, &verified).await?;
+        return Ok(VerifiedRequestIdentity {
+            claims,
+            central: Some(verified),
+            product_personal: None,
+        });
+    }
+    let claims = local_identity_for_bearer_token(pool, auth_secret, token).await?;
+    Ok(VerifiedRequestIdentity {
+        claims,
+        central: None,
+        product_personal: None,
+    })
+}
 pub(crate) async fn identity_for_bearer_token(
     pool: &PgPool,
     auth_secret: &str,
     token: &str,
 ) -> Result<crate::auth::AccessClaims, ApiError> {
-    // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
-    // and cicd_ PATs remain valid during the migration window.
-    if let Some(central) = crate::central_auth::try_central(token).await? {
-        return central_identity(pool, &central).await;
+    Ok(verified_identity_for_bearer_token(pool, auth_secret, token)
+        .await?
+        .claims)
+}
+async fn local_identity_for_bearer_token(
+    pool: &PgPool,
+    auth_secret: &str,
+    token: &str,
+) -> Result<crate::auth::AccessClaims, ApiError> {
+    if crate::central_auth::application_policy_required()? && !token.starts_with("forge_sat_") {
+        return Err(ApiError::forbidden());
     }
     if token.starts_with("forge_sat_") {
         let hash = crate::auth::hash_token(token);

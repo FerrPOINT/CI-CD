@@ -25,7 +25,7 @@ use authz_mw::{
 };
 pub(crate) use authz_mw::{
     bearer_token_has_scope, identity_for_bearer_token, list_projects_for_claims,
-    project_membership_role, rate_limit_mw, request_id_mw,
+    project_membership_role, rate_limit_mw, request_id_mw, verified_identity_for_bearer_token,
 };
 #[cfg(test)]
 use axum::http::{Method, header};
@@ -99,6 +99,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::workspace_projects::all_pipelines,
         crate::workspace_projects::all_summary,
         crate::repository_catalog::all,
+        crate::space_admission::human_window,
         crate::delivery_configs::readback,
         crate::workspace_projects::list,
         crate::workspace_projects::get,
@@ -114,6 +115,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::delivery_configs::push_get,
         crate::delivery_configs::push_put,
         crate::namespace::apply,
+        crate::space_owner::apply,
+        crate::space_owner::readback,
         crate::task_links::link,
         crate::task_links::list,
         crate::task_links::evidence,
@@ -227,6 +230,9 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::api::pipelines_routes::get_test_report, crate::api::pipelines_routes::upload_test_report,
     ),
     components(schemas(
+        crate::space_admission::HumanAdmissionWindowV1,
+        pdlc_shared::space_lifecycle::SpaceOwnerCommandV2,
+        pdlc_shared::space_lifecycle::SpaceOwnerReadbackV2,
         crate::registered_source::VerifiedSource,
         crate::registered_source::DeliveryConfigurationReadback,
         crate::registered_devops_evidence::DevopsEvidence,
@@ -483,6 +489,13 @@ impl ApiError {
         }
     }
     pub(crate) fn internal(error: sqlx::Error) -> Self {
+        if error.as_database_error().is_some_and(|database| {
+            database.code().as_deref() == Some("42501")
+                && database.message() == "forge_request_authority_expired"
+        }) {
+            return Self::service_unavailable("Original admission proof expired before COMMIT");
+        }
+
         if let Some(database) = error.as_database_error()
             && database.code().as_deref() == Some("23505")
             && matches!(

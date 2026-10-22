@@ -5480,6 +5480,22 @@ paths:
           description: ''
         '404':
           description: ''
+  /api/v1/space-admission:
+    get:
+      tags:
+      - spaces
+      operationId: human_window
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanAdmissionWindowV1'
+        '403':
+          description: ''
+        '503':
+          description: ''
   /api/v1/users:
     get:
       tags:
@@ -6035,6 +6051,67 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkspaceSummary'
+  /api/v2/spaces/{registry}/{space}/owner-state:
+    get:
+      tags:
+      - spaces-v2
+      operationId: forge_space_owner_v2_readback
+      parameters:
+      - name: registry
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: space
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpaceOwnerReadbackV2'
+        '404':
+          description: No current v2 operation
+    put:
+      tags:
+      - spaces-v2
+      operationId: forge_space_owner_v2_apply
+      parameters:
+      - name: registry
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: space
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpaceOwnerCommandV2'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpaceOwnerReadbackV2'
+        '403':
+          description: Registered service account and exact ci-cd write scope required
+        '409':
+          description: Original mapping, operation or revision conflict
   /git/{repo}/git-receive-pack:
     post:
       tags:
@@ -7262,6 +7339,11 @@ components:
         id:
           type: string
           format: uuid
+    DesiredSpaceState:
+      type: string
+      enum:
+      - active
+      - archived
     DestinationAlert:
       type: object
       required:
@@ -7537,6 +7619,29 @@ components:
           - string
           - 'null'
           format: uuid
+    HumanAdmissionWindowV1:
+      type: object
+      description: A display descriptor, never a reusable repository/Git capability.
+      required:
+      - schema_version
+      - enforced
+      properties:
+        enforced:
+          type: boolean
+        remaining_millis:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+        schema_version:
+          type: integer
+          format: int32
+          minimum: 0
+        scope_revision:
+          type:
+          - string
+          - 'null'
     IssueServiceAccountToken:
       type: object
       required:
@@ -9942,6 +10047,103 @@ components:
           format: uuid
         tracker_instance_id:
           type: string
+      additionalProperties: false
+    SpaceMetadata:
+      type: object
+      required:
+      - slug
+      - name
+      - description
+      - responsible_subject
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        responsible_subject:
+          type: string
+        slug:
+          type: string
+      additionalProperties: false
+    SpaceOwnerCommandV2:
+      type: object
+      required:
+      - schema_version
+      - space
+      - participant_instance_id
+      - operation_id
+      - revision
+      - desired_state
+      - metadata
+      properties:
+        desired_state:
+          $ref: '#/components/schemas/DesiredSpaceState'
+        metadata:
+          $ref: '#/components/schemas/SpaceMetadata'
+        operation_id:
+          type: string
+          format: uuid
+        participant_instance_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          format: int64
+        schema_version:
+          type: integer
+          format: int32
+          minimum: 0
+        space:
+          $ref: '#/components/schemas/SpaceRef'
+      additionalProperties: false
+    SpaceOwnerReadbackV2:
+      type: object
+      required:
+      - schema_version
+      - space
+      - participant_instance_id
+      - operation_id
+      - revision
+      - state
+      - drained
+      properties:
+        drained:
+          type: boolean
+        local_resource:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/ResourceRef'
+            description: Wiki returns its persistent local UUID. Barrier-only participants have no local resource.
+        operation_id:
+          type: string
+          format: uuid
+        participant_instance_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          format: int64
+        schema_version:
+          type: integer
+          format: int32
+          minimum: 0
+        space:
+          $ref: '#/components/schemas/SpaceRef'
+        state:
+          $ref: '#/components/schemas/DesiredSpaceState'
+      additionalProperties: false
+    SpaceRef:
+      type: object
+      required:
+      - registry_instance_id
+      - space_id
+      properties:
+        registry_instance_id:
+          type: string
+          format: uuid
+        space_id:
+          type: string
+          format: uuid
       additionalProperties: false
     Stage:
       type: object

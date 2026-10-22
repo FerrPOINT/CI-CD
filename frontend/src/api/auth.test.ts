@@ -61,3 +61,13 @@ describe('central browser session', () => {
     vi.unstubAllGlobals()
   })
 })
+
+it('retires pending response ownership without changing the central account or credentials', async () => {
+  const { acceptSso, currentSession, rotateSessionAccess } = await import('./auth')
+  const original = acceptSso('private-access', Date.now() + 60_000, 'Human', 'human-id')
+  const next = rotateSessionAccess()
+  expect(next).toEqual(original)
+  expect(next).not.toBe(original)
+  expect(currentSession()).toBe(next)
+  expect(JSON.stringify(localStorage)).not.toContain('private-access')
+})

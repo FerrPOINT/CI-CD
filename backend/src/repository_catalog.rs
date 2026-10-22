@@ -58,13 +58,21 @@ pub struct CatalogPage {
 pub async fn all(
     State(state): State<Arc<AppState>>,
     Query(page): Query<Page>,
-) -> Result<Json<CatalogPage>, ApiError> {
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let identity = request
+        .extensions()
+        .get::<crate::api::authz_mw::VerifiedRequestIdentity>()
+        .cloned();
+    drop(request);
+    let admission = crate::space_admission::catalog_read(pool, identity).await?;
+    let groups = admission.as_ref().map(|scope| scope.groups.clone());
     let search = page.search.as_deref().unwrap_or("");
     let managed = page.managed.unwrap_or(false);
-    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($1::uuid IS NULL OR r.group_id=$1) AND position(lower($2) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $3 OR b.resource_id IS NOT NULL) AND (NOT $4 OR (r.kind='hosted' AND r.ready AND COALESCE(b.state,'active')='active' AND NOT EXISTS(SELECT 1 FROM repository_sync_connections c WHERE c.repository_id=r.id)))")
-        .bind(page.group_id).bind(search).bind(managed).bind(page.sync_available.unwrap_or(false)).fetch_one(pool).await.map_err(catalog_database_error)?;
-    let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',COALESCE(g.slug||'/'||r.slug,r.slug),'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id) ELSE NULL END,'state',b.state) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($3::uuid IS NULL OR r.group_id=$3) AND position(lower($4) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $5 OR b.resource_id IS NOT NULL) AND (NOT $6 OR (r.kind='hosted' AND r.ready AND COALESCE(b.state,'active')='active' AND NOT EXISTS(SELECT 1 FROM repository_sync_connections c WHERE c.repository_id=r.id))) ORDER BY g.slug NULLS LAST,r.slug,r.id LIMIT $1 OFFSET $2").bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(page.group_id).bind(search).bind(managed).bind(page.sync_available.unwrap_or(false)).fetch_all(pool).await.map_err(catalog_database_error)?;
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id LEFT JOIN forge_space_catalog c ON c.group_id=g.id WHERE ($5::uuid[] IS NULL OR r.group_id=ANY($5)) AND ($1::uuid IS NULL OR r.group_id=$1) AND position(lower($2) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $3 OR c.space_id IS NOT NULL OR b.resource_id IS NOT NULL) AND (NOT $4 OR (r.kind='hosted' AND r.ready AND COALESCE(c.state,b.state,'active')='active' AND NOT EXISTS(SELECT 1 FROM repository_sync_connections c WHERE c.repository_id=r.id)))")
+        .bind(page.group_id).bind(search).bind(managed).bind(page.sync_available.unwrap_or(false)).bind(groups.clone()).fetch_one(pool).await.map_err(catalog_database_error)?;
+    let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',COALESCE(g.slug||'/'||r.slug,r.slug),'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN c.space_id IS NOT NULL OR b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',COALESCE(c.registry_instance_id,b.registry_instance_id),'namespace_id',COALESCE(c.space_id,b.namespace_id)) ELSE NULL END,'state',COALESCE(c.state,b.state)) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id LEFT JOIN forge_space_catalog c ON c.group_id=g.id WHERE ($7::uuid[] IS NULL OR r.group_id=ANY($7)) AND ($3::uuid IS NULL OR r.group_id=$3) AND position(lower($4) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $5 OR c.space_id IS NOT NULL OR b.resource_id IS NOT NULL) AND (NOT $6 OR (r.kind='hosted' AND r.ready AND COALESCE(c.state,b.state,'active')='active' AND NOT EXISTS(SELECT 1 FROM repository_sync_connections c WHERE c.repository_id=r.id))) ORDER BY g.slug NULLS LAST,r.slug,r.id LIMIT $1 OFFSET $2").bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(page.group_id).bind(search).bind(managed).bind(page.sync_available.unwrap_or(false)).bind(groups).fetch_all(pool).await.map_err(catalog_database_error)?;
     let mut items = Vec::new();
     for value in rows {
         let mut repo: CatalogRepository = serde_json::from_value(value)
@@ -75,7 +83,12 @@ pub async fn all(
         check_availability(&state, &mut repo).await;
         items.push(repo);
     }
-    Ok(Json(CatalogPage { items, total }))
+    use axum::response::IntoResponse;
+    let response = Json(CatalogPage { items, total }).into_response();
+    match admission {
+        Some(scope) => scope.response(response),
+        None => Ok(response),
+    }
 }
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -310,12 +323,11 @@ pub(crate) async fn catalog_write_lease_on_pool(
         crate::namespace::binding_on(&mut *tx, group)
             .await?
             .ok_or_else(|| ApiError::service_unavailable("namespace_projection_missing"))?;
-        let state: Option<String> =
-            sqlx::query_scalar("SELECT state FROM forge_namespace_bindings WHERE resource_id=$1")
-                .bind(group)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(catalog_database_error)?;
+        let state: Option<String> = sqlx::query_scalar("SELECT forge_effective_group_state($1)")
+            .bind(group)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(catalog_database_error)?;
         if state.as_deref() != Some("active") {
             return Err(ApiError::conflict("namespace_resource_read_only"));
         }
@@ -336,7 +348,11 @@ pub(crate) async fn require_project_writable_on(
     if let Some(group) = group {
         crate::namespace::binding_on(&mut *connection, group).await?;
     }
-    let lifecycle: Option<String> = sqlx::query_scalar("SELECT b.state FROM projects p JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE p.id=$1").bind(project).fetch_optional(&mut *connection).await.map_err(catalog_database_error)?;
+    let lifecycle: Option<String> = sqlx::query_scalar("SELECT forge_effective_group_state($1)")
+        .bind(group)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(catalog_database_error)?;
     if lifecycle.is_some_and(|s| s != "active") {
         return Err(ApiError::conflict("namespace_resource_read_only"));
     }
@@ -353,7 +369,11 @@ pub async fn require_storage_writable(pool: &PgPool, storage: &str) -> Result<()
     if let Some(group) = group {
         crate::namespace::binding(pool, group).await?;
     }
-    let lifecycle: Option<String>=sqlx::query_scalar("SELECT b.state FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.storage_name=$1").bind(storage).fetch_optional(pool).await.map_err(catalog_database_error)?;
+    let lifecycle: Option<String> = sqlx::query_scalar("SELECT forge_effective_group_state($1)")
+        .bind(group)
+        .fetch_one(pool)
+        .await
+        .map_err(catalog_database_error)?;
     if lifecycle.is_some_and(|state| state != "active") {
         return Err(ApiError::conflict("namespace_resource_read_only"));
     }
@@ -417,10 +437,30 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Query(page): Query<Page>,
-) -> Result<Json<CatalogPage>, ApiError> {
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let identity = request
+        .extensions()
+        .get::<crate::api::authz_mw::VerifiedRequestIdentity>()
+        .cloned();
+    drop(request);
+    let admission = crate::space_admission::catalog_read(pool, identity).await?;
+    use axum::response::IntoResponse;
+    let admission = match admission {
+        Some(scope) if !scope.groups.contains(&id) => {
+            return scope.response(
+                Json(CatalogPage {
+                    items: Vec::new(),
+                    total: 0,
+                })
+                .into_response(),
+            );
+        }
+        scope => scope,
+    };
     crate::namespace::binding(pool, id).await?;
-    let items: Vec<serde_json::Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',g.slug||'/'||r.slug,'storage_name',r.storage_name,'visibility',s.visibility) FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id JOIN repositories s ON s.id=r.id WHERE r.group_id=$1 AND position(lower($4) in lower(r.slug))>0 ORDER BY r.slug,r.id LIMIT $2 OFFSET $3")
+    let items: Vec<serde_json::Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',g.slug||'/'||r.slug,'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN c.space_id IS NOT NULL OR b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',COALESCE(c.registry_instance_id,b.registry_instance_id),'namespace_id',COALESCE(c.space_id,b.namespace_id)) ELSE NULL END,'state',COALESCE(c.state,b.state)) FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id JOIN repositories s ON s.id=r.id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id LEFT JOIN forge_space_catalog c ON c.group_id=g.id WHERE r.group_id=$1 AND position(lower($4) in lower(r.slug))>0 ORDER BY r.slug,r.id LIMIT $2 OFFSET $3")
         .bind(id).bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(page.search.as_deref().unwrap_or("")) .fetch_all(pool).await.map_err(catalog_database_error)?;
     let mut items = items
         .into_iter()
@@ -434,7 +474,11 @@ pub async fn list(
     }
     let total: i64 = sqlx::query_scalar("SELECT count(*) FROM repository_catalog r JOIN repositories s ON s.id=r.id WHERE r.group_id=$1 AND position(lower($2) in lower(r.slug))>0")
         .bind(id).bind(page.search.as_deref().unwrap_or("")).fetch_one(pool).await.map_err(catalog_database_error)?;
-    Ok(Json(CatalogPage { items, total }))
+    let response = Json(CatalogPage { items, total }).into_response();
+    match admission {
+        Some(scope) => scope.response(response),
+        None => Ok(response),
+    }
 }
 
 #[utoipa::path(get,operation_id="forge_unbound_repository_catalog",path="/api/v1/catalog/available-repositories",tag="namespaces",params(Page),responses((status=200,body=CatalogPage)))]
@@ -501,10 +545,17 @@ pub async fn attach(
         .execute(&mut *tx)
         .await
         .map_err(catalog_database_error)?;
-    let binding = crate::namespace::binding_on(&mut *tx, input.group_id)
+    crate::namespace::binding_on(&mut *tx, input.group_id)
         .await?
         .ok_or_else(|| ApiError::conflict("managed_git_group_required"))?;
-    if binding.state != "active" {
+    if sqlx::query_scalar::<_, Option<String>>("SELECT forge_effective_group_state($1)")
+        .bind(input.group_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(catalog_database_error)?
+        .as_deref()
+        != Some("active")
+    {
         return Err(ApiError::conflict("namespace_resource_read_only"));
     }
     let group_slug: String = sqlx::query_scalar("SELECT slug FROM git_groups WHERE id=$1")
@@ -623,7 +674,7 @@ pub async fn create(
     crate::namespace::binding_on(&mut *lease, group)
         .await?
         .ok_or_else(|| ApiError::service_unavailable("namespace_projection_missing"))?;
-    let group_slug: Option<String> = sqlx::query_scalar("SELECT g.slug FROM git_groups g JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE g.id=$1 AND b.state='active'").bind(group).fetch_optional(&mut *lease).await.map_err(catalog_database_error)?;
+    let group_slug: Option<String> = sqlx::query_scalar("SELECT g.slug FROM git_groups g JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE g.id=$1 AND forge_effective_group_state(g.id)='active'").bind(group).fetch_optional(&mut *lease).await.map_err(catalog_database_error)?;
     let group_slug =
         group_slug.ok_or_else(|| ApiError::conflict("namespace_resource_read_only"))?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,1))")
@@ -699,7 +750,7 @@ pub async fn connect_delivery(
         return Err(ApiError::not_found());
     }
     let mut tx = catalog_write_lease(&state, id).await?;
-    let row = sqlx::query("SELECT r.group_id,b.state FROM repository_catalog r LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=$1").bind(id).fetch_optional(&mut *tx).await.map_err(catalog_database_error)?.ok_or_else(ApiError::not_found)?;
+    let row = sqlx::query("SELECT r.group_id,forge_effective_group_state(r.group_id) AS state FROM repository_catalog r WHERE r.id=$1").bind(id).fetch_optional(&mut *tx).await.map_err(catalog_database_error)?.ok_or_else(ApiError::not_found)?;
     if row.get::<Option<Uuid>, _>("group_id").is_some()
         && row.get::<Option<String>, _>("state").as_deref() != Some("active")
     {
@@ -738,15 +789,49 @@ pub async fn storage_by_id(pool: &PgPool, id: Uuid) -> Result<String, ApiError> 
 pub async fn get(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-) -> Result<Json<CatalogRepository>, ApiError> {
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    let value: serde_json::Value=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',COALESCE(g.slug||'/'||r.slug,r.slug),'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id) ELSE NULL END,'state',b.state) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=$1").bind(id).fetch_optional(pool).await.map_err(catalog_database_error)?.ok_or_else(ApiError::not_found)?;
+    let identity = request
+        .extensions()
+        .get::<crate::api::authz_mw::VerifiedRequestIdentity>()
+        .cloned();
+    drop(request);
+    let admission = crate::space_admission::catalog_read(pool, identity).await?;
+    let groups = admission.as_ref().map(|scope| scope.groups.clone());
+    use axum::response::IntoResponse;
+    let Some(repository) = get_core(&state, id, groups).await? else {
+        return match admission {
+            Some(scope) => scope.response(ApiError::not_found().into_response()),
+            None => Err(ApiError::not_found()),
+        };
+    };
+    let response = Json(repository).into_response();
+    match admission {
+        Some(scope) => scope.response(response),
+        None => Ok(response),
+    }
+}
+
+/// Typed metadata accessor, not a human permission. HTTP adapters pass the
+/// admitted group filter; existing sync adapters retain their separate ACL.
+/// Their common admission remains a serving-cohort gate.
+pub(crate) async fn get_core(
+    state: &AppState,
+    id: Uuid,
+    groups: Option<Vec<Uuid>>,
+) -> Result<Option<CatalogRepository>, ApiError> {
+    let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let value: Option<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',COALESCE(g.slug||'/'||r.slug,r.slug),'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN c.space_id IS NOT NULL OR b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',COALESCE(c.registry_instance_id,b.registry_instance_id),'namespace_id',COALESCE(c.space_id,b.namespace_id)) ELSE NULL END,'state',COALESCE(c.state,b.state)) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id LEFT JOIN forge_space_catalog c ON c.group_id=r.group_id WHERE r.id=$1 AND ($2::uuid[] IS NULL OR r.group_id=ANY($2))").bind(id).bind(groups).fetch_optional(pool).await.map_err(catalog_database_error)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
     let mut repository: CatalogRepository = serde_json::from_value(value)
         .map_err(|_| ApiError::service_unavailable("invalid_repository_catalog"))?;
     if let Some(group) = repository.group_id {
         crate::namespace::binding(pool, group).await?;
     }
-    check_availability(&state, &mut repository).await;
+    check_availability(state, &mut repository).await;
     repository.clone_url = if repository.kind == "external" {
         repository.external_url.clone()
     } else if repository.group_id.is_some() {
@@ -758,7 +843,7 @@ pub async fn get(
     } else {
         None
     };
-    Ok(Json(repository))
+    Ok(Some(repository))
 }
 
 async fn check_availability(state: &AppState, repository: &mut CatalogRepository) {
@@ -805,6 +890,7 @@ pub async fn create_pull(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    permit: Option<axum::Extension<crate::pulls::RepositoryWrite>>,
     Json(input): Json<CreatePull>,
 ) -> Result<Json<crate::pulls::PullRequest>, ApiError> {
     let storage = storage_by_id(state.pool.as_ref().ok_or_else(ApiError::unavailable)?, id).await?;
@@ -812,6 +898,7 @@ pub async fn create_pull(
         State(state),
         Path(storage.clone()),
         claims,
+        permit,
         Json(crate::pulls::CreatePullRequest {
             repository_name: storage,
             title: input.title,
@@ -827,8 +914,19 @@ pub async fn create_pull(
 pub async fn pull_action(
     State(state): State<Arc<AppState>>,
     Path((id, number)): Path<(Uuid, i32)>,
+    permit: Option<axum::Extension<crate::pulls::RepositoryWrite>>,
+    authority: Option<axum::Extension<pdlc_auth_core::http_authority::RequestAuthority>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<crate::pulls::PrAction>,
 ) -> Result<Json<crate::pulls::PullRequest>, ApiError> {
     let storage = storage_by_id(state.pool.as_ref().ok_or_else(ApiError::unavailable)?, id).await?;
-    crate::pulls::pr_action(State(state), Path((storage, number)), Json(input)).await
+    crate::pulls::pr_action(
+        State(state),
+        Path((storage, number)),
+        permit,
+        authority,
+        claims,
+        Json(input),
+    )
+    .await
 }

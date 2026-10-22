@@ -246,12 +246,13 @@ async fn populated_0094_to_0095_preserves_original_custody_business_and_migratio
         tokio::spawn(async move {
             let full = cicd::migrations().await.unwrap();
             let prior = migration_catalog_subset(&full, 94);
+            let successor = migration_catalog_subset(&full, 95);
             assert_eq!(
                 prior.iter().map(|m| m.version).collect::<Vec<_>>(),
                 (1..=40).chain([90, 91, 92, 93, 94]).collect::<Vec<_>>()
             );
             assert_eq!(
-                full.iter().map(|m| m.version).collect::<Vec<_>>(),
+                successor.iter().map(|m| m.version).collect::<Vec<_>>(),
                 (1..=40).chain([90, 91, 92, 93, 94, 95]).collect::<Vec<_>>()
             );
             prior.run(&checked).await.unwrap();
@@ -307,7 +308,7 @@ async fn populated_0094_to_0095_preserves_original_custody_business_and_migratio
                 .unwrap();
             assert_eq!(guards.as_object().unwrap().len(), 2);
 
-            full.run(&checked).await.unwrap();
+            successor.run(&checked).await.unwrap();
             let upgraded = migration_catalog_history(&checked).await;
             let old_rows: Vec<_> = upgraded
                 .as_array()
@@ -333,7 +334,8 @@ async fn populated_0094_to_0095_preserves_original_custody_business_and_migratio
                     .unwrap();
             assert_eq!(
                 checksum.as_slice(),
-                full.iter()
+                successor
+                    .iter()
                     .find(|m| m.version == 95)
                     .unwrap()
                     .checksum
@@ -342,7 +344,7 @@ async fn populated_0094_to_0095_preserves_original_custody_business_and_migratio
 
             for replay in 0..2 {
                 if replay != 0 {
-                    full.run(&checked).await.unwrap();
+                    successor.run(&checked).await.unwrap();
                 }
                 assert_eq!(
                     sqlx::query_scalar::<_, Value>(BUSINESS)
@@ -368,6 +370,48 @@ async fn populated_0094_to_0095_preserves_original_custody_business_and_migratio
                         .unwrap(),
                     0,
                     "migration/replay must not mint successor custody"
+                );
+            }
+            // Qualify the same populated predecessor through the current cohort
+            // as well; keep the exact 0094->0095 custody regression above.
+            full.run(&checked).await.unwrap();
+            let current = migration_catalog_history(&checked).await;
+            let retained: Vec<_> = current
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["version"].as_i64().unwrap() <= 95)
+                .cloned()
+                .collect();
+            assert_eq!(json!(retained), upgraded, "all 0095 ledger fields retained");
+            assert_eq!(current.as_array().unwrap().last().unwrap()["version"], 104);
+            assert_eq!(
+                current.as_array().unwrap().len(),
+                upgraded.as_array().unwrap().len() + 9
+            );
+            for _ in 0..2 {
+                full.run(&checked).await.unwrap();
+                assert_eq!(migration_catalog_history(&checked).await, current);
+                assert_eq!(
+                    sqlx::query_scalar::<_, Value>(BUSINESS)
+                        .fetch_one(&checked)
+                        .await
+                        .unwrap(),
+                    before
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, Value>(GUARDS)
+                        .fetch_one(&checked)
+                        .await
+                        .unwrap(),
+                    guards
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM task_credential_successors")
+                        .fetch_one(&checked)
+                        .await
+                        .unwrap(),
+                    0
                 );
             }
         })

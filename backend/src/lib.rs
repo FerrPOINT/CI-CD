@@ -10,7 +10,10 @@ pub mod delegated_credentials;
 pub mod dispatch_signal;
 pub mod metrics;
 pub mod outbox;
+pub(crate) mod pipeline_authority;
+pub(crate) mod product_tokens;
 pub mod rate_limit;
+pub mod request_database;
 pub(crate) mod schedule;
 use std::path::{Path, PathBuf};
 
@@ -47,10 +50,13 @@ pub(crate) mod runner_docker;
 pub(crate) mod runner_image_build;
 pub mod runner_protocol;
 pub mod runner_workspace;
+pub(crate) mod space_admission;
+pub(crate) mod space_owner;
 pub mod store;
 pub mod task_delivery;
 pub mod task_git;
 pub mod task_links;
+pub(crate) mod task_owner;
 pub mod workspace_projects;
 
 pub use cicd_domain as domain_types;

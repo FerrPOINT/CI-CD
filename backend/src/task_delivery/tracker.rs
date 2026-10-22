@@ -356,7 +356,13 @@ pub(super) async fn read_bound(
     })?;
     // Include all transport/readback time; never renew an old receipt using completion time.
     let permit = Permit {
-        until: started + remaining,
+        until: crate::task_owner::intersect(
+            value["receipt"]["task"]["owner_subject"]
+                .as_str()
+                .ok_or_else(ApiError::forbidden)?,
+            started + remaining,
+        )
+        .await?,
     };
     permit
         .check()

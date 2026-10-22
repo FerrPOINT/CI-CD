@@ -1,6 +1,7 @@
+import { queryClient } from "./shared/query-client";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import { RouterProvider } from "react-router";
 import { Toaster } from "@pdlc/ui/ui";
@@ -19,7 +20,7 @@ import {
   setPlatformQueryClient,
 } from "@pdlc/ui/platform";
 
-const queryClient = new QueryClient();
+
 setPlatformQueryClient(queryClient);
 capturePlatformReturn(import.meta.env.VITE_PLATFORM_ORIGIN);
 

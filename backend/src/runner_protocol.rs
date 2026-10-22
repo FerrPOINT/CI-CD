@@ -600,15 +600,18 @@ pub(crate) async fn ack_runner_lease(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
+    let owner_clock =
+        lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
+    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?;
     let row = sqlx::query_as::<_, LeaseControlRow>(
         "UPDATE job_leases \
-         SET acknowledged_at = COALESCE(acknowledged_at, now()), last_renewed_at = now() \
+         SET acknowledged_at = COALESCE(acknowledged_at, now()), last_renewed_at = now(), lease_expires_at = LEAST(lease_expires_at, COALESCE($6::timestamptz,lease_expires_at)) \
          WHERE id = $1 \
            AND runner_id = $2 \
            AND lease_status = 'active' \
            AND lease_token_hash = $3 \
            AND generation = $4 \
-           AND lease_expires_at > now() \
+           AND lease_expires_at > now() AND ($6::timestamptz IS NULL OR clock_timestamp() < $6) \
            AND (acknowledged_at IS NOT NULL OR ack_deadline IS NULL OR ack_deadline > now()) \
          RETURNING lease_expires_at, now() + ($5::bigint * interval '1 second') AS renew_after, \
                    cancel_requested_at IS NOT NULL AS cancel_requested",
@@ -618,13 +621,17 @@ pub(crate) async fn ack_runner_lease(
     .bind(token_hash)
     .bind(input.fencing_token)
     .bind(RENEW_AFTER_SECONDS)
+    .bind(owner_until)
     .fetch_optional(db)
     .await
     .map_err(ApiError::internal)?;
 
+    if let Some(clock) = owner_clock {
+        clock.require()?;
+    }
     match row {
         Some(row) => Ok(Json(control_response(row))),
-        None => Err(lease_mutation_error(db, lease_id).await),
+        None => Err(lease_mutation_error(db, lease_id, runner.id).await),
     }
 }
 
@@ -651,16 +658,19 @@ pub(crate) async fn renew_runner_lease(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
+    let owner_clock =
+        lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
+    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?;
     let row = sqlx::query_as::<_, LeaseControlRow>(
         "UPDATE job_leases \
-         SET lease_expires_at = now() + ($5::bigint * interval '1 second'), \
+         SET lease_expires_at = LEAST(now() + ($5::bigint * interval '1 second'),COALESCE($7::timestamptz,now() + ($5::bigint * interval '1 second'))), \
              last_renewed_at = now() \
          WHERE id = $1 \
            AND runner_id = $2 \
            AND lease_status = 'active' \
            AND lease_token_hash = $3 \
            AND generation = $4 \
-           AND lease_expires_at > now() \
+           AND lease_expires_at > now() AND ($7::timestamptz IS NULL OR clock_timestamp() < $7) \
            AND acknowledged_at IS NOT NULL \
          RETURNING lease_expires_at, now() + ($6::bigint * interval '1 second') AS renew_after, \
                    cancel_requested_at IS NOT NULL AS cancel_requested",
@@ -671,13 +681,17 @@ pub(crate) async fn renew_runner_lease(
     .bind(input.fencing_token)
     .bind(LEASE_TTL_SECONDS)
     .bind(RENEW_AFTER_SECONDS)
+    .bind(owner_until)
     .fetch_optional(db)
     .await
     .map_err(ApiError::internal)?;
 
+    if let Some(clock) = owner_clock {
+        clock.require()?;
+    }
     match row {
         Some(row) => Ok(Json(control_response(row))),
-        None => Err(lease_mutation_error(db, lease_id).await),
+        None => Err(lease_mutation_error(db, lease_id, runner.id).await),
     }
 }
 
@@ -743,7 +757,7 @@ pub(crate) async fn poll_runner_lease_control(
 
     match row {
         Some(row) => Ok(Json(control_response(row))),
-        None => Err(lease_mutation_error(db, lease_id).await),
+        None => Err(lease_mutation_error(db, lease_id, runner.id).await),
     }
 }
 
@@ -791,14 +805,14 @@ pub(crate) async fn resolve_runner_lease_secrets(
     )
     .bind(lease_id)
     .bind(runner.id)
-    .bind(token_hash)
+    .bind(&token_hash)
     .bind(input.fencing_token)
     .fetch_optional(db)
     .await
     .map_err(ApiError::internal)?;
 
     let Some(row) = row else {
-        return Err(lease_mutation_error(db, lease_id).await);
+        return Err(lease_mutation_error(db, lease_id, runner.id).await);
     };
 
     let allowed: BTreeSet<&str> = row.required_secrets.iter().map(String::as_str).collect();
@@ -809,6 +823,8 @@ pub(crate) async fn resolve_runner_lease_secrets(
         return Err(ApiError::forbidden());
     }
 
+    let owner_clock =
+        lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
     let pairs = crate::platform::project_secret_pairs_for_names_with_config(
         db,
         row.project_id,
@@ -818,7 +834,13 @@ pub(crate) async fn resolve_runner_lease_secrets(
     .await?;
     let response_body = RunnerSecretResolveResponse {
         protocol_version: PROTOCOL_VERSION,
-        expires_at: Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS),
+        expires_at: owner_clock
+            .map(|clock| clock.valid_until())
+            .transpose()?
+            .map_or(
+                Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS),
+                |until| until.min(Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS)),
+            ),
         items: pairs
             .into_iter()
             .map(|(name, value)| RunnerSecretItem {
@@ -832,7 +854,10 @@ pub(crate) async fn resolve_runner_lease_secrets(
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    Ok(response)
+    match owner_clock {
+        Some(clock) => Ok(clock.response(response)),
+        None => Ok(response),
+    }
 }
 
 #[utoipa::path(
@@ -914,7 +939,7 @@ pub(crate) async fn upload_runner_lease_artifact(
     )
     .bind(lease_id)
     .bind(runner.id)
-    .bind(token_hash)
+    .bind(&token_hash)
     .bind(fencing_token)
     .bind(attempt_id)
     .fetch_optional(db)
@@ -922,12 +947,14 @@ pub(crate) async fn upload_runner_lease_artifact(
     .map_err(ApiError::internal)?;
 
     let Some(row) = row else {
-        return Err(lease_mutation_error(db, lease_id).await);
+        return Err(lease_mutation_error(db, lease_id, runner.id).await);
     };
     if !row.artifact_paths.iter().any(|path| path == &artifact_path) {
         return Err(ApiError::forbidden());
     }
 
+    let owner_clock =
+        lease_owner_clock(db, lease_id, runner.id, &token_hash, fencing_token).await?;
     let artifact = crate::platform::store_job_artifact_with_config(
         db,
         &state.config.artifacts,
@@ -936,8 +963,15 @@ pub(crate) async fn upload_runner_lease_artifact(
         &artifact_name,
         content_type,
         body,
+        crate::platform::ArtifactPublication {
+            clock: owner_clock,
+            session: None,
+        },
     )
     .await?;
+    if let Some(clock) = owner_clock {
+        clock.require()?;
+    }
     Ok(Json(artifact))
 }
 
@@ -992,7 +1026,7 @@ pub(crate) async fn append_runner_lease_logs(
     .map_err(ApiError::internal)?;
 
     let Some(row) = row else {
-        return Err(lease_mutation_error(db, lease_id).await);
+        return Err(lease_mutation_error(db, lease_id, runner.id).await);
     };
 
     let mut accepted = 0;
@@ -1086,7 +1120,7 @@ pub(crate) async fn complete_runner_lease(
 
     let Some(row) = row else {
         drop(tx);
-        return Err(lease_mutation_error(db, lease_id).await);
+        return Err(lease_mutation_error(db, lease_id, runner.id).await);
     };
 
     sqlx::query(
@@ -1220,7 +1254,7 @@ async fn claim_next_work(
              LEFT JOIN pipeline_plans pp ON pp.pipeline_id = p.id \
              LEFT JOIN repository_catalog rc ON rc.id=pr.repository_id \
              LEFT JOIN git_groups gg ON gg.id=rc.group_id \
-             WHERE q.state = 'queued' \
+             WHERE q.state = 'queued' AND NOT EXISTS (SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                 AND NOT EXISTS(SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                AND NOT EXISTS(SELECT 1 FROM repository_catalog nr JOIN forge_namespace_bindings nb ON nb.resource_id=nr.group_id WHERE nr.id=pr.repository_id AND nb.state<>'active') \
                AND q.not_before <= now() \
@@ -1327,6 +1361,11 @@ async fn claim_next_work(
             }
             Err(error) => return Err(ApiError::internal(error)),
         };
+        let owner_clock =
+            crate::pipeline_authority::confirm(db, row.pipeline_id, row.attempt_id).await?;
+        if let Some(clock) = owner_clock {
+            clock.bind_commit_clock(&mut tx).await?;
+        }
         let checkout_url = match row.catalog_kind.as_deref() {
             Some("external") => row
                 .catalog_external_url
@@ -1479,13 +1518,14 @@ fn control_response(row: LeaseControlRow) -> RunnerLeaseControlResponse {
     }
 }
 
-async fn lease_mutation_error(db: &PgPool, lease_id: Uuid) -> ApiError {
+async fn lease_mutation_error(db: &PgPool, lease_id: Uuid, runner_id: Uuid) -> ApiError {
     match sqlx::query_as::<_, LeaseStateRow>(
         "SELECT lease_status, lease_expires_at <= now() AS expired, \
                 (ack_deadline IS NOT NULL AND acknowledged_at IS NULL AND ack_deadline <= now()) AS ack_expired \
-         FROM job_leases WHERE id = $1",
+         FROM job_leases WHERE id = $1 AND runner_id = $2",
     )
     .bind(lease_id)
+    .bind(runner_id)
     .fetch_optional(db)
     .await
     {
@@ -1862,7 +1902,7 @@ pub(crate) async fn begin_artifact_upload_session(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
-    let row = lease_artifact_row(
+    let (row, owner_clock) = lease_artifact_row(
         db,
         lease_id,
         runner.id,
@@ -1879,6 +1919,16 @@ pub(crate) async fn begin_artifact_upload_session(
         return Err(ApiError::forbidden());
     }
 
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    if let Some(clock) = owner_clock {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
+    sqlx::query("SELECT id FROM job_leases WHERE id=$1 FOR UPDATE")
+        .bind(lease_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+
     // Idempotent begin: an open session for the same (attempt, path) resumes.
     let existing = sqlx::query_as::<_, (Uuid, i64, i32, String)>(
         "SELECT id, received_bytes, highest_chunk, status \
@@ -1887,11 +1937,14 @@ pub(crate) async fn begin_artifact_upload_session(
     )
     .bind(input.attempt_id)
     .bind(&input.artifact_path)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
 
     if let Some((session_id, received_bytes, highest_chunk, status)) = existing {
+        if let Some(clock) = owner_clock {
+            clock.require()?;
+        }
         return Ok(Json(ArtifactSessionBeginResponse {
             session_id,
             chunk_size: body_limits::ARTIFACT_CHUNK_BYTES,
@@ -1926,10 +1979,13 @@ pub(crate) async fn begin_artifact_upload_session(
             .unwrap_or("application/octet-stream"),
     )
     .bind(input.declared_size)
-    .execute(db)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
 
+    tx.commit()
+        .await
+        .map_err(crate::git_host::GitDeadline::commit_error)?;
     Ok(Json(ArtifactSessionBeginResponse {
         session_id,
         chunk_size: body_limits::ARTIFACT_CHUNK_BYTES,
@@ -1948,7 +2004,7 @@ async fn lease_artifact_row(
     token_hash: &str,
     fencing_token: i64,
     attempt_id: Uuid,
-) -> Result<RunnerArtifactLeaseRow, ApiError> {
+) -> Result<(RunnerArtifactLeaseRow, Option<crate::git_host::GitDeadline>), ApiError> {
     let row = sqlx::query_as::<_, RunnerArtifactLeaseRow>(
         "SELECT l.job_id, l.attempt_id, j.artifact_paths \
          FROM job_leases l \
@@ -1973,7 +2029,12 @@ async fn lease_artifact_row(
     .fetch_optional(db)
     .await
     .map_err(ApiError::internal)?;
-    row.ok_or_else(|| ApiError::gone("lease is no longer active"))
+    let row = row.ok_or_else(|| ApiError::gone("lease is no longer active"))?;
+    let clock = lease_owner_clock(db, lease_id, runner_id, token_hash, fencing_token).await?;
+    if let Some(clock) = clock {
+        clock.require()?;
+    }
+    Ok((row, clock))
 }
 
 #[utoipa::path(
@@ -2042,7 +2103,7 @@ pub(crate) async fn append_artifact_upload_chunk(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(&lease_token);
-    lease_artifact_row(
+    let (_, owner_clock) = lease_artifact_row(
         db,
         lease_id,
         runner.id,
@@ -2053,6 +2114,9 @@ pub(crate) async fn append_artifact_upload_chunk(
     .await?;
 
     let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    if let Some(clock) = owner_clock {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
     let session = sqlx::query_as::<_, (i64, i32, i64, String)>(
         "SELECT declared_size, highest_chunk, received_bytes, status \
          FROM artifact_upload_sessions \
@@ -2122,7 +2186,9 @@ pub(crate) async fn append_artifact_upload_chunk(
     .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
-    tx.commit().await.map_err(ApiError::internal)?;
+    tx.commit()
+        .await
+        .map_err(crate::git_host::GitDeadline::commit_error)?;
 
     Ok(Json(ArtifactSessionStatusResponse {
         session_id,
@@ -2167,7 +2233,7 @@ pub(crate) async fn complete_artifact_upload_session(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
-    lease_artifact_row(
+    let (_, owner_clock) = lease_artifact_row(
         db,
         lease_id,
         runner.id,
@@ -2270,19 +2336,12 @@ pub(crate) async fn complete_artifact_upload_session(
         &artifact_name,
         &content_type,
         body_bytes.into(),
+        crate::platform::ArtifactPublication {
+            clock: owner_clock,
+            session: Some(session_id),
+        },
     )
     .await?;
-
-    sqlx::query(
-        "UPDATE artifact_upload_sessions \
-         SET status = 'completed', artifact_id = $2, updated_at = now() \
-         WHERE id = $1",
-    )
-    .bind(session_id)
-    .bind(artifact.id())
-    .execute(db)
-    .await
-    .map_err(ApiError::internal)?;
 
     Ok(Json(artifact))
 }
@@ -2311,7 +2370,7 @@ pub(crate) async fn abort_artifact_upload_session(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
-    lease_artifact_row(
+    let (_, owner_clock) = lease_artifact_row(
         db,
         lease_id,
         runner.id,
@@ -2320,6 +2379,10 @@ pub(crate) async fn abort_artifact_upload_session(
         input.attempt_id,
     )
     .await?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    if let Some(clock) = owner_clock {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
     let updated = sqlx::query(
         "UPDATE artifact_upload_sessions \
          SET status = 'aborted', updated_at = now() \
@@ -2328,12 +2391,15 @@ pub(crate) async fn abort_artifact_upload_session(
     .bind(session_id)
     .bind(runner.id)
     .bind(lease_id)
-    .execute(db)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
     if updated.rows_affected() == 0 {
         return Err(ApiError::not_found());
     }
+    tx.commit()
+        .await
+        .map_err(crate::git_host::GitDeadline::commit_error)?;
     Ok(Json(ArtifactSessionStatusResponse {
         session_id,
         received_bytes: 0,
@@ -2341,6 +2407,21 @@ pub(crate) async fn abort_artifact_upload_session(
         persisted_chunks: vec![],
         status: "aborted".into(),
     }))
+}
+
+async fn lease_owner_clock(
+    db: &PgPool,
+    lease_id: Uuid,
+    runner: Uuid,
+    token_hash: &str,
+    generation: i64,
+) -> Result<Option<crate::git_host::GitDeadline>, ApiError> {
+    if !crate::central_auth::application_policy_required()? {
+        return Ok(None);
+    }
+    let (pipeline,attempt):(Uuid,Uuid)=sqlx::query_as("SELECT s.pipeline_id,l.attempt_id FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id WHERE l.id=$1 AND l.runner_id=$2 AND l.lease_token_hash=$3 AND l.generation=$4 AND l.lease_status='active' AND l.lease_expires_at>clock_timestamp()")
+        .bind(lease_id).bind(runner).bind(token_hash).bind(generation).fetch_optional(db).await.map_err(ApiError::internal)?.ok_or_else(||ApiError::gone("lease is no longer active"))?;
+    crate::pipeline_authority::confirm(db, pipeline, attempt).await
 }
 
 #[cfg(test)]

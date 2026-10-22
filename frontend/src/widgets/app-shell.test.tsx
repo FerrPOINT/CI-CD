@@ -1,3 +1,12 @@
+import { applicationAccessFixture } from "@/test/application-access";
+const accessActor = vi.hoisted(() => ({
+  role: "admin" as "user" | "admin",
+  applications: ["ci-cd"],
+}));
+vi.mock("@pdlc/ui/auth", async (original) => ({
+  ...(await original<object>()),
+  useApplicationAccess: () => applicationAccessFixture(accessActor),
+}));
 import {
   act,
   cleanup,
@@ -21,7 +30,10 @@ const authState = vi.hoisted(() => ({
 }));
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key }),
+  useTranslation: () => ({
+    t: (key: string, options?: { defaultValue?: string }) =>
+      options?.defaultValue ?? key,
+  }),
 }));
 
 vi.mock("@/shared/auth/auth-provider", () => ({
@@ -82,8 +94,13 @@ describe("AppShell navigation", () => {
     expect(utility).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(utility);
     fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Служебное" })).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Служебное" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   it("marks the parent section active on a direct nested route", () => {
@@ -200,9 +217,7 @@ describe("AppShell navigation", () => {
       vi.fn(() => media),
     );
     const { unmount } = renderShell();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Открыть навигацию" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Открыть навигацию" }));
     await screen.findByRole("dialog");
     const listener = media.addEventListener.mock.calls.at(-1)![1] as () => void;
     media.matches = true;
@@ -261,14 +276,13 @@ describe("AppShell navigation", () => {
   });
 });
 
-
-it('uses the shared Base sidebar and compact-state contract', () => {
-  renderShell()
-  const shell = document.querySelector('[data-base-shell]')!
-  expect(document.querySelectorAll('aside')).toHaveLength(1)
-  expect(shell.getAttribute('data-sidebar-mode')).toBe('expanded')
-  fireEvent.click(screen.getByRole('button', {name:'Свернуть меню'}))
-  expect(shell.getAttribute('data-sidebar-mode')).toBe('compact')
-  fireEvent.click(screen.getByRole('button', {name:'Развернуть меню'}))
-  expect(shell.getAttribute('data-sidebar-mode')).toBe('expanded')
-})
+it("uses the shared Base sidebar and compact-state contract", () => {
+  renderShell();
+  const shell = document.querySelector("[data-base-shell]")!;
+  expect(document.querySelectorAll("aside")).toHaveLength(1);
+  expect(shell.getAttribute("data-sidebar-mode")).toBe("expanded");
+  fireEvent.click(screen.getByRole("button", { name: "Свернуть меню" }));
+  expect(shell.getAttribute("data-sidebar-mode")).toBe("compact");
+  fireEvent.click(screen.getByRole("button", { name: "Развернуть меню" }));
+  expect(shell.getAttribute("data-sidebar-mode")).toBe("expanded");
+});

@@ -25,7 +25,8 @@ pub(crate) async fn auth_login(
     // This bridge remains available only in legacy deployments where central
     // browser SSO is not configured.
     if let Some(pair) = crate::central_auth::try_login(&input.username, &input.password).await {
-        if let Some(central) = crate::central_auth::try_central(&pair.access_token).await? {
+        if let Some(central) = crate::central_auth::try_verified_central(&pair.access_token).await?
+        {
             let claims = crate::central_auth::link_central_user(pool, &central).await?; // shadow user ensured
             // Issue a local refresh session so the browser survives access-token
             // expiry (the central token itself has no refresh cookie here).

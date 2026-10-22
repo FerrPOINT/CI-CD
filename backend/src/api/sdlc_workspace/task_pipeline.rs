@@ -178,10 +178,13 @@ async fn tracker_bound(
         + current(&value, intent).map_err(|_| {
             ApiError::conflict("Текущий Tracker task assignment или lease не совпадает")
         })?;
-    if Instant::now() >= until {
-        return Err(ApiError::conflict("Lease истёк во время readback"));
-    }
-    Ok(until)
+    crate::task_owner::intersect(
+        value["receipt"]["task"]["owner_subject"]
+            .as_str()
+            .ok_or_else(ApiError::forbidden)?,
+        until,
+    )
+    .await
 }
 
 pub(crate) async fn authorize_saved(
@@ -437,16 +440,21 @@ pub(crate) async fn before_delegated_effect(
     pipeline: Uuid,
     attempt: Uuid,
     config: &crate::runner::RuntimeRunnerConfig,
-) -> Result<(), ApiError> {
+) -> Result<Option<crate::git_host::GitDeadline>, ApiError> {
+    let owner_clock = crate::pipeline_authority::confirm(pool, pipeline, attempt).await?;
+    if let Some(clock) = owner_clock {
+        clock.require()?;
+    }
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let Some(record) = ledger::find_task_pipeline(&mut tx, pipeline, false)
         .await
         .map_err(ApiError::internal)?
     else {
-        return Ok(());
+        return Ok(owner_clock);
     };
-    if record.delegated_credential.is_none() {
-        return Ok(());
+    if record.delegated_credential.is_none() && !crate::central_auth::application_policy_required()?
+    {
+        return Ok(owner_clock);
     }
     if !ledger::task_attempt_submitted(&mut tx, pipeline, attempt)
         .await
@@ -463,7 +471,7 @@ pub(crate) async fn before_delegated_effect(
             "Task authority expired before publication",
         ));
     }
-    Ok(())
+    Ok(Some(crate::git_host::GitDeadline::native(until)?))
 }
 
 /// Verify an already submitted task attempt without claiming or replaying it.

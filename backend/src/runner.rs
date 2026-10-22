@@ -235,6 +235,8 @@ async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiE
 async fn claim_embedded_job_lease(
     pool: &PgPool,
     job_id: Uuid,
+    admitted_attempt: Option<Uuid>,
+    owner_clock: Option<crate::git_host::GitDeadline>,
 ) -> Result<Option<EmbeddedJobLease>, ApiError> {
     crate::store::enqueue_missing_ready_jobs(pool)
         .await
@@ -262,6 +264,7 @@ async fn claim_embedded_job_lease(
             JOIN pipelines p ON p.id = s.pipeline_id
             JOIN projects pr ON pr.id = p.project_id
             WHERE j.id = $1
+              AND ($3::uuid IS NULL OR q.attempt_id=$3)
               AND q.state = 'queued'
               AND q.not_before <= now()
               AND cardinality(q.required_tags) = 0
@@ -346,6 +349,7 @@ async fn claim_embedded_job_lease(
     )
     .bind(job_id)
     .bind(Uuid::new_v4())
+    .bind(admitted_attempt)
     .fetch_optional(&mut *tx)
     .await;
     let row = match row {
@@ -358,6 +362,9 @@ async fn claim_embedded_job_lease(
         }
         Err(error) => return Err(ApiError::internal(error)),
     };
+    if let Some(clock) = owner_clock {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
     if let Err(error) = tx.commit().await {
         if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") {
             return Ok(None);
@@ -1214,8 +1221,19 @@ async fn run_job_inner(
         return Ok(ExecutionOutcome::Finished); // terminal already
     }
 
+    let (admitted_attempt, owner_clock) = if crate::central_auth::application_policy_required()? {
+        let attempt:Uuid=sqlx::query_scalar("SELECT id FROM execution_attempts WHERE job_id=$1 AND status IN ('queued','running') ORDER BY attempt_no DESC LIMIT 1").bind(job_id).fetch_optional(&pool).await.map_err(ApiError::internal)?.ok_or_else(||ApiError::service_unavailable("Current execution attempt unavailable"))?;
+        (
+            Some(attempt),
+            crate::pipeline_authority::confirm(&pool, job.pipeline_id, attempt).await?,
+        )
+    } else {
+        (None, None)
+    };
     let lease = if job.status == "queued" {
-        let Some(lease) = claim_embedded_job_lease(&pool, job_id).await? else {
+        let Some(lease) =
+            claim_embedded_job_lease(&pool, job_id, admitted_attempt, owner_clock).await?
+        else {
             return Ok(ExecutionOutcome::Finished);
         };
         lease
@@ -1227,6 +1245,9 @@ async fn run_job_inner(
         lease
     };
     let attempt_id = lease.attempt_id;
+    if admitted_attempt.is_some_and(|admitted| admitted != attempt_id) {
+        return Ok(ExecutionOutcome::Held);
+    }
 
     if !matches!(
         crate::api::sdlc_workspace::task_pipeline::already_submitted(
@@ -1505,6 +1526,9 @@ async fn run_job_inner(
         Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Legacy) => None,
         Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Permit(until)) => Some(until),
     };
+    if let Some(clock) = owner_clock {
+        clock.require()?;
+    }
     let mut guard = running.lock().await;
     let active: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN job_leases l ON l.attempt_id=a.id \
@@ -1576,6 +1600,9 @@ async fn run_job_inner(
                 .await;
             return Ok(ExecutionOutcome::Held);
         }
+    }
+    if let Some(clock) = owner_clock {
+        clock.require()?;
     }
     let mut child = match child.spawn() {
         Ok(child) => child,
@@ -1816,18 +1843,21 @@ async fn run_job_inner(
             .and_then(|remote| remote.deployment_artifacts())
             .unwrap_or(workspace.as_path())
     };
-    if image_build.is_none()
-        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
+    let artifact_clock = if let Some(until) = publication_until {
+        Some(crate::git_host::GitDeadline::native(until)?)
+    } else {
+        match crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
             &pool,
             job.pipeline_id,
             attempt_id,
             config,
         )
         .await
-        .is_err()
-    {
-        return Ok(ExecutionOutcome::Held);
-    }
+        {
+            Ok(clock) => clock,
+            Err(_) => return Ok(ExecutionOutcome::Held),
+        }
+    };
     let artifact_error = collect_declared_artifacts(
         &pool,
         &config.artifacts,
@@ -1835,6 +1865,7 @@ async fn run_job_inner(
         attempt_id,
         artifact_root,
         &job.artifact_paths,
+        artifact_clock,
     )
     .await
     .err();
@@ -2004,11 +2035,13 @@ async fn finish_workspace_retention(
             tracing::warn!(attempt_id = %lease.attempt_id, "workspace completion journal unavailable; files retained");
             return ExecutionOutcome::Held;
         }
-        // Only this embedded owner has observed and journaled actual terminal completion.
-        // Keep generic/external completion semantics unchanged.
-        if sqlx::query("UPDATE job_leases l SET acknowledged_at=COALESCE(l.acknowledged_at,clock_timestamp()),completion_received_at=COALESCE(l.completion_received_at,clock_timestamp()) WHERE l.id=$1 AND l.runner_id IS NULL AND EXISTS(SELECT 1 FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN task_pipeline_intents t ON t.pipeline_id=s.pipeline_id WHERE j.id=l.job_id)")
-            .bind(lease.id).execute(pool).await.is_err()
-        {
+        // The embedded owner observed process exit and durably acknowledged its
+        // workspace journal. This applies to ordinary CI as well as task pipelines;
+        // neither lease expiry nor reconciliation enters this path.
+        let accepted = sqlx::query("UPDATE job_leases l SET acknowledged_at=COALESCE(l.acknowledged_at,clock_timestamp()),completion_received_at=COALESCE(l.completion_received_at,clock_timestamp()) WHERE l.id=$1 AND l.attempt_id=$2 AND l.generation=$3 AND l.runner_id IS NULL AND l.completed_at IS NOT NULL AND l.terminal_status=$4 AND l.lease_status IN ('completed','canceled')")
+            .bind(lease.id).bind(lease.attempt_id).bind(lease.generation).bind(&outcome)
+            .execute(pool).await;
+        if !accepted.is_ok_and(|result| result.rows_affected() == 1) {
             return ExecutionOutcome::Held;
         }
         if let Some(remote) = remote_job {
@@ -2114,6 +2147,7 @@ async fn collect_declared_artifacts(
     attempt_id: Uuid,
     workspace: &Path,
     artifact_paths: &[String],
+    clock: Option<crate::git_host::GitDeadline>,
 ) -> Result<(), ApiError> {
     if artifact_paths.is_empty() {
         return Ok(());
@@ -2145,6 +2179,10 @@ async fn collect_declared_artifacts(
             &name,
             "application/octet-stream",
             Bytes::from(bytes),
+            crate::platform::ArtifactPublication {
+                clock,
+                session: None,
+            },
         )
         .await?;
         append_attempt_log(

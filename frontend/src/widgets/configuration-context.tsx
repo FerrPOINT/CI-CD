@@ -1,61 +1,63 @@
-import { Fragment, type ReactNode } from 'react'
-import { useParams, useLocation } from 'react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useApplicationAccess } from "@pdlc/ui/auth";
+import { Fragment, type ReactNode } from "react";
+import { useParams, useLocation } from "react-router";
+import { useQuery } from "@tanstack/react-query";
 import {
   NamespaceLink as Link,
   ProjectAvatar,
   SectionNavigation,
   SectionNavigationItem,
-} from '@pdlc/ui/ui'
-import { withNamespaceLocation } from '@pdlc/ui/lib'
-import { api } from '@/api/client'
+} from "@pdlc/ui/ui";
+import { withNamespaceLocation } from "@pdlc/ui/lib";
+import { api } from "@/api/client";
 import {
   useWorkspace,
   workspaceKey,
   workspacePath,
   type Configuration,
-} from '@/api/workspaces'
-import { useNamespaceRef } from './namespace-context'
-import type { components } from '@/api/schema'
+} from "@/api/workspaces";
+import { useNamespaceRef } from "./namespace-context";
+import type { components } from "@/api/schema";
 export function ConfigurationContext({
   children,
   configurationId,
   showSettings = true,
 }: {
-  children: ReactNode
-  configurationId?: string
-  showSettings?: boolean
+  children: ReactNode;
+  configurationId?: string;
+  showSettings?: boolean;
 }) {
-  const { projectId: routeId } = useParams()
-  const location = useLocation()
-  const projectId = configurationId ?? routeId
-  const { ref, malformed } = useNamespaceRef()
+  const { projectId: routeId } = useParams();
+  const location = useLocation();
+  const canAdmin = useApplicationAccess()?.permits([], true) === true;
+  const projectId = configurationId ?? routeId;
+  const { ref, malformed } = useNamespaceRef();
   const config = useQuery({
     queryKey: [
-      'delivery-config',
+      "delivery-config",
       ref?.registry_instance_id,
       ref?.namespace_id,
       projectId,
     ],
     queryFn: ({ signal }) =>
       api<Configuration>(`/delivery-configurations/${projectId}`, { signal }),
-  })
+  });
   const repository = useQuery({
     queryKey: [
-      'catalog-repository',
+      "catalog-repository",
       ref?.registry_instance_id,
       ref?.namespace_id,
       config.data?.repository_id,
     ],
     enabled: !!config.data?.repository_id,
     queryFn: ({ signal }) =>
-      api<components['schemas']['CatalogRepository']>(
+      api<components["schemas"]["CatalogRepository"]>(
         `/catalog/repositories/${config.data!.repository_id}`,
         { signal },
       ),
-  })
-  const namespace = repository.data?.namespace ?? null
-  const project = useWorkspace(namespace)
+  });
+  const namespace = repository.data?.namespace ?? null;
+  const project = useWorkspace(namespace);
   if (
     malformed ||
     (ref &&
@@ -66,15 +68,15 @@ export function ConfigurationContext({
       <p role="alert" className="text-danger">
         Конфигурация принадлежит другому проекту.
       </p>
-    )
+    );
   if (config.isError || repository.isError)
     return (
       <p role="alert" className="text-danger">
         Конфигурация недоступна.
       </p>
-    )
+    );
   if (config.isPending || (config.data.repository_id && repository.isPending))
-    return <p role="status">Загружаем конфигурацию…</p>
+    return <p role="status">Загружаем конфигурацию…</p>;
   return (
     <div className="space-y-4">
       <nav
@@ -119,36 +121,41 @@ export function ConfigurationContext({
       {showSettings && (
         <SectionNavigation aria-label="Разделы CI-конфигурации">
           {[
-            ['settings', 'Настройки'],
-            ['pipelines', 'Запуски'],
-            ['secrets', 'Секреты'],
-            ['environments', 'Окружения'],
-            ['schedules', 'Расписания'],
-            ['webhooks', 'Вебхуки'],
-            ['reports', 'Отчёты'],
-          ].map(([section, label]) => (
-            <SectionNavigationItem
-              asChild
-              key={section}
-              active={
-                location.pathname ===
-                `/delivery-configs/${projectId}/${section}`
-              }
-            >
-              <Link
+            ["settings", "Настройки"],
+            ["pipelines", "Запуски"],
+            ["secrets", "Секреты"],
+            ["environments", "Окружения"],
+            ["schedules", "Расписания"],
+            ["webhooks", "Вебхуки"],
+            ["reports", "Отчёты"],
+          ]
+            .filter(
+              ([section]) =>
+                canAdmin || ["pipelines", "reports"].includes(section),
+            )
+            .map(([section, label]) => (
+              <SectionNavigationItem
+                asChild
                 key={section}
-                to={withNamespaceLocation(
-                  `/delivery-configs/${projectId}/${section}`,
-                  namespace,
-                )}
+                active={
+                  location.pathname ===
+                  `/delivery-configs/${projectId}/${section}`
+                }
               >
-                {label}
-              </Link>
-            </SectionNavigationItem>
-          ))}
+                <Link
+                  key={section}
+                  to={withNamespaceLocation(
+                    `/delivery-configs/${projectId}/${section}`,
+                    namespace,
+                  )}
+                >
+                  {label}
+                </Link>
+              </SectionNavigationItem>
+            ))}
         </SectionNavigation>
       )}
       <Fragment key={projectId}>{children}</Fragment>
     </div>
-  )
+  );
 }

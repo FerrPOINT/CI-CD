@@ -19,3 +19,7 @@ pdlc-auth-core = { path = "../../../services-base/base-modules/rust/pdlc-auth-co
 uuid.workspace = true
 cicd-domain = { path = "../domain" }
 serde_json.workspace = true
+
+[dev-dependencies]
+axum = "0.8"
+tokio.workspace = true

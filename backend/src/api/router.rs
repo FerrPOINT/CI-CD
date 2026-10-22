@@ -203,6 +203,10 @@ pub(crate) fn build_router_with_cors(
             get(crate::workspace_projects::all_summary),
         )
         .route(
+            "/api/v1/space-admission",
+            get(crate::space_admission::human_window),
+        )
+        .route(
             "/api/v1/catalog/repositories",
             get(crate::repository_catalog::all),
         )
@@ -407,6 +411,9 @@ pub(crate) fn build_router_with_cors(
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             rate_limit_mw,
+        ))
+        .layer(axum::middleware::from_fn(
+            pdlc_auth_core::http_authority::enforce,
         ))
         .layer(axum::middleware::from_fn(request_id_mw))
         .layer(cors)
