@@ -176,6 +176,21 @@ Disposable shared data volume получает минимум долей его 
 Kubernetes не предоставляет Docker per-container pids_limit: operator обязан
 квалифицировать aggregate Pod/node PID policy для configured target отдельно.
 
+## Embedded status и terminal cleanup
+
+После actual embedded claim stage/pipeline получают running до Kubernetes
+подготовки. Terminal projection обновляется после matching durable DB completion,
+до retryable физического cleanup, и повторно в existing reconciliation.
+
+Для embedded runner durable ACK — exact job/attempt/lease/generation, latest lease,
+runner_name=embedded без external runner ID, matching terminal status и completed/
+finished timestamps без competing active lease. completion_received_at принадлежит
+внешнему wire protocol и не требуется для обычной embedded completion. Success recovery
+не backfill-ит этот discriminator; прежний failure termination ACK сохраняется.
+DB ACK отдельно от actual exact-UID terminated Pod proof: cleanup требует обоих; unknown/foreign/stale authority остаётся HOLD.
+Sanitized diagnostics содержат только attempt/job IDs, bounded stage, HTTP status
+или transport timeout/connect flags, без response body, token или secret values.
+
 ## Проверки source candidate
 
 Нужны scoped Rust check, unit/API-double lifecycle tests, реальные PostgreSQL

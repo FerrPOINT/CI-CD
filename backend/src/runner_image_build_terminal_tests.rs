@@ -1,4 +1,4 @@
-//! Real PostgreSQL terminal-CAS tests only, not task admission or native build proof.
+//! Real PostgreSQL terminal-CAS and embedded Kubernetes DB authority tests; no native effect proof.
 //! Registered by MAIN as a private runner child under cfg(test, feature = "integration").
 use super::*;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -350,4 +350,99 @@ async fn image_build_terminal_pg_atomic_success_expiry_cancel_and_reconcile() {
     let result = assertions.await;
     fixture.cleanup().await;
     result.unwrap();
+}
+
+// Exercise the real embedded claim branch. An absent operator config stops before any native effect.
+#[tokio::test]
+#[ignore = "requires disposable CICD_TEST_DATABASE_URL; Kubernetes config must be absent; no native effects"]
+async fn kubernetes_claim_pg_projects_running_before_operator_failure() {
+    assert!(std::env::var_os("CICD_KUBERNETES_RUNNER_CONFIG").is_none(),
+        "this DB-only fixture must not have native Kubernetes authority");
+    let fixture = Fixture::new().await;
+    let pool = fixture.pool.clone();
+    let project = fixture.project;
+    let assertions = tokio::spawn(async move {
+        let active = Case::new(&pool, project).await;
+        let neighbor = Case::new(&pool, project).await;
+        for case in [&active, &neighbor] {
+            sqlx::query("UPDATE job_queue SET state='queued',lease_id=NULL,leased_at=NULL WHERE job_id=$1")
+                .bind(case.job).execute(&pool).await.unwrap();
+            sqlx::query("DELETE FROM job_leases WHERE job_id=$1")
+                .bind(case.job).execute(&pool).await.unwrap();
+            sqlx::query("UPDATE execution_attempts SET status='queued',started_at=NULL WHERE job_id=$1")
+                .bind(case.job).execute(&pool).await.unwrap();
+            sqlx::query("UPDATE jobs SET status='queued',started_at=NULL,image='alpine:3.20',command='true' WHERE id=$1")
+                .bind(case.job).execute(&pool).await.unwrap();
+            sqlx::query("UPDATE stages SET status='queued' WHERE id=(SELECT stage_id FROM jobs WHERE id=$1)")
+                .bind(case.job).execute(&pool).await.unwrap();
+            sqlx::query("UPDATE pipelines SET status='queued' WHERE id=(SELECT s.pipeline_id FROM stages s JOIN jobs j ON j.stage_id=s.id WHERE j.id=$1)")
+                .bind(case.job).execute(&pool).await.unwrap();
+        }
+        let mut config = RuntimeRunnerConfig::from_config(&RuntimeConfig::test_default());
+        config.mode = RunnerMode::Kubernetes;
+        let result = run_job_inner(pool.clone(), active.job, Default::default(), &config).await;
+        let error = result.expect_err("operator config is required before a Pod can be prepared");
+        assert_eq!(error.status, axum::http::StatusCode::CONFLICT);
+        for (case, expected) in [(&active, "running"), (&neighbor, "queued")] {
+            let statuses: (String, String, String, String) = sqlx::query_as(
+                "SELECT j.status,a.status,s.status,p.status FROM jobs j JOIN execution_attempts a ON a.job_id=j.id JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id WHERE j.id=$1")
+                .bind(case.job).fetch_one(&pool).await.unwrap();
+            assert_eq!(statuses, (expected.into(),expected.into(),expected.into(),expected.into()));
+        }
+    }).await;
+    fixture.cleanup().await;
+    assertions.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CICD_TEST_DATABASE_URL; no Git, Docker, Kubernetes or native effects"]
+async fn kubernetes_terminal_pg_embedded_ack_without_external_wire_receipt() {
+    let fixture = Fixture::new().await;
+    let pool = fixture.pool.clone();
+    let project = fixture.project;
+    let assertions = tokio::spawn(async move {
+        for status in ["success", "failed", "canceled"] {
+            let case = Case::new(&pool, project).await;
+            sqlx::query("UPDATE jobs SET status=$2,finished_at=clock_timestamp() WHERE id=$1")
+                .bind(case.job).bind(status).execute(&pool).await.unwrap();
+            sqlx::query("UPDATE execution_attempts SET status=$2,finished_at=clock_timestamp() WHERE id=$1")
+                .bind(case.lease.attempt_id).bind(status).execute(&pool).await.unwrap();
+            assert_eq!(complete_lease_by_id(&pool, case.lease.id, status, None).await.unwrap(), 1);
+            assert!(sqlx::query_scalar::<_, bool>("SELECT completion_received_at IS NULL FROM job_leases WHERE id=$1")
+                .bind(case.lease.id).fetch_one(&pool).await.unwrap());
+            assert!(kubernetes::terminal_acknowledged(&pool, case.job, &case.lease).await.unwrap(),
+                "embedded durable completion does not require an external completion HTTP receipt");
+
+            for wrong in [
+                EmbeddedJobLease { id: Uuid::new_v4(), attempt_id: case.lease.attempt_id, generation: 1 },
+                EmbeddedJobLease { id: case.lease.id, attempt_id: Uuid::new_v4(), generation: 1 },
+                EmbeddedJobLease { id: case.lease.id, attempt_id: case.lease.attempt_id, generation: 2 },
+            ] {
+                assert!(!kubernetes::terminal_acknowledged(&pool, case.job, &wrong).await.unwrap());
+            }
+            assert!(!kubernetes::terminal_acknowledged(&pool, Uuid::new_v4(), &case.lease).await.unwrap());
+            for mutation in [
+                "lease_status='active',completed_at=NULL,terminal_status=NULL",
+                "runner_name='foreign'",
+                "terminal_status=NULL",
+            ] {
+                sqlx::query(&format!("UPDATE job_leases SET {mutation} WHERE id=$1"))
+                    .bind(case.lease.id).execute(&pool).await.unwrap();
+                assert!(!kubernetes::terminal_acknowledged(&pool, case.job, &case.lease).await.unwrap(), "{mutation}");
+                sqlx::query("UPDATE job_leases SET completed_at=clock_timestamp(),runner_name='embedded',terminal_status=$2,lease_status=CASE WHEN $2='canceled' THEN 'canceled' ELSE 'completed' END WHERE id=$1")
+                    .bind(case.lease.id).bind(status).execute(&pool).await.unwrap();
+            }
+            sqlx::query("UPDATE execution_attempts SET finished_at=NULL WHERE id=$1")
+                .bind(case.lease.attempt_id).execute(&pool).await.unwrap();
+            assert!(!kubernetes::terminal_acknowledged(&pool, case.job, &case.lease).await.unwrap());
+            sqlx::query("UPDATE execution_attempts SET finished_at=clock_timestamp() WHERE id=$1")
+                .bind(case.lease.attempt_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_name,generation,lease_expires_at) VALUES($1,$2,$3,'embedded',2,clock_timestamp()+interval '1 hour')")
+                .bind(Uuid::new_v4()).bind(case.job).bind(case.lease.attempt_id).execute(&pool).await.unwrap();
+            assert!(!kubernetes::terminal_acknowledged(&pool, case.job, &case.lease).await.unwrap(),
+                "a later lease makes the old completion ineligible");
+        }
+    }).await;
+    fixture.cleanup().await;
+    assertions.unwrap();
 }

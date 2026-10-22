@@ -1247,6 +1247,8 @@ async fn run_job_inner(
     let attempt_id = lease.attempt_id;
 
     if config.mode == RunnerMode::Kubernetes {
+        // Parent projections follow the claimed job, not later Pod cleanup.
+        refresh_stage(pool.clone(), job.id).await?;
         return kubernetes::run(&pool, &job, &lease, &running, config).await;
     }
 

@@ -679,10 +679,19 @@ impl Execution {
             if let Some(path) = &self.token_path {
                 request = request.bearer_auth(fs::read_to_string(path)?.trim());
             }
-            ensure!(
-                request.send().await?.status().is_success(),
-                "finalizer release unconfirmed"
-            );
+            let response = request.send().await.map_err(|error| {
+                tracing::warn!(attempt_id = %self.intent.scope.attempt_id,
+                    stage = "finalizer-release", timeout = error.is_timeout(),
+                    connect = error.is_connect(), "Kubernetes custody transport held");
+                error
+            })?;
+            let status = response.status();
+            if !status.is_success() {
+                tracing::warn!(attempt_id = %self.intent.scope.attempt_id,
+                    stage = "finalizer-release", http_status = status.as_u16(),
+                    "Kubernetes custody update held");
+            }
+            ensure!(status.is_success(), "finalizer release unconfirmed");
         }
         let (status, _) = self
             .request(

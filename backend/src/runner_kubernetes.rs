@@ -490,11 +490,15 @@ async fn run_inner(
         sqlx::query("UPDATE execution_attempts SET status=$2,finished_at=now(),exit_code=$3 WHERE id=$1 AND status='running'").bind(lease.attempt_id).bind(status).bind(terminal.exit_code).execute(pool).await.map_err(ApiError::internal)?;
         complete_embedded_job_lease(pool, lease.id, status, None).await?;
     }
-    let ack:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id WHERE l.id=$1 AND l.attempt_id=$2 AND l.generation=$3 AND l.completed_at IS NOT NULL AND l.lease_status IN ('completed','canceled') AND a.status=l.terminal_status AND a.finished_at IS NOT NULL)").bind(lease.id).bind(lease.attempt_id).bind(lease.generation).fetch_one(pool).await.map_err(ApiError::internal)?;
-    if !ack || execution.acknowledge().await.is_err() {
+    if !terminal_acknowledged(pool, job.id, lease).await.map_err(ApiError::internal)? {
         return Ok(ExecutionOutcome::Held);
     }
+    // Terminal job projection is independent of a retryable physical cleanup failure.
     refresh_stage(pool.clone(), job.id).await?;
+    if execution.acknowledge().await.is_err() {
+        tracing::warn!(job_id = %job.id, attempt_id = %lease.attempt_id, stage = "terminal-cleanup", "Kubernetes custody cleanup held");
+        return Ok(ExecutionOutcome::Held);
+    }
     let outcome =
         finish_workspace_retention(pool, lease, workspace, None, config.keep_workspace).await;
     if outcome == ExecutionOutcome::Finished && execution.finish_workspace_cleanup().is_err() {
@@ -636,6 +640,27 @@ async fn publish_build(
     Ok(output)
 }
 
+/// Embedded terminal authority is the exact durable lease/attempt result, not an external wire receipt.
+pub(super) async fn terminal_acknowledged(
+    pool: &PgPool,
+    job: Uuid,
+    lease: &EmbeddedJobLease,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM job_leases l JOIN jobs j ON j.id=l.job_id \
+         JOIN execution_attempts a ON a.id=l.attempt_id AND a.job_id=j.id \
+         WHERE l.id=$1 AND l.job_id=$2 AND l.attempt_id=$3 AND l.generation=$4 \
+         AND l.runner_id IS NULL AND l.runner_name='embedded' \
+         AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id) \
+         AND l.completed_at IS NOT NULL AND j.finished_at IS NOT NULL AND a.finished_at IS NOT NULL \
+         AND l.terminal_status=j.status AND a.status=j.status AND j.status IN ('success','failed','canceled') \
+         AND l.lease_status=CASE WHEN j.status='canceled' THEN 'canceled' ELSE 'completed' END \
+         AND NOT EXISTS(SELECT 1 FROM job_leases other WHERE other.job_id=j.id AND other.id<>l.id AND other.lease_status='active'))",
+    )
+    .bind(lease.id).bind(job).bind(lease.attempt_id).bind(lease.generation)
+    .fetch_one(pool).await
+}
+
 /// Existing supervisor drives recovery; no new scheduler, process replay or guessed Pod adoption.
 pub(super) async fn reconcile_terminal(
     pool: &PgPool,
@@ -660,8 +685,8 @@ pub(super) async fn reconcile_terminal(
         {
             continue;
         }
-        let row=sqlx::query_as::<_,(String,String,String,bool)>("SELECT j.status,a.status,l.lease_status,l.completion_received_at IS NOT NULL FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN execution_attempts a ON a.id=l.attempt_id WHERE l.id=$1 AND l.job_id=$2 AND l.attempt_id=$3 AND l.generation=$4 AND l.runner_id IS NULL AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id)").bind(scope.lease_id).bind(scope.job_id).bind(scope.attempt_id).bind(scope.generation).fetch_optional(pool).await?;
-        let Some((job_status, attempt_status, lease_status, ack)) = row else {
+        let row=sqlx::query_as::<_,(String,String,String)>("SELECT j.status,a.status,l.lease_status FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN execution_attempts a ON a.id=l.attempt_id WHERE l.id=$1 AND l.job_id=$2 AND l.attempt_id=$3 AND l.generation=$4 AND l.runner_id IS NULL AND l.runner_name='embedded' AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id)").bind(scope.lease_id).bind(scope.job_id).bind(scope.attempt_id).bind(scope.generation).fetch_optional(pool).await?;
+        let Some((job_status, attempt_status, lease_status)) = row else {
             continue;
         };
         if job_status == "running" && attempt_status == "running" && lease_status == "active" {
@@ -680,6 +705,8 @@ pub(super) async fn reconcile_terminal(
         else {
             continue;
         };
+        let lease = EmbeddedJobLease { id: scope.lease_id, attempt_id: scope.attempt_id, generation: scope.generation };
+        let ack = terminal_acknowledged(pool, scope.job_id, &lease).await?;
         match execution.reconcile().await {
             Ok(Some(_terminal))
                 if job_status == attempt_status
@@ -693,7 +720,9 @@ pub(super) async fn reconcile_terminal(
                         continue;
                     }
                 }
+                refresh_stage(pool.clone(), scope.job_id).await.map_err(|_| sqlx::Error::Protocol("terminal parent projection unavailable".into()))?;
                 if execution.acknowledge().await.is_err() {
+                    tracing::warn!(job_id = %scope.job_id, attempt_id = %scope.attempt_id, stage = "recovered-terminal-cleanup", "Kubernetes custody cleanup held");
                     continue;
                 }
                 let Ok(records) =
@@ -736,6 +765,8 @@ pub(super) async fn reconcile_terminal(
             Ok(None) if matches!(job_status.as_str(), "failed" | "canceled") => {
                 let _ = execution.cancel().await;
             }
+            Err(_) => tracing::warn!(job_id = %scope.job_id, attempt_id = %scope.attempt_id, stage = "native-terminal-readback", "Kubernetes reconciliation held"),
+            Ok(Some(_)) => tracing::warn!(job_id = %scope.job_id, attempt_id = %scope.attempt_id, stage = "embedded-terminal-authority", "Kubernetes reconciliation held"),
             _ => {}
         }
     }
