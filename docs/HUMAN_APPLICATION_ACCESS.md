@@ -209,3 +209,10 @@ image/deployment publication сохраняет существующий native 
 Native HTTP/PG fixture подтверждает разрешённую публикацию, истечение в реальном
 COMMIT без metadata/audit/file, отзыв перед chunk, откат chunk high-water mark и
 положительный повтор завершённой сессии без дублей.
+
+Заполненная migration fixture использует прежнюю схему95, реальные проекты,
+репозитории и pipeline history из закрытой копии dev. Она сравнивает прежние
+колонки всех таблиц и SQLx receipts после миграций и повтора; новые owner/role
+таблицы не заполняются догадками. Independent space activation остаётся OFF.
+Восстановление pre-policy копии отдельно проверяет возврат исходной схемы;
+это не доказывает совместимость прежнего binary после новой activation.
