@@ -234,7 +234,7 @@ impl RepositoryWrite {
                 .await
                 .map_err(ApiError::internal)?;
         let (username, role, enabled) = row.ok_or_else(ApiError::forbidden)?;
-        if !enabled || !crate::authz::Role::parse(&role).is_some_and(|role| role >= self.min_role) {
+        if !enabled || crate::authz::Role::parse(&role).is_none_or(|role| role < self.min_role) {
             return Err(ApiError::forbidden());
         }
         let row: Option<(uuid::Uuid,uuid::Uuid,i64,String)>=sqlx::query_as(

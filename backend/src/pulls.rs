@@ -1026,7 +1026,7 @@ async fn pr_action_owned(
                 axum::body::Bytes::new(),
                 write.as_ref().map(RepositoryWrite::proof),
                 application_clock,
-                &mutation_guard,
+                mutation_guard,
             )
             .await?;
             if !merge_output.status.success() {
@@ -1061,7 +1061,7 @@ async fn pr_action_owned(
                 axum::body::Bytes::new(),
                 write.as_ref().map(RepositoryWrite::proof),
                 application_clock,
-                &mutation_guard,
+                mutation_guard,
             )
             .await?;
             if !commit_output.status.success() {

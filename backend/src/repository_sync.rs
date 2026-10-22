@@ -81,7 +81,7 @@ async fn authorize(
         .authorize(repository, access, write)
         .await
         .map_err(api_error)?;
-    let repo = crate::repository_catalog::get_core(&state, repository, None)
+    let repo = crate::repository_catalog::get_core(state, repository, None)
         .await?
         .ok_or_else(ApiError::not_found)?;
     if write

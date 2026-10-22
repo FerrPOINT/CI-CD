@@ -190,7 +190,7 @@ pub(crate) async fn require_auth(
         && let Some(verified) = crate::central_auth::try_verified_central(token).await?
     {
         let central = &verified.context;
-        if crate::delegated_credentials::has_grant(&central)
+        if crate::delegated_credentials::has_grant(central)
             || state
                 .config
                 .sdlc_workspace
@@ -198,7 +198,7 @@ pub(crate) async fn require_auth(
                 .is_some_and(|id| id.to_string() == central.user_id)
         {
             let identity = crate::delegated_credentials::Identity::verified(
-                &central,
+                central,
                 &state.config.sdlc_workspace,
             )?;
             identity.route(&method, req.uri().path())?;
