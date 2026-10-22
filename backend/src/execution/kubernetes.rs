@@ -103,6 +103,7 @@ impl Execution {
         ensure!(digest_image(image) && (config.allowed_images.is_empty() || config.allowed_images.iter().any(|v|v==image) || image==config.builder_image), "image outside operator allowlist");
         ensure!((5..=86400).contains(&timeout) && !command.is_empty(), "invalid execution bounds");
         guarded(root)?; guarded(workspace)?;
+        #[cfg(unix)]{use std::os::unix::fs::MetadataExt;let meta=fs::metadata(root)?;ensure!(meta.gid()==config.security.fs_group && meta.mode()&0o2070==0o2070,"workspace PVC root must already have configured fsGroup, group rwx and setgid; recursive fsGroup mutation is forbidden");}
         ensure!(root.is_absolute() && root.canonicalize()?==root && workspace.canonicalize()?==workspace, "canonical workspace mount required");
         let sub=workspace.strip_prefix(root)?;
         ensure!(sub.components().all(|c|matches!(c,Component::Normal(_))) && sub.components().count()>=2, "only attempt workspace may be mounted");
@@ -124,7 +125,8 @@ impl Execution {
         let mut intent:Intent=read(&directory.join("intent.json"))?;
         if directory.join("effect-identity.json").exists(){let effect:Value=read(&directory.join("effect-identity.json"))?;intent.action_sha256=effect["actionSha256"].as_str().context("effective digest missing")?.into();}
         ensure!(intent.scope.attempt_id==attempt && intent.scope.generation==generation,"custody scope mismatch");
-        let config=Config::from_env()?;ensure!(config==intent.config,"installation identity/policy changed");
+        let current=Config::from_env()?;ensure!(current.cluster_ca_sha256==intent.config.cluster_ca_sha256 && current.namespace==intent.config.namespace && current.namespace_uid==intent.config.namespace_uid && current.workspace_claim==intent.config.workspace_claim && current.workspace_claim_uid==intent.config.workspace_claim_uid && current.installation==intent.config.installation,"installation physical identity changed");
+        let config=intent.config.clone();
         let (client,server,token_path)=transport(&config)?;
         Ok(Self{config,client,server,token_path,directory,intent,manifest:Value::Null})
     }
@@ -156,6 +158,8 @@ impl Execution {
         let uid=value["metadata"]["uid"].as_str().context("Pod UID missing")?;
         Uuid::parse_str(uid)?;
         if self.directory.join("effect-identity.json").exists(){let effect:Value=read(&self.directory.join("effect-identity.json"))?;let expected=effect["containers"].as_array().context("container identity missing")?;let actual=value["spec"]["containers"].as_array().context("container inventory missing")?;ensure!(expected.len()==actual.len() && expected.iter().zip(actual).all(|(e,a)|e["name"]==a["name"] && e["image"]==a["image"]),"execution service images changed");}
+        ensure!(value["spec"]["initContainers"].as_array().is_none_or(|v|v.is_empty()) && value["spec"]["ephemeralContainers"].as_array().is_none_or(|v|v.is_empty()),"foreign execution containers; reconciliation held");
+        if !self.directory.join("effect-identity.json").exists(){ensure!(value["spec"]["containers"].as_array().is_some_and(|v|v.len()==1),"ordinary Pod container inventory changed");}
         let created=self.directory.join("created.json");
         if created.exists() {ensure!(read::<String>(&created)?==uid,"Pod UID changed");}
         Ok(uid.into())
@@ -166,6 +170,7 @@ impl Execution {
         self.identities().await?;
         let issued=self.directory.join("issued.json");
         if !issued.exists() {
+            ensure!(self.manifest.is_object(),"reopened custody cannot create a new effect");
             let admission=authorize()?;
             write_once(&issued,b"true")?;
             let mut manifest=self.manifest.clone();
@@ -197,27 +202,43 @@ impl Execution {
             ensure!(status.is_success(),"Pod cancellation unconfirmed");
         } Ok(())
     }
-    pub async fn logs(&self)->anyhow::Result<String> {
+    pub async fn stream_logs<F,Fut>(&self,mut emit:F)->anyhow::Result<()> where F:FnMut(String)->Fut,Fut:std::future::Future<Output=anyhow::Result<()>> {
         let value=self.get(&self.path()).await?.ok_or(Held)?;self.identity(&value)?;
-        let (status,bytes)=self.request(Method::GET,&format!("{}/log?container=execution&limitBytes={MAX_RESPONSE}",self.path()),None).await?;
-        ensure!(status.is_success(),"Pod logs unavailable");Ok(String::from_utf8(bytes)?)
+        let mut request=self.client.get(format!("{}{}/log?container=execution",self.server,self.path())).timeout(Duration::from_secs(300));
+        if let Some(path)=&self.token_path{request=request.bearer_auth(fs::read_to_string(path)?.trim());}
+        let mut response=request.send().await?;ensure!(response.status().is_success(),"Pod logs unavailable");
+        let mut line=Vec::new();
+        while let Some(chunk)=response.chunk().await? {
+            for byte in chunk {if byte==b'\n'{emit(String::from_utf8_lossy(&line).into_owned()).await?;line.clear();}else{ensure!(line.len()<1024*1024,"single log line exceeds bound");line.push(byte);}}
+        }
+        if !line.is_empty(){emit(String::from_utf8_lossy(&line).into_owned()).await?;}Ok(())
     }
     /// Called only after exact durable owner terminal ACK. Never deletes workspace files.
     pub async fn acknowledge(&self)->anyhow::Result<()> {
-        if self.directory.join("cleaned.json").exists(){return Ok(())}
+        if self.directory.join("cleaned.json").exists(){ensure!(read::<bool>(&self.directory.join("cleaned.json"))?,"invalid cleanup receipt");return self.complete_cleanup()}
         let previous:Terminal=read(&self.directory.join("terminal.json"))?;
-        ensure!(self.observe().await?==Some(previous.clone()),"terminal proof changed");
-        write_once(&self.directory.join("ack.json"),&serde_json::to_vec(&previous)?)?;
-        let value=self.get(&self.path()).await?.ok_or(Held)?;
+        self.identities().await?;
+        let cleanup_started=self.directory.join("cleanup-intent.json").exists() && read::<Terminal>(&self.directory.join("cleanup-intent.json"))?==previous && read::<Terminal>(&self.directory.join("ack.json"))?==previous;
+        let Some(value)=self.get(&self.path()).await? else {
+            ensure!(cleanup_started,"Pod absence is not stop proof");
+            return self.complete_cleanup();
+        };
         let uid=self.identity(&value)?;
-        let finalizers=value["metadata"]["finalizers"].as_array().context("finalizers missing")?;
+        ensure!(terminal(&value,&uid)?==Some(previous.clone()),"terminal proof changed");
+        write_once(&self.directory.join("ack.json"),&serde_json::to_vec(&previous)?)?;
+        write_once(&self.directory.join("cleanup-intent.json"),&serde_json::to_vec(&previous)?)?;
+        let finalizers=match &value["metadata"]["finalizers"]{Value::Null=>Vec::new(),Value::Array(values)=>values.clone(),_=>return Err(Held.into())};
         ensure!(finalizers.iter().all(|v|v==FINALIZER),"foreign finalizer; cleanup held");
-        let patch=json!({"metadata":{"uid":uid,"resourceVersion":value["metadata"]["resourceVersion"],"finalizers":[]}});
-        let mut request=self.client.patch(format!("{}{}",self.server,self.path())).header("Content-Type","application/merge-patch+json").json(&patch);
-        if let Some(path)=&self.token_path {request=request.bearer_auth(fs::read_to_string(path)?.trim());}
-        ensure!(request.send().await?.status().is_success(),"finalizer release unconfirmed");
+        if !finalizers.is_empty(){
+            let patch=json!({"metadata":{"uid":uid,"resourceVersion":value["metadata"]["resourceVersion"],"finalizers":[]}});
+            let mut request=self.client.patch(format!("{}{}",self.server,self.path())).header("Content-Type","application/merge-patch+json").json(&patch);
+            if let Some(path)=&self.token_path {request=request.bearer_auth(fs::read_to_string(path)?.trim());}
+            ensure!(request.send().await?.status().is_success(),"finalizer release unconfirmed");
+        }
         let (status,_)=self.request(Method::DELETE,&self.path(),Some(&json!({"apiVersion":"v1","kind":"DeleteOptions","preconditions":{"uid":uid}}))).await?;
-        ensure!(status.is_success()||status==StatusCode::NOT_FOUND,"Pod cleanup unconfirmed");
+        ensure!(status.is_success()||status==StatusCode::NOT_FOUND,"Pod cleanup unconfirmed");self.complete_cleanup()
+    }
+    fn complete_cleanup(&self)->anyhow::Result<()> {
         write_once(&self.directory.join("cleaned.json"),b"true")?;
         let credential=self.directory.join("lease-token");if credential.exists(){guarded(&credential)?;fs::remove_file(credential)?;}Ok(())
     }
@@ -253,8 +274,13 @@ impl Execution {
     pub fn scope(&self)->&Scope{&self.intent.scope}
     pub fn image(&self)->&str{&self.intent.image}
     pub fn config(&self)->&Config{&self.config}
+    pub fn finish_workspace_cleanup(&self)->anyhow::Result<()>{ensure!(self.directory.join("cleaned.json").exists(),"Pod cleanup not acknowledged");write_once(&self.directory.join("workspace-closed.json"),b"true")}
     pub fn terminal_record(&self)->anyhow::Result<Terminal>{read(&self.directory.join("terminal.json"))}
-    pub async fn reconcile(&self)->anyhow::Result<Option<Terminal>>{ensure!(self.directory.join("issued.json").exists(),"effect never issued; no automatic create");self.start().await?;self.observe().await}
+    pub async fn reconcile(&self)->anyhow::Result<Option<Terminal>>{
+        ensure!(self.directory.join("issued.json").exists(),"effect never issued; no automatic create");
+        if self.directory.join("cleanup-intent.json").exists(){let terminal=self.terminal_record()?;ensure!(read::<Terminal>(&self.directory.join("ack.json"))?==terminal && read::<Terminal>(&self.directory.join("cleanup-intent.json"))?==terminal,"cleanup intent mismatch");self.identities().await?;if self.get(&self.path()).await?.is_none(){return Ok(Some(terminal))}}
+        self.start().await?;self.observe().await
+    }
     pub fn save_external_recovery(&self,token:&str,artifacts:&[String],secrets:&[String])->anyhow::Result<()> {
         ensure!(!token.trim().is_empty() && token.len()<=4096,"invalid lease credential");
         write_once(&self.directory.join("lease-token"),token.as_bytes())?;
@@ -290,6 +316,10 @@ fn terminal(pod:&Value,uid:&str)->anyhow::Result<Option<Terminal>> {
     if !matches!(pod["status"]["phase"].as_str(),Some("Succeeded"|"Failed")){return Ok(None)}
     let statuses=pod["status"]["containerStatuses"].as_array().ok_or(Held)?;
     ensure!(!statuses.is_empty() && statuses.len()<=9 && statuses.iter().all(|s|s["restartCount"]==0 && s["state"]["terminated"]["finishedAt"].as_str().is_some_and(|v|!v.is_empty())),"container termination incomplete or restarted");
+    let expected=pod["spec"]["containers"].as_array().ok_or(Held)?;
+    let actual_names:std::collections::BTreeSet<&str>=statuses.iter().filter_map(|s|s["name"].as_str()).collect();
+    let expected_names:std::collections::BTreeSet<&str>=expected.iter().filter_map(|s|s["name"].as_str()).collect();
+    ensure!(actual_names.len()==statuses.len() && expected_names.len()==expected.len() && statuses.len()==expected.len() && actual_names==expected_names,"full container stop inventory mismatch");
     let main=statuses.iter().find(|s|s["name"]=="execution").ok_or(Held)?;
     let state=&main["state"]["terminated"];
     let code=state["exitCode"].as_i64().ok_or(Held)?;
@@ -317,7 +347,8 @@ mod tests {
     use super::*;
     pub(super) fn config()->Config{Config{schema_version:1,installation_sha256:"d".repeat(64),installation:"fixture".into(),builder_service_account:"forge-builder-job".into(),cluster_ca_sha256:"c".repeat(64),namespace:"app-a".into(),namespace_uid:Uuid::new_v4().to_string(),workspace_claim:"workspaces".into(),workspace_claim_uid:Uuid::new_v4().to_string(),job_service_account:"forge-job".into(),allowed_images:vec![format!("registry.test/job@sha256:{}","a".repeat(64))],builder_image:format!("registry.test/buildkit@sha256:{}","b".repeat(64)),registry_prefix:"registry.test/forge".into(),registry_secret:None,deployment_recipes:Vec::new(),resources:Resources{cpu_millis:500,memory_bytes:256*1024*1024,ephemeral_storage_bytes:1024*1024*1024},security:Security{run_as_user:1000,run_as_group:1000,fs_group:1000}}}
     #[test]fn pod_is_single_attempt_without_controller_or_host_authority(){let c=config();c.validate().unwrap();let s=Scope{job_id:Uuid::new_v4(),attempt_id:Uuid::new_v4(),lease_id:Uuid::new_v4(),generation:2,source_commit:"a".repeat(40)};let p=pod(&c,&s,&s.name(),"attempt-x/workspace",&c.allowed_images[0],&["sh".into(),"-c".into(),"echo done".into()],&[("DECLARED".into(),"value".into())],60);assert_eq!(p["spec"]["restartPolicy"],"Never");assert_eq!(p["spec"]["automountServiceAccountToken"],false);assert_eq!(p["spec"]["containers"][0]["image"],c.allowed_images[0]);assert_eq!(p["spec"]["containers"][0]["volumeMounts"][0]["subPath"],"attempt-x/workspace");assert!(p.to_string().find("hostPath").is_none());assert_eq!(p["metadata"]["finalizers"][0],FINALIZER);}
-    #[test]fn terminal_requires_exact_stopped_container_not_phase_or_absence(){let mut p=json!({"status":{"phase":"Succeeded"}});assert!(terminal(&p,"uid").is_err());p["status"]["containerStatuses"]=json!([{"name":"execution","restartCount":0,"state":{"terminated":{"exitCode":0,"finishedAt":"2026-10-22T00:00:00Z","reason":"Completed"}}}]);assert_eq!(terminal(&p,"uid").unwrap().unwrap().exit_code,0);p["status"]["containerStatuses"][0]["restartCount"]=json!(1);assert!(terminal(&p,"uid").is_err());}
+    #[test]fn terminal_requires_exact_stopped_container_not_phase_or_absence(){let mut p=json!({"status":{"phase":"Succeeded"}});assert!(terminal(&p,"uid").is_err());p["spec"]=json!({"containers":[{"name":"execution"}]});p["status"]["containerStatuses"]=json!([{"name":"execution","restartCount":0,"state":{"terminated":{"exitCode":0,"finishedAt":"2026-10-22T00:00:00Z","reason":"Completed"}}}]);assert_eq!(terminal(&p,"uid").unwrap().unwrap().exit_code,0);p["status"]["containerStatuses"][0]["restartCount"]=json!(1);assert!(terminal(&p,"uid").is_err());}
+    #[test]fn custody_inventory_overflow_fails_closed(){let root=std::env::temp_dir().join(format!("forge-inventory-bound-{}",Uuid::new_v4()));fs::create_dir(&root).unwrap();let control=root.join(".kubernetes-control");fs::create_dir(&control).unwrap();for index in 0..4097{fs::write(control.join(format!("retained-{index}")),b"{}").unwrap();}assert!(retry_unconfirmed(&root,Uuid::new_v4()).is_err());fs::remove_dir_all(root).unwrap();}
     #[test]fn config_rejects_mutable_images_root_and_cross_namespace_aliases(){let mut c=config();c.allowed_images[0]="registry.test/job:latest".into();assert!(c.validate().is_err());c=config();c.security.run_as_user=0;assert!(c.validate().is_err());c=config();c.namespace="other/../app-a".into();assert!(c.validate().is_err());}
 }
 
@@ -391,11 +422,25 @@ mod lifecycle_tests {
         let (execution,state,task)=fixture().await;execution.start_with_admission(||Ok(grant(&execution.config))).await.unwrap();let original=state.lock().unwrap().pod.take();assert!(execution.observe().await.unwrap_err().is::<Held>());assert!(execution.start_with_admission(||panic!("no new admission")).await.is_err());assert_eq!(state.lock().unwrap().creates,1);
         state.lock().unwrap().pod=original;state.lock().unwrap().pod.as_mut().unwrap()["metadata"]["uid"]=json!(Uuid::new_v4().to_string());assert!(execution.observe().await.is_err());fs::remove_dir_all(&execution.directory).unwrap();task.abort();
     }
+    #[tokio::test]async fn cleanup_after_ack_recovers_missing_pod_without_reinterpreting_absence_as_stop(){
+        let (execution,state,task)=fixture().await;execution.start_with_admission(||Ok(grant(&execution.config))).await.unwrap();
+        assert_eq!(execution.recovery_masks(&["TOKEN".into()]).await.unwrap(),vec!["private-value"]);
+        execution.cancel().await.unwrap();let terminal=execution.observe().await.unwrap().unwrap();
+        write_once(&execution.directory.join("ack.json"),&serde_json::to_vec(&terminal).unwrap()).unwrap();write_once(&execution.directory.join("cleanup-intent.json"),&serde_json::to_vec(&terminal).unwrap()).unwrap();
+        state.lock().unwrap().pod=None;assert_eq!(execution.reconcile().await.unwrap(),Some(terminal));execution.acknowledge().await.unwrap();assert!(execution.directory.join("cleaned.json").exists());assert_eq!(state.lock().unwrap().creates,1);fs::remove_dir_all(&execution.directory).unwrap();task.abort();
+    }
+    #[test]fn stopped_proof_requires_every_original_companion_not_only_execution(){
+        let terminated=|name|json!({"name":name,"restartCount":0,"state":{"terminated":{"exitCode":0,"finishedAt":"2026-10-22T00:00:00Z"}}});
+        let mut value=json!({"spec":{"containers":[{"name":"execution"},{"name":"database"}]},"status":{"phase":"Failed","containerStatuses":[terminated("execution")]}});
+        assert!(terminal(&value,"uid").is_err());value["status"]["containerStatuses"].as_array_mut().unwrap().push(terminated("database"));assert!(terminal(&value,"uid").is_ok());value["status"]["containerStatuses"][1]["name"]=json!("foreign");assert!(terminal(&value,"uid").is_err());
+    }
     #[test]fn admission_rejects_stale_future_wrong_namespace_and_disabled(){let c=super::tests::config();let mut a=grant(&c);assert!(validate_admission(&c,&a,110).is_ok());assert!(validate_admission(&c,&a,145).is_err());assert!(validate_admission(&c,&a,99).is_err());a.namespace="app-b".into();assert!(validate_admission(&c,&a,110).is_err());a=grant(&c);a.allow_new_operations=false;assert!(validate_admission(&c,&a,110).is_err());a=grant(&c);a.expires_epoch=146;assert!(validate_admission(&c,&a,110).is_err());}
 }
 
 pub fn inventory(root:&Path)->anyhow::Result<Vec<Scope>> {
     let path=root.join(".kubernetes-control");if !path.exists(){return Ok(Vec::new())}guarded(&path)?;
     let entries=fs::read_dir(path)?.collect::<Result<Vec<_>,_>>()?;ensure!(entries.len()<=4096,"custody inventory exceeds bound");
-    let mut scopes=Vec::new();for entry in entries{if !entry.path().join("intent.json").exists(){continue}let intent:Intent=read(&entry.path().join("intent.json"))?;if !entry.path().join("cleaned.json").exists(){scopes.push(intent.scope)}}Ok(scopes)
+    let mut scopes=Vec::new();for entry in entries{if !entry.path().join("intent.json").exists(){continue}let intent:Intent=read(&entry.path().join("intent.json"))?;if !entry.path().join("workspace-closed.json").exists(){scopes.push(intent.scope)}}Ok(scopes)
 }
+
+pub fn external_marker(root:&Path,attempt:Uuid,generation:i64)->anyhow::Result<bool>{let directory=root.join(".kubernetes-control").join(format!("forge-{}-g{}",attempt.simple(),generation));if !directory.exists(){return Ok(false)}guarded(&directory)?;Ok(directory.join("external-recovery.json").exists())}

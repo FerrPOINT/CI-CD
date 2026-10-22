@@ -17,6 +17,8 @@ pub struct SourceObservationTimeout;
 const MARKER: &str = ".forge-attempt.json";
 const COMPLETION: &str = ".forge-completion.json";
 const ACK: &str = ".forge-completion-ack.json";
+const RECOVERY_COMPLETION: &str = ".forge-recovery-completion.json";
+const RECOVERY_ACK: &str = ".forge-recovery-completion-ack.json";
 const MAX_INVENTORY_ENTRIES: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,15 +161,24 @@ impl OwnedWorkspace {
         )
     }
 
+    /// Only after a fresh authenticated failure/cancel ACK for a definitively stopped original effect.
+    /// The pre-crash completion intention remains intact; an acknowledged result cannot be replaced.
+    pub fn record_recovered_termination(&self,terminal_status:&str)->anyhow::Result<()> {
+        self.verify_owner()?;ensure!(matches!(terminal_status,"failed"|"canceled") && !self.directory.join(ACK).exists(),"acknowledged/successful history cannot be superseded");
+        self.write_record(RECOVERY_COMPLETION,&Completion{schema:"forge/attempt-completion/v1".into(),owner:self.owner.clone(),terminal_status:terminal_status.into()})
+    }
+    fn completion_paths(&self)->(&'static str,&'static str){if self.directory.join(RECOVERY_COMPLETION).exists(){(RECOVERY_COMPLETION,RECOVERY_ACK)}else{(COMPLETION,ACK)}}
+
     /// Call only after an exact terminal ACK or authenticated owner readback.
     pub fn acknowledge_completion(&self, terminal_status: &str) -> anyhow::Result<()> {
         self.verify_owner()?;
-        let completion = self.read_record(COMPLETION)?;
+        let (completion_path,ack_path)=self.completion_paths();
+        let completion = self.read_record(completion_path)?;
         ensure!(
             completion.terminal_status == terminal_status,
             "workspace terminal acknowledgement mismatch"
         );
-        self.write_record(ACK, &completion)
+        self.write_record(ack_path, &completion)
     }
 
     fn read_record(&self, name: &str) -> anyhow::Result<Completion> {
@@ -266,14 +277,15 @@ impl OwnedWorkspace {
                 continue;
             }
             let workspace = Self::reopen(&root, name)?;
-            let terminal_status = match fs::symlink_metadata(workspace.directory.join(COMPLETION)) {
-                Ok(_) => Some(workspace.read_record(COMPLETION)?.terminal_status),
+            let (completion_path,ack_path)=workspace.completion_paths();
+            let terminal_status = match fs::symlink_metadata(workspace.directory.join(completion_path)) {
+                Ok(_) => Some(workspace.read_record(completion_path)?.terminal_status),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error.into()),
             };
-            let acknowledged = match fs::symlink_metadata(workspace.directory.join(ACK)) {
+            let acknowledged = match fs::symlink_metadata(workspace.directory.join(ack_path)) {
                 Ok(_) => {
-                    let ack = workspace.read_record(ACK)?;
+                    let ack = workspace.read_record(ack_path)?;
                     ensure!(
                         Some(&ack.terminal_status) == terminal_status.as_ref(),
                         "orphan workspace acknowledgement"
@@ -372,7 +384,7 @@ impl OwnedWorkspace {
         tokio::task::spawn_blocking(move || {
             self.verify_owner()?;
             ensure!(
-                self.read_record(COMPLETION)? == self.read_record(ACK)?,
+                self.read_record(self.completion_paths().0)? == self.read_record(self.completion_paths().1)?,
                 "workspace terminal acknowledgement missing"
             );
             fs::remove_dir_all(&self.directory).context("remove acknowledged attempt workspace")
@@ -679,4 +691,14 @@ mod tests {
         assert_eq!(fs::read_to_string(&outside).unwrap(), "secret fixture");
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[cfg(test)]mod kubernetes_recovery_tests{
+    use super::*;
+    #[tokio::test]async fn expired_failure_ack_preserves_original_unacknowledged_intention(){
+        let root=std::env::temp_dir().join(format!("forge-recovery-intention-{}",Uuid::new_v4()));fs::create_dir(&root).unwrap();
+        let workspace=OwnedWorkspace::create(&root,Uuid::new_v4(),Uuid::new_v4(),1).unwrap();workspace.create_empty_checkout().unwrap();workspace.record_completion("success").unwrap();let original=fs::read(workspace.directory.join(COMPLETION)).unwrap();
+        workspace.record_recovered_termination("failed").unwrap();assert_eq!(fs::read(workspace.directory.join(COMPLETION)).unwrap(),original);let inventory=OwnedWorkspace::inventory(&root).unwrap();assert_eq!(inventory[0].terminal_status.as_deref(),Some("failed"));assert!(!inventory[0].acknowledged);workspace.acknowledge_completion("failed").unwrap();workspace.cleanup_after_ack().await.unwrap();fs::remove_dir(root).unwrap();
+    }
+    #[tokio::test]async fn recovered_failure_cannot_replace_acknowledged_success(){let root=std::env::temp_dir().join(format!("forge-recovery-ack-{}",Uuid::new_v4()));fs::create_dir(&root).unwrap();let workspace=OwnedWorkspace::create(&root,Uuid::new_v4(),Uuid::new_v4(),1).unwrap();workspace.create_empty_checkout().unwrap();workspace.record_completion("success").unwrap();workspace.acknowledge_completion("success").unwrap();assert!(workspace.record_recovered_termination("failed").is_err());workspace.cleanup_after_ack().await.unwrap();fs::remove_dir(root).unwrap();}
 }

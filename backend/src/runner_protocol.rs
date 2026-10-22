@@ -283,7 +283,7 @@ pub(crate) struct RunnerLogAppendResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RunnerCompleteRequest {
     #[serde(default)]
-    termination_proof: Option<termination::Proof>,
+    termination_proof: Option<termination::KubernetesTerminationProof>,
     protocol_version: i32,
     lease_token: String,
     fencing_token: i64,

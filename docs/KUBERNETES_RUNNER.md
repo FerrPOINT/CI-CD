@@ -9,7 +9,9 @@ Compose/host-shell paths и SDK/UI pins сохранены.
 Backend и внешний runner используют один product-local adapter
 `backend/src/execution/kubernetes.rs`. Включение: `CICD_RUNNER_MODE=kubernetes`,
 `CICD_KUBERNETES_RUNNER_CONFIG=/etc/forge/runner.json`.
-Controller монтирует свой workspace PVC в `/workspaces`; external work-dir
+PVC root заранее имеет configured fsGroup, group rwx и setgid (например2770),
+чтобы `OnRootMismatch` не менял весь PVC рекурсивно; source проверяет это до
+эффекта. Controller монтирует свой workspace PVC в `/workspaces`; external work-dir
 также должен быть `/workspaces`. Пример non-secret operator JSON:
 
 ```json
@@ -90,11 +92,23 @@ readback. Success, stale/foreign identity и новая generation запрещ�
 Это actual owner termination ACK, не принятие expiry за ACK; projection,
 finished_at и очередь не переписываются. Duplicate ACK идемпотентен.
 
+Локальная pre-crash completion intention не считается server ACK. При принятом
+failure/cancel recovery появляется отдельная immutable recovery intention/ACK;
+первоначальные bytes сохраняются, acknowledged success не заменяется.
+Cleanup intent пишется после durable owner ACK до снятия finalizer. Только эта
+связка с prior exact terminal proof разрешает восстановить cleanup при уже
+отсутствующем Pod; отсутствие само по себе по-прежнему удерживает эффект.
+Embedded recovery использует original secret masks из exact-UID Pod env,
+поэтому последующая ротация project secret не раскрывает старое значение в logs.
+На shared PVC external startup пропускает чужие embedded leases только по
+аутентифицированному receipt readback и отсутствию external-issued marker.
+
+
 Pipeline artifacts stage/return сохраняют прежние managed pipeline directories;
 job не получает общий root. Symlinks и переполнение inventory удерживают работу.
-Logs маскируются перед существующим job_logs API/DB. Readback логов ограничен
-4 MiB; большая log qualification и полноценный resumable log protocol остаются
-отдельной проверкой, не доказанной этим source slice.
+Logs маскируются перед существующим job_logs API/DB. Completed logs читаются потоково без усечения общего объёма; single-line bound
+1 MiB удерживает pathological output. Live follow/resumable chunks остаются
+отдельным расширением; source candidate передаёт логи при terminal readback.
 
 ## Typed image build
 
@@ -114,6 +128,8 @@ cap_drop ALL, no escalation, readonly rootfs. Writable state — bounded `/tmp`
 Scoped build-output0770 должен принадлежать configured fsGroup; иначе fail closed.
 Broad PVC chown, privileged, unconfined и no-process-sandbox fallback отсутствуют.
 
+Текущий native gate на выбранном стенде — **FAIL**, cutover удерживается:
+[Feasibility report](KUBERNETES_BUILDER_FEASIBILITY_20261022.md).
 Owner обязан отдельно доказать native kernel/userns/security feasibility.
 Неудача этого gate удерживает runtime rollout. После build backend сверяет
 registry manifest/config digests, source/attempt labels и создаёт прежний

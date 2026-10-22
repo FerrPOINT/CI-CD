@@ -15,6 +15,7 @@ pub(super) async fn run(pool:&PgPool,job:&JobRow,lease:&EmbeddedJobLease,running
 async fn run_inner(pool:&PgPool,job:&JobRow,lease:&EmbeddedJobLease,running:&RunningJobs,config:&RuntimeRunnerConfig)->Result<ExecutionOutcome,ApiError>{
     let root=workspace_root(config);
     let retained=crate::execution::kubernetes::retry_unconfirmed(&root,lease.attempt_id).map_err(|_|ApiError::conflict("Kubernetes custody unavailable"))?;
+    if retained{running.lock().await.insert(job.id,u32::MAX);}
     let input=image_build_input(pool,job,config).await?;
     let workspace=if retained {
         let records=crate::runner_workspace::OwnedWorkspace::inventory(&root).map_err(|_|ApiError::conflict("Retained workspace inventory unavailable"))?;
@@ -23,8 +24,8 @@ async fn run_inner(pool:&PgPool,job:&JobRow,lease:&EmbeddedJobLease,running:&Run
         crate::runner_workspace::OwnedWorkspace::reopen(&root,&matching[0].workspace_id).map_err(|_|ApiError::conflict("Original workspace unavailable"))?
     }else{prepare_workspace(pool,job,lease,config).await?};
     let kube=Config::from_env().map_err(|_|ApiError::conflict("Kubernetes operator config unavailable"))?;
-    let secrets=crate::platform::project_secret_pairs_for_names_with_config(pool,job.project_id,&job.required_secrets,&config.secrets).await?;
-    let masks:Vec<String>=secrets.iter().filter(|(_,v)|!v.is_empty()).map(|(_,v)|v.clone()).collect();
+    let secrets=if retained{Vec::new()}else{crate::platform::project_secret_pairs_for_names_with_config(pool,job.project_id,&job.required_secrets,&config.secrets).await?};
+    let mut masks:Vec<String>=secrets.iter().filter(|(_,v)|!v.is_empty()).map(|(_,v)|v.clone()).collect();
     let timeout=sqlx::query_scalar::<_,Option<i32>>("SELECT timeout_seconds FROM jobs WHERE id=$1").bind(job.id).fetch_one(pool).await.map_err(ApiError::internal)?.unwrap_or(3600).clamp(5,86400) as u64;
     let scope=Scope{job_id:job.id,attempt_id:lease.attempt_id,lease_id:lease.id,generation:lease.generation,source_commit:job.commit_sha.clone().ok_or_else(||ApiError::conflict("Kubernetes job requires source pin"))?};
     let mut env=vec![("CICD_PIPELINE_ID".into(),job.pipeline_id.to_string()),("CICD_JOB_ID".into(),job.id.to_string()),("CICD_JOB_NAME".into(),job.name.clone()),("CICD_STAGE_NAME".into(),job.stage_name.clone()),("CICD_PROJECT_ID".into(),job.project_id.to_string()),("CICD_PROJECT_NAME".into(),job.project_name.clone()),("CICD_COMMIT_REF".into(),job.git_ref.clone()),("CICD_COMMIT_SHA".into(),scope.source_commit.clone()),("CICD_ARTIFACTS_DIR".into(),"/workspace/artifacts".into()),("CICD_PIPELINE_ARTIFACTS_DIR".into(),"/workspace/pipeline-artifacts".into())];
@@ -53,6 +54,7 @@ async fn run_inner(pool:&PgPool,job:&JobRow,lease:&EmbeddedJobLease,running:&Run
         if input.is_some(){execution.build_template(&registry).map_err(|_|ApiError::conflict("BuildKit security template unavailable"))?;}
         execution
     };
+    if retained{masks=execution.recovery_masks(&job.required_secrets).await.map_err(|_|ApiError::conflict("Original Pod secret masks unavailable"))?;}
     let submitted=retained && crate::api::sdlc_workspace::task_pipeline::already_submitted(pool,job.pipeline_id,lease.attempt_id).await?;
     let until=if submitted {Some(crate::api::sdlc_workspace::task_pipeline::verify_submitted_attempt(pool,job.pipeline_id,lease.attempt_id,&config.sdlc_workspace,&config.secrets).await.unwrap_or_else(|_|std::time::Instant::now()))}else{match crate::api::sdlc_workspace::task_pipeline::before_spawn(pool,job.pipeline_id,lease.attempt_id,&config.sdlc_workspace,&config.secrets).await?{
         crate::api::sdlc_workspace::task_pipeline::Spawn::Held=>return Ok(ExecutionOutcome::Held),
@@ -75,8 +77,7 @@ async fn run_inner(pool:&PgPool,job:&JobRow,lease:&EmbeddedJobLease,running:&Run
         if terminal.is_none(){tokio::time::sleep(Duration::from_secs(1)).await;}
     }
     let terminal=terminal.expect("observed terminal");
-    let logs=match execution.logs().await{Ok(logs)=>logs,Err(_)=>return Ok(ExecutionOutcome::Held)};
-    for line in logs.lines(){append_attempt_log(pool,job.id,lease.attempt_id,&mask_secrets(line,&masks)).await?;}
+    if execution.stream_logs(|line|{let pool=pool.clone();let masks=masks.clone();async move{append_attempt_log(&pool,job.id,lease.attempt_id,&mask_secrets(&line,&masks)).await.map_err(|_|anyhow::anyhow!("masked log persistence unavailable"))}}).await.is_err(){return Ok(ExecutionOutcome::Held)}
     let mut status=if timed_out{"failed"}else if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"};
     let mut artifact_root=workspace.checkout().to_path_buf();
     if let Some((spec,_))=&input {if status=="success"{if !image_build_attempt_active(pool,lease).await?{return Ok(ExecutionOutcome::Held)}artifact_root=match publish_build(&kube,job,lease,spec,workspace.checkout(),&registry).await{Ok(root)=>root,Err(_)=>return Ok(ExecutionOutcome::Held)};}}
@@ -100,7 +101,9 @@ async fn run_inner(pool:&PgPool,job:&JobRow,lease:&EmbeddedJobLease,running:&Run
     }
     let ack:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id WHERE l.id=$1 AND l.attempt_id=$2 AND l.generation=$3 AND l.completed_at IS NOT NULL AND l.lease_status IN ('completed','canceled') AND a.status=l.terminal_status AND a.finished_at IS NOT NULL)").bind(lease.id).bind(lease.attempt_id).bind(lease.generation).fetch_one(pool).await.map_err(ApiError::internal)?;
     if !ack || execution.acknowledge().await.is_err(){return Ok(ExecutionOutcome::Held)}refresh_stage(pool.clone(),job.id).await?;
-    Ok(finish_workspace_retention(pool,lease,workspace,None,config.keep_workspace).await)
+    let outcome=finish_workspace_retention(pool,lease,workspace,None,config.keep_workspace).await;
+    if outcome==ExecutionOutcome::Finished && execution.finish_workspace_cleanup().is_err(){return Ok(ExecutionOutcome::Held)}
+    Ok(outcome)
 }
 
 fn copy_artifact_tree(source:&Path,target:&Path)->anyhow::Result<()> {
@@ -141,7 +144,9 @@ async fn publish_build(kube:&Config,job:&JobRow,lease:&EmbeddedJobLease,spec:&cr
 /// Existing supervisor drives recovery; no new scheduler, process replay or guessed Pod adoption.
 pub(super) async fn reconcile_terminal(pool:&PgPool,running:&RunningJobs,config:&RuntimeRunnerConfig)->Result<(),sqlx::Error>{
     let scopes=crate::execution::kubernetes::inventory(&workspace_root(config)).map_err(|e|sqlx::Error::Protocol(e.to_string()))?;
-    for scope in scopes.into_iter().take(32){
+    static CURSOR:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
+    let count=scopes.len().min(32);let start=if scopes.is_empty(){0}else{CURSOR.fetch_add(count,std::sync::atomic::Ordering::Relaxed)%scopes.len()};
+    for scope in scopes.iter().cycle().skip(start).take(count).cloned(){
         if WORKERS.get_or_init(Default::default).lock().map_err(|_|sqlx::Error::Protocol("worker lock poisoned".into()))?.contains(&scope.job_id){continue}
         let row=sqlx::query_as::<_,(String,String,String,bool)>("SELECT j.status,a.status,l.lease_status,l.completion_received_at IS NOT NULL FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN execution_attempts a ON a.id=l.attempt_id WHERE l.id=$1 AND l.job_id=$2 AND l.attempt_id=$3 AND l.generation=$4 AND l.runner_id IS NULL AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id)").bind(scope.lease_id).bind(scope.job_id).bind(scope.attempt_id).bind(scope.generation).fetch_optional(pool).await?;
         let Some((job_status,attempt_status,lease_status,ack))=row else{continue};
@@ -160,9 +165,14 @@ pub(super) async fn reconcile_terminal(pool:&PgPool,running:&RunningJobs,config:
                 }
                 if execution.acknowledge().await.is_err(){continue}
                 let Ok(records)=crate::runner_workspace::OwnedWorkspace::inventory(&workspace_root(config)) else{continue};
+                let mut workspace_done=true;
                 for record in records.iter().filter(|r|r.attempt_id==scope.attempt_id && r.lease_id==scope.lease_id && r.generation==scope.generation){
-                    if let Ok(workspace)=crate::runner_workspace::OwnedWorkspace::reopen(&workspace_root(config),&record.workspace_id){if workspace.record_completion(&job_status).and_then(|_|workspace.acknowledge_completion(&job_status)).is_ok(){if !config.keep_workspace{let _=workspace.cleanup_after_ack().await;}}}
+                    match crate::runner_workspace::OwnedWorkspace::reopen(&workspace_root(config),&record.workspace_id){
+                        Ok(workspace)=>{if workspace.record_completion(&job_status).or_else(|_|workspace.record_recovered_termination(&job_status)).and_then(|_|workspace.acknowledge_completion(&job_status)).is_err(){workspace_done=false;}else if !config.keep_workspace && workspace.cleanup_after_ack().await.is_err(){workspace_done=false;}},
+                        Err(_)=>workspace_done=false,
+                    }
                 }
+                if !workspace_done || execution.finish_workspace_cleanup().is_err(){continue}
                 running.lock().await.remove(&scope.job_id);
             }
             Ok(None) if matches!(job_status.as_str(),"failed"|"canceled")=>{let _=execution.cancel().await;}

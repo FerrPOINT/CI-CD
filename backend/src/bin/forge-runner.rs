@@ -357,6 +357,12 @@ async fn reconcile_workspaces(
 ) -> anyhow::Result<()> {
     let mut unresolved = 0;
     for record in cicd::runner_workspace::OwnedWorkspace::inventory(root)? {
+        if kubernetes_mode() && !cicd::execution::kubernetes::external_marker(root,record.attempt_id,record.generation)? {
+            let ownership=client.get(format!("{base}/api/v1/runner/leases/{}/receipt",record.lease_id)).bearer_auth(credential).send().await?;
+            // Only an authenticated foreign lease with no issued external marker may be skipped.
+            if ownership.status()==reqwest::StatusCode::NOT_FOUND{continue}
+            ensure_success(ownership).await?;
+        }
         let Some(outcome) = record.terminal_status.as_deref() else {
             if kubernetes_mode(){match recover_kubernetes(client,base,credential,root,&record,keep_workspace).await{Ok(())=>continue,Err(_)=>{unresolved+=1;continue}}}
             unresolved += 1;
@@ -374,6 +380,7 @@ async fn reconcile_workspaces(
         .await
         .is_err()
         {
+            if kubernetes_mode(){match recover_kubernetes(client,base,credential,root,&record,keep_workspace).await{Ok(())=>continue,Err(_)=>{unresolved+=1;continue}}}
             unresolved += 1;
             continue;
         }
@@ -381,9 +388,8 @@ async fn reconcile_workspaces(
         workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
         if kubernetes_mode(){cicd::execution::kubernetes::Execution::reopen(root,record.attempt_id,record.generation)?.acknowledge().await?;}
         workspace.acknowledge_completion(outcome)?;
-        if !keep_workspace {
-            workspace.cleanup_after_ack().await?;
-        }
+        if !keep_workspace {workspace.cleanup_after_ack().await?;}
+        if kubernetes_mode(){cicd::execution::kubernetes::Execution::reopen(root,record.attempt_id,record.generation)?.finish_workspace_cleanup()?;}
     }
     if unresolved > 0 {
         bail!("{unresolved} workspaces remain unresolved; no commands were re-executed");
@@ -858,7 +864,10 @@ async fn complete_executed_attempt(
     keep_workspace: bool,
 ) -> anyhow::Result<()> {
     let outcome = result.outcome;
-    workspace.record_completion(outcome)?;
+    let cleanup_root=workspace_root_for_checkout(workspace.checkout())?;
+    let mut workspace_closed=true;
+    let recovery_record=workspace.record_completion(outcome).is_err();
+    if recovery_record && (!kubernetes_mode() || !matches!(outcome,"failed"|"canceled")){bail!("workspace completion intention conflicts");}
     let completion = complete_lease(client, base, credential, offer, result).await;
     // Never repeat the POST: a lost reply may follow a committed completion.
     let completion = match completion {
@@ -877,6 +886,7 @@ async fn complete_executed_attempt(
         }
     };
     if completion.is_ok() {
+        if recovery_record{workspace.record_recovered_termination(outcome)?;}
         if kubernetes_mode(){
             cicd::execution::kubernetes::Execution::reopen(&workspace_root_for_checkout(workspace.checkout())?,offer.attempt.id,offer.fencing_token)?.acknowledge().await?;
         }
@@ -884,9 +894,11 @@ async fn complete_executed_attempt(
     }
     if completion.is_ok() && !keep_workspace {
         if let Err(error) = workspace.cleanup_after_ack().await {
+            workspace_closed=false;
             eprintln!("acknowledged workspace retained: {error:#}");
         }
     }
+    if completion.is_ok() && workspace_closed && kubernetes_mode(){cicd::execution::kubernetes::Execution::reopen(&cleanup_root,offer.attempt.id,offer.fencing_token)?.finish_workspace_cleanup()?;}
     completion
 }
 
@@ -1917,8 +1929,7 @@ async fn execute_kubernetes(
         tokio::time::sleep(Duration::from_secs(1)).await;
     };
     if let Some(context)=&log {
-        let output=execution.logs().await.map_err(|_|UnconfirmedExecution)?;
-        for line in output.lines(){append_log_lines(context,vec![RunnerLogLine{stream:"stdout",message:protocol_log_message(&mask_secrets(line,&context.masks))}]).await.map_err(|_|UnconfirmedExecution)?;}
+        execution.stream_logs(|line|{let context=context.clone();async move{append_log_lines(&context,vec![RunnerLogLine{stream:"stdout",message:protocol_log_message(&mask_secrets(&line,&context.masks))}]).await}}).await.map_err(|_|UnconfirmedExecution)?;
         if !execution.cancelled(){upload_declared_artifacts(context,offer,workspace.checkout()).await.map_err(|_|UnconfirmedExecution)?;}
     }
     let result=ExecutionResult{outcome:if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"},exit_code:Some(terminal.exit_code),diagnostic:None};
@@ -1954,10 +1965,10 @@ async fn recover_kubernetes(client:&reqwest::Client,base:&str,credential:&str,ro
     let receipt:LeaseReceipt=response_json(response).await?;
     let outcome=if receipt.terminal_acknowledged{receipt.terminal_status.as_deref().context("terminal status missing")?}else if matches!(receipt.terminal_status.as_deref(),Some("failed"|"canceled")){revoked=true;receipt.terminal_status.as_deref().unwrap()}else if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"};
     if receipt.terminal_acknowledged {
-        workspace.record_completion(outcome)?;workspace.acknowledge_completion(outcome)?;execution.acknowledge().await?;if !keep_workspace{workspace.cleanup_after_ack().await?;}return Ok(())
+        workspace.record_completion(outcome).or_else(|_|workspace.record_recovered_termination(outcome))?;workspace.acknowledge_completion(outcome)?;execution.acknowledge().await?;if !keep_workspace{workspace.cleanup_after_ack().await?;}execution.finish_workspace_cleanup()?;return Ok(())
     }
     if !revoked {
-        for line in execution.logs().await?.lines(){append_log_lines(&context,vec![RunnerLogLine{stream:"stdout",message:protocol_log_message(&mask_secrets(line,&context.masks))}]).await?;}
+        execution.stream_logs(|line|{let context=context.clone();async move{append_log_lines(&context,vec![RunnerLogLine{stream:"stdout",message:protocol_log_message(&mask_secrets(&line,&context.masks))}]).await}}).await?;
         if outcome!="canceled"{upload_declared_artifacts(&context,&offer,workspace.checkout()).await?;}
     }
     context.masks.clear();

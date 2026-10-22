@@ -4,7 +4,7 @@ use crate::execution::kubernetes::{Execution,Scope,Terminal};
 use std::path::Path;
 #[derive(Debug,Deserialize,Serialize,utoipa::ToSchema)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
-pub(crate) struct Proof {pub cluster_ca_sha256:String,pub namespace_uid:String,pub workspace_claim_uid:String,pub pod_uid:String}
+pub(crate) struct KubernetesTerminationProof {pub cluster_ca_sha256:String,pub namespace_uid:String,pub workspace_claim_uid:String,pub pod_uid:String}
 
 pub(super) async fn complete(db:&PgPool,runner:&AuthenticatedRunner,lease:Uuid,input:&RunnerCompleteRequest)->Result<Json<RunnerCompleteResponse>,ApiError>{
     if !matches!(input.outcome.as_str(),"failed"|"failure"|"canceled"){return Err(ApiError::conflict("Expired execution cannot report success"))}
