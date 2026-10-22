@@ -1,7 +1,7 @@
 # Минимальный backend graph PDLC3
 
 Область: обе backend Docker recipes, их context policies, обычные source guard,
-CI/quality callers. Общие правила — [Base](../../../services-base/docs/BUILD_PERFORMANCE.md).
+CI/quality callers. Общие правила — [инструкции по pinned Base standard](../../AGENTS.md).
 
 План: metadata/stubs → unit dependencies → full dependencies → реальные unit
 sources и независимый полный build с marker. Unit не наследует server graph.
