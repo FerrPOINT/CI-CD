@@ -13,6 +13,8 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Read-only predecessor hashes; never a native retirement or held acknowledgement.
+    AdoptionStatus,
     /// Explicit owner handoff; native source/destination proof is verified by Base.
     AdoptPrepare { #[arg(long)] operation:Uuid, #[arg(long)] handoff:PathBuf, #[arg(long)] handoff_sha256:String },
     AdoptCommit { #[arg(long)] operation:Uuid, #[arg(long)] handoff:PathBuf, #[arg(long)] handoff_sha256:String },
@@ -27,6 +29,8 @@ enum Command {
         operation: Uuid,
         #[arg(long)]
         expected: PathBuf,
+        #[arg(long)]
+        require_recoverable_idle: bool,
     },
     /// Explicitly reopen admission after a completed/abandoned backup, exact operation only.
     Resume {
@@ -39,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let gate = Gate::open(&args.directory)?;
     match args.command {
+        Command::AdoptionStatus=>println!("{}",cicd::quiescence::adoption_status(&gate)?),
         Command::AdoptPrepare{operation,handoff,handoff_sha256}=>adopt(gate,operation,handoff,handoff_sha256,false).await?,
         Command::AdoptCommit{operation,handoff,handoff_sha256}=>adopt(gate,operation,handoff,handoff_sha256,true).await?,
         Command::Request { operation } => {
@@ -52,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Hold {
             operation,
             expected,
+            require_recoverable_idle,
         } => {
             ensure!(
                 std::fs::metadata(&expected)?.len() <= 32768,
@@ -69,11 +75,9 @@ async fn main() -> anyhow::Result<()> {
                 owner.gate().verify_participants(&expected)?;
                 if let Some(fence) = owner.try_fence()? {
                     owner.gate().verify_no_effect_records(&fence)?;
-                    let check = tokio::time::timeout(
-                        std::time::Duration::from_secs(3),
-                        cicd::quiescence::verify_idle(&fence, &pool, &expected),
-                    )
-                    .await;
+                    let check = tokio::time::timeout(std::time::Duration::from_secs(3),async {
+                        cicd::quiescence::verify_idle_at(&fence,&pool,&expected,owner.gate(),require_recoverable_idle).await
+                    }).await;
                     if matches!(check, Ok(Ok(()))) {
                         owner.gate().verify_participants(&expected)?;
                         break fence;
@@ -88,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
             owner.publish_held(&fence, &expected)?;
             println!(
                 "{}",
-                serde_json::json!({"schema":"forge/quiescence-held/v1","operationId":operation,"coordinatorPid":std::process::id(),"participants":expected,"backupAcknowledged":true,"validity":"only while this exact foreground coordinator retains its kernel fence"})
+                serde_json::json!({"schema":"forge/quiescence-held/v1","operationId":operation,"coordinatorPid":std::process::id(),"participants":expected,"backupAcknowledged":true,"recoverableIdleRequired":require_recoverable_idle,"validity":"only while this exact foreground coordinator retains its kernel fence"})
             );
             std::io::stdout().flush()?;
             let mut rx = read_command();
@@ -141,7 +145,7 @@ async fn adopt(gate:Gate,operation:Uuid,path:PathBuf,sha:String,commit:bool)->an
     owner.gate().verify_no_effect_records(&fence)?;
     let config=cicd::config::RuntimeConfig::from_env()?;
     let pool=sqlx::postgres::PgPoolOptions::new().max_connections(1).acquire_timeout(std::time::Duration::from_secs(3)).connect(&config.database.url).await?;
-    let seals=cicd::quiescence::adoption_preflight(&fence,&pool,&handoff,&old).await?;
+    let seals=cicd::quiescence::adoption_preflight(&fence,&pool,&handoff,&old,owner.gate()).await?;
     pool.close().await;
     if commit {owner.verify_adoption_seals()?;owner.commit_adoption(&fence,&handoff,&bytes,&old)?;}
     else{owner.prepare_adoption(&fence,&handoff,&bytes,&old,seals)?;}

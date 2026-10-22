@@ -18,10 +18,15 @@ pub struct RootMapping {pub source:CustodyRoot,pub destination:CustodyRoot}
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct Enrollment {pub source_participants:Vec<String>,pub participant:String,pub kind:String,pub roots:Vec<RootMapping>}
+#[derive(Clone,Serialize,Deserialize,PartialEq,Eq)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct PriorGeneration {pub generation_id:Uuid,pub handoff_sha256:String,pub state_sha256:String,pub archive_catalog_sha256:String}
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct AdoptionHandoff {
     pub schema_version:u32,pub schema:String,pub operation_id:Uuid,pub generation_id:Uuid,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub prior_generation:Option<PriorGeneration>,
     pub source_exited_receipt:EvidenceFile,pub retired_processes:Vec<RetiredProcess>,
     pub destination:DestinationIdentity,pub participants:Vec<Enrollment>,
     pub source_docker_daemon_id:Option<String>,pub source_workspace_volume:Option<String>,
@@ -48,6 +53,8 @@ struct Snapshot {files:Vec<SnapshotFile>,directories:Vec<PathBuf>}
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 struct Adoption {
     schema_version:u32,operation_id:Uuid,generation_id:Uuid,handoff_sha256:String,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    prior_generation:Option<PriorGeneration>,
     phase:String,archive_sha256:String,basis_sha256:String,control_sha256:String,root_inode:u64,coordinator_inode:u64,effects_inode:u64,
     retired_compose:Vec<RetiredCompose>,enrolled:Vec<Identity>,
 }
@@ -106,24 +113,80 @@ fn ensure_no_generation_bypass(gate:&Gate)->anyhow::Result<()>{
         ensure!(fs::read_dir(gate.root.join("generations"))?.next().is_none(),"archived adoption lacks its journal; HOLD");
     }Ok(())
 }
-fn basis(state:&Adoption)->anyhow::Result<Vec<u8>>{
-    Ok(serde_json::to_vec(&serde_json::json!({"schemaVersion":state.schema_version,"operationId":state.operation_id,"generationId":state.generation_id,
-        "handoffSha256":state.handoff_sha256,"archiveSha256":state.archive_sha256,"controlSha256":state.control_sha256,
-        "rootInode":state.root_inode,"coordinatorInode":state.coordinator_inode,"effectsInode":state.effects_inode,"retiredCompose":state.retired_compose}))?)
+fn catalog(gate:&Gate,exclude:Uuid)->anyhow::Result<Snapshot>{
+    let base=gate.root.join("generations");let mut value=Snapshot{files:vec![],directories:vec![]};
+    if !base.try_exists()?{return Ok(value)}private(&base,true)?;
+    let pending=if gate.root.join("adoption.next").try_exists()?{let next:Adoption=read(&gate.root.join("adoption.next"))?;if next.phase=="preparing"{Some(next.generation_id)}else{None}}else{None};
+    for entry in fs::read_dir(&base)?{
+        let path=entry?.path();let name=path.file_name().and_then(|n|n.to_str()).context("generation archive name invalid")?;
+        let generation=Uuid::parse_str(name)?;ensure!(!generation.is_nil() && generation.to_string()==name,"unknown generation archive");
+        if generation==exclude || Some(generation)==pending{continue}
+        value.directories.push(PathBuf::from(name));collect(&base,&path,&mut value,false)?;
+    }
+    value.files.sort_by(|a,b|a.path.cmp(&b.path));value.directories.sort();Ok(value)
 }
-fn load(gate:&Gate)->anyhow::Result<Option<(Adoption,AdoptionHandoff)>>{
+fn verify_lineage(gate:&Gate,current:&Adoption)->anyhow::Result<()>{
+    let mut expected=BTreeSet::new();expected.insert(current.generation_id);let mut prior=current.prior_generation.clone();let mut at=current.generation_id;
+    while let Some(reference)=prior{
+        ensure!(expected.len()<64 && expected.insert(reference.generation_id),"cyclic/oversized generation chain");
+        let raw=bounded_bytes(&generation_root(gate,at).join("prior-state.json"))?;
+        ensure!(sha(&raw)==reference.state_sha256,"lineage state hash changed");let state:Adoption=serde_json::from_slice(&raw)?;
+        ensure!(state.phase=="active" && state.generation_id==reference.generation_id && state.handoff_sha256==reference.handoff_sha256,"lineage predecessor differs");
+        at=state.generation_id;prior=state.prior_generation;
+    }
+    let pending=if gate.root.join("adoption.next").try_exists()?{let next:Adoption=read(&gate.root.join("adoption.next"))?;if next.phase=="preparing"{Some(next.generation_id)}else{None}}else{None};
+    let mut actual=BTreeSet::new();for entry in fs::read_dir(gate.root.join("generations"))?{
+        let path=entry?.path();private(&path,true)?;let name=path.file_name().and_then(|n|n.to_str()).context("lineage archive name invalid")?;let id=Uuid::parse_str(name)?;
+        if Some(id)!=pending{ensure!(id.to_string()==name && actual.insert(id),"unknown lineage archive");}
+    }
+    ensure!(actual==expected,"unlinked/branched generation archive; HOLD");Ok(())
+}
+fn verify_prior(gate:&Gate,handoff:&AdoptionHandoff,old:&[Identity],bytes:&[u8])->anyhow::Result<Vec<u8>>{
+    let prior=handoff.prior_generation.as_ref().context("existing generation requires an exact predecessor")?;
+    let (state,_)=load_inner(gate,false)?.context("predecessor state missing")?;
+    ensure!(state.phase=="active" && state.generation_id==prior.generation_id && state.handoff_sha256==prior.handoff_sha256 && sha(bytes)==prior.state_sha256
+        && snapshot_sha(&catalog(gate,handoff.generation_id)?)?==prior.archive_catalog_sha256,"predecessor is not the exact sealed active generation");
+    ensure!(state.enrolled.len()==old.len() && old.iter().all(|i|state.enrolled.contains(i)),"source-exited boots differ from predecessor enrollment");
+    Ok(serde_json::to_vec(&catalog(gate,handoff.generation_id)?)?)
+}
+pub fn adoption_status(gate:&Gate)->anyhow::Result<serde_json::Value>{
+    let (state,_)=load(gate)?.context("directory has no adopted generation")?;
+    ensure!(state.phase=="active" && !gate.root.join("adoption.next").try_exists()?,"generation is not a stable active predecessor");
+    Ok(serde_json::json!({"schema":"forge/quiescence-generation/v1","generationId":state.generation_id,
+        "handoffSha256":state.handoff_sha256,"stateSha256":sha(&bounded_bytes(&gate.root.join("adoption.json"))?),
+        "archiveCatalogSha256":snapshot_sha(&catalog(gate,Uuid::nil())?)?,"nativeRetirementVerified":false}))
+}
+fn basis(state:&Adoption)->anyhow::Result<Vec<u8>>{
+    let mut value=serde_json::json!({"schemaVersion":state.schema_version,"operationId":state.operation_id,"generationId":state.generation_id,
+        "handoffSha256":state.handoff_sha256,"archiveSha256":state.archive_sha256,"controlSha256":state.control_sha256,
+        "rootInode":state.root_inode,"coordinatorInode":state.coordinator_inode,"effectsInode":state.effects_inode,"retiredCompose":state.retired_compose});
+    if let Some(prior)=&state.prior_generation{value["priorGeneration"]=serde_json::to_value(prior)?;}
+    Ok(serde_json::to_vec(&value)?)
+}
+fn load(gate:&Gate)->anyhow::Result<Option<(Adoption,AdoptionHandoff)>>{load_inner(gate,true)}
+fn load_inner(gate:&Gate,current_inodes:bool)->anyhow::Result<Option<(Adoption,AdoptionHandoff)>>{
     ensure_no_generation_bypass(gate)?;
     let path=gate.root.join("adoption.json");if !path.try_exists()?{ensure!(!gate.root.join("adoption.next").try_exists()?,"unfinished initial adoption CAS; HOLD");return Ok(None)}
     let state:Adoption=read(&path)?;ensure!(state.schema_version==1 && !state.generation_id.is_nil() && !state.operation_id.is_nil() && hex(&state.handoff_sha256)
         && matches!(state.phase.as_str(),"preparing"|"prepared"|"committed"|"active"),"unknown adoption journal state");
-    ensure!(inode(&gate.root)?==state.root_inode && inode(&gate.root.join("coordinator.lock"))?==state.coordinator_inode
-        && inode(&gate.root.join("effects.lock"))?==state.effects_inode,"adoption root/lock inode changed");
+    if current_inodes{ensure!(inode(&gate.root)?==state.root_inode && inode(&gate.root.join("coordinator.lock"))?==state.coordinator_inode
+        && inode(&gate.root.join("effects.lock"))?==state.effects_inode,"adoption root/lock inode changed");}
     let archive=generation_root(gate,state.generation_id);private(&archive,true)?;
-    for entry in fs::read_dir(&archive)?{ensure!(matches!(entry?.file_name().to_str(),Some("handoff.json"|"original-control"|"source-exited.json"|"inventory.json"|"basis.json")),"unknown generation archive state");}
+    for entry in fs::read_dir(&archive)?{ensure!(matches!(entry?.file_name().to_str(),Some("handoff.json"|"original-control"|"source-exited.json"|"inventory.json"|"basis.json"|"prior-state.json"|"prior-catalog.json")),"unknown generation archive state");}
     let bytes=bounded_bytes(&archive.join("handoff.json"))?;ensure!(sha(&bytes)==state.handoff_sha256,"archived handoff changed");
     let handoff:AdoptionHandoff=serde_json::from_slice(&bytes)?;
-    ensure!(handoff.operation_id==state.operation_id && handoff.generation_id==state.generation_id,"adoption handoff identity changed");
+    ensure!(handoff.operation_id==state.operation_id && handoff.generation_id==state.generation_id && handoff.prior_generation==state.prior_generation,"adoption handoff identity changed");
+    if state.prior_generation.is_none(){ensure!(!archive.join("prior-state.json").try_exists()? && !archive.join("prior-catalog.json").try_exists()?,"unplanned predecessor archive");}
     if state.phase!="preparing"{
+        verify_lineage(gate,&state)?;
+        if let Some(prior)=&state.prior_generation{
+            let previous_bytes=bounded_bytes(&archive.join("prior-state.json"))?;
+            ensure!(sha(&previous_bytes)==prior.state_sha256,"archived predecessor state changed");
+            let previous:Adoption=serde_json::from_slice(&previous_bytes)?;
+            ensure!(previous.phase=="active" && previous.generation_id==prior.generation_id && previous.handoff_sha256==prior.handoff_sha256,"archived predecessor is unknown/incomplete");
+            let prior_catalog=bounded_bytes(&archive.join("prior-catalog.json"))?;
+            ensure!(sha(&prior_catalog)==prior.archive_catalog_sha256 && snapshot_sha(&catalog(gate,state.generation_id)?)?==prior.archive_catalog_sha256,"prior archive catalog changed");
+        }
         let archived_basis=bounded_bytes(&archive.join("basis.json"))?;
         ensure!(sha(&archived_basis)==state.basis_sha256 && archived_basis==basis(&state)?,"adoption immutable basis changed");
         let control=archive.join("original-control");
@@ -143,6 +206,9 @@ pub fn load_adoption_handoff(path:&Path,expected_sha:&str)->anyhow::Result<(Adop
     ensure!(handoff.schema_version==1 && handoff.schema=="forge/quiescence-adoption/v1" && !handoff.operation_id.is_nil() && !handoff.generation_id.is_nil(),"unsupported adoption handoff");
     ensure!(hex(&handoff.destination.installation_sha256) && !handoff.destination.namespace_uid.is_nil() && !handoff.destination.workspace_claim_uid.is_nil()
         && !handoff.destination.namespace.is_empty() && handoff.destination.namespace.len()<=63 && handoff.destination.namespace.bytes().all(|b|b.is_ascii_lowercase() || b.is_ascii_digit() || b==b'-'),"destination binding incomplete");
+    if let Some(prior)=&handoff.prior_generation{
+        ensure!(!prior.generation_id.is_nil() && prior.generation_id!=handoff.generation_id && hex(&prior.handoff_sha256) && hex(&prior.state_sha256) && hex(&prior.archive_catalog_sha256),"invalid predecessor reference");
+    }
     ensure!(hex(&handoff.source_exited_receipt.sha256) && handoff.source_exited_receipt.path.is_absolute(),"source-exited receipt reference incomplete");
     let exited_bytes=bounded_bytes(&handoff.source_exited_receipt.path)?;
     ensure!(sha(&exited_bytes)==handoff.source_exited_receipt.sha256,"source-exited receipt hash changed");
@@ -200,19 +266,34 @@ impl Coordinator{
             store(&self.gate,&pending)?;Some(pending)
         }else{None};
         let archive=generation_root(&self.gate,handoff.generation_id);
+        if let Some(previous)=&existing{
+            if previous.generation_id!=handoff.generation_id{
+                let old_bytes=bounded_bytes(&state_path)?;let prior_catalog=verify_prior(&self.gate,handoff,old,&old_bytes)?;
+                let state=Adoption{schema_version:1,operation_id:self.operation,generation_id:handoff.generation_id,handoff_sha256:sha(bytes),prior_generation:handoff.prior_generation.clone(),
+                    phase:"preparing".into(),archive_sha256:String::new(),basis_sha256:String::new(),control_sha256:old_sha.clone(),
+                    root_inode:inode(&self.gate.root)?,coordinator_inode:inode(&self.gate.root.join("coordinator.lock"))?,effects_inode:inode(&self.gate.root.join("effects.lock"))?,retired_compose:retired_compose.clone(),enrolled:vec![]};
+                ensure!(!archive.try_exists()? || self.gate.root.join("adoption.next").try_exists()?,"generation ID already archived; branching forbidden");
+                let next_bytes=serde_json::to_vec(&state)?;ensure!(next_bytes.len()<=32768,"adoption journal exceeds bound");
+                save_exact(&self.gate.root.join("adoption.next"),&next_bytes)?;
+                directory(&archive)?;save_exact(&archive.join("handoff.json"),bytes)?;save_exact(&archive.join("prior-state.json"),&old_bytes)?;save_exact(&archive.join("prior-catalog.json"),&prior_catalog)?;
+                store(&self.gate,&state)?;
+            }
+        }
+        let existing=if state_path.try_exists()?{Some(read::<Adoption>(&state_path)?)}else{None};
         if let Some(state)=&existing{
             ensure!(state.schema_version==1 && state.operation_id==self.operation && state.generation_id==handoff.generation_id && state.handoff_sha256==sha(bytes) && state.control_sha256==old_sha,"adoption preparation CAS changed");
             ensure!(inode(&self.gate.root)?==state.root_inode && inode(&self.gate.root.join("coordinator.lock"))?==state.coordinator_inode && inode(&self.gate.root.join("effects.lock"))?==state.effects_inode,"adoption lock/root inode changed");
             if state.phase!="preparing"{let _=load(&self.gate)?.context("adoption archive missing")?;return Ok(())}
         }else{
+            ensure!(handoff.prior_generation.is_none(),"predecessor state missing");
             directory(&self.gate.root.join("generations"))?;ensure!(fs::read_dir(self.gate.root.join("generations"))?.next().is_none(),"another generation archive exists");
-            let state=Adoption{schema_version:1,operation_id:self.operation,generation_id:handoff.generation_id,handoff_sha256:sha(bytes),phase:"preparing".into(),archive_sha256:String::new(),basis_sha256:String::new(),control_sha256:old_sha,
+            let state=Adoption{schema_version:1,operation_id:self.operation,generation_id:handoff.generation_id,handoff_sha256:sha(bytes),prior_generation:None,phase:"preparing".into(),archive_sha256:String::new(),basis_sha256:String::new(),control_sha256:old_sha,
                 root_inode:inode(&self.gate.root)?,coordinator_inode:inode(&self.gate.root.join("coordinator.lock"))?,effects_inode:inode(&self.gate.root.join("effects.lock"))?,retired_compose,enrolled:vec![]};
             store(&self.gate,&state)?;
         }
         let mut state:Adoption=read(&state_path)?;
         directory(&archive)?;save_exact(&archive.join("handoff.json"),bytes)?;
-        for entry in fs::read_dir(&archive)?{let name=entry?.file_name();ensure!(matches!(name.to_str(),Some("handoff.json"|"original-control"|"source-exited.json"|"inventory.json"|"basis.json")),"unknown partial archive state; HOLD");}
+        for entry in fs::read_dir(&archive)?{let name=entry?.file_name();ensure!(matches!(name.to_str(),Some("handoff.json"|"original-control"|"source-exited.json"|"inventory.json"|"basis.json"|"prior-state.json"|"prior-catalog.json")),"unknown partial archive state; HOLD");}
         let control=archive.join("original-control");directory(&control)?;
         for entry in &old_snapshot.directories{relative(entry)?;}
         for relative_path in &old_snapshot.directories{directory(&control.join(relative_path))?;}
@@ -231,7 +312,8 @@ impl Coordinator{
     }
     pub fn resume_enrolled(self,fence:&Fence,expected:&[Identity])->anyhow::Result<()>{
         if let Some((mut state,handoff))=load(&self.gate)?{
-            ensure!(state.operation_id==self.operation && matches!(state.phase.as_str(),"committed"|"active"),"generation is not committed for release");
+            ensure!(state.phase=="active" || (state.phase=="committed" && state.operation_id==self.operation),"generation is not committed for release");
+            held_release(&self,expected)?;
             self.gate.verify_participants(expected)?;self.gate.verify_no_effect_records(fence)?;
             ensure!(expected.len()==handoff.participants.len(),"destination participant catalog is incomplete");
             for identity in expected{validate_target(&handoff,&identity.participant,&identity.kind,&identity.custody_roots)?;}
@@ -251,6 +333,10 @@ impl Coordinator{
 }
 pub(super) fn standalone_resume(gate:&Gate)->anyhow::Result<()>{
     ensure!(load(gate)?.is_none(),"adopted generation release requires a live held enrollment; HOLD");Ok(())
+}
+fn held_release(owner:&Coordinator,expected:&[Identity])->anyhow::Result<()>{
+    let held:Held=read(&owner.gate.root.join("held.json"))?;
+    ensure!(held.schema_version==1 && held.operation_id==owner.operation && held.coordinator_id==owner.nonce && !held.acknowledgement_id.is_nil() && held.participants==expected,"release requires this fresh held acknowledgement");Ok(())
 }
 fn validate_target(handoff:&AdoptionHandoff,id:&str,kind:&str,roots:&[CustodyRoot])->anyhow::Result<()>{
     let target=handoff.participants.iter().find(|p|p.participant==id).context("unapproved destination participant")?;
@@ -279,6 +365,24 @@ pub async fn wait_for_enrollment()->anyhow::Result<()>{
         if admission(&gate,IDENTITY.get()).is_ok() && !gate.requested()?{if let Ok(probe)=gate.enter(false){drop(probe);return Ok(())}}
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+}
+pub fn retired_compose_all(gate:&Gate)->anyhow::Result<Vec<RetiredCompose>>{
+    Ok(load(gate)?.map(|(state,_)|state.retired_compose).unwrap_or_default())
+}
+pub fn inherited_compose(gate:&Gate,handoff:&AdoptionHandoff)->anyhow::Result<Vec<RetiredCompose>>{
+    let Some(prior)=&handoff.prior_generation else{return Ok(vec![])};
+    let Some((state,_))=load_inner(gate,false)? else{anyhow::bail!("predecessor custody absent")};
+    let mut result=vec![];
+    let entries=if state.generation_id==prior.generation_id{state.retired_compose}else{
+        ensure!(state.generation_id==handoff.generation_id,"foreign adoption custody generation");
+        return Ok(state.retired_compose)
+    };
+    for entry in entries{
+        for mapping in adoption_root_mappings(handoff).iter().filter(|m|m.source.kind=="workspace" && m.source.path==entry.root){
+            let mut next=entry.clone();next.root=mapping.destination.path.clone();
+            ensure!(custody_files(&next.root.join(".compose-control").join(&next.name))?==next.files,"inherited retired custody changed");result.push(next);
+        }
+    }Ok(result)
 }
 pub fn retired_compose_binding(root:&Path,name:&str)->anyhow::Result<Option<RetiredCompose>>{
     let Some(gate)=Gate::from_env()? else{return Ok(None)};
@@ -365,23 +469,100 @@ mod tests{
         assert!(owner.resume_enrolled(&fence,&[]).is_err());assert!(gate.requested().unwrap());drop(fence);fs::remove_dir_all(parent).unwrap();
     }
     #[test]fn actual_child_enrolls_without_effect_then_owner_releases_exact_boot(){
-        use std::io::BufRead;use std::process::{Child,Command,Stdio};
+        use std::io::{BufRead,Write};use std::process::{Child,Command,Stdio};
         struct Fixture(Child);impl Drop for Fixture{fn drop(&mut self){if self.0.try_wait().ok().flatten().is_none(){let _=self.0.kill();let _=self.0.wait();}}}
         let(parent,gate,handoff,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
         owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();owner.commit_adoption(&fence,&handoff,&bytes,&old).unwrap();drop(fence);drop(owner);
         let mut child=Fixture(Command::new(std::env::current_exe().unwrap()).args(["--exact",&format!("{}::enrollment_fixture",module_path!().split_once("::").unwrap().1),"--nocapture"])
-            .env("FORGE_ADOPTION_CHILD",&parent).env("CICD_QUIESCENCE_DIR",&gate.root).env("CICD_QUIESCENCE_PARTICIPANT","new").env("CICD_QUIESCENCE_GENERATION",handoff.generation_id.to_string()).stdout(Stdio::piped()).spawn().unwrap());
+            .env("FORGE_ADOPTION_CHILD",&parent).env("FORGE_ADOPTION_FRESH_MAINTENANCE","1").stdin(Stdio::piped()).env("CICD_QUIESCENCE_DIR",&gate.root).env("CICD_QUIESCENCE_PARTICIPANT","new").env("CICD_QUIESCENCE_GENERATION",handoff.generation_id.to_string()).stdout(Stdio::piped()).spawn().unwrap());
         let mut output=std::io::BufReader::new(child.0.stdout.take().unwrap());let identity=loop{let mut line=String::new();assert!(output.read_line(&mut line).unwrap()>0);if let Some(offset)=line.find("ENROLLED "){break serde_json::from_str::<Identity>(line[offset+9..].trim()).unwrap()}};
         assert!(!parent.join("effect").exists());assert!(admission(&gate,Some(&identity)).is_err());
         let owner=Coordinator::request(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();owner.publish_held(&fence,std::slice::from_ref(&identity)).unwrap();
-        owner.resume_enrolled(&fence,&[identity]).unwrap();drop(fence);
+        owner.resume_enrolled(&fence,std::slice::from_ref(&identity)).unwrap();drop(fence);
+        for _ in 0..100{if parent.join("effect").exists(){break}std::thread::sleep(std::time::Duration::from_millis(20));}
+        assert!(parent.join("effect").exists());
+        let maintenance=Coordinator::request(gate.clone(),Uuid::new_v4()).unwrap();let mut acquired=None;
+        for _ in 0..100{acquired=maintenance.try_fence().unwrap();if acquired.is_some(){break}std::thread::sleep(std::time::Duration::from_millis(20));}
+        let fence=acquired.expect("actual child effect did not release its kernel lease");
+        assert!(held_release(&maintenance,std::slice::from_ref(&identity)).is_err());
+        maintenance.publish_held(&fence,std::slice::from_ref(&identity)).unwrap();maintenance.resume_enrolled(&fence,std::slice::from_ref(&identity)).unwrap();drop(fence);
+        child.0.stdin.as_mut().unwrap().write_all(b"finish\n").unwrap();
         let mut stopped=false;for _ in 0..100{if let Some(status)=child.0.try_wait().unwrap(){assert!(status.success());stopped=true;break}std::thread::sleep(std::time::Duration::from_millis(20));}assert!(stopped);assert_eq!(fs::read(parent.join("effect")).unwrap(),b"admitted");fs::remove_dir_all(parent).unwrap();
+    }
+    fn synthetic_active(gate:&Gate){
+        let (mut state,handoff)=load(gate).unwrap().unwrap();let target=&handoff.participants[0];
+        let old:Identity=read(&gate.root.join("participants/old.json")).unwrap();
+        let mut identity=old;identity.participant=target.participant.clone();identity.boot_id=Uuid::new_v4();identity.custody_roots=target.roots.iter().map(|r|r.destination.clone()).collect();
+        let stem=gate.root.join("participants").join(&identity.participant);let _=file(&stem.with_extension("lock")).unwrap();replace(&stem.with_extension("json"),&serde_json::to_vec(&identity).unwrap()).unwrap();
+        state.phase="active".into();state.enrolled=vec![identity];store(gate,&state).unwrap();
+    }
+    fn next_handoff(parent:&Path,gate:&Gate)->(AdoptionHandoff,Vec<u8>,Vec<Identity>){
+        let (state,mut handoff)=load(gate).unwrap().unwrap();let old=state.enrolled.clone();
+        let status=adoption_status(gate).unwrap();let prior:PriorGeneration=serde_json::from_value(serde_json::json!({
+            "generationId":status["generationId"],"handoffSha256":status["handoffSha256"],
+            "stateSha256":status["stateSha256"],"archiveCatalogSha256":status["archiveCatalogSha256"]})).unwrap();
+        handoff.operation_id=Uuid::new_v4();handoff.generation_id=Uuid::new_v4();handoff.prior_generation=Some(prior);
+        let evidence=parent.join(format!("exited-{}.json",handoff.generation_id));let bytes=serde_json::to_vec(&serde_json::json!({"schema":"forge/quiescence-exited/v1","operationId":handoff.operation_id,"participants":old,"allPinnedKernelOwnersExited":true,"exclusiveFenceStillHeld":true})).unwrap();write_new(&evidence,&bytes).unwrap();
+        handoff.source_exited_receipt=EvidenceFile{path:evidence,sha256:sha(&bytes)};
+        handoff.retired_processes=old.iter().map(|i|RetiredProcess{participant:i.participant.clone(),boot_id:i.boot_id,container_id:"4".repeat(64),image_config_digest:format!("sha256:{}","5".repeat(64)),process_id:i.process_id,process_start:i.process_start.clone()}).collect();
+        handoff.participants[0].source_participants=old.iter().map(|i|i.participant.clone()).collect();
+        let bytes=serde_json::to_vec(&handoff).unwrap();(handoff,bytes,old)
+    }
+    fn copied_control(source:&Path,destination:&Path){
+        directory(destination).unwrap();
+        for entry in fs::read_dir(source).unwrap(){let path=entry.unwrap().path();let target=destination.join(path.file_name().unwrap());if path.is_dir(){copied_control(&path,&target)}else{write_new(&target,&fs::read(&path).unwrap()).unwrap();}}
+    }
+    #[test]fn linear_g1_g2_g3_restore_keeps_history_and_rebinds_copied_inodes(){
+        let(parent,gate,first,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),first.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();owner.prepare_adoption(&fence,&first,&bytes,&old,vec![]).unwrap();owner.commit_adoption(&fence,&first,&bytes,&old).unwrap();drop(fence);drop(owner);synthetic_active(&gate);
+        let mut current=gate;
+        for index in 2..=3{
+            let(handoff,bytes,old)=next_handoff(&parent,&current);let history=snapshot_sha(&catalog(&current,Uuid::nil()).unwrap()).unwrap();
+            fs::remove_file(current.root.join("request.json")).unwrap();drop(Coordinator::request(current.clone(),handoff.operation_id).unwrap());
+            let copied=parent.join(format!("destination-{index}"));copied_control(&current.root,&copied);let destination=Gate::open(&copied).unwrap();assert!(load(&destination).is_err());
+            let owner=Coordinator::for_adoption(destination.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+            owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();
+            if index==2{
+                // Model a crash after durable next, before predecessor bytes/catalog were copied.
+                let (prepared,_)=load(&destination).unwrap().unwrap();let archive=generation_root(&destination,handoff.generation_id);
+                let prior_bytes=bounded_bytes(&archive.join("prior-state.json")).unwrap();
+                let mut pending:Adoption=serde_json::from_slice(&serde_json::to_vec(&prepared).unwrap()).unwrap();
+                pending.phase="preparing".into();pending.archive_sha256.clear();pending.basis_sha256.clear();
+                replace(&destination.root.join("adoption.json"),&prior_bytes).unwrap();write_new(&destination.root.join("adoption.next"),&serde_json::to_vec(&pending).unwrap()).unwrap();
+                fs::remove_dir_all(archive.join("original-control")).unwrap();
+                for file in ["prior-state.json","prior-catalog.json","source-exited.json","inventory.json","basis.json"]{fs::remove_file(archive.join(file)).unwrap();}
+                assert!(validate_registration(&destination,"new","server",&[]).is_err());
+                owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();
+            }
+            owner.commit_adoption(&fence,&handoff,&bytes,&old).unwrap();
+            assert_eq!(snapshot_sha(&catalog(&destination,handoff.generation_id).unwrap()).unwrap(),history);
+            assert!(generation_root(&destination,handoff.generation_id).join("prior-state.json").is_file());
+            drop(fence);drop(owner);synthetic_active(&destination);current=destination;
+        }
+        assert_eq!(fs::read_dir(current.root.join("generations")).unwrap().count(),3);
+        let(handoff,bytes,old)=next_handoff(&parent,&current);fs::remove_file(current.root.join("request.json")).unwrap();drop(Coordinator::request(current.clone(),handoff.operation_id).unwrap());
+        let owner=Coordinator::for_adoption(current.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();let mut foreign=handoff.clone();foreign.prior_generation.as_mut().unwrap().state_sha256="0".repeat(64);
+        assert!(owner.prepare_adoption(&fence,&foreign,&serde_json::to_vec(&foreign).unwrap(),&old,vec![]).is_err());
+        let first_archive=fs::read_dir(current.root.join("generations")).unwrap().next().unwrap().unwrap().path();
+        let mut reused=handoff.clone();reused.generation_id=Uuid::parse_str(first_archive.file_name().unwrap().to_str().unwrap()).unwrap();
+        assert!(owner.prepare_adoption(&fence,&reused,&serde_json::to_vec(&reused).unwrap(),&old,vec![]).is_err());
+        write_new(&first_archive.join("unknown.json"),b"{}").unwrap();
+        assert!(owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).is_err());drop(fence);drop(owner);fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]fn incomplete_predecessor_and_generation_reuse_are_not_reset_paths(){
+        let(parent,gate,handoff,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+        owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();owner.commit_adoption(&fence,&handoff,&bytes,&old).unwrap();drop(fence);drop(owner);synthetic_active(&gate);
+        let(next,bytes,old)=next_handoff(&parent,&gate);fs::remove_file(gate.root.join("request.json")).unwrap();drop(Coordinator::request(gate.clone(),next.operation_id).unwrap());
+        let (mut state,_)=load(&gate).unwrap().unwrap();state.phase="committed".into();store(&gate,&state).unwrap();
+        let owner=Coordinator::for_adoption(gate.clone(),next.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();assert!(owner.prepare_adoption(&fence,&next,&bytes,&old,vec![]).is_err());
+        drop(fence);drop(owner);fs::remove_dir_all(parent).unwrap();
     }
     #[test]fn enrollment_fixture(){
         use std::io::Write;
         let Some(parent)=std::env::var_os("FORGE_ADOPTION_CHILD")else{return};
         initialize("server",vec![]).unwrap();println!("ENROLLED {}",serde_json::to_string(IDENTITY.get().unwrap()).unwrap());std::io::stdout().flush().unwrap();
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(wait_for_enrollment()).unwrap();
-        let _effect=enter(true).unwrap();fs::write(PathBuf::from(parent).join("effect"),b"admitted").unwrap();
+        {let _effect=enter(true).unwrap();fs::write(PathBuf::from(parent).join("effect"),b"admitted").unwrap();}
+        if std::env::var_os("FORGE_ADOPTION_FRESH_MAINTENANCE").is_some(){let mut line=String::new();std::io::stdin().read_line(&mut line).unwrap();assert_eq!(line.trim(),"finish");}
+
     }
 }

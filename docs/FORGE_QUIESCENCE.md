@@ -253,11 +253,34 @@ resume при adoption запрещён. Authorization generation/enrolled boots
 до удаления request последним шагом. Restart не получает автоматический
 допуск: новый boot требует свежего owner enrollment/held release.
 
-Текущий ABI принимает первое explicit adoption этого directory. Другой
-generation/handoff после уже committed state даёт HOLD; дальнейший migration
-из adopted installation потребует отдельного versioned chaining contract,
-без очистки сохранённой history. Native first enrollment, restore integrity,
-target identities и release qualification остаются owner gates.
+Повторное полное recovery продолжает только линейную цепочку exact active
+generation. Дополнительное поле priorGeneration равно null/отсутствует только
+при отсутствии adoption history; иначе содержит generationId, handoffSha256,
+stateSha256 и archiveCatalogSha256 текущего predecessor. Их owner получает
+через private read-only adoption-status (schema forge/quiescence-generation/v1;
+nativeRetirementVerified=false) до архивирования source. SourceExited нового
+backup operation обязан содержать ровно текущие enrolled boots.
+
+Каждый следующий generation сохраняет byte-exact prior-state.json и
+prior-catalog.json; immutable basis связывает hashes predecessor и всего
+предыдущего archive catalog. Предыдущие generations не переносятся и не
+перезаписываются. Copied inode значения OLD state — историческая evidence:
+лишь explicit adoption с exact predecessor принимает новые destination inodes.
+Обычный runtime не получает такого исключения. Unknown/unlinked archive,
+branch, reused UUID, изменённый predecessor или incomplete prior phase — HOLD.
+
+Durable adoption.next закрывает admission ДО сохранения predecessor archive;
+OLD adoption.json заменяется только после fsync точных prior-state/catalog.
+После crash принимаются только те же CAS inputs. Fresh maintenance backup
+operation использует новый request/held nonce и ACK текущего live holder;
+исходный immutable adoption operation при этом сохраняется.
+
+Для exact backup owner вызывает hold с --require-recoverable-idle. Этот флаг
+дополнительно требует тот же строгий нулевой pending-work query set, что adoption,
+до held ACK; recoverableIdleRequired=true входит в ACK. Default hold сохраняет
+queued jobs для обычного maintenance и не является exact recovery qualification.
+Pool coordinator закрывается до ACK. Native repeated restore, enrollment,
+target identities и итоговая application qualification остаются owner gates.
 
 ## Проверки
 

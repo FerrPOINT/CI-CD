@@ -14,7 +14,7 @@ use std::{
 use uuid::Uuid;
 #[path = "generation.rs"]
 mod generation;
-pub use generation::{AdoptionHandoff, RootMapping, RetiredCompose, CustodyFile, load_adoption_handoff, adoption_root_mappings, custody_files, retired_compose_binding, wait_for_enrollment};
+pub use generation::{AdoptionHandoff, RootMapping, RetiredCompose, CustodyFile, load_adoption_handoff, adoption_status, retired_compose_all, inherited_compose, adoption_root_mappings, custody_files, retired_compose_binding, wait_for_enrollment};
 
 #[derive(Clone)]
 pub struct Gate {
