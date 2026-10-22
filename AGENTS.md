@@ -122,3 +122,50 @@ Dialog и Toaster/toast использовать из публичного @pdlc
 Брендинг применяется общим runtime; draft preview изолируется BrandingScope.
 Канонический контракт — Base docs/platform/DESIGN_SYSTEM.md и docs/BRANDING.md.
 UI/SDK/skills pins независимы; source-изменения не означают установку.
+
+## Единое пространство PDLC
+
+[Согласованный план](docs/plans/unified-spaces-20261019.md) вводит M:N и общий read admission. До полного
+совместимого cohort это цель, не установленное поведение. Строгие V1/V2 и
+applied migrations сохранять; ProjectRef/SpaceRef/V3 отдельны. Полный gate на
+интегрированной вехе, в ходе реализации scoped checks. Runtime не активировать
+по готовности одного продукта; не выбирать первый Project/Space неявно.
+Git deadline передавать как private proof с исходным fixed clock до native IO
+и ref preparation; не заменять его новой длительностью. Не освобождать lifecycle
+lease до завершения native owner/cleanup. Custom hooks сохранять; unknown Git
+publication требует exact ref readback без автоматического retry.
+REST identity proof не сводить к claims до выдачи защищённых данных. Общий
+допуск каталогов применять до count/page по owner ID, не по именам. Пустой
+selected не превращать в unrestricted SQL NULL; local admin не visibility bypass.
+Typed metadata accessor не считать human authorization: HTTP adapter передаёт
+admitted filter. При изменении handler signature искать все внутренние callers
+по всему backend; не передавать им фиктивный HTTP request ради обхода границы.
+
+Read adapters должны разрешать framework-decoded owner params одинаково для ACL
+и данных. До общего допуска читать только owner identity; kind/readiness также
+защищены. Common visibility заменяет прежнее read membership, но не scopes,
+project binding credential или права изменения. Read proof не является write
+permit: PR mutation/merge требуют собственной effect/deadline границы.
+
+PR write permit должен оставаться у typed/detached owner до SQL commit/native
+ref preparation. После SQL wait повторно проверять исходный proof; роль/lifecycle
+держать под существующими locks. Counter и создание PR атомарны. Timeout после
+возможной публикации — unknown outcome с exact ref readback, без auto retry,
+отката refs по предположению или признания PR status доказательством Git rollback.
+
+Task-link replay не обходит текущий допуск: при активной политике проверять
+write permit/роль/lifecycle до stored readback. Новая связь и проверки исходного
+proof после SQL wait входят в одну транзакцию; прежний source commit при replay
+не переснимать. OFF сохраняет исторический original-key readback.
+
+При native timeout дать Git ограниченное время на собственный signal cleanup
+ref locks перед SIGKILL остальной owned group. Это не продлевает proof. Сохранять
+unknown outcome; не удалять locks по предположению. Fixture custom hook обязан
+использовать фактический core.hooksPath и доказывать достижение hook.
+
+Для PR merge сохранять durable intent до ref publication, затем повторно брать
+role/lifecycle/PR SQL locks с исходным proof. MutationGuard берётся до SQL locks
+и держится через intent commit и recovery. Prepared attempt не удалять и не
+перезапускать по таймеру или старому target OID. Повтор требует текущих прав и
+точных source/candidate refs; только metadata recovery, без native retry/ancestry.
+[ADR-0038](docs/adr/0038-durable-pull-merge-recovery.md) определяет журнал и rollout.

@@ -130,6 +130,7 @@ const fn user(
 
 /// Exhaustive policy registry for the current OpenAPI/router surface.
 pub const ROUTE_POLICIES: &[RoutePolicy] = &[
+    user(GET, "/api/v1/space-admission", Action::Read, Role::Viewer),
     user(GET, "/api/v1/repository-syncs", Action::Read, Role::Viewer),
     user(
         GET,
@@ -209,6 +210,16 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Action::Read,
         Role::Viewer,
     ),
+    RoutePolicy {
+        methods: GET,
+        path: "/api/v2/spaces/{registry}/{space}/owner-state",
+        access: RouteAccess::NamespaceOwner,
+    },
+    RoutePolicy {
+        methods: PUT,
+        path: "/api/v2/spaces/{registry}/{space}/owner-state",
+        access: RouteAccess::NamespaceOwner,
+    },
     RoutePolicy {
         methods: GET,
         path: "/api/v1/namespace-resources/git_group/{id}",

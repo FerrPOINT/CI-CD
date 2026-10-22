@@ -1,5 +1,24 @@
 # Git Hosting — Forge CI/CD
 
+Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
+сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
+transaction и original proof до native publication. GET связанных задач PR
+использует общий repository read. [Durable merge recovery](adr/0038-durable-pull-merge-recovery.md) использует
+сохранённый intent и точные refs; повтор не запускает native publication.
+Добавлена миграция 0098; runtime и исторические migrations не изменены.
+Полный совместимый cohort остаётся отдельным gate.
+
+Native deadline cleanup сначала даёт Git250ms на SIGTERM, затем завершает
+остаток owned process group через SIGKILL. Локальные ref locks убирает сам Git;
+при forced termination нельзя удалять неизвестные locks или считать rollback
+доказанным. Неизвестная publication требует exact ref readback.
+
+Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)
+использует decoded owner identity и original proof. Read adapters и PR write
+покрываются scoped native HTTP/Git/SQL fixture; exact inputs и результаты находятся
+в отчёте задачи. Это source candidate, не установленная политика и не готовность
+всего serving cohort.
+
 Opt-in source-only [own-task candidate Git](OWN_TASK_CANDIDATE_GIT.md) проверяет
 confirmed source/current Developer и exact OID CAS через native hooks. Только
 этот child-вариант подавляет post-receive auto-pipeline; обычный human/SAT поток
@@ -155,7 +174,16 @@ Git Smart HTTP различает read и write:
 - `git-upload-pack` для repository с `visibility = public` доступен без credential.
 - Private `git-upload-pack` и любой `git-receive-pack` требуют credential.
 - Legacy `CICD_GIT_TOKEN` остаётся operator bypass для совместимости.
-- При непустом `CICD_AUTH_SECRET` можно передать JWT/PAT пользователя: `viewer+` читает связанный project repository, `developer+` может push, `admin` имеет bypass. PAT дополнительно должен иметь `git:read` для fetch/clone или `git:write` для push и, если задан `project_id`, совпадать со связанным проектом.
+- При непустом `CICD_AUTH_SECRET` можно передать JWT/PAT пользователя: `viewer+` читает связанный project repository, `developer+` может push, `admin` имеет bypass. PAT дополнительно должен иметь `git:read` для fetch/clone или `git:write` для push и, если задан `project_id`, совпадать со связанным проектом. Для центрального PAT исходное подтверждение Auth и scopes сохраняются отдельно от локальных claims: отсутствие локального `api_tokens.id` не означает browser session. Срок повторно проверяется после асинхронной ACL-проверки; scope не заменяет подтверждённую роль.
+  Private proof сохраняет исходный срок также на native advertisement/RPC,
+  owner lock wait и body handoff; private, no-store запрещает кешировать
+  защищённый Git response. Native receive проверяет fixed deadline после custom
+  prepared reference-transaction hook. По истечении native owner завершает
+  собственную process group и ждёт Git, сохраняя write lease до cleanup.
+  Неизвестный результат требует exact ref readback без автоматического retry.
+  Linux boot-clock bridge округляет оставшееся окно вниз; последняя неполная
+  секунда закрывается. Уже отправленные байты отозвать нельзя. Подробности и
+  оставшиеся public/legacy/task admission gates — в [матрице](UNIFIED_SPACE_SURFACES.md).
 - Project-bound `forge_sat_` использует тот же repository UUID → CI project
   predicate, что API, без фиктивного human membership. Нужны отдельные
   `git:read`/`git:write`; `api:read`/`api:write` не дают Git-доступ.
@@ -199,15 +227,22 @@ curl -H "x-git-token: <TOKEN>" ...
 
 `CICD_GIT_INTERNAL_TOKEN` ведёт себя так же строго по границе окружения: пустое значение отключает проверку только для trusted-local hook traffic, shared deployment обязан задать уникальный токен. Устаревшее значение `forge-internal-dev-token` отклоняется при старте backend.
 
+Opt-in source общего пространства (migration0097, default OFF) требует central
+human identity и Admin policy на discovery/RPC/aliases до public/legacy fallback.
+Unbound repository закрыт; read admission не выдаёт write роль. Нужна точная
+v2 revision mapping и active состояние для записи. Старый task V1 не наследует
+human admission. Включать partial source нельзя; [cohort и оставшиеся gates](UNIFIED_SPACE_SURFACES.md#opt-in-human-git-space-admission-source-candidate).
+Существующая установка и поведение выше описаны отдельно от этого source slice.
+
 ## 9. Ограничения MVP и следующий этап
 
-- Нет organization/tenant-bound repository model и отдельного scoped Git credential class; current read/write RBAC строится на project membership и PAT scopes через `repository_url`.
+- Каталог Git groups/repository UUID и project-bound SAT уже существуют. Общее Space admission ещё не установлено: public/legacy Git и прочие поверхности требуют отдельной квалификации полного совместимого cohort. Current read/write RBAC использует memberships и PAT scopes через `projects.repository_id`, а не URL tail.
 - Нет Git LFS HTTP endpoints несмотря на наличие `git-lfs` в образе.
 - Нет SSH transport: только Smart HTTP.
 - Hook делает best-effort запрос; он не блокирует push при временном сбое CI/CD API.
 - Embedded runner клонирует project repository в workspace перед выполнением job; external runner protocol MVP уже отдаёт `workspace.checkoutUrl`, а `forge-runner` использует его для checkout. Scoped repository credential class и production checkout policy ещё не реализованы.
 
-Следующая фаза: per-project repository mapping вместо URL suffix lookup, scoped Git credentials, signed internal events с one-time event ID, Git LFS, SSH transport, отдельный production runner checkout boundary и stricter checkout/commit identity guarantees.
+Следующая фаза общего пространства: [Space admission v2](SPACE_ADMISSION_CONTRACT_V2.md) и [матрица поверхностей](UNIFIED_SPACE_SURFACES.md). Git LFS/SSH transport и прочие будущие возможности не входят в эту реализацию. Фактические serving listeners и ingress проверяются отдельно перед активацией.
 
 ## 10. Проверка
 

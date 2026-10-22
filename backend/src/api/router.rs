@@ -203,6 +203,10 @@ pub(crate) fn build_router_with_cors(
             get(crate::workspace_projects::all_summary),
         )
         .route(
+            "/api/v1/space-admission",
+            get(crate::space_admission::human_window),
+        )
+        .route(
             "/api/v1/catalog/repositories",
             get(crate::repository_catalog::all),
         )

@@ -1,5 +1,16 @@
 # Дата-модель Forge CI/CD
 
+Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
+сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
+transaction и original proof до native publication. GET связанных задач PR
+использует общий repository read. Task-link POST и replay используют тот же
+write permit и исходный proof до SQL commit. [Durable merge recovery](adr/0038-durable-pull-merge-recovery.md) сохраняет intent
+до публикации; повтор восстанавливает только metadata по точным refs, без
+повторного native merge. Добавлена миграция 0098; runtime и исторические
+migrations не изменены. Полный совместимый cohort остаётся отдельным gate.
+
+Аддитивная0096 сохраняет strict-v1 binding/receipts и добавляет Space catalog/operation journal с необязательной Git-группой. Effective lifecycle и общий v1/v2 fence описаны в [SPACE_LIFECYCLE_V2](SPACE_LIFECYCLE_V2.md). Это source candidate; рабочая БД не мигрирована.
+
 Namespace DevOps evidence читает существующие task pipeline/preparation journals
 и owner manifests под прежними catalog/namespace/project locks. Таблицы и
 миграции не добавлены; исторический child не расшифровывается. Контракт:
@@ -66,6 +77,11 @@ DevOps context и accepted Developer result ID в прежнем filesystem inte
 source-observation receipt. Completed acknowledged build допускает только readonly
 DevOps observation, не реактивацию job lease. Current Tracker authority читается
 отдельно перед новым effect. [API](API.md#task-bound-nonproduction-delivery); PG/runtime pending.
+
+Аддитивная0097 хранит только opt-in activation state (default false), отдельно
+от Admin user policy и immutable Space mapping. Включающего API нет; partial
+Git source не разрешает activation. Historical migrations/receipts сохранены.
+[Границы source slice](UNIFIED_SPACE_SURFACES.md#opt-in-human-git-space-admission-source-candidate).
 
 ## Retry и подтверждение выполнения
 
@@ -273,6 +289,23 @@ Protected branch lookup при PR merge вычисляет `COALESCE(BOOL_OR(...
 | tests_total / tests_passed / tests_failed / tests_skipped | INTEGER | Итоги suite |
 | duration_ms | INTEGER NULL | Время из JUnit `time` (секунды → миллисекунды) |
 
+
+## Durable merge attempts
+
+Миграция `0098_pull_request_merge_attempts.sql` добавляет
+`pull_request_merge_attempts`: UUID попытки, FK PR/repository с RESTRICT,
+исходные source/target refs и OID, подготовленный merge OID,
+`prepared|confirmed|rejected`, created/completed timestamps.
+Частичный UNIQUE по PR для `state <> 'rejected'` допускает только одну
+неотклонённую попытку. Исторические миграции не переписываются.
+
+Intent коммитится до Git publication. PR status и `confirmed` коммитятся вместе.
+Только определённый native reject до publication переводит attempt в `rejected`.
+Unknown сохраняет `prepared`, включая неизменные, удалённые или изменённые refs.
+FK RESTRICT сохраняет evidence; очистка журнала не является обычным retry.
+
+[ADR-0038](adr/0038-durable-pull-merge-recovery.md) определяет locks, recovery,
+границы совместимости и migration/rollback gate.
 
 ## 0.2 pull_requests
 
@@ -1228,3 +1261,27 @@ repository_sync_operations (operation UUID PK, actor/repository/kind, keyed HMAC
 fingerprint, safe readback). Partial unique index допускает только один active
 run на repository. Namespace triggers запрещают создание работы/изменение
 настроек в архиве. История не удаляется автоматически и удерживает identity.
+
+Единое пространство: [поверхности доступа](UNIFIED_SPACE_SURFACES.md) и [центральный профиль/роли](CENTRAL_PROFILE_ROLES.md).
+
+
+Общий Space drain использует существующие completion_received_at, acknowledged_at,
+generation и execution_attempts; миграции/checksums не переписываются. В обычном
+embedded CI marker теперь ставится после того же реального owner journal ACK,
+что и в task pipeline. Failed/expired legacy execution без принятого completion
+остаётся незавершённой для drain и входит в миграционное расследование.
+
+## Confirmed privileges for linked central identities
+
+Migration0099 adds forge_confirmed_user_roles without backfilling unknown
+assignments. users.role and existing identities remain unchanged. For a linked
+central identity, an existing admin/maintainer role is effective only with a
+matching explicit provenance record or a current confirmed central administrator.
+Unconfirmed shadow privileges yield viewer authority; SSO does not rewrite the
+stored assignment. Lower native roles remain unchanged and a central admin does
+not replace a stored viewer/developer role.
+
+Changing users.role or central_sub retires its confirmation, so an old grant
+cannot silently return after reassignment. Standalone native role semantics are
+unchanged. Release migration may record only assignments whose origin is verified;
+unknown history is not a reason to copy administrative privileges.

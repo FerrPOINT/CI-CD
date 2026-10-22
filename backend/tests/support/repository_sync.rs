@@ -315,6 +315,13 @@ async fn sync_guard_serializes_concurrent_pr_merge_without_duplicate_commit() {
     git(&local, &["update-ref", "refs/heads/feature", &feature]).await;
     sqlx::query("INSERT INTO pull_requests(id,repository_id,repository_name,number,title,source_branch,target_branch) VALUES($1,$2,$3,1,'QA concurrent merge','feature','main')")
         .bind(Uuid::new_v4()).bind(repository).bind(&name).execute(&pool).await.unwrap();
+    // Count native target publications rather than treating an idempotent HTTP
+    // confirmation as a second merge. Durable recovery returns the original OID.
+    let publications = root.join("main-publications");
+    let hook = local.join("hooks/reference-transaction");
+    std::fs::write(&hook, format!("#!/bin/sh\nif [ \"$1\" = prepared ]; then\n while read old new reference; do\n  if [ \"$reference\" = refs/heads/main ] && [ \"$old\" != \"$new\" ]; then printf '%s\\n' \"$new\" >> '{}'; fi\n done\nfi\n",publications.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut config = cicd::config::RuntimeConfig::from_env_source(|_| None, false).unwrap();
     config.git.root = root.clone();
     let state = std::sync::Arc::new(cicd::api::AppState {
@@ -334,19 +341,30 @@ async fn sync_guard_serializes_concurrent_pr_merge_without_duplicate_commit() {
         cicd::pulls::pr_action(
             axum::extract::State(state.clone()),
             axum::extract::Path((name.clone(), 1)),
+            None,
             axum::Json(cicd::pulls::PrAction {
                 action: "merge".into(),
             }),
         )
     };
     let (first, second) = tokio::join!(merge(), merge());
-    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
-    let (accepted, rejected) = match (first, second) {
-        (Ok(value), Err(error)) | (Err(error), Ok(value)) => (value.0, error),
-        _ => panic!("one merge must win"),
-    };
-    use axum::response::IntoResponse;
-    assert_eq!(rejected.into_response().status(), StatusCode::CONFLICT);
+    let first = first.expect("original merge succeeds").0;
+    let accepted = second
+        .expect("concurrent retry confirms the durable merge")
+        .0;
+    assert_eq!(first.id, accepted.id);
+    assert_eq!(first.status, "merged");
+    assert_eq!(accepted.status, "merged");
+    assert_eq!(first.merge_commit_sha, accepted.merge_commit_sha);
+    let attempts: i64 = sqlx::query_scalar("SELECT count(*) FROM pull_request_merge_attempts WHERE pull_request_id=$1 AND state='confirmed'")
+        .bind(accepted.id).fetch_one(&pool).await.unwrap();
+    assert_eq!(attempts, 1, "one durable merge, not two accepted effects");
+    let observed = std::fs::read_to_string(&publications).unwrap();
+    assert_eq!(
+        observed.lines().collect::<Vec<_>>(),
+        vec![accepted.merge_commit_sha.as_deref().unwrap()],
+        "target publication hook runs once"
+    );
     assert_eq!(
         accepted.merge_commit_sha.as_deref(),
         Some(git(&local, &["rev-parse", "main"]).await.as_str())

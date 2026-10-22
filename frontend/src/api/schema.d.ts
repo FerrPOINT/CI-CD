@@ -2223,6 +2223,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/space-admission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["human_window"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users": {
         parameters: {
             query?: never;
@@ -2376,6 +2392,22 @@ export interface paths {
         };
         get: operations["forge_workspace_all_summary"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/spaces/{registry}/{space}/owner-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_space_owner_v2_readback"];
+        put: operations["forge_space_owner_v2_apply"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2896,6 +2928,8 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        /** @enum {string} */
+        DesiredSpaceState: "active" | "archived";
         DestinationAlert: {
             channel: string;
             destination: string;
@@ -3003,6 +3037,15 @@ export interface components {
             repository: string;
             /** Format: uuid */
             repository_id?: string | null;
+        };
+        /** @description A display descriptor, never a reusable repository/Git capability. */
+        HumanAdmissionWindowV1: {
+            enforced: boolean;
+            /** Format: int64 */
+            remaining_millis?: number | null;
+            /** Format: int32 */
+            schema_version: number;
+            scope_revision?: string | null;
         };
         IssueServiceAccountToken: {
             /** Format: int32 */
@@ -3982,6 +4025,45 @@ export interface components {
             /** Format: uuid */
             task_id: string;
             tracker_instance_id: string;
+        };
+        SpaceMetadata: {
+            description: string;
+            name: string;
+            responsible_subject: string;
+            slug: string;
+        };
+        SpaceOwnerCommandV2: {
+            desired_state: components["schemas"]["DesiredSpaceState"];
+            metadata: components["schemas"]["SpaceMetadata"];
+            /** Format: uuid */
+            operation_id: string;
+            /** Format: uuid */
+            participant_instance_id: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: int32 */
+            schema_version: number;
+            space: components["schemas"]["SpaceRef"];
+        };
+        SpaceOwnerReadbackV2: {
+            drained: boolean;
+            local_resource?: null | components["schemas"]["ResourceRef"];
+            /** Format: uuid */
+            operation_id: string;
+            /** Format: uuid */
+            participant_instance_id: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: int32 */
+            schema_version: number;
+            space: components["schemas"]["SpaceRef"];
+            state: components["schemas"]["DesiredSpaceState"];
+        };
+        SpaceRef: {
+            /** Format: uuid */
+            registry_instance_id: string;
+            /** Format: uuid */
+            space_id: string;
         };
         Stage: {
             /** Format: uuid */
@@ -9957,6 +10039,37 @@ export interface operations {
             };
         };
     };
+    human_window: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAdmissionWindowV1"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_users: {
         parameters: {
             query?: never;
@@ -10264,6 +10377,75 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["WorkspaceSummary"];
                 };
+            };
+        };
+    };
+    forge_space_owner_v2_readback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                registry: string;
+                space: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceOwnerReadbackV2"];
+                };
+            };
+            /** @description No current v2 operation */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_space_owner_v2_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                registry: string;
+                space: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpaceOwnerCommandV2"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceOwnerReadbackV2"];
+                };
+            };
+            /** @description Registered service account and exact ci-cd write scope required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Original mapping, operation or revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -2004,11 +2004,13 @@ async fn finish_workspace_retention(
             tracing::warn!(attempt_id = %lease.attempt_id, "workspace completion journal unavailable; files retained");
             return ExecutionOutcome::Held;
         }
-        // Only this embedded owner has observed and journaled actual terminal completion.
-        // Keep generic/external completion semantics unchanged.
-        if sqlx::query("UPDATE job_leases l SET acknowledged_at=COALESCE(l.acknowledged_at,clock_timestamp()),completion_received_at=COALESCE(l.completion_received_at,clock_timestamp()) WHERE l.id=$1 AND l.runner_id IS NULL AND EXISTS(SELECT 1 FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN task_pipeline_intents t ON t.pipeline_id=s.pipeline_id WHERE j.id=l.job_id)")
-            .bind(lease.id).execute(pool).await.is_err()
-        {
+        // The embedded owner observed process exit and durably acknowledged its
+        // workspace journal. This applies to ordinary CI as well as task pipelines;
+        // neither lease expiry nor reconciliation enters this path.
+        let accepted = sqlx::query("UPDATE job_leases l SET acknowledged_at=COALESCE(l.acknowledged_at,clock_timestamp()),completion_received_at=COALESCE(l.completion_received_at,clock_timestamp()) WHERE l.id=$1 AND l.attempt_id=$2 AND l.generation=$3 AND l.runner_id IS NULL AND l.completed_at IS NOT NULL AND l.terminal_status=$4 AND l.lease_status IN ('completed','canceled')")
+            .bind(lease.id).bind(lease.attempt_id).bind(lease.generation).bind(&outcome)
+            .execute(pool).await;
+        if !accepted.is_ok_and(|result| result.rows_affected() == 1) {
             return ExecutionOutcome::Held;
         }
         if let Some(remote) = remote_job {

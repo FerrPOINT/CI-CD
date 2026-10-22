@@ -22,6 +22,7 @@ vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<type
   toast: { error: vi.fn(), success: vi.fn() },
 }))()}))
 
+let admissionAvailable = true
 const projectId = '22222222-2222-4222-8222-222222222222'
 const pipelineId = '11111111-1111-4111-8111-111111111111'
 const stageId = '33333333-3333-4333-8333-333333333333'
@@ -112,6 +113,8 @@ const routeCases = [
 
 afterEach(() => {
   cleanup()
+  admissionAvailable = true
+  clearSession()
   window.localStorage.clear()
   vi.unstubAllGlobals()
 })
@@ -120,6 +123,13 @@ describe('app router smoke', () => {
   it.each(routeCases)('renders $entry', async ({ entry, marker }) => {
     renderRoute(entry)
     await expectText(marker)
+  })
+
+  it('does not mount private routes when admission cannot be confirmed', async () => {
+    admissionAvailable = false
+    renderRoute('/projects')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось подтвердить доступ')
+    expect(screen.queryByText('forge-api')).not.toBeInTheDocument()
   })
 
   it('redirects an old project-members link to Projects', async () => {
@@ -190,6 +200,12 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   const method = init?.method ?? 'GET'
 
   if (method !== 'GET') return json({})
+
+  if (path === '/space-admission') {
+    if (!admissionAvailable) return Promise.resolve(new Response('unavailable', { status: 503 }))
+    return json({ schema_version: 1, enforced: true, remaining_millis: 60000,
+                  scope_revision: 'a'.repeat(64) })
+  }
 
   if (path.startsWith('/delivery-configurations/')) return json({ ...project, repository_id: null })
   if (path === '/workspace-projects') return json({ items: [{ ...project, registry_instance_id: userId, namespace_id: projectId, project_key: 'FORGE', state: 'active', group_id: userId, group_slug: 'platform', repositories: 1 }], total: 1 })

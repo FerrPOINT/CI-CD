@@ -48,11 +48,20 @@ async fn wire(response: Response) -> Value {
 }
 
 pub(crate) async fn seed(pool: &PgPool, original: &StoredCredential, pipeline: Uuid) {
+    seed_with_owner(pool, original, pipeline, Uuid::new_v4(), Uuid::new_v4()).await;
+}
+
+pub(crate) async fn seed_with_owner(
+    pool: &PgPool,
+    original: &StoredCredential,
+    pipeline: Uuid,
+    registry: Uuid,
+    instance: Uuid,
+) {
     let context = &original.context;
     let project = context.project_id;
     let b = &context.intent.binding;
     let group = Uuid::new_v4();
-    let registry = Uuid::new_v4();
     let namespace = Uuid::new_v4();
     let command = OwnerCommand {
         schema_version: 1,
@@ -61,7 +70,7 @@ pub(crate) async fn seed(pool: &PgPool, original: &StoredCredential, pipeline: U
             namespace_id: namespace,
         },
         resource: ResourceRef {
-            instance_id: Uuid::new_v4(),
+            instance_id: instance,
             kind: ResourceKind::GitGroup,
             resource_id: group,
         },
