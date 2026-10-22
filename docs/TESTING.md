@@ -92,5 +92,6 @@ Source guard принадлежит единственному `tooling:build-co
 `./check-workspace.ps1 -Profile Unit -Repository CI-CD -Component tooling`
 из корня соответствующего workspace. Обе recipe входят в component и inputs.
 Source checks не заменяют native qualification нового recipe и измерения
-приложения. Общие правила и evidence — в Base
-[плане unit graphs](../../services-base/docs/plans/forge-unit-dependency-graph-20261022.md).
+приложения. Общий контракт — Base `docs/BUILD_PERFORMANCE.md`, выбранный по
+`qualityTooling.path` корневого inventory. Product docs не требуют копировать
+новый source Base или менять независимый SDK pin.
