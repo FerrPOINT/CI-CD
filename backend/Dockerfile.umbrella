@@ -1,7 +1,10 @@
-# Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
-# Stages the sibling services-base checkout so the sdlc-auth-core path
-# dependency (../../../services-base/...) resolves.
-FROM rust:1.88.0-slim-bookworm AS build
+# syntax=docker/dockerfile:1
+# Workspace-root context with original sibling SDK.
+FROM rust:1.88.0-slim-bookworm AS manifests
+ARG PDLC_RUN_SLOT_SHARING=locked
+ARG TARGETARCH
+ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
+ARG CARGO_BUILD_JOBS=2
 WORKDIR /app
 # backend/Cargo.toml: sdlc-auth-core = { path = "../../../services-base/..." }
 # /app/../../services-base == /services-base (WORKDIR is repo backend/).
@@ -12,32 +15,70 @@ COPY services-base/crates/sdlc-cli-core /services-base/crates/sdlc-cli-core
 COPY services-base/crates/sdlc-telemetry /services-base/crates/sdlc-telemetry
 COPY CI-CD/backend/Cargo.toml CI-CD/backend/Cargo.lock* ./
 COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
+COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
+COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
 COPY CI-CD/backend/infra/Cargo.toml infra/Cargo.toml
 COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
-COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
-COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
-RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
- && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
- && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs && printf 'fn main() {}\n' > src/bin/dummy.rs \
- && printf '\n' > domain/src/lib.rs \
- && printf '\n' > app/src/lib.rs \
- && printf '\n' > infra/src/lib.rs \
- && printf '\n' > api/src/lib.rs \
- && printf 'fn main() {}\n' > cli/src/main.rs \
- && printf 'fn main() {}\n' > migration/src/main.rs \
- && /usr/local/cargo/bin/cargo build --locked --release \
- && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} \
+    mkdir -p src \
+    && printf '%s\n' '' > src/lib.rs \
+    && mkdir -p src \
+    && printf '%s\n' 'fn main() {}' > src/main.rs \
+    && mkdir -p src/bin \
+    && printf '%s\n' 'fn main() {}' > src/bin/openapi-dump.rs \
+    && mkdir -p src/bin \
+    && printf '%s\n' 'fn main() {}' > src/bin/forge-runner.rs \
+    && mkdir -p domain/src \
+    && printf '%s\n' '' > domain/src/lib.rs \
+    && printf '%s\n' 'fn main() {}' > domain/src/main.rs \
+    && mkdir -p cli/src \
+    && printf '%s\n' '' > cli/src/lib.rs \
+    && mkdir -p cli/src \
+    && printf '%s\n' 'fn main() {}' > cli/src/main.rs \
+    && mkdir -p migration/src \
+    && printf '%s\n' '' > migration/src/lib.rs \
+    && mkdir -p migration/src \
+    && printf '%s\n' 'fn main() {}' > migration/src/main.rs \
+    && mkdir -p app/src \
+    && printf '%s\n' '' > app/src/lib.rs \
+    && printf '%s\n' 'fn main() {}' > app/src/main.rs \
+    && mkdir -p infra/src \
+    && printf '%s\n' '' > infra/src/lib.rs \
+    && printf '%s\n' 'fn main() {}' > infra/src/main.rs \
+    && mkdir -p api/src \
+    && printf '%s\n' '' > api/src/lib.rs \
+    && printf '%s\n' 'fn main() {}' > api/src/main.rs
+
+FROM manifests AS unit-dependencies
+ARG PDLC_RUN_SLOT_SHARING=locked
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked \
+    cargo test --locked --release -p cicd-domain --lib --no-run \
+    && cargo clean --release -p cicd-server -p cicd-domain -p cicd-cli -p cicd-migrate -p cicd-app -p cicd-infra -p cicd-api
+
+FROM unit-dependencies AS dependencies
+ARG PDLC_RUN_SLOT_SHARING=locked
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked \
+    cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner \
+    && cargo clean --release -p cicd-server -p cicd-domain -p cicd-cli -p cicd-migrate -p cicd-app -p cicd-infra -p cicd-api
+
+FROM unit-dependencies AS unit
+ARG PDLC_RUN_SLOT_SHARING=locked
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} rm -rf -- domain/src
+COPY CI-CD/backend/domain ./domain
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked cargo test --locked --release -p cicd-domain --lib && printf 'passed\n' > /tmp/rust-unit-check
+
+FROM dependencies AS build
+ARG PDLC_RUN_SLOT_SHARING=locked
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=bind,from=unit,source=/tmp/rust-unit-check,target=/tmp/rust-unit-check test "$(cat /tmp/rust-unit-check)" = passed
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} rm -rf -- src domain/src app/src infra/src api/src
 COPY CI-CD/backend/src ./src
-COPY CI-CD/backend/domain/src domain/src
-COPY CI-CD/backend/app/src app/src
-COPY CI-CD/backend/infra/src infra/src
-COPY CI-CD/backend/api/src api/src
-COPY CI-CD/backend/cli/src cli/src
-COPY CI-CD/backend/migration/src migration/src
+COPY CI-CD/backend/domain ./domain
+COPY CI-CD/backend/app ./app
+COPY CI-CD/backend/infra ./infra
+COPY CI-CD/backend/api ./api
 COPY CI-CD/backend/migrations ./migrations
-RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
- && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner
 
 FROM debian:bookworm-slim
 # docker-cli only (DooD): embedded runner spawns job containers through the
