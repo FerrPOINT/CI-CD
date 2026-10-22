@@ -130,7 +130,7 @@ async fn catalog(
     let headers = response.headers().clone();
     let text = response.text().await.unwrap();
     assert_eq!(status, 200, "common catalog {query}: {text}");
-    assert_eq!(headers["cache-control"], "private, no-store");
+    assert_eq!(headers["cache-control"], "private, no-store, no-transform");
     serde_json::from_str(&text).unwrap()
 }
 
@@ -156,7 +156,7 @@ async fn detail(
     let headers = response.headers().clone();
     let text = response.text().await.unwrap();
     assert_eq!(status, expected, "catalog detail {id}: {text}");
-    assert_eq!(headers["cache-control"], "private, no-store");
+    assert_eq!(headers["cache-control"], "private, no-store, no-transform");
     if expected == 200 {
         Some(serde_json::from_str(&text).unwrap())
     } else {
@@ -182,7 +182,7 @@ async fn group_page(
     let headers = response.headers().clone();
     let text = response.text().await.unwrap();
     assert_eq!(status, 200, "group catalog: {text}");
-    assert_eq!(headers["cache-control"], "private, no-store");
+    assert_eq!(headers["cache-control"], "private, no-store, no-transform");
     serde_json::from_str(&text).unwrap()
 }
 
@@ -203,7 +203,7 @@ async fn repository_read(
     if expected == 200 {
         assert_eq!(
             response.headers().get("cache-control").unwrap(),
-            "private, no-store"
+            "private, no-store, no-transform"
         );
     }
     let text = response.text().await.unwrap();
@@ -891,6 +891,27 @@ pub(super) async fn verify(
         (&other_name, other_repo.id),
     )
     .await;
+    let push = || async {
+        tokio::process::Command::new("git")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .arg("-C")
+            .arg(root.join("client"))
+            .arg("-c")
+            .arg("http.extraHeader=Authorization: Bearer sdlc_pat_fixture_product_roles")
+            .args(["push", "origin", "HEAD:refs/heads/task/common-space"])
+            .output()
+            .await
+            .unwrap()
+    };
+    let missing_application_scope = push().await;
+    assert!(!missing_application_scope.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_application_scope.stderr).contains("403"),
+        "legacy git:write cannot replace central ci-cd:write"
+    );
+    profile.write().unwrap().scopes = vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"];
     let pushed = tokio::process::Command::new("git")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")

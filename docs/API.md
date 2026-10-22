@@ -100,6 +100,21 @@ Custom hooks и human ACL сохраняются. Ограниченный initi
 admin/operator описан ниже; SAT его не получает. [Git hosting](GIT_HOSTING.md#8-аутентификация).
 Новые routes/credentials/scopes не вводятся; Rust/PG и installed-image qualification pending.
 
+## Current human authority: source candidate
+
+Сохранённый product PAT пересекается с текущими ролью и приложениями владельца
+из Auth, исходными scopes и project binding. Git scopes не открывают API.
+Тот же owner proof может пройти независимый space admission, без синтетического
+центрального bearer. Отзыв приложения проверяется до чтения namespace cache.
+Отсутствующий или неоднозначный central_sub закрывает запрос.
+
+PR close/reopen с истёкшим proof возвращают403; SQL COMMIT защищён исходным
+clock. Accepted merge с возможной native публикацией возвращает503
+operation_outcome_unknown и требует exact operation/ref readback. HTTP guard
+может дождаться bounded cleanup, но не продлевает разрешение или effect window.
+Ни timeout, ни503 не являются доказательством Git rollback; автоматический
+повтор публикации запрещён. Оба PR action URL передают один исходный clock.
+
 ## Общий Space owner v2
 
 | Метод | Путь | Контракт |
@@ -592,8 +607,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 99,
-    "latest_required_version": 99,
+    "latest_applied_version": 104,
+    "latest_required_version": 104,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -2241,3 +2256,10 @@ or expired owner confirmation retires private caches/forms and pending response
 ownership while preserving the central credentials. Late success/401 responses
 cannot affect a newer account. Git, PR, jobs and downloads still require their
 separate resource/native authorization at every actual boundary.
+
+### Центральный справочник и продуктовый PAT
+
+При настроенном central Auth GET /api/v1/users требует центральный credential.
+Forge PAT не пересылается в Auth и получает403 даже у текущего администратора:
+его audience остаётся Forge. Текущие права и scopes Forge PAT проверяются
+независимо для собственных административных API Forge, включая runners.

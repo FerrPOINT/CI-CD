@@ -317,6 +317,10 @@ Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` prox
 
 Подключение версий, границы контрактов и проверки описаны в [BASE_INTEGRATION](BASE_INTEGRATION.md).
 
+## Человеческие роли и приложения
+
+[Контракт и текущие gates](HUMAN_APPLICATION_ACCESS.md) описывают feature-исходники.
+До установки полного совместимого cohort политика не активируется.
 Единое пространство: [поверхности доступа](UNIFIED_SPACE_SURFACES.md) и [центральный профиль/роли](CENTRAL_PROFILE_ROLES.md).
 
 ## Архивные проекты в рабочей навигации

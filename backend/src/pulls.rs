@@ -872,14 +872,34 @@ pub async fn pr_action(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath((repo, number)): AxumPath<(String, i32)>,
     permit: Option<axum::Extension<RepositoryWrite>>,
+    authority: Option<axum::Extension<pdlc_auth_core::http_authority::RequestAuthority>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<PrAction>,
 ) -> Result<Json<PullRequest>, ApiError> {
+    let application_clock = match (authority.as_ref(), claims.as_ref()) {
+        (Some(authority), Some(claims)) => {
+            crate::git_host::GitDeadline::request(&authority.0, claims.exp)?
+        }
+        _ => None,
+    };
+    if crate::central_auth::application_policy_required()?
+        && claims
+            .as_ref()
+            .is_none_or(|claims| claims.role != "service_account")
+        && application_clock.is_none()
+    {
+        return Err(ApiError::forbidden());
+    }
+    if let Some(authority) = authority.filter(|_| input.action == "merge") {
+        authority.retain_native_owner();
+    }
     // An accepted native merge keeps its admission and row lock if the HTTP caller disconnects.
     tokio::spawn(pr_action_owned(
         state,
         repo,
         number,
         permit.map(|p| p.0),
+        application_clock,
         input,
     ))
     .await
@@ -895,6 +915,7 @@ async fn pr_action_owned(
     repo: String,
     number: i32,
     permit: Option<RepositoryWrite>,
+    application_clock: Option<crate::git_host::GitDeadline>,
     input: PrAction,
 ) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
@@ -919,6 +940,9 @@ async fn pr_action_owned(
         None
     };
     let mut transaction = pool.begin().await.map_err(ApiError::internal)?;
+    if let Some(clock) = application_clock {
+        clock.bind_commit_clock(&mut transaction).await?;
+    }
     if let Some(permit) = write.as_ref() {
         permit.lock(&mut transaction).await?;
     }
@@ -1001,6 +1025,7 @@ async fn pr_action_owned(
                 &["merge-tree", "--write-tree", "-z", &target.oid, &source.oid],
                 axum::body::Bytes::new(),
                 write.as_ref().map(RepositoryWrite::proof),
+                application_clock,
                 mutation_guard,
             )
             .await?;
@@ -1035,6 +1060,7 @@ async fn pr_action_owned(
                 ],
                 axum::body::Bytes::new(),
                 write.as_ref().map(RepositoryWrite::proof),
+                application_clock,
                 mutation_guard,
             )
             .await?;
@@ -1068,6 +1094,9 @@ async fn pr_action_owned(
 
             // Restore role/lifecycle SQL locks using the original fixed proof before any ref effect.
             let mut transaction = pool.begin().await.map_err(|_| merge_unconfirmed())?;
+            if let Some(clock) = application_clock {
+                clock.bind_commit_clock(&mut transaction).await?;
+            }
             if let Some(permit) = write.as_ref() {
                 permit.lock(&mut transaction).await?;
             }
@@ -1087,7 +1116,15 @@ async fn pr_action_owned(
                 &target,
                 &merge_sha,
                 Some(mutation_guard),
-                write.as_ref().map(|permit| (&*state, permit.proof())),
+                if write.is_some() || application_clock.is_some() {
+                    Some((
+                        &*state,
+                        write.as_ref().map(RepositoryWrite::proof),
+                        application_clock,
+                    ))
+                } else {
+                    None
+                },
             )
             .await
             {
@@ -1299,7 +1336,8 @@ async fn publish_merge(
     guard: Option<&cicd_infra::sync_git::MutationGuard>,
     permit: Option<(
         &AppState,
-        &pdlc_auth_core::service_bridge::ConfirmedSpaceRead,
+        Option<&pdlc_auth_core::service_bridge::ConfirmedSpaceRead>,
+        Option<crate::git_host::GitDeadline>,
     )>,
 ) -> Result<(), ApiError> {
     // Git locks/verifies both refs in one transaction; no stale source or target can be published.
@@ -1307,13 +1345,14 @@ async fn publish_merge(
         "start\nverify {} {}\nupdate {} {} {}\nprepare\ncommit\n",
         source.reference, source.oid, target.reference, merged, target.oid
     );
-    let (written, observed) = if let Some((state, proof)) = permit {
+    let (written, observed) = if let Some((state, proof, application_clock)) = permit {
         let observed = crate::git_host::pr_output(
             state,
             path,
             &["update-ref", "--stdin"],
             axum::body::Bytes::from(plan),
-            Some(proof),
+            proof,
+            application_clock,
             guard.ok_or_else(ApiError::forbidden)?,
         )
         .await?;

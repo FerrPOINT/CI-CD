@@ -211,6 +211,27 @@ impl ReceiveHooks {
         write_private(&self.directory.join("pre-receive"), script.as_bytes()).map_err(io_error)
     }
 
+    pub(super) fn updates(&self) -> Result<Vec<(String, String, String)>, ApiError> {
+        let path = self.directory.join("updates");
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let raw = fs::read_to_string(path).map_err(io_error)?;
+        raw.lines()
+            .map(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                if fields.len() != 3
+                    || !is_probable_object_id(fields[0])
+                    || !is_probable_object_id(fields[1])
+                    || !fields[2].starts_with("refs/")
+                {
+                    return Err(ApiError::forbidden());
+                }
+                Ok((fields[0].into(), fields[1].into(), fields[2].into()))
+            })
+            .collect()
+    }
+
     pub(super) fn config(&self) -> String {
         format!("core.hooksPath={}", self.directory.display())
     }

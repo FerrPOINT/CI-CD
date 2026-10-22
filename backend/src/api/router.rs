@@ -412,6 +412,9 @@ pub(crate) fn build_router_with_cors(
             state.clone(),
             rate_limit_mw,
         ))
+        .layer(axum::middleware::from_fn(
+            pdlc_auth_core::http_authority::enforce,
+        ))
         .layer(axum::middleware::from_fn(request_id_mw))
         .layer(cors)
         .layer(TraceLayer::new_for_http())

@@ -352,6 +352,7 @@ dependencies = [
 name = "cicd-app"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "chrono",
  "cicd-domain",
  "jsonwebtoken",
@@ -362,6 +363,7 @@ dependencies = [
  "sqlx",
  "subtle",
  "thiserror",
+ "tokio",
  "utoipa",
  "uuid",
 ]
@@ -443,6 +445,7 @@ dependencies = [
  "cicd-infra",
  "clap",
  "flate2",
+ "futures-util",
  "hmac",
  "jsonwebtoken",
  "lettre",
@@ -1684,6 +1687,7 @@ dependencies = [
  "argon2",
  "axum",
  "chrono",
+ "futures-util",
  "jsonwebtoken",
  "pdlc-shared",
  "reqwest 0.12.28",

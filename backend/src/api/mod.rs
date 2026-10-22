@@ -489,6 +489,13 @@ impl ApiError {
         }
     }
     pub(crate) fn internal(error: sqlx::Error) -> Self {
+        if error.as_database_error().is_some_and(|database| {
+            database.code().as_deref() == Some("42501")
+                && database.message() == "forge_request_authority_expired"
+        }) {
+            return Self::service_unavailable("Original admission proof expired before COMMIT");
+        }
+
         if let Some(database) = error.as_database_error()
             && database.code().as_deref() == Some("23505")
             && matches!(

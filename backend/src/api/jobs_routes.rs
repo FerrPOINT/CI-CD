@@ -222,6 +222,12 @@ pub(crate) async fn retry_pipeline(
             "previous embedded execution has not released its reservation",
         ));
     }
+    let _ = crate::pipeline_authority::retry_origin(&mut tx, pipeline_id).await?;
+    let admission_active = crate::central_auth::application_policy_required()?;
+    if admission_active {
+        sqlx::query("UPDATE job_queue q SET state='canceled',completed_at=clock_timestamp(),updated_at=clock_timestamp() FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE q.job_id=j.id AND s.pipeline_id=$1 AND j.status='queued' AND q.state='queued'").bind(pipeline_id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+        sqlx::query("UPDATE execution_attempts a SET status='canceled',finished_at=clock_timestamp() FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE a.job_id=j.id AND s.pipeline_id=$1 AND j.status='queued' AND a.status='queued'").bind(pipeline_id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+    }
     close_retry_leases(
         &mut tx,
         pipeline_id,
@@ -233,7 +239,7 @@ pub(crate) async fn retry_pipeline(
         "WITH retry_jobs AS ( \
              SELECT j.id \
              FROM jobs j JOIN stages s ON s.id = j.stage_id \
-             WHERE s.pipeline_id = $1 AND j.status IN ('failed','canceled') \
+             WHERE s.pipeline_id = $1 AND (j.status IN ('failed','canceled') OR ($2::boolean AND j.status='queued')) \
          ), nexts AS ( \
              SELECT r.id AS job_id, COALESCE(MAX(a.attempt_no), 0) + 1 AS attempt_no \
              FROM retry_jobs r LEFT JOIN execution_attempts a ON a.job_id = r.id \
@@ -243,6 +249,7 @@ pub(crate) async fn retry_pipeline(
          SELECT gen_random_uuid(), job_id, attempt_no, 'queued', 'pipeline_retry' FROM nexts RETURNING job_id,id",
     )
     .bind(pipeline_id)
+    .bind(admission_active)
     .fetch_all(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
@@ -268,6 +275,7 @@ pub(crate) async fn retry_pipeline(
     .await
     .map_err(ApiError::internal)?;
     for (job, attempt) in attempts {
+        crate::pipeline_authority::record_retry(&mut tx, pipeline_id, attempt).await?;
         crate::store::enqueue_job_attempt_tx(&mut tx, job, attempt)
             .await
             .map_err(ApiError::internal)?;
@@ -395,6 +403,7 @@ pub(crate) async fn retry_job(
             "previous embedded execution has not released its reservation",
         ));
     }
+    let _ = crate::pipeline_authority::retry_origin(&mut tx, pipeline).await?;
     close_retry_leases(
         &mut tx,
         pipeline,
@@ -430,6 +439,7 @@ pub(crate) async fn retry_job(
         .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
+    crate::pipeline_authority::record_retry(&mut tx, pipeline, attempt_id).await?;
     crate::store::enqueue_job_attempt_tx(&mut tx, job_id, attempt_id)
         .await
         .map_err(ApiError::internal)?;
@@ -489,6 +499,9 @@ pub(crate) async fn start_manual_job(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> ApiResult<ManualJobStartResult> {
+    if crate::central_auth::application_policy_required()? {
+        return start_manual_job_admitted(&state, job_id).await;
+    }
     let pool = pool(&state)?;
     let manual_job: Option<(bool, String)> =
         sqlx::query_as("SELECT manual, status FROM jobs WHERE id = $1")
@@ -938,6 +951,55 @@ impl LogPageParams {
         }
         Ok(Some(like_contains_pattern(raw)))
     }
+}
+
+async fn start_manual_job_admitted(state: &AppState, job: Uuid) -> ApiResult<ManualJobStartResult> {
+    let pool = pool(state)?;
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    let pipeline: Uuid = sqlx::query_scalar(
+        "SELECT s.pipeline_id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE j.id=$1",
+    )
+    .bind(job)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    sqlx::query("SELECT id FROM pipelines WHERE id=$1 FOR UPDATE")
+        .bind(pipeline)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    let row: Option<(bool, String)> =
+        sqlx::query_as("SELECT manual,status FROM jobs WHERE id=$1 FOR UPDATE")
+            .bind(job)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+    if !matches!(row,Some((true,ref state)) if state=="queued") {
+        return Err(ApiError::conflict("job is not a waiting manual job"));
+    }
+    let _ = crate::pipeline_authority::retry_origin(&mut tx, pipeline).await?;
+    sqlx::query("UPDATE job_queue SET state='canceled',completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE job_id=$1 AND state='queued'").bind(job).execute(&mut *tx).await.map_err(ApiError::internal)?;
+    sqlx::query("UPDATE execution_attempts SET status='canceled',finished_at=clock_timestamp() WHERE job_id=$1 AND status='queued'").bind(job).execute(&mut *tx).await.map_err(ApiError::internal)?;
+    let attempt = Uuid::new_v4();
+    sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) SELECT $1,$2,COALESCE(MAX(attempt_no),0)+1,'queued','manual' FROM execution_attempts WHERE job_id=$2").bind(attempt).bind(job).execute(&mut *tx).await.map_err(ApiError::internal)?;
+    crate::pipeline_authority::record_retry(&mut tx, pipeline, attempt).await?;
+    sqlx::query("UPDATE jobs SET manual=false WHERE id=$1")
+        .bind(job)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    if crate::store::enqueue_job_attempt_tx(&mut tx, job, attempt)
+        .await
+        .map_err(ApiError::internal)?
+        != 1
+    {
+        return Err(ApiError::conflict("pipeline is not active"));
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    crate::dispatch_signal::notify_runner_work_available();
+    crate::metrics::PIPELINES_CREATED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(Json(ManualJobStartResult { started: true }))
 }
 
 #[cfg(test)]

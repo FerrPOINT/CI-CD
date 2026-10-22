@@ -3,8 +3,6 @@ use cicd::{
     outbox, platform, runner,
 };
 
-use sqlx::postgres::PgPoolOptions;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Fleet-standard tracing setup (JSON in prod via PDLC_LOG_JSON).
@@ -18,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "CICD_GIT_INTERNAL_TOKEN is not set; post-receive ingress is trusted-local only"
         );
     }
-    let pool = PgPoolOptions::new()
+    let pool = cicd::request_database::pool_options()
         .max_connections(10)
         .connect(&config.database.url)
         .await?;

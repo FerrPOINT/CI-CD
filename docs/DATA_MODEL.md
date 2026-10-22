@@ -45,6 +45,13 @@ unique operation keys и immutable receipt/attempt guards сохранены. Н
 upgrade и populated history; рабочая БД не менялась.
 [Состав проверки](FORGE_TASK_DEPLOYMENT_LOCAL_20261017.md).
 
+Additive0100 application_request_clock вводит ephemeral
+forge_request_commit_fences. Insert/delete в одной транзакции оставляет deferred
+COMMIT event, но не постоянную строку: истечение исходного application/credential
+clock отклоняет COMMIT после SQL wait даже при выключенной политике пространств.
+Таблица не назначает роли или доступ и не заменяет lifecycle/data admission.
+Миграция является source candidate, в dev этой задачей не устанавливалась.
+
 PR actions получают namespace admission перед `pull_requests FOR UPDATE`.
 Merge/close/reopen читают актуальное состояние под одной row lock; Git publication
 подтверждается до `status=merged`/`merge_commit_sha`. Branch SHA фиксируется
@@ -1285,3 +1292,24 @@ Changing users.role or central_sub retires its confirmation, so an old grant
 cannot silently return after reassignment. Standalone native role semantics are
 unchanged. Release migration may record only assignments whose origin is verified;
 unknown history is not a reason to copy administrative privileges.
+
+
+### Центральный владелец pipeline
+
+Migration0101 добавляет pipeline_human_owners: pipeline_id (PK/FK),
+owner_subject (центральный UUID), requires_admin и recorded_at. Связь создаётся
+транзакционно с pipeline из проверенного origin. Она не является credential,
+ролью или миграционным доказательством старого локального назначения. Существующие
+записи не заполняются по email/первому администратору; unresolved active/queued
+pipeline входят в отчёт миграции до включения app policy. Task machine journals
+сохраняют самостоятельную модель custody/assignment/lease.
+
+### Исходный human clock обычных SQL-записей
+
+0104 добавляет `forge_human_request_commit_clock()` и idempotent installer
+`forge_install_human_request_clocks()` для deferred constraint triggers на
+product tables. Новых human grants, owner rows или изменения старых migration
+checksums нет. Значение `forge.request_valid_until` задаётся serving SQLx pool
+из исходного request proof и очищается перед повторным использованием.
+Новые таблицы также должны получить этот guard. Полный контракт:
+[HUMAN_APPLICATION_ACCESS](HUMAN_APPLICATION_ACCESS.md#обычные-sql-записи-и-исходный-срок-подтверждения).

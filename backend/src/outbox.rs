@@ -1095,10 +1095,10 @@ async fn materialize_schedule_fire(
              UPDATE schedules \
              SET next_fire_at = $3, last_fire_error = NULL \
              WHERE id = $1 AND enabled AND next_fire_at = $2 \
-             RETURNING id, project_id \
+             RETURNING id, project_id, owner_subject \
          ) \
-         INSERT INTO schedule_fires (id, schedule_id, project_id, scheduled_for, status) \
-         SELECT $4, id, project_id, $2, 'pending' FROM claimed \
+         INSERT INTO schedule_fires (id, schedule_id, project_id, scheduled_for, status, owner_subject) \
+         SELECT $4, id, project_id, $2, 'pending', owner_subject FROM claimed \
          ON CONFLICT (schedule_id, scheduled_for) DO NOTHING",
     )
     .bind(schedule_id)
@@ -1110,8 +1110,8 @@ async fn materialize_schedule_fire(
 }
 
 async fn process_pending_schedule_fires(pool: &PgPool, git_root: &Path) -> usize {
-    let fires = sqlx::query_as::<_, (Uuid, Uuid, Uuid, DateTime<Utc>, String)>(
-        "SELECT f.id, f.schedule_id, f.project_id, f.scheduled_for, s.git_ref \
+    let fires = sqlx::query_as::<_, (Uuid, Uuid, Uuid, DateTime<Utc>, String, Option<Uuid>)>(
+        "SELECT f.id, f.schedule_id, f.project_id, f.scheduled_for, s.git_ref, f.owner_subject \
          FROM schedule_fires f \
          JOIN schedules s ON s.id = f.schedule_id \
          WHERE f.status = 'pending' \
@@ -1123,18 +1123,22 @@ async fn process_pending_schedule_fires(pool: &PgPool, git_root: &Path) -> usize
     .unwrap_or_default();
 
     let mut fired = 0;
-    for (fire_id, schedule_id, project_id, scheduled_for, git_ref) in fires {
-        let pipeline = crate::api::create_pipeline_with_vars_idempotent(
-            pool,
-            project_id,
-            git_ref,
-            serde_json::json!({
-                "schedule_id": schedule_id,
-                "scheduled_for": scheduled_for.to_rfc3339(),
-            }),
-            crate::api::PIPELINE_TRIGGER_SOURCE_SCHEDULE,
-            Some(&schedule_idempotency_key(schedule_id, scheduled_for)),
-            git_root,
+    for (fire_id, schedule_id, project_id, scheduled_for, git_ref, owner) in fires {
+        let pipeline = crate::pipeline_authority::with_saved(
+            owner,
+            true,
+            crate::api::create_pipeline_with_vars_idempotent(
+                pool,
+                project_id,
+                git_ref,
+                serde_json::json!({
+                    "schedule_id": schedule_id,
+                    "scheduled_for": scheduled_for.to_rfc3339(),
+                }),
+                crate::api::PIPELINE_TRIGGER_SOURCE_SCHEDULE,
+                Some(&schedule_idempotency_key(schedule_id, scheduled_for)),
+                git_root,
+            ),
         )
         .await;
         match pipeline {
@@ -1158,6 +1162,17 @@ async fn process_pending_schedule_fires(pool: &PgPool, git_root: &Path) -> usize
                 .execute(pool)
                 .await;
                 fired += 1;
+            }
+            Err(error) if error.status.is_server_error() => {
+                // Original fire/key stays pending. Retry confirmation/enqueue,
+                // never repeat an untracked external execution.
+                let _ = sqlx::query(
+                    "UPDATE schedule_fires SET error=$2 WHERE id=$1 AND status='pending'",
+                )
+                .bind(fire_id)
+                .bind(&error.message)
+                .execute(pool)
+                .await;
             }
             Err(error) => {
                 let error = format!("{error:?}");

@@ -342,6 +342,8 @@ async fn sync_guard_serializes_concurrent_pr_merge_without_duplicate_commit() {
             axum::extract::State(state.clone()),
             axum::extract::Path((name.clone(), 1)),
             None,
+            None,
+            None,
             axum::Json(cicd::pulls::PrAction {
                 action: "merge".into(),
             }),

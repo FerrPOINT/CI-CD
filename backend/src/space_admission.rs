@@ -1,7 +1,7 @@
 //! Common visibility is additional to Git write roles and credential scopes.
-use crate::{api::ApiError, central_auth::BRIDGE};
+use crate::api::ApiError;
 use pdlc_auth_core::service_bridge::{
-    ConfirmedSpaceRead, SpaceAdmissionClient, SpaceAdmissionError, VerifiedCentralToken,
+    ConfirmedSpaceRead, SpaceAdmissionClient, SpaceAdmissionError,
 };
 use pdlc_shared::space_access::{SpaceRef, SpaceState};
 use sqlx::PgPool;
@@ -15,7 +15,7 @@ pub(crate) async fn active(pool: &PgPool) -> Result<bool, ApiError> {
         .map_err(ApiError::internal)
 }
 
-async fn client() -> Result<&'static SpaceAdmissionClient, ApiError> {
+pub(crate) async fn client() -> Result<&'static SpaceAdmissionClient, ApiError> {
     CLIENT
         .get_or_try_init(|| async {
             let url = std::env::var("CICD_SPACES__ADMISSION_URL")
@@ -28,7 +28,7 @@ async fn client() -> Result<&'static SpaceAdmissionClient, ApiError> {
         .await
 }
 
-fn owner_error(error: SpaceAdmissionError) -> ApiError {
+pub(crate) fn owner_error(error: SpaceAdmissionError) -> ApiError {
     match error {
         SpaceAdmissionError::Expired => ApiError::forbidden(),
         _ => ApiError::service_unavailable("space_admission_unavailable"),
@@ -40,7 +40,7 @@ fn owner_error(error: SpaceAdmissionError) -> ApiError {
 pub(crate) async fn repository(
     pool: &PgPool,
     storage: &str,
-    actor: &VerifiedCentralToken,
+    actor: &crate::api::authz_mw::VerifiedRequestIdentity,
     write: bool,
 ) -> Result<ConfirmedSpaceRead, ApiError> {
     let row: Option<(uuid::Uuid, uuid::Uuid, i64, String)> = sqlx::query_as(
@@ -57,18 +57,13 @@ pub(crate) async fn repository(
         registry_instance_id,
         space_id,
     };
-    let proof = client()
-        .await?
-        .confirm_many_read(&BRIDGE, actor, std::slice::from_ref(&space))
-        .await
-        .map_err(owner_error)?;
+    let proof = actor
+        .confirm_spaces(client().await?, std::slice::from_ref(&space))
+        .await?;
     let admission = proof.admission().map_err(owner_error)?;
     let now = chrono::Utc::now().timestamp();
-    let identity = pdlc_shared::space_access::CentralIdentity {
-        issuer: actor.issuer.clone(),
-        subject: actor.context.user_id.clone(),
-    };
-    if !admission.can_read_space(&identity, &space, now, actor.lifetime.local_valid_until()) {
+    let identity = actor.space_identity()?;
+    if !admission.can_read_space(&identity, &space, now, actor.claims.exp) {
         return Err(ApiError::forbidden());
     }
     let confirmed = admission
@@ -107,7 +102,6 @@ pub(crate) async fn catalog_read(
     }
     let identity = identity.ok_or_else(ApiError::forbidden)?;
     identity.require_scope("ci-cd:read")?;
-    let actor = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
     let rows: Vec<(uuid::Uuid, uuid::Uuid, uuid::Uuid)> = sqlx::query_as(
         "SELECT group_id,registry_instance_id,space_id FROM forge_space_catalog \
          WHERE group_id IS NOT NULL AND state IN ('active','archiving','archived') \
@@ -128,11 +122,7 @@ pub(crate) async fn catalog_read(
             space_id: *space_id,
         })
         .collect();
-    let proof = client()
-        .await?
-        .confirm_many_read(&BRIDGE, actor, &spaces)
-        .await
-        .map_err(owner_error)?;
+    let proof = identity.confirm_spaces(client().await?, &spaces).await?;
     let readable: std::collections::HashSet<_> = proof
         .readable_spaces()
         .map_err(owner_error)?
@@ -431,14 +421,10 @@ pub async fn human_window(
     let scope = catalog_read(pool, Some(identity.clone()))
         .await?
         .ok_or_else(ApiError::forbidden)?;
-    let actor = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
     let admission = scope.proof.admission().map_err(owner_error)?;
     let mut read = scope.proof.readable_spaces().map_err(owner_error)?;
     read.sort_by_key(|s| (s.registry_instance_id, s.space_id));
-    let subject = pdlc_shared::space_access::CentralIdentity {
-        issuer: actor.issuer.clone(),
-        subject: actor.context.user_id.clone(),
-    };
+    let subject = identity.space_identity()?;
     let write: Vec<_> = read
         .iter()
         .filter(|s| {
@@ -446,7 +432,7 @@ pub async fn human_window(
                 &subject,
                 s,
                 chrono::Utc::now().timestamp(),
-                actor.lifetime.local_valid_until(),
+                identity.claims.exp,
             )
         })
         .collect();

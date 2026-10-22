@@ -82,6 +82,7 @@ const BASE_PG_HELPERS: &[(&str, &[u8])] = &[
     pinned_base_helper!("base-operator/src/pdlc_operator/workspace/extended.py"),
     pinned_base_helper!("base-operator/src/pdlc_operator/workspace/install.py"),
     pinned_base_helper!("base-operator/src/pdlc_operator/workspace/prepare.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/projects.py"),
     pinned_base_helper!("base-operator/src/pdlc_operator/workspace/qualification.py"),
     pinned_base_helper!("base-operator/src/pdlc_operator/workspace/scope.py"),
     pinned_base_helper!("base-operator/src/pdlc_operator/workspace/services.py"),

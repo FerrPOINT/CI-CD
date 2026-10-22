@@ -47,22 +47,37 @@ async fn post(
         .unwrap();
     let status = response.status();
     if expected == 200 {
-        assert_eq!(response.headers()["cache-control"], "private, no-store");
+        assert_eq!(
+            response.headers()["cache-control"],
+            "private, no-store, no-transform"
+        );
     }
     let text = response.text().await.unwrap();
     assert_eq!(status.as_u16(), expected, "PR {path}: {text}");
     serde_json::from_str(&text).unwrap()
 }
 async fn wait_query(pool: &PgPool, pattern: &str) {
-    tokio::time::timeout(std::time::Duration::from_secs(3),async {
+    use sqlx::Connection;
+    // Observe a deliberately blocked request without competing for its small
+    // application pool. This changes no request deadline or database lock.
+    let mut observer = sqlx::PgConnection::connect_with(&pool.connect_options())
+        .await
+        .unwrap();
+    let observed = tokio::time::timeout(std::time::Duration::from_secs(3),async {
         loop {
             let found:bool=sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE $1)",
-            ).bind(pattern).fetch_one(pool).await.unwrap();
+            ).bind(pattern).fetch_one(&mut observer).await.unwrap();
             if found {break}
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-    }).await.expect("request reached actual protected SQL wait");
+    }).await;
+    if observed.is_err() {
+        let active: Vec<(String,Option<String>,String)> = sqlx::query_as(
+            "SELECT state,wait_event_type,query FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()"
+        ).fetch_all(&mut observer).await.unwrap();
+        panic!("request did not reach protected SQL wait {pattern}: {active:?}");
+    }
 }
 async fn delayed_post(
     http: &reqwest::Client,

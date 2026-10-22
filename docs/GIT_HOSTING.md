@@ -350,3 +350,30 @@ payload; Git/PR acceptance использует ветки с кавычками
 [плане приёмки синхронизации](plans/2026-10-18-repository-sync-complete-test-suite.md).
 Актуальные результаты кандидата и ограничения приведены в
 [отчёте подготовки к merge](reports/2026-10-18-repository-sync-merge-readiness.md).
+
+
+## Две роли и сохранённый product PAT: source candidate
+
+При обязательной application policy cicd_ проверяется по действующей записи,
+центральному UUID владельца и fresh Auth owner proof. Локальный admin flag не
+назначает центрального admin. Прежние git:read/write, API scopes и project pin
+сохраняются. При включённом space admission видимость разрешается только тому
+же центральному владельцу; приложение и пространства проверяются независимо.
+
+Native Git/ref preparation получает минимум исходных deadlines владельца,
+credential и пространства. Durable merge сохраняет original clock после
+перехода к detached owner. Истечение вызывает ограниченный process cleanup и
+unknown outcome с exact ref readback; старый callback не публикуется повторно.
+Это описывает feature-исходники: installed cohort и real job acceptance остаются
+отдельными gates, а закрытые task V1/machine adapters ещё требуют реализации.
+
+
+## Текущий допуск владельца task Git
+
+При обязательной application policy Task Git V1 дополнительно проверяет
+текущие ci-cd/task-tracker/fleet-control владельца, подтверждённого readback
+Tracker. Строгий child grant и прежние exact OID/ref/lease/custody ограничения
+сохраняются. Исходные сроки пересекаются до IO и custom hook/ref preparation;
+callback не обновляет окно операции. Независимая space policy дополнительно
+ограничивает точное пространство. Подробности и native fixture:
+[HUMAN_APPLICATION_ACCESS](HUMAN_APPLICATION_ACCESS.md#task-git-child-и-текущий-владелец).

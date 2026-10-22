@@ -320,11 +320,6 @@ pub(crate) struct Artifact {
     purged_at: Option<DateTime<Utc>>,
 }
 
-impl Artifact {
-    pub(crate) fn id(&self) -> Uuid {
-        self.id
-    }
-}
 #[utoipa::path(get, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path)), responses((status = 200, body = [Artifact])))]
 async fn list_artifacts(
     State(state): State<Arc<AppState>>,
@@ -358,11 +353,32 @@ async fn upload_artifact(
         name,
         content_type,
         body,
+        ArtifactPublication {
+            clock: crate::pipeline_authority::current_clock(),
+            session: None,
+        },
     )
     .await?;
     Ok(Json(artifact))
 }
 
+/// Original admission clock and optional idempotent upload-session completion.
+pub(crate) struct ArtifactPublication {
+    pub(crate) clock: Option<crate::git_host::GitDeadline>,
+    pub(crate) session: Option<Uuid>,
+}
+struct UnpublishedArtifactFile {
+    path: PathBuf,
+    retain: bool,
+}
+impl Drop for UnpublishedArtifactFile {
+    fn drop(&mut self) {
+        if !self.retain {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn store_job_artifact_with_config(
     db: &PgPool,
     artifacts: &ArtifactsConfig,
@@ -371,6 +387,7 @@ pub(crate) async fn store_job_artifact_with_config(
     name: &str,
     content_type: &str,
     body: Bytes,
+    publication: ArtifactPublication,
 ) -> Result<Artifact, ApiError> {
     if body.is_empty() || body.len() > MAX_ARTIFACT_BYTES {
         return Err(ApiError::bad_request(
@@ -394,14 +411,85 @@ pub(crate) async fn store_job_artifact_with_config(
                 other => ApiError::internal(other),
             })?,
     };
+    let clock = publication.clock;
+    if crate::central_auth::application_policy_required()? && clock.is_none() {
+        return Err(ApiError::service_unavailable(
+            "Artifact admission confirmation missing",
+        ));
+    }
+    if let Some(clock) = clock {
+        clock.require()?;
+    }
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    if let Some(clock) = clock {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
+    if let Some(session) = publication.session {
+        let row:Option<(String,Option<Uuid>)>=sqlx::query_as("SELECT status,artifact_id FROM artifact_upload_sessions WHERE id=$1 AND attempt_id=$2 FOR UPDATE")
+            .bind(session).bind(attempt_id).fetch_optional(&mut *tx).await.map_err(ApiError::internal)?;
+        match row {
+            Some((status, Some(id))) if status == "completed" => {
+                if let Some(clock) = clock {
+                    clock.require()?;
+                }
+                return sqlx::query_as("SELECT * FROM artifacts WHERE id=$1")
+                    .bind(id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(ApiError::internal);
+            }
+            Some((status, _)) if status == "open" => {}
+            _ => return Err(ApiError::conflict("Artifact upload session is not open")),
+        }
+    }
     let id = Uuid::new_v4();
     let artifact_sha256 = sha256_bytes(body.as_ref());
     let expires_at = artifact_expires_at(artifacts);
     let path = new_artifact_path(artifacts, id)?;
-    std::fs::write(&path, &body).map_err(io_error)?;
+    if let Some(clock) = clock {
+        clock.require()?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(io_error)?;
+    let mut staged = UnpublishedArtifactFile {
+        path: path.clone(),
+        retain: false,
+    };
+    std::io::Write::write_all(&mut file, &body).map_err(io_error)?;
+    file.sync_all().map_err(io_error)?;
+    if let Some(clock) = clock {
+        clock.require()?;
+    }
     let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, sha256, size_bytes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at, expires_at, purged_at")
-        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).bind(expires_at).fetch_one(db).await.map_err(ApiError::internal)?;
-    audit(db, "artifact.uploaded", "artifact", id, None).await?;
+        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).bind(expires_at).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+    sqlx::query("INSERT INTO audit_log(action,resource_type,resource_id) VALUES('artifact.uploaded','artifact',$1)").bind(id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+    if let Some(session) = publication.session {
+        let changed=sqlx::query("UPDATE artifact_upload_sessions SET status='completed',artifact_id=$2,updated_at=clock_timestamp() WHERE id=$1 AND status='open' AND attempt_id=$3").bind(session).bind(id).bind(attempt_id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+        if changed.rows_affected() != 1 {
+            return Err(ApiError::conflict("Artifact upload session changed"));
+        }
+    }
+    if let Some(clock) = clock {
+        clock.require()?;
+    }
+    // COMMIT transport loss is an unknown outcome. Preserve the owned file until
+    // readback proves no metadata committed; never delete a committed artifact.
+    staged.retain = true;
+    if let Err(error) = tx.commit().await {
+        if matches!(
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM artifacts WHERE id=$1)")
+                .bind(id)
+                .fetch_one(db)
+                .await,
+            Ok(false)
+        ) {
+            staged.retain = false;
+        }
+        return Err(crate::git_host::GitDeadline::commit_error(error));
+    }
     Ok(artifact)
 }
 #[utoipa::path(get, path = "/api/v1/artifacts/{artifact_id}/download", tag = "artifacts", params(("artifact_id" = Uuid, Path)), responses((status = 200, description = "Artifact download"), (status = 404)))]
@@ -1300,7 +1388,14 @@ async fn create_schedule(
         return Err(ApiError::bad_request("git_ref is required"));
     }
     let next_fire_at = schedule_next_fire_at(cron, enabled)?;
-    Ok(Json(sqlx::query_as("INSERT INTO schedules (id, project_id, cron, git_ref, enabled, next_fire_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(Uuid::new_v4()).bind(project_id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
+    let origin = crate::pipeline_authority::require_creation(false)?;
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+    if let Some(origin) = origin {
+        origin.bind(&mut tx).await?;
+    }
+    let value=sqlx::query_as::<_,Schedule>("INSERT INTO schedules (id, project_id, cron, git_ref, enabled, next_fire_at, owner_subject) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(Uuid::new_v4()).bind(project_id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).bind(origin.map(|origin|origin.subject())).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(Json(value))
 }
 #[utoipa::path(patch, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", request_body = ScheduleInput, params(("schedule_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400), (status = 404), (status = 409, description = "Namespace resource is read-only")))]
 async fn update_schedule(
@@ -1322,7 +1417,14 @@ async fn update_schedule(
         return Err(ApiError::bad_request("git_ref is required"));
     }
     let next_fire_at = schedule_next_fire_at(cron, enabled)?;
-    Ok(Json(sqlx::query_as("UPDATE schedules SET cron = $2, git_ref = $3, enabled = $4, next_fire_at = $5, last_fire_error = NULL WHERE id = $1 RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
+    let origin = crate::pipeline_authority::require_creation(false)?;
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+    if let Some(origin) = origin {
+        origin.bind(&mut tx).await?;
+    }
+    let value=sqlx::query_as::<_,Schedule>("UPDATE schedules SET cron = $2, git_ref = $3, enabled = $4, next_fire_at = $5, last_fire_error = NULL, owner_subject=$6 WHERE id = $1 RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).bind(origin.map(|origin|origin.subject())).fetch_optional(&mut *tx).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(Json(value))
 }
 #[utoipa::path(delete, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", params(("schedule_id" = Uuid, Path)), responses((status = 200), (status = 404), (status = 409, description = "Namespace resource is read-only")))]
 async fn delete_schedule(
@@ -2545,9 +2647,18 @@ pub(crate) struct UserInput {
 #[utoipa::path(get, path = "/api/v1/users", tag = "users", responses((status = 200, body = [User])))]
 async fn list_users(
     State(state): State<Arc<AppState>>,
+    identity: Option<axum::Extension<crate::api::authz_mw::VerifiedRequestIdentity>>,
     headers: HeaderMap,
 ) -> ApiResult<Vec<User>> {
     if let Ok(jwks) = std::env::var("CICD_AUTH__CENTRAL_JWKS_URI") {
+        // This adapter reads the Auth directory. A Forge credential remains
+        // product-scoped even when its current owner is a central administrator.
+        if identity
+            .as_ref()
+            .is_some_and(|actor| actor.product_personal.is_some())
+        {
+            return Err(ApiError::forbidden());
+        }
         let token = headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
@@ -2555,7 +2666,7 @@ async fn list_users(
             .ok_or_else(ApiError::unauthorized)?;
         let mut url = reqwest::Url::parse(&jwks)
             .map_err(|_| ApiError::service_unavailable("Central Auth URL is invalid"))?;
-        url.set_path("/auth/users");
+        url.set_path("/auth/directory");
         let client = reqwest::Client::builder()
             .timeout(StdDuration::from_secs(5))
             .build()
