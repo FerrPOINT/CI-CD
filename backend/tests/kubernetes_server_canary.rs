@@ -144,8 +144,9 @@ fn source(root: &Path, image: &str, op: Uuid) -> Result<(String,String)> {
         let command=if branch=="success" {
             format!("test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/product.txt; printf 'main-canary:%s\\n' '{op}'")
         } else {format!("test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/started; exec sleep 90")};
-        fs::write(work.join(".forge-ci.yml"),serde_json::to_vec(&json!({"version":1,"jobs":{"ordinary":{"image":image,
-            "commands":[command],"timeout":"120s","artifacts":{"paths":if branch=="success"{vec!["artifacts/product.txt"]}else{vec![]}}}}}))?)?;
+        let mut job=json!({"image":image,"commands":[command],"timeout":"120s"});
+        if branch=="success" {job["artifacts"]=json!({"paths":["artifacts/product.txt"]});}
+        fs::write(work.join(".forge-ci.yml"),serde_json::to_vec(&json!({"version":1,"jobs":{"ordinary":job}}))?)?;
         git(&work,&["add","."])?; git(&work,&["-c","user.name=QA","-c","user.email=qa@example.invalid","commit","-m",branch])?;
         pins.push(git(&work,&["rev-parse","HEAD"])?);
     }
