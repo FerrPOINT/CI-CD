@@ -190,23 +190,74 @@ source/CID/mount drift, disconnect, сигнал с pending IO, post-stop hash m
 исходе. Не использовать expiry-as-stop, SIGSTOP, kill активных jobs, hotpatch
 или общий DB write-lock вместо source-owned closure.
 
-## Generation handoff и restore
+## Generation handoff и restore: private ABI v1
 
-Архив quiescence directory содержит OLD-source participants/boot IDs,
-request/held/exit markers, lock files и возможную unknown custody. Lock file
-из архива не является живым kernel lock. Их нельзя автоматически удалять,
-игнорировать или считать destination enrollment. Старый exited receipt сам
-по себе не разрешает новые writers в другой installation.
+Архивные lock files не являются живыми kernel locks. Состояние OLD generation
+не сбрасывается и не становится destination enrollment автоматически.
+Base проверяет native sourceExited, retired CID/process identities и destination
+installation receipt/selector; Forge не выдаёт native proof из входного JSON.
 
-До запуска первого destination writer внешний release owner должен выполнить
-явный generation handoff: связать сохранённый sourceExited receipt с точными
-OLD process/CID identities, current operation UUID и destination namespace/PVC
-UIDs; проверить retirement OLD generation и записать полный approved mapping
-на новые participant identities/roots. Unknown custody остаётся HOLD и
-сохраняется для original-owner reconciliation. Автоматического import/retire
-в этом source-срезе нет: конкретная native процедура и её restore integrity
-qualification — открытый operator gate. Не снимать request и не запускать
-destination с другим пустым directory ради обхода старой custody.
+Owner подготавливает private handoff JSON, schemaVersion=1,
+schema=forge/quiescence-adoption/v1. Поля camelCase, unknown fields запрещены:
+
+- operationId: тот же OLD closed operation UUID; generationId: новый UUID.
+- sourceExitedReceipt: {path,sha256}, точные bytes stdout receipt
+  forge/quiescence-exited/v1. Он содержит исходный полный participants catalog.
+- retiredProcesses: [{participant,bootId,containerId,imageConfigDigest,
+  processId,processStart}], точная связь каждого OLD participant с external
+  native retirement proof. containerId — полный lowercase 64hex,
+  imageConfigDigest — sha256:64hex.
+- destination: {installationSha256,namespace,namespaceUid,workspaceClaimUid}.
+  Эти identities проверяет внешний owner, а не filesystem helper.
+- participants: [{sourceParticipants:[OLD participant names],participant,kind,
+  roots:[{source:{kind,path},destination:{kind,path}}]}].
+  Полное покрытие OLD participants/roots; новый manifest — actual catalog,
+  не четыре обязательных процесса. Root kind сохраняется, alias ownership
+  неоднозначного destination root запрещён.
+- sourceDockerDaemonId/sourceWorkspaceVolume: OLD Compose ownership bindings
+  или null при отсутствии такой custody.
+
+    forge-quiesce --directory DIR adopt-prepare --operation OP \\
+      --handoff /private/handoff.json --handoff-sha256 SHA256
+    forge-quiesce --directory DIR adopt-commit --operation OP \\
+      --handoff /private/handoff.json --handoff-sha256 SHA256
+
+SHA256 вычислен по исходным bytes handoff. Обе команды требуют private DB config,
+закрытого original request, свободного exclusive effect fence, всех OLD local
+kernel owners absent, effects=0, terminal/ACK/cleanup custody и DB work=0.
+Adoption дополнительно запрещает queued jobs/queue/sync runs, pending fires,
+undelivered outbox и pull events. Future schedules сохраняются под admission.
+Unknown или expired-but-unACKed custody остаётся HOLD.
+
+Prepare/commit сохраняют inode DIR/coordinator.lock/effects.lock. Private archive:
+generations/GENERATION/{handoff.json,source-exited.json,inventory.json,basis.json,
+original-control/...}. OLD control bytes копируются и сверяются; raw workspaces,
+journals и unknown records не удаляются и не переписываются. Prepared/committed
+adoption.json и deterministic adoption.next обеспечивают CAS resume с теми же
+inputs; malformed/changed/unknown partial state не очищается автоматически.
+Нормальные durable boundaries повторяемы; неизвестная частично записанная
+evidence требует owner reconciliation, а не перезаписи.
+
+Receipts stdout: schema forge/quiescence-adoption-prepared/v1 либо
+forge/quiescence-adoption-committed/v1; operationId, generationId, handoffSha256,
+admissionClosed=true, nativeRetirementVerifiedBy=external-owner. Это не held ACK.
+
+После commit release config всех новых writers содержит:
+CICD_QUIESCENCE_GENERATION=GENERATION и прежние private DIR/participant fields.
+Процессы регистрируют fresh approved kind/roots и ждут enrollment до любого
+startup DB/native effect. Owner native-проверяет actual new boots/CIDs и
+создаёт полный expected JSON. Existing foreground hold проверяет этот набор,
+custody и DB, закрывает собственный PgPool и только затем выдаёт held ACK.
+Только stdin resume OP этого live holder разрешает новые boots; standalone
+resume при adoption запрещён. Authorization generation/enrolled boots durable
+до удаления request последним шагом. Restart не получает автоматический
+допуск: новый boot требует свежего owner enrollment/held release.
+
+Текущий ABI принимает первое explicit adoption этого directory. Другой
+generation/handoff после уже committed state даёт HOLD; дальнейший migration
+из adopted installation потребует отдельного versioned chaining contract,
+без очистки сохранённой history. Native first enrollment, restore integrity,
+target identities и release qualification остаются owner gates.
 
 ## Проверки
 
@@ -215,7 +266,8 @@ destination с другим пустым directory ради обхода ста�
 
 Тесты покрывают actual kernel participant child process, cancellation waiter
 при живом blocking writer, private normal child exit и wrong-op/stale-holder/
-replacement rejection, strict Git fetch boundary с native Git IO только до
+replacement rejection, adoption hash/archive/CAS negatives и actual child
+closed enrollment/release, strict Git fetch boundary с native Git IO только до
 held fence, HTTP admission/continuation и реальный PostgreSQL
 unfinished SQL/running job. Native enrollment, Compose/Kubernetes executor и
 backup/restore integrity остаются owner gates.

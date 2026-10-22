@@ -48,7 +48,7 @@ struct Snapshot {files:Vec<SnapshotFile>,directories:Vec<PathBuf>}
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 struct Adoption {
     schema_version:u32,operation_id:Uuid,generation_id:Uuid,handoff_sha256:String,
-    phase:String,archive_sha256:String,control_sha256:String,root_inode:u64,coordinator_inode:u64,effects_inode:u64,
+    phase:String,archive_sha256:String,basis_sha256:String,control_sha256:String,root_inode:u64,coordinator_inode:u64,effects_inode:u64,
     retired_compose:Vec<RetiredCompose>,enrolled:Vec<Identity>,
 }
 fn sha(bytes:&[u8])->String{format!("{:x}",Sha256::digest(bytes))}
@@ -96,13 +96,20 @@ fn save_exact(path:&Path,bytes:&[u8])->anyhow::Result<()> {
     else{write_new(path,bytes)?;}Ok(())
 }
 fn store(gate:&Gate,state:&Adoption)->anyhow::Result<()>{
-    let next=gate.root.join("adoption.next");let bytes=serde_json::to_vec(state)?;
+    let next=gate.root.join("adoption.next");let bytes=serde_json::to_vec(state)?;ensure!(bytes.len()<=32768,"adoption journal exceeds bound");
     save_exact(&next,&bytes)?;fs::rename(&next,gate.root.join("adoption.json"))?;File::open(&gate.root)?.sync_all()?;Ok(())
 }
 fn ensure_no_generation_bypass(gate:&Gate)->anyhow::Result<()>{
+    if gate.root.join("adoption.next").try_exists()?{let _:Adoption=read(&gate.root.join("adoption.next"))?;}
+
     if !gate.root.join("adoption.json").try_exists()? && gate.root.join("generations").try_exists()?{
         ensure!(fs::read_dir(gate.root.join("generations"))?.next().is_none(),"archived adoption lacks its journal; HOLD");
     }Ok(())
+}
+fn basis(state:&Adoption)->anyhow::Result<Vec<u8>>{
+    Ok(serde_json::to_vec(&serde_json::json!({"schemaVersion":state.schema_version,"operationId":state.operation_id,"generationId":state.generation_id,
+        "handoffSha256":state.handoff_sha256,"archiveSha256":state.archive_sha256,"controlSha256":state.control_sha256,
+        "rootInode":state.root_inode,"coordinatorInode":state.coordinator_inode,"effectsInode":state.effects_inode,"retiredCompose":state.retired_compose}))?)
 }
 fn load(gate:&Gate)->anyhow::Result<Option<(Adoption,AdoptionHandoff)>>{
     ensure_no_generation_bypass(gate)?;
@@ -112,11 +119,13 @@ fn load(gate:&Gate)->anyhow::Result<Option<(Adoption,AdoptionHandoff)>>{
     ensure!(inode(&gate.root)?==state.root_inode && inode(&gate.root.join("coordinator.lock"))?==state.coordinator_inode
         && inode(&gate.root.join("effects.lock"))?==state.effects_inode,"adoption root/lock inode changed");
     let archive=generation_root(gate,state.generation_id);private(&archive,true)?;
-    for entry in fs::read_dir(&archive)?{ensure!(matches!(entry?.file_name().to_str(),Some("handoff.json"|"original-control"|"source-exited.json"|"inventory.json")),"unknown generation archive state");}
+    for entry in fs::read_dir(&archive)?{ensure!(matches!(entry?.file_name().to_str(),Some("handoff.json"|"original-control"|"source-exited.json"|"inventory.json"|"basis.json")),"unknown generation archive state");}
     let bytes=bounded_bytes(&archive.join("handoff.json"))?;ensure!(sha(&bytes)==state.handoff_sha256,"archived handoff changed");
     let handoff:AdoptionHandoff=serde_json::from_slice(&bytes)?;
     ensure!(handoff.operation_id==state.operation_id && handoff.generation_id==state.generation_id,"adoption handoff identity changed");
     if state.phase!="preparing"{
+        let archived_basis=bounded_bytes(&archive.join("basis.json"))?;
+        ensure!(sha(&archived_basis)==state.basis_sha256 && archived_basis==basis(&state)?,"adoption immutable basis changed");
         let control=archive.join("original-control");
         ensure!(snapshot_sha(&snapshot(&control,false)?)?==state.control_sha256,"archived old control changed");
         let archive_bytes=bounded_bytes(&archive.join("inventory.json"))?;
@@ -197,13 +206,13 @@ impl Coordinator{
             if state.phase!="preparing"{let _=load(&self.gate)?.context("adoption archive missing")?;return Ok(())}
         }else{
             directory(&self.gate.root.join("generations"))?;ensure!(fs::read_dir(self.gate.root.join("generations"))?.next().is_none(),"another generation archive exists");
-            let state=Adoption{schema_version:1,operation_id:self.operation,generation_id:handoff.generation_id,handoff_sha256:sha(bytes),phase:"preparing".into(),archive_sha256:String::new(),control_sha256:old_sha,
+            let state=Adoption{schema_version:1,operation_id:self.operation,generation_id:handoff.generation_id,handoff_sha256:sha(bytes),phase:"preparing".into(),archive_sha256:String::new(),basis_sha256:String::new(),control_sha256:old_sha,
                 root_inode:inode(&self.gate.root)?,coordinator_inode:inode(&self.gate.root.join("coordinator.lock"))?,effects_inode:inode(&self.gate.root.join("effects.lock"))?,retired_compose,enrolled:vec![]};
             store(&self.gate,&state)?;
         }
         let mut state:Adoption=read(&state_path)?;
         directory(&archive)?;save_exact(&archive.join("handoff.json"),bytes)?;
-        for entry in fs::read_dir(&archive)?{let name=entry?.file_name();ensure!(matches!(name.to_str(),Some("handoff.json"|"original-control"|"source-exited.json"|"inventory.json")),"unknown partial archive state; HOLD");}
+        for entry in fs::read_dir(&archive)?{let name=entry?.file_name();ensure!(matches!(name.to_str(),Some("handoff.json"|"original-control"|"source-exited.json"|"inventory.json"|"basis.json")),"unknown partial archive state; HOLD");}
         let control=archive.join("original-control");directory(&control)?;
         for entry in &old_snapshot.directories{relative(entry)?;}
         for relative_path in &old_snapshot.directories{directory(&control.join(relative_path))?;}
@@ -211,7 +220,7 @@ impl Coordinator{
         let exited=bounded_bytes(&handoff.source_exited_receipt.path)?;ensure!(sha(&exited)==handoff.source_exited_receipt.sha256,"source-exited evidence changed");save_exact(&archive.join("source-exited.json"),&exited)?;
         ensure!(snapshot_sha(&snapshot(&control,false)?)?==state.control_sha256 && snapshot_sha(&snapshot(&self.gate.root,true)?)?==state.control_sha256,"old control/archive CAS changed");
         let inventory=serde_json::to_vec(&old_snapshot)?;save_exact(&archive.join("inventory.json"),&inventory)?;
-        state.archive_sha256=sha(&inventory);state.phase="prepared".into();store(&self.gate,&state)?;Ok(())
+        state.archive_sha256=sha(&inventory);let immutable=basis(&state)?;save_exact(&archive.join("basis.json"),&immutable)?;state.basis_sha256=sha(&immutable);state.phase="prepared".into();store(&self.gate,&state)?;Ok(())
     }
     pub fn commit_adoption(&self,fence:&Fence,handoff:&AdoptionHandoff,bytes:&[u8],old:&[Identity])->anyhow::Result<()>{
         self.gate.verify_no_effect_records(fence)?;ensure!(self.gate.all_exited(old)?,"old kernel owner appeared");
@@ -225,7 +234,7 @@ impl Coordinator{
             ensure!(state.operation_id==self.operation && matches!(state.phase.as_str(),"committed"|"active"),"generation is not committed for release");
             self.gate.verify_participants(expected)?;self.gate.verify_no_effect_records(fence)?;
             ensure!(expected.len()==handoff.participants.len(),"destination participant catalog is incomplete");
-            for identity in expected{validate_registration(&self.gate,&identity.participant,&identity.kind,&identity.custody_roots)?;}
+            for identity in expected{validate_target(&handoff,&identity.participant,&identity.kind,&identity.custody_roots)?;}
             state.enrolled=expected.to_vec();state.phase="active".into();
             // Authorization is durable before the last admission marker is removed.
             store(&self.gate,&state)?;
@@ -243,14 +252,17 @@ impl Coordinator{
 pub(super) fn standalone_resume(gate:&Gate)->anyhow::Result<()>{
     ensure!(load(gate)?.is_none(),"adopted generation release requires a live held enrollment; HOLD");Ok(())
 }
+fn validate_target(handoff:&AdoptionHandoff,id:&str,kind:&str,roots:&[CustodyRoot])->anyhow::Result<()>{
+    let target=handoff.participants.iter().find(|p|p.participant==id).context("unapproved destination participant")?;
+    let wanted:Vec<_>=target.roots.iter().map(|r|r.destination.clone()).collect();
+    ensure!(target.kind==kind && wanted==roots,"destination participant roots/kind changed");Ok(())
+}
 pub(super) fn validate_registration(gate:&Gate,id:&str,kind:&str,roots:&[CustodyRoot])->anyhow::Result<()>{
     if let Some((state,handoff))=load(gate)?{
         ensure!(!gate.root.join("adoption.next").try_exists()?,"adoption CAS pending; HOLD");
         ensure!(matches!(state.phase.as_str(),"committed"|"active"),"generation preparation not committed");
         ensure!(std::env::var("CICD_QUIESCENCE_GENERATION").ok().and_then(|v|Uuid::parse_str(&v).ok())==Some(state.generation_id),"destination generation env differs");
-        let target=handoff.participants.iter().find(|p|p.participant==id).context("unapproved destination participant")?;
-        let wanted:Vec<_>=target.roots.iter().map(|r|r.destination.clone()).collect();
-        ensure!(target.kind==kind && wanted==roots,"destination participant roots/kind changed");
+        validate_target(&handoff,id,kind,roots)?;
     }else{ensure!(std::env::var_os("CICD_QUIESCENCE_GENERATION").is_none(),"generation enrollment lacks its preserved adoption state");}Ok(())
 }
 pub(super) fn admission(gate:&Gate,identity:Option<&Identity>)->anyhow::Result<()>{
@@ -264,7 +276,7 @@ pub async fn wait_for_enrollment()->anyhow::Result<()>{
     loop{
         let Some(gate)=Gate::from_env()? else{return Ok(())};
         if load(&gate)?.is_none(){ensure!(std::env::var_os("CICD_QUIESCENCE_GENERATION").is_none(),"generation enrollment state missing");return Ok(())}
-        if admission(&gate,IDENTITY.get()).is_ok() && !gate.requested()?{return Ok(())}
+        if admission(&gate,IDENTITY.get()).is_ok() && !gate.requested()?{if let Ok(probe)=gate.enter(false){drop(probe);return Ok(())}}
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
@@ -280,4 +292,96 @@ pub fn retired_compose_binding(root:&Path,name:&str)->anyhow::Result<Option<Reti
 }
 pub fn custody_files(root:&Path)->anyhow::Result<Vec<CustodyFile>>{
     Ok(snapshot(root,false)?.files.into_iter().map(|f|CustodyFile{path:f.path,sha256:f.sha256}).collect())
+}
+
+
+#[cfg(all(test,unix))]
+mod tests{
+    use super::*;
+    fn fixture()->(PathBuf,Gate,AdoptionHandoff,Vec<u8>,Vec<Identity>){
+        let parent=std::env::temp_dir().join(format!("forge-adoption-{}",Uuid::new_v4()));fs::create_dir(&parent).unwrap();
+        {use std::os::unix::fs::PermissionsExt;fs::set_permissions(&parent,fs::Permissions::from_mode(0o700)).unwrap();}
+        let gate=Gate::open(&parent.join("control")).unwrap();let(participant,identity)=gate.register("old","server",vec![]).unwrap();drop(participant);
+        let operation=Uuid::new_v4();drop(Coordinator::request(gate.clone(),operation).unwrap());
+        let exited=parent.join("exited.json");let bytes=serde_json::to_vec(&serde_json::json!({"schema":"forge/quiescence-exited/v1","operationId":operation,"participants":[identity],"allPinnedKernelOwnersExited":true,"exclusiveFenceStillHeld":true})).unwrap();write_new(&exited,&bytes).unwrap();
+        let handoff:AdoptionHandoff=serde_json::from_value(serde_json::json!({
+            "schemaVersion":1,"schema":"forge/quiescence-adoption/v1","operationId":operation,"generationId":Uuid::new_v4(),
+            "sourceExitedReceipt":{"path":exited,"sha256":sha(&bytes)},
+            "retiredProcesses":[{"participant":"old","bootId":identity.boot_id,"containerId":"1".repeat(64),"imageConfigDigest":format!("sha256:{}","2".repeat(64)),"processId":identity.process_id,"processStart":identity.process_start}],
+            "destination":{"installationSha256":"3".repeat(64),"namespace":"fixture","namespaceUid":Uuid::new_v4(),"workspaceClaimUid":Uuid::new_v4()},
+            "participants":[{"sourceParticipants":["old"],"participant":"new","kind":"server","roots":[]}],
+            "sourceDockerDaemonId":null,"sourceWorkspaceVolume":null
+        })).unwrap();
+        let bytes=serde_json::to_vec(&handoff).unwrap();write_new(&parent.join("handoff.json"),&bytes).unwrap();
+        (parent,gate,handoff,bytes,vec![identity])
+    }
+    #[test]fn adoption_requires_hash_bound_original_receipt_and_retired_catalog(){
+        let(parent,_,_,bytes,_)=fixture();let path=parent.join("handoff.json");
+        assert!(load_adoption_handoff(&path,&sha(&bytes)).is_ok());assert!(load_adoption_handoff(&path,&"0".repeat(64)).is_err());
+        let mut value:serde_json::Value=serde_json::from_slice(&bytes).unwrap();value["retiredProcesses"][0]["bootId"]=serde_json::json!(Uuid::new_v4());
+        let changed=serde_json::to_vec(&value).unwrap();fs::write(&path,&changed).unwrap();assert!(load_adoption_handoff(&path,&sha(&changed)).is_err());fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]fn prepare_commit_preserve_root_locks_and_archive_and_cannot_standalone_release(){
+        let(parent,gate,handoff,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+        let before=(inode(&gate.root).unwrap(),inode(&gate.root.join("coordinator.lock")).unwrap(),inode(&gate.root.join("effects.lock")).unwrap());
+        owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();
+        owner.commit_adoption(&fence,&handoff,&bytes,&old).unwrap();owner.commit_adoption(&fence,&handoff,&bytes,&old).unwrap();
+        assert_eq!(before,(inode(&gate.root).unwrap(),inode(&gate.root.join("coordinator.lock")).unwrap(),inode(&gate.root.join("effects.lock")).unwrap()));
+        assert!(gate.requested().unwrap());assert!(gate.enter(false).is_err());assert!(standalone_resume(&gate).is_err());
+        let (state,_)=load(&gate).unwrap().unwrap();assert_eq!(state.phase,"committed");assert!(generation_root(&gate,handoff.generation_id).join("original-control/participants/old.json").is_file());
+        drop(fence);drop(owner);fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]fn live_replaced_unknown_and_effect_custody_hold_before_preparation(){
+        let(parent,gate,handoff,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+        let (replacement,_)=gate.register("old","server",vec![]).unwrap();assert!(owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).is_err());drop(replacement);
+        // Original identity must remain exact, not merely a free lock for its name.
+        assert!(owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).is_err());drop(fence);drop(owner);fs::remove_dir_all(parent).unwrap();
+        let(parent,gate,handoff,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+        write_new(&gate.root.join("unknown.json"),b"{}").unwrap();assert!(owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).is_err());fs::remove_file(gate.root.join("unknown.json")).unwrap();
+        directory(&gate.root.join("effects")).unwrap();write_new(&gate.root.join("effects/orphan.json"),b"{}").unwrap();assert!(owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).is_err());
+        drop(fence);drop(owner);fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]fn interrupted_preparing_archive_and_durable_next_resume_without_discard(){
+        let(parent,gate,handoff,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+        owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();let (prepared,_)=load(&gate).unwrap().unwrap();
+        let pending_bytes=serde_json::to_vec(&prepared).unwrap();let mut interrupted:Adoption=serde_json::from_slice(&pending_bytes).unwrap();interrupted.phase="preparing".into();interrupted.archive_sha256.clear();
+        replace(&gate.root.join("adoption.json"),&serde_json::to_vec(&interrupted).unwrap()).unwrap();write_new(&gate.root.join("adoption.next"),&pending_bytes).unwrap();
+        let archive=generation_root(&gate,handoff.generation_id);fs::remove_file(archive.join("inventory.json")).unwrap();fs::remove_file(archive.join("source-exited.json")).unwrap();
+        owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();assert_eq!(load(&gate).unwrap().unwrap().0.phase,"prepared");assert!(!gate.root.join("adoption.next").exists());
+        let file=archive.join("original-control/participants/old.json");fs::write(&file,b"{}").unwrap();assert!(owner.commit_adoption(&fence,&handoff,&bytes,&old).is_err());
+        drop(fence);drop(owner);fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]fn replaced_lock_inode_prevents_commit_without_cleaning_evidence(){
+        let(parent,gate,handoff,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+        owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();
+        let replacement=gate.root.join("replacement");write_new(&replacement,b"").unwrap();fs::rename(replacement,gate.root.join("effects.lock")).unwrap();
+        assert!(owner.commit_adoption(&fence,&handoff,&bytes,&old).is_err());assert!(gate.root.join("request.json").exists());assert!(generation_root(&gate,handoff.generation_id).join("original-control").exists());
+        drop(fence);drop(owner);fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]fn incomplete_or_changed_destination_catalog_never_releases(){
+        let(parent,gate,handoff,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+        owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();owner.commit_adoption(&fence,&handoff,&bytes,&old).unwrap();
+        assert!(validate_target(&handoff,"new","external-runner",&[]).is_err());assert!(validate_target(&handoff,"foreign","server",&[]).is_err());assert!(validate_target(&handoff,"new","server",&[CustodyRoot::workspace(parent.clone())]).is_err());
+        assert!(owner.resume_enrolled(&fence,&[]).is_err());assert!(gate.requested().unwrap());drop(fence);fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]fn actual_child_enrolls_without_effect_then_owner_releases_exact_boot(){
+        use std::io::BufRead;use std::process::{Child,Command,Stdio};
+        struct Fixture(Child);impl Drop for Fixture{fn drop(&mut self){if self.0.try_wait().ok().flatten().is_none(){let _=self.0.kill();let _=self.0.wait();}}}
+        let(parent,gate,handoff,bytes,old)=fixture();let owner=Coordinator::for_adoption(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();
+        owner.prepare_adoption(&fence,&handoff,&bytes,&old,vec![]).unwrap();owner.commit_adoption(&fence,&handoff,&bytes,&old).unwrap();drop(fence);drop(owner);
+        let mut child=Fixture(Command::new(std::env::current_exe().unwrap()).args(["--exact",&format!("{}::enrollment_fixture",module_path!().split_once("::").unwrap().1),"--nocapture"])
+            .env("FORGE_ADOPTION_CHILD",&parent).env("CICD_QUIESCENCE_DIR",&gate.root).env("CICD_QUIESCENCE_PARTICIPANT","new").env("CICD_QUIESCENCE_GENERATION",handoff.generation_id.to_string()).stdout(Stdio::piped()).spawn().unwrap());
+        let mut output=std::io::BufReader::new(child.0.stdout.take().unwrap());let identity=loop{let mut line=String::new();assert!(output.read_line(&mut line).unwrap()>0);if let Some(offset)=line.find("ENROLLED "){break serde_json::from_str::<Identity>(line[offset+9..].trim()).unwrap()}};
+        assert!(!parent.join("effect").exists());assert!(admission(&gate,Some(&identity)).is_err());
+        let owner=Coordinator::request(gate.clone(),handoff.operation_id).unwrap();let fence=owner.try_fence().unwrap().unwrap();owner.publish_held(&fence,std::slice::from_ref(&identity)).unwrap();
+        owner.resume_enrolled(&fence,&[identity]).unwrap();drop(fence);
+        let mut stopped=false;for _ in 0..100{if let Some(status)=child.0.try_wait().unwrap(){assert!(status.success());stopped=true;break}std::thread::sleep(std::time::Duration::from_millis(20));}assert!(stopped);assert_eq!(fs::read(parent.join("effect")).unwrap(),b"admitted");fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]fn enrollment_fixture(){
+        use std::io::Write;
+        let Some(parent)=std::env::var_os("FORGE_ADOPTION_CHILD")else{return};
+        initialize("server",vec![]).unwrap();println!("ENROLLED {}",serde_json::to_string(IDENTITY.get().unwrap()).unwrap());std::io::stdout().flush().unwrap();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(wait_for_enrollment()).unwrap();
+        let _effect=enter(true).unwrap();fs::write(PathBuf::from(parent).join("effect"),b"admitted").unwrap();
+    }
 }

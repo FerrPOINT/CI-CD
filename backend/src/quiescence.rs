@@ -789,7 +789,20 @@ mod tests {
         );
         tx.rollback().await.unwrap();
         drop(other);
-        assert!(verify_idle(&fence, &pool, &[identity]).await.is_ok());
+        assert!(verify_idle(&fence, &pool, std::slice::from_ref(&identity)).await.is_ok());
+        let handoff:AdoptionHandoff=serde_json::from_value(serde_json::json!({
+            "schemaVersion":1,"schema":"forge/quiescence-adoption/v1","operationId":Uuid::new_v4(),"generationId":Uuid::new_v4(),
+            "sourceExitedReceipt":{"path":"/fixture/source-exited.json","sha256":"1".repeat(64)},"retiredProcesses":[],
+            "destination":{"installationSha256":"2".repeat(64),"namespace":"fixture","namespaceUid":Uuid::new_v4(),"workspaceClaimUid":Uuid::new_v4()},
+            "participants":[{"sourceParticipants":["server"],"participant":"destination","kind":"server","roots":[]}],
+            "sourceDockerDaemonId":null,"sourceWorkspaceVolume":null
+        })).unwrap();
+        assert!(adoption_preflight(&fence,&pool,&handoff,std::slice::from_ref(&identity)).await.is_ok());
+        sqlx::query("UPDATE jobs SET status='queued' WHERE id=$1").bind(job).execute(&pool).await.unwrap();
+        assert!(verify_idle(&fence,&pool,std::slice::from_ref(&identity)).await.is_ok());
+        assert!(adoption_preflight(&fence,&pool,&handoff,std::slice::from_ref(&identity)).await.is_err());
+        sqlx::query("UPDATE jobs SET status='success' WHERE id=$1").bind(job).execute(&pool).await.unwrap();
+        assert!(adoption_preflight(&fence,&pool,&handoff,&[identity]).await.is_ok());
         drop(fence);
         coordinator.resume().unwrap();
         pool.close().await;
@@ -942,7 +955,7 @@ fn workspace_idle_bound(root:&Path,recorded_root:&Path,daemon_override:Option<&s
                     .and_then(|v| Uuid::parse_str(v).ok())
                     .context("Compose job identity missing")?;
                 let project = format!("sdlc-build-job-{}", attempt.simple());
-                let retired=retired_compose_binding(root,path.file_name().and_then(|v|v.to_str()).context("invalid Compose custody name")?)?;
+                let retired=if daemon_override.is_none() && volume_override.is_none(){retired_compose_binding(root,path.file_name().and_then(|v|v.to_str()).context("invalid Compose custody name")?)?}else{None};
                 let daemon=retired.as_ref().map(|b|b.daemon_id.clone()).or_else(||daemon_override.map(str::to_owned)).or_else(||std::env::var("CICD_RUNNER_DOCKER_DAEMON_ID").ok()).context("Compose daemon identity unavailable")?;
                 let volume=retired.as_ref().map(|b|b.workspace_volume.clone()).or_else(||volume_override.map(str::to_owned)).or_else(||std::env::var("CICD_RUNNER_WORKSPACE_VOLUME").ok()).context("Compose workspace volume identity unavailable")?;
                 let recorded_root=retired.as_ref().map(|b|b.source_root.as_path()).unwrap_or(recorded_root);
