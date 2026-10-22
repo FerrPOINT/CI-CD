@@ -3,6 +3,8 @@
   "product": "CI-CD",
   "components": {
     "tooling": [
+      "backend/Dockerfile.umbrella",
+      "backend/Dockerfile",
       "scripts/tests/test_backend_release_ownership.py",
       "scripts/tests/test_backend_dockerfile.py",
       "scripts/tests/test_ci_contract_checks.py",

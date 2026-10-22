@@ -78,3 +78,19 @@ Root quality Release выбирает полный `backend:quality` и отде
 quality один раз; standalone protocol workspace сохраняет собственный запуск.
 Fast/Unit/Build по-прежнему выбирают прежний combined `backend:unit`.
 Source routing contract: `python -B -m unittest scripts.tests.test_backend_release_ownership`.
+
+## Минимальная подготовка Docker unit target
+
+В двух backend recipes unit имеет ancestry `manifests → unit-dependencies → unit`.
+Запрос `--target unit` готовит только `cicd-domain --lib` и отдельный
+`tests/cache-protocol --lib`; предварительная компиляция server/runner в этот
+путь не входит. Полная сборка расширяет тот же immutable dependency layer в
+`dependencies`, затем `build` требует исходный unit marker. Все реальные unit
+команды, поставляемые binaries, runtime и pinned toolchains сохранены.
+
+Source guard принадлежит единственному `tooling:build-contracts`:
+`./check-workspace.ps1 -Profile Unit -Repository CI-CD -Component tooling`
+из корня соответствующего workspace. Обе recipe входят в component и inputs.
+Source checks не заменяют native qualification нового recipe и измерения
+приложения. Общие правила и evidence — в Base
+[плане unit graphs](../../services-base/docs/plans/forge-unit-dependency-graph-20261022.md).
