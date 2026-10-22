@@ -1,81 +1,199 @@
 //! Owner-only native HTTP canary: actual main, real PG and the production Kubernetes runner.
 #![cfg(all(unix, feature = "integration"))]
 use anyhow::{Context, Result, ensure};
-use cicd::{execution::kubernetes::{self, Config}, quiescence::{Coordinator, CustodyRoot, Gate, Identity}, runner_workspace::OwnedWorkspace};
+use cicd::{
+    execution::kubernetes::{self, Config},
+    quiescence::{Coordinator, CustodyRoot, Gate, Identity},
+    runner_workspace::OwnedWorkspace,
+};
 use reqwest::{Client, Method, StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, postgres::PgPoolOptions};
-use std::{fs::{self, OpenOptions}, io::Write, os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt}, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::Duration};
-use tokio::{process::{Child, Command}, sync::Mutex, time::{sleep, timeout}};
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    process::{Child, Command},
+    sync::Mutex,
+    time::{sleep, timeout},
+};
 use uuid::Uuid;
 
 #[derive(Deserialize)]
-#[serde(rename_all="camelCase", deny_unknown_fields)]
-struct Reference { path: PathBuf, sha256: String }
-#[derive(Deserialize)]
-#[serde(rename_all="camelCase", deny_unknown_fields)]
-struct Input {
-    schema_version: u32, kind: String, operation_id: Uuid,
-    expected_source_head: String, expected_executor_sha256: String,
-    main_binary_sha256: String, image: String, api_host: String, api_port: u16, admission_file: PathBuf, migrations_directory: PathBuf, migrations_sha256: String,
-    database: Reference, runner_config: Reference, expected_config: Config,
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Reference {
+    path: PathBuf,
+    sha256: String,
 }
-fn hash(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Input {
+    schema_version: u32,
+    kind: String,
+    operation_id: Uuid,
+    expected_source_head: String,
+    expected_executor_sha256: String,
+    main_binary_sha256: String,
+    image: String,
+    api_host: String,
+    api_port: u16,
+    admission_file: PathBuf,
+    migrations_directory: PathBuf,
+    migrations_sha256: String,
+    database: Reference,
+    runner_config: Reference,
+    expected_config: Config,
+}
+fn hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 fn private(path: &Path) -> Result<Vec<u8>> {
-    let m=fs::symlink_metadata(path)?;
-    ensure!(path.is_absolute() && path.canonicalize()?==path && m.is_file() && m.nlink()==1
-        && m.uid()==unsafe{libc::geteuid()} && m.mode()&0o077==0 && m.len()<=65536, "private canonical fixture file required");
+    let m = fs::symlink_metadata(path)?;
+    ensure!(
+        path.is_absolute()
+            && path.canonicalize()? == path
+            && m.is_file()
+            && m.nlink() == 1
+            && m.uid() == unsafe { libc::geteuid() }
+            && m.mode() & 0o077 == 0
+            && m.len() <= 65536,
+        "private canonical fixture file required"
+    );
     Ok(fs::read(path)?)
 }
 fn pinned(r: &Reference) -> Result<Vec<u8>> {
-    let b=private(&r.path)?; ensure!(hash(&b)==r.sha256, "fixture file changed"); Ok(b)
+    let b = private(&r.path)?;
+    ensure!(hash(&b) == r.sha256, "fixture file changed");
+    Ok(b)
 }
 fn evidence(root: &Path, name: &str, value: &Value) -> Result<()> {
-    let mut f=OpenOptions::new().write(true).create_new(true).mode(0o600).open(root.join(name))?;
-    f.write_all(&serde_json::to_vec(value)?)?; f.sync_all()?; fs::File::open(root)?.sync_all()?; Ok(())
+    let mut f = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(root.join(name))?;
+    f.write_all(&serde_json::to_vec(value)?)?;
+    f.sync_all()?;
+    fs::File::open(root)?.sync_all()?;
+    Ok(())
 }
 fn process_start(pid: u32) -> Result<String> {
-    Ok(fs::read_to_string(format!("/proc/{pid}/stat"))?.rsplit_once(") ").context("process identity")?.1
-        .split_whitespace().nth(19).context("process start")?.into())
+    Ok(fs::read_to_string(format!("/proc/{pid}/stat"))?
+        .rsplit_once(") ")
+        .context("process identity")?
+        .1
+        .split_whitespace()
+        .nth(19)
+        .context("process start")?
+        .into())
 }
 fn migrations_digest(root: &Path) -> Result<String> {
-    ensure!(root.is_absolute() && root.canonicalize()?==root, "migration directory alias");
-    let mut files=fs::read_dir(root)?.map(|r|r.map(|r|r.path())).collect::<std::io::Result<Vec<_>>>()?;
-    files.sort(); ensure!(!files.is_empty() && files.len()<=512, "migration catalog bound");
-    let mut h=Sha256::new();
+    ensure!(
+        root.is_absolute() && root.canonicalize()? == root,
+        "migration directory alias"
+    );
+    let mut files = fs::read_dir(root)?
+        .map(|r| r.map(|r| r.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    files.sort();
+    ensure!(
+        !files.is_empty() && files.len() <= 512,
+        "migration catalog bound"
+    );
+    let mut h = Sha256::new();
     for p in files {
-        let m=fs::symlink_metadata(&p)?;
-        ensure!(m.is_file() && m.nlink()==1 && m.len()<=1024*1024 && p.extension().is_some_and(|e|e=="sql"), "migration file invalid");
-        h.update(p.file_name().context("migration filename")?.as_encoded_bytes()); h.update([0]); h.update(fs::read(p)?);
+        let m = fs::symlink_metadata(&p)?;
+        ensure!(
+            m.is_file()
+                && m.nlink() == 1
+                && m.len() <= 1024 * 1024
+                && p.extension().is_some_and(|e| e == "sql"),
+            "migration file invalid"
+        );
+        h.update(
+            p.file_name()
+                .context("migration filename")?
+                .as_encoded_bytes(),
+        );
+        h.update([0]);
+        h.update(fs::read(p)?);
     }
-    Ok(format!("{:x}",h.finalize()))
+    Ok(format!("{:x}", h.finalize()))
 }
 struct Fixture {
-    input: Input, root: PathBuf, pool: PgPool, http: Client,
-    child: Mutex<Child>, pid: u32, start: Option<String>, success: String, cancel: String,
+    input: Input,
+    root: PathBuf,
+    pool: PgPool,
+    http: Client,
+    child: Mutex<Child>,
+    pid: u32,
+    start: Option<String>,
+    success: String,
+    cancel: String,
 }
 impl Fixture {
-    async fn request(&self, method: Method, path: &str, token: Option<&str>, body: Value) -> Result<reqwest::Response> {
-        let mut r=self.http.request(method,format!("http://127.0.0.1:22801{path}"));
-        if let Some(t)=token {r=r.bearer_auth(t);}
-        Ok(r.header("Idempotency-Key",Uuid::new_v4().to_string()).json(&body).send().await?)
+    async fn request(
+        &self,
+        method: Method,
+        path: &str,
+        token: Option<&str>,
+        body: Value,
+    ) -> Result<reqwest::Response> {
+        let mut r = self
+            .http
+            .request(method, format!("http://127.0.0.1:22801{path}"));
+        if let Some(t) = token {
+            r = r.bearer_auth(t);
+        }
+        Ok(r.header("Idempotency-Key", Uuid::new_v4().to_string())
+            .json(&body)
+            .send()
+            .await?)
     }
     async fn json(&self, method: Method, path: &str, token: &str, body: Value) -> Result<Value> {
-        let r=self.request(method,path,Some(token),body).await?;
-        ensure!(r.status()==StatusCode::OK, "canary HTTP request rejected ({})",r.status());
-        let b=r.bytes().await?; ensure!(b.len()<=262144,"HTTP response bound"); Ok(serde_json::from_slice(&b)?)
+        let r = self.request(method, path, Some(token), body).await?;
+        ensure!(
+            r.status() == StatusCode::OK,
+            "canary HTTP request rejected ({})",
+            r.status()
+        );
+        let b = r.bytes().await?;
+        ensure!(b.len() <= 262144, "HTTP response bound");
+        Ok(serde_json::from_slice(&b)?)
     }
     async fn pipeline(&self, id: Uuid, token: &str, expected: &str) -> Result<Value> {
-        timeout(Duration::from_secs(150),async {
+        timeout(Duration::from_secs(150), async {
             loop {
-                let v=self.json(Method::GET,&format!("/api/v1/pipelines/{id}"),token,Value::Null).await?;
-                if v["pipeline"]["status"]==expected {return Ok(v);}
-                ensure!(!["failed","canceled","success"].iter().any(|s|v["pipeline"]["status"]==*s),"unexpected terminal pipeline");
+                let v = self
+                    .json(
+                        Method::GET,
+                        &format!("/api/v1/pipelines/{id}"),
+                        token,
+                        Value::Null,
+                    )
+                    .await?;
+                if v["pipeline"]["status"] == expected {
+                    return Ok(v);
+                }
+                ensure!(
+                    !["failed", "canceled", "success"]
+                        .iter()
+                        .any(|s| v["pipeline"]["status"] == *s),
+                    "unexpected terminal pipeline"
+                );
                 sleep(Duration::from_millis(250)).await;
             }
-        }).await.context("pipeline observation deadline")?
+        })
+        .await
+        .context("pipeline observation deadline")?
     }
     async fn completed(&self, job: Uuid, expected: &str) -> Result<Value> {
         timeout(Duration::from_secs(150),async {
@@ -96,95 +214,240 @@ impl Fixture {
         }).await.context("bound lease ACK/workspace cleanup deadline")?
     }
     async fn shutdown(&self) -> Result<()> {
-        let gate=Gate::open(&self.root.join("control"))?;
-        let identity: Identity=serde_json::from_slice(&private(&self.root.join("control/participants/canary.json"))?)?;
-        ensure!(identity.process_id==self.pid && Some(&identity.process_start)==self.start.as_ref() && identity.process_start==process_start(self.pid)?
-            && identity.participant=="canary" && identity.kind=="server"
-            && identity.custody_roots==vec![CustodyRoot::workspace(PathBuf::from("/workspaces")),CustodyRoot::git(self.root.join("git"))],
-            "actual main participant does not bind retained child");
-        ensure!(self.child.lock().await.try_wait()?.is_none(),"main exited before normal-stop proof");
-        let expected=[identity]; let owner=Coordinator::request(gate,self.input.operation_id)?;
-        let fence=timeout(Duration::from_secs(180),async {
+        let gate = Gate::open(&self.root.join("control"))?;
+        let identity: Identity = serde_json::from_slice(&private(
+            &self.root.join("control/participants/canary.json"),
+        )?)?;
+        ensure!(
+            identity.process_id == self.pid
+                && Some(&identity.process_start) == self.start.as_ref()
+                && identity.process_start == process_start(self.pid)?
+                && identity.participant == "canary"
+                && identity.kind == "server"
+                && identity.custody_roots
+                    == vec![
+                        CustodyRoot::workspace(PathBuf::from("/workspaces")),
+                        CustodyRoot::git(self.root.join("git"))
+                    ],
+            "actual main participant does not bind retained child"
+        );
+        ensure!(
+            self.child.lock().await.try_wait()?.is_none(),
+            "main exited before normal-stop proof"
+        );
+        let expected = [identity];
+        let owner = Coordinator::request(gate, self.input.operation_id)?;
+        let fence = timeout(Duration::from_secs(180), async {
             loop {
                 owner.gate().verify_participants(&expected)?;
-                if let Some(fence)=owner.try_fence()? {
+                if let Some(fence) = owner.try_fence()? {
                     owner.gate().verify_no_effect_records(&fence)?;
-                    if matches!(timeout(Duration::from_secs(5),cicd::quiescence::verify_recoverable_idle(&fence,&self.pool,&expected)).await,Ok(Ok(()))) {
-                        return Ok::<_,anyhow::Error>(fence);
+                    if matches!(
+                        timeout(
+                            Duration::from_secs(5),
+                            cicd::quiescence::verify_recoverable_idle(
+                                &fence, &self.pool, &expected
+                            )
+                        )
+                        .await,
+                        Ok(Ok(()))
+                    ) {
+                        return Ok::<_, anyhow::Error>(fence);
                     }
                     drop(fence);
                 }
                 sleep(Duration::from_millis(250)).await;
             }
-        }).await.context("normal-stop idle remains unknown")??;
+        })
+        .await
+        .context("normal-stop idle remains unknown")??;
         self.pool.close().await;
-        owner.publish_held(&fence,&expected)?;
-        evidence(&self.root,"held.json",&json!({"operationId":self.input.operation_id,"participants":expected,"recoverableIdle":true}))?;
-        owner.request_exit(&fence,&expected)?;
-        let mut child=self.child.lock().await;
-        let status=timeout(Duration::from_secs(15),child.wait()).await.context("normal main exit unknown")??;
+        owner.publish_held(&fence, &expected)?;
+        evidence(
+            &self.root,
+            "held.json",
+            &json!({"operationId":self.input.operation_id,"participants":expected,"recoverableIdle":true}),
+        )?;
+        owner.request_exit(&fence, &expected)?;
+        let mut child = self.child.lock().await;
+        let status = timeout(Duration::from_secs(15), child.wait())
+            .await
+            .context("normal main exit unknown")??;
         drop(child);
-        ensure!(status.success() && owner.gate().all_exited(&expected)?,"normal main exit not qualified");
-        evidence(&self.root,"exited.json",&json!({"operationId":self.input.operation_id,"pid":self.pid,"participants":expected,"normalExit":true}))?;
+        ensure!(
+            status.success() && owner.gate().all_exited(&expected)?,
+            "normal main exit not qualified"
+        );
+        evidence(
+            &self.root,
+            "exited.json",
+            &json!({"operationId":self.input.operation_id,"pid":self.pid,"participants":expected,"normalExit":true}),
+        )?;
         Ok(())
     }
 }
 fn git(root: &Path, args: &[&str]) -> Result<String> {
-    let out=std::process::Command::new("git").current_dir(root).args(args).output()?;
-    ensure!(out.status.success(),"owned Git fixture command failed");
+    let out = std::process::Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()?;
+    ensure!(out.status.success(), "owned Git fixture command failed");
     Ok(String::from_utf8(out.stdout)?.trim().into())
 }
-fn source(root: &Path, image: &str, op: Uuid) -> Result<(String,String)> {
-    let work=root.join("source"); fs::create_dir(&work)?;
-    git(&work,&["init","--initial-branch=success"])?;
-    fs::write(work.join("source.txt"),op.to_string())?;
-    let mut pins=Vec::new();
-    for branch in ["success","cancel"] {
-        if branch=="cancel" {git(&work,&["checkout","-b","cancel"])?;}
-        let command=if branch=="success" {
-            format!("test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/product.txt; printf 'main-canary:%s\\n' '{op}'")
-        } else {format!("test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/started; exec sleep 90")};
-        let mut job=json!({"image":image,"commands":[command],"timeout":"120s"});
-        if branch=="success" {job["artifacts"]=json!({"paths":["artifacts/product.txt"]});}
-        fs::write(work.join(".forge-ci.yml"),serde_json::to_vec(&json!({"version":1,"jobs":{"ordinary":job}}))?)?;
-        git(&work,&["add","."])?; git(&work,&["-c","user.name=QA","-c","user.email=qa@example.invalid","commit","-m",branch])?;
-        pins.push(git(&work,&["rev-parse","HEAD"])?);
+fn source(root: &Path, image: &str, op: Uuid) -> Result<(String, String)> {
+    let work = root.join("source");
+    fs::create_dir(&work)?;
+    git(&work, &["init", "--initial-branch=success"])?;
+    fs::write(work.join("source.txt"), op.to_string())?;
+    let mut pins = Vec::new();
+    for branch in ["success", "cancel"] {
+        if branch == "cancel" {
+            git(&work, &["checkout", "-b", "cancel"])?;
+        }
+        let command = if branch == "success" {
+            format!(
+                "test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/product.txt; printf 'main-canary:%s\\n' '{op}'"
+            )
+        } else {
+            format!(
+                "test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/started; exec sleep 90"
+            )
+        };
+        let mut job = json!({"image":image,"commands":[command],"timeout":"120s"});
+        if branch == "success" {
+            job["artifacts"] = json!({"paths":["artifacts/product.txt"]});
+        }
+        fs::write(
+            work.join(".forge-ci.yml"),
+            serde_json::to_vec(&json!({"version":1,"jobs":{"ordinary":job}}))?,
+        )?;
+        git(&work, &["add", "."])?;
+        git(
+            &work,
+            &[
+                "-c",
+                "user.name=QA",
+                "-c",
+                "user.email=qa@example.invalid",
+                "commit",
+                "-m",
+                branch,
+            ],
+        )?;
+        pins.push(git(&work, &["rev-parse", "HEAD"])?);
     }
-    git(root,&["clone","--bare","--no-hardlinks","source","git/canary.git"])?;
-    Ok((pins.remove(0),pins.remove(0)))
+    git(
+        root,
+        &[
+            "clone",
+            "--bare",
+            "--no-hardlinks",
+            "source",
+            "git/canary.git",
+        ],
+    )?;
+    Ok((pins.remove(0), pins.remove(0)))
 }
 async fn exercise(f: Arc<Fixture>) -> Result<Value> {
-    evidence(&f.root,"child.json",&json!({"pid":f.pid,"processStart":f.start.as_ref().context("initial child start unavailable")?,
-        "mainBinarySha256":f.input.main_binary_sha256,"sourceHead":f.input.expected_source_head}))?;
-    timeout(Duration::from_secs(60),async {
+    evidence(
+        &f.root,
+        "child.json",
+        &json!({"pid":f.pid,"processStart":f.start.as_ref().context("initial child start unavailable")?,
+        "mainBinarySha256":f.input.main_binary_sha256,"sourceHead":f.input.expected_source_head}),
+    )?;
+    timeout(Duration::from_secs(60), async {
         loop {
-            ensure!(f.child.lock().await.try_wait()?.is_none(),"main exited during startup");
-            if let Ok(r)=f.http.get("http://127.0.0.1:22801/api/v1/readiness").send().await {
-                if r.status()==StatusCode::OK {break Ok::<_,anyhow::Error>(());}
+            ensure!(
+                f.child.lock().await.try_wait()?.is_none(),
+                "main exited during startup"
+            );
+            if let Ok(r) = f
+                .http
+                .get("http://127.0.0.1:22801/api/v1/readiness")
+                .send()
+                .await
+            {
+                if r.status() == StatusCode::OK {
+                    break Ok::<_, anyhow::Error>(());
+                }
             }
             sleep(Duration::from_millis(250)).await;
         }
-    }).await.context("main readiness deadline")??;
-    let user=Uuid::new_v4(); let password=Uuid::new_v4().to_string(); let username=format!("canary-{user}");
-    sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,'admin')").bind(user).bind(&username).execute(&f.pool).await?;
-    sqlx::query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)").bind(user)
-        .bind(cicd::auth::hash_password(&password)?).execute(&f.pool).await?;
-    ensure!(f.request(Method::GET,"/api/v1/projects",None,Value::Null).await?.status()==StatusCode::UNAUTHORIZED,"authentication bypass");
-    let login=f.request(Method::POST,"/api/v1/auth/login",None,json!({"username":username,"password":password})).await?;
-    ensure!(login.status()==StatusCode::OK,"real local-auth login failed");
-    let pair: Value=login.json().await?; let token=pair["access_token"].as_str().context("access JWT absent")?;
-    ensure!(f.request(Method::GET,"/api/v1/projects",Some("invalid-fixture"),Value::Null).await?.status()==StatusCode::UNAUTHORIZED,"invalid credential accepted");
-    let repo=Uuid::new_v4(); let project=Uuid::new_v4();
-    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,'canary')").bind(repo).execute(&f.pool).await?;
+    })
+    .await
+    .context("main readiness deadline")??;
+    let user = Uuid::new_v4();
+    let password = Uuid::new_v4().to_string();
+    let username = format!("canary-{user}");
+    sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,'admin')")
+        .bind(user)
+        .bind(&username)
+        .execute(&f.pool)
+        .await?;
+    sqlx::query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)")
+        .bind(user)
+        .bind(cicd::auth::hash_password(&password)?)
+        .execute(&f.pool)
+        .await?;
+    ensure!(
+        f.request(Method::GET, "/api/v1/projects", None, Value::Null)
+            .await?
+            .status()
+            == StatusCode::UNAUTHORIZED,
+        "authentication bypass"
+    );
+    let login = f
+        .request(
+            Method::POST,
+            "/api/v1/auth/login",
+            None,
+            json!({"username":username,"password":password}),
+        )
+        .await?;
+    ensure!(
+        login.status() == StatusCode::OK,
+        "real local-auth login failed"
+    );
+    let pair: Value = login.json().await?;
+    let token = pair["access_token"].as_str().context("access JWT absent")?;
+    ensure!(
+        f.request(
+            Method::GET,
+            "/api/v1/projects",
+            Some("invalid-fixture"),
+            Value::Null
+        )
+        .await?
+        .status()
+            == StatusCode::UNAUTHORIZED,
+        "invalid credential accepted"
+    );
+    let repo = Uuid::new_v4();
+    let project = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,'canary')")
+        .bind(repo)
+        .execute(&f.pool)
+        .await?;
     sqlx::query("INSERT INTO projects(id,name,repository_url,repository_id) VALUES($1,'native-canary','http://127.0.0.1:22801/git/canary.git',$2)")
         .bind(project).bind(repo).execute(&f.pool).await?;
-    let mut receipts=Vec::new();
-    for (branch,pin) in [("success",&f.success),("cancel",&f.cancel)] {
-        let created=f.json(Method::POST,&format!("/api/v1/projects/{project}/pipelines"),token,json!({"git_ref":branch})).await?;
-        let pipeline: Uuid=serde_json::from_value(created["pipeline"]["id"].clone())?;
-        ensure!(created["plan"]["config_source"]=="repository" && created["plan"]["resolved_commit_sha"]==pin.as_str(),"source pin/plan mismatch");
-        let job: Uuid=serde_json::from_value(created["stages"][0]["jobs"][0]["id"].clone())?;
-        if branch=="cancel" {
+    let mut receipts = Vec::new();
+    for (branch, pin) in [("success", &f.success), ("cancel", &f.cancel)] {
+        let created = f
+            .json(
+                Method::POST,
+                &format!("/api/v1/projects/{project}/pipelines"),
+                token,
+                json!({"git_ref":branch}),
+            )
+            .await?;
+        let pipeline: Uuid = serde_json::from_value(created["pipeline"]["id"].clone())?;
+        ensure!(
+            created["plan"]["config_source"] == "repository"
+                && created["plan"]["resolved_commit_sha"] == pin.as_str(),
+            "source pin/plan mismatch"
+        );
+        let job: Uuid = serde_json::from_value(created["stages"][0]["jobs"][0]["id"].clone())?;
+        if branch == "cancel" {
             timeout(Duration::from_secs(90),async {
                 loop {
                     let lease: Option<(Uuid,Uuid,i64)>=sqlx::query_as("SELECT attempt_id,id,generation FROM job_leases WHERE job_id=$1 ORDER BY generation DESC LIMIT 1").bind(job).fetch_optional(&f.pool).await?;
@@ -206,115 +469,347 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
                     sleep(Duration::from_millis(100)).await;
                 }
             }).await.context("actual cancel start marker deadline")??;
-            f.json(Method::POST,&format!("/api/v1/pipelines/{pipeline}/cancel"),token,json!({})).await?;
+            f.json(
+                Method::POST,
+                &format!("/api/v1/pipelines/{pipeline}/cancel"),
+                token,
+                json!({}),
+            )
+            .await?;
         }
-        let done=f.pipeline(pipeline,token,if branch=="success"{"success"}else{"canceled"}).await?;
-        if branch=="success" {
-            let logs=f.json(Method::GET,&format!("/api/v1/jobs/{job}/logs"),token,Value::Null).await?;
-            ensure!(logs.to_string().contains(&format!("main-canary:{}",f.input.operation_id)),"actual job log missing");
-            let artifacts=f.json(Method::GET,&format!("/api/v1/jobs/{job}/artifacts"),token,Value::Null).await?;
-            let rows=artifacts.as_array().context("artifact list")?; ensure!(rows.len()==1,"artifact inventory");
-            let response=f.request(Method::GET,&format!("/api/v1/artifacts/{}/download",rows[0]["id"].as_str().context("artifact id")?),Some(token),Value::Null).await?;
-            ensure!(response.status()==StatusCode::OK && response.bytes().await?.as_ref()==f.input.operation_id.to_string().as_bytes(),"actual artifact/source bytes mismatch");
+        let done = f
+            .pipeline(
+                pipeline,
+                token,
+                if branch == "success" {
+                    "success"
+                } else {
+                    "canceled"
+                },
+            )
+            .await?;
+        if branch == "success" {
+            let logs = f
+                .json(
+                    Method::GET,
+                    &format!("/api/v1/jobs/{job}/logs"),
+                    token,
+                    Value::Null,
+                )
+                .await?;
+            ensure!(
+                logs.to_string()
+                    .contains(&format!("main-canary:{}", f.input.operation_id)),
+                "actual job log missing"
+            );
+            let artifacts = f
+                .json(
+                    Method::GET,
+                    &format!("/api/v1/jobs/{job}/artifacts"),
+                    token,
+                    Value::Null,
+                )
+                .await?;
+            let rows = artifacts.as_array().context("artifact list")?;
+            ensure!(rows.len() == 1, "artifact inventory");
+            let response = f
+                .request(
+                    Method::GET,
+                    &format!(
+                        "/api/v1/artifacts/{}/download",
+                        rows[0]["id"].as_str().context("artifact id")?
+                    ),
+                    Some(token),
+                    Value::Null,
+                )
+                .await?;
+            ensure!(
+                response.status() == StatusCode::OK
+                    && response.bytes().await?.as_ref()
+                        == f.input.operation_id.to_string().as_bytes(),
+                "actual artifact/source bytes mismatch"
+            );
         }
-        let custody=f.completed(job,if branch=="success"{"success"}else{"canceled"}).await?;
-        receipts.push(json!({"branch":branch,"pipeline":done,"sourceCommit":pin,"custody":custody}));
+        let custody = f
+            .completed(
+                job,
+                if branch == "success" {
+                    "success"
+                } else {
+                    "canceled"
+                },
+            )
+            .await?;
+        receipts
+            .push(json!({"branch":branch,"pipeline":done,"sourceCommit":pin,"custody":custody}));
     }
-    evidence(&f.root,"http-cases.json",&json!(receipts))?;
-    Ok(json!({"status":"PASS","localAuthenticationQualified":true,"centralSsoQualified":false,
-        "actualMain":true,"ordinaryPipelineCases":["success","cancel"],"externalRunnerProtocolQualified":false}))
+    evidence(&f.root, "http-cases.json", &json!(receipts))?;
+    Ok(
+        json!({"status":"PASS","localAuthenticationQualified":true,"centralSsoQualified":false,
+        "actualMain":true,"ordinaryPipelineCases":["success","cancel"],"externalRunnerProtocolQualified":false}),
+    )
 }
 
 fn validate_scope(i: &Input, built: Option<&str>) -> Result<()> {
-    ensure!(i.schema_version==1 && i.kind=="forge/native-main-canary/v1" && !i.operation_id.is_nil(),"unsupported canary ABI");
-    ensure!(built==Some(i.expected_source_head.as_str()) && i.expected_source_head.len()==40
-        && i.expected_source_head.bytes().all(|b|b.is_ascii_hexdigit())
-        && i.expected_executor_sha256==hash(include_bytes!("../src/execution/kubernetes.rs")),"compiled source differs from owner pin");
+    ensure!(
+        i.schema_version == 1
+            && i.kind == "forge/native-main-canary/v1"
+            && !i.operation_id.is_nil(),
+        "unsupported canary ABI"
+    );
+    ensure!(
+        built == Some(i.expected_source_head.as_str())
+            && i.expected_source_head.len() == 40
+            && i.expected_source_head
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit())
+            && i.expected_executor_sha256 == hash(include_bytes!("../src/execution/kubernetes.rs")),
+        "compiled source differs from owner pin"
+    );
     i.expected_config.validate()?;
-    ensure!(!i.expected_config.builder_enabled && i.expected_config.deployment_recipes.is_empty(),"ordinary CI canary only");
-    ensure!(i.image.rsplit_once("@sha256:").is_some_and(|(name,d)|!name.is_empty() && d.len()==64 && d.bytes().all(|b|b.is_ascii_hexdigit()))
-        && !i.image.chars().any(char::is_whitespace),"immutable qualified image required");
-    ensure!(i.api_host.parse::<std::net::Ipv4Addr>().is_ok() && i.api_port>0,"qualified literal API endpoint required");
+    ensure!(
+        !i.expected_config.builder_enabled && i.expected_config.deployment_recipes.is_empty(),
+        "ordinary CI canary only"
+    );
+    ensure!(
+        i.image
+            .rsplit_once("@sha256:")
+            .is_some_and(|(name, d)| !name.is_empty()
+                && d.len() == 64
+                && d.bytes().all(|b| b.is_ascii_hexdigit()))
+            && !i.image.chars().any(char::is_whitespace),
+        "immutable qualified image required"
+    );
+    ensure!(
+        i.api_host.parse::<std::net::Ipv4Addr>().is_ok() && i.api_port > 0,
+        "qualified literal API endpoint required"
+    );
     Ok(())
 }
-#[tokio::test(flavor="multi_thread",worker_threads=2)]
-#[ignore="requires owner-pinned main binary, isolated real PG, SA/CA, private fixture and actual Kubernetes"]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires owner-pinned main binary, isolated real PG, SA/CA, private fixture and actual Kubernetes"]
 async fn actual_main_http_current_ci_canary() -> Result<()> {
-    let input_path=PathBuf::from(std::env::var("FORGE_MAIN_CANARY_INPUT")?);
-    let bytes=private(&input_path)?;
-    ensure!(hash(&bytes)==std::env::var("FORGE_MAIN_CANARY_INPUT_SHA256")?,"canary input hash changed");
-    let input: Input=serde_json::from_slice(&bytes)?;
-    validate_scope(&input,option_env!("FORGE_MAIN_CANARY_BUILD_HEAD"))?;
-    ensure!(serde_json::from_slice::<Config>(&pinned(&input.runner_config)?)?==input.expected_config,"runner config pin differs");
-    ensure!(migrations_digest(&input.migrations_directory)?==input.migrations_sha256,"migration catalog changed");
+    let input_path = PathBuf::from(std::env::var("FORGE_MAIN_CANARY_INPUT")?);
+    let bytes = private(&input_path)?;
+    ensure!(
+        hash(&bytes) == std::env::var("FORGE_MAIN_CANARY_INPUT_SHA256")?,
+        "canary input hash changed"
+    );
+    let input: Input = serde_json::from_slice(&bytes)?;
+    validate_scope(&input, option_env!("FORGE_MAIN_CANARY_BUILD_HEAD"))?;
+    ensure!(
+        serde_json::from_slice::<Config>(&pinned(&input.runner_config)?)? == input.expected_config,
+        "runner config pin differs"
+    );
+    ensure!(
+        migrations_digest(&input.migrations_directory)? == input.migrations_sha256,
+        "migration catalog changed"
+    );
     private(&input.admission_file)?;
-    let binary=Path::new(env!("CARGO_BIN_EXE_cicd-server"));
-    let meta=fs::symlink_metadata(binary)?;
-    ensure!(binary.canonicalize()?==binary && meta.is_file() && meta.nlink()==1 && meta.len()<=256*1024*1024,"main binary alias/bound");
-    let mut h=Sha256::new(); let mut file=fs::File::open(binary)?; let mut chunk=[0u8;65536];
-    loop {let n=std::io::Read::read(&mut file,&mut chunk)?;if n==0{break;}h.update(&chunk[..n]);}
-    ensure!(format!("{:x}",h.finalize())==input.main_binary_sha256,"actual compiled main binary changed");
-    let dsn=String::from_utf8(pinned(&input.database)?)?;
-    let url=reqwest::Url::parse(dsn.trim())?;
-    ensure!(matches!(url.scheme(),"postgres"|"postgresql") && url.path().starts_with("/forge_test_")
-        && url.query().is_none() && url.fragment().is_none(),"new disposable whole DB only; no search_path override");
-    let pool=PgPoolOptions::new().max_connections(1).acquire_timeout(Duration::from_secs(3)).connect(dsn.trim()).await?;
-    let tables: i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'").fetch_one(&pool).await?;
-    ensure!(tables==0,"canary DB must be new/empty before actual main migrations");
-    let workspace=Path::new("/workspaces");
-    ensure!(workspace.canonicalize()?==workspace && OwnedWorkspace::inventory(workspace)?.is_empty()
-        && kubernetes::inventory(workspace)?.is_empty(),"workspace/execution custody already present");
-    let c=&input.expected_config;
-    ensure!(unsafe{libc::geteuid()}==c.security.run_as_user && unsafe{libc::getegid()}==c.security.run_as_group,"controller/job UID differs");
-    ensure!(workspace.metadata()?.gid()==c.security.fs_group && workspace.metadata()?.mode()&0o2070==0o2070,"workspace fsGroup root not prepared");
-    let root=PathBuf::from(format!("/qualification/main-canary-{}",input.operation_id));
-    ensure!(root.parent().context("fixture parent")?.canonicalize()?==Path::new("/qualification"),"private fixture parent alias");
-    fs::create_dir(&root)?; fs::set_permissions(&root,fs::Permissions::from_mode(0o700))?;
-    for name in ["git","artifacts","control","home","tmp"] {fs::create_dir(root.join(name))?;fs::set_permissions(root.join(name),fs::Permissions::from_mode(0o700))?;}
-    let (success,cancel)=source(&root,&input.image,input.operation_id)?;
-    let reserve=std::net::TcpListener::bind("127.0.0.1:22801")?;drop(reserve);
-    let secret=Uuid::new_v4().to_string();
-    let stdout=OpenOptions::new().write(true).create_new(true).mode(0o600).open(root.join("main.stdout.private.log"))?;
-    let stderr=OpenOptions::new().write(true).create_new(true).mode(0o600).open(root.join("main.stderr.private.log"))?;
-    evidence(&root,"planned.json",&json!({"operationId":input.operation_id,"sourceHead":input.expected_source_head,
-        "mainBinary":binary,"mainBinarySha256":input.main_binary_sha256,"workspace":workspace,"pidUnknownUntilSpawn":true}))?;
-    let http=Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none())
-        .retry(reqwest::retry::never()).timeout(Duration::from_secs(5)).build()?;
-    let child=Command::new(binary).env_clear().envs([
-        ("PATH","/usr/local/bin:/usr/bin:/bin".to_owned()),("HOME",root.join("home").display().to_string()),
-        ("TMPDIR",root.join("tmp").display().to_string()),("CICD_DATABASE_URL",dsn.trim().to_owned()),
-        ("CICD_MIGRATIONS_DIR",input.migrations_directory.display().to_string()),("CICD_BIND","127.0.0.1:22801".into()),
-        ("CICD_ROLES","api,runner".into()),("CICD_AUTH_SECRET",secret),
-        ("CICD_GIT_ROOT",root.join("git").display().to_string()),("CICD_GIT_INTERNAL_TOKEN",Uuid::new_v4().to_string()),
-        ("CICD_ARTIFACTS_DIR",root.join("artifacts").display().to_string()),
-        ("CICD_RUNNER_MODE","kubernetes".into()),("CICD_EMBEDDED_RUNNER_ENABLED","true".into()),
-        ("CICD_RUNNER_KEEP_WORKSPACE","false".into()),("CICD_RUNNER_QUEUE_TIMEOUT_SECONDS","120".into()),
-        ("CICD_KUBERNETES_RUNNER_CONFIG",input.runner_config.path.display().to_string()),
-        ("CICD_KUBERNETES_ADMISSION_FILE",input.admission_file.display().to_string()),
-        ("KUBERNETES_SERVICE_HOST",input.api_host.clone()),("KUBERNETES_SERVICE_PORT_HTTPS",input.api_port.to_string()),
-        ("CICD_QUIESCENCE_DIR",root.join("control").display().to_string()),("CICD_QUIESCENCE_PARTICIPANT","canary".into())])
-        .stdin(Stdio::null()).stdout(stdout).stderr(stderr).kill_on_drop(false).spawn()?;
-    // All fallible work after spawn is inside caught tasks. The outer owner retains Child.
-    let pid=child.id().unwrap_or(0);
-    let start=process_start(pid).ok();
-    let f=Arc::new(Fixture{input,root,pool,http,child:Mutex::new(child),pid,start,success,cancel});
-    let case={let f=f.clone();tokio::spawn(async move{timeout(Duration::from_secs(420),exercise(f)).await.context("HTTP case deadline")?}).await};
-    let stopped={let f=f.clone();tokio::spawn(async move{timeout(Duration::from_secs(240),f.shutdown()).await.context("normal cleanup deadline")?}).await};
-    if !matches!(&stopped,Ok(Ok(()))) {
-        let _=evidence(&f.root,"HOLD.json",&json!({"status":"HOLD","pid":f.pid,"operationId":f.input.operation_id,
-            "processStart":f.start,"normalExitProven":false,"ownerMustRetainWorker":true,"reason":"case/cleanup failed; unknown custody is retained"}));
-        eprintln!("FORGE_MAIN_CANARY_HOLD operation={} pid={} evidence={}",f.input.operation_id,f.pid,f.root.display());
-        loop {sleep(Duration::from_secs(30)).await;}
+    let binary = Path::new(env!("CARGO_BIN_EXE_cicd-server"));
+    let meta = fs::symlink_metadata(binary)?;
+    ensure!(
+        binary.canonicalize()? == binary
+            && meta.is_file()
+            && meta.nlink() == 1
+            && meta.len() <= 256 * 1024 * 1024,
+        "main binary alias/bound"
+    );
+    let mut h = Sha256::new();
+    let mut file = fs::File::open(binary)?;
+    let mut chunk = [0u8; 65536];
+    loop {
+        let n = std::io::Read::read(&mut file, &mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&chunk[..n]);
     }
-    let result=case.context("canary task panicked; main has now exited normally")??;
-    evidence(&f.root,"result.json",&result)?;
+    ensure!(
+        format!("{:x}", h.finalize()) == input.main_binary_sha256,
+        "actual compiled main binary changed"
+    );
+    let dsn = String::from_utf8(pinned(&input.database)?)?;
+    let url = reqwest::Url::parse(dsn.trim())?;
+    ensure!(
+        matches!(url.scheme(), "postgres" | "postgresql")
+            && url.path().starts_with("/forge_test_")
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "new disposable whole DB only; no search_path override"
+    );
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(3))
+        .connect(dsn.trim())
+        .await?;
+    let tables: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    ensure!(
+        tables == 0,
+        "canary DB must be new/empty before actual main migrations"
+    );
+    let workspace = Path::new("/workspaces");
+    ensure!(
+        workspace.canonicalize()? == workspace
+            && OwnedWorkspace::inventory(workspace)?.is_empty()
+            && kubernetes::inventory(workspace)?.is_empty(),
+        "workspace/execution custody already present"
+    );
+    let c = &input.expected_config;
+    ensure!(
+        unsafe { libc::geteuid() } == c.security.run_as_user
+            && unsafe { libc::getegid() } == c.security.run_as_group,
+        "controller/job UID differs"
+    );
+    ensure!(
+        workspace.metadata()?.gid() == c.security.fs_group
+            && workspace.metadata()?.mode() & 0o2070 == 0o2070,
+        "workspace fsGroup root not prepared"
+    );
+    let root = PathBuf::from(format!("/qualification/main-canary-{}", input.operation_id));
+    ensure!(
+        root.parent().context("fixture parent")?.canonicalize()? == Path::new("/qualification"),
+        "private fixture parent alias"
+    );
+    fs::create_dir(&root)?;
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+    for name in ["git", "artifacts", "control", "home", "tmp"] {
+        fs::create_dir(root.join(name))?;
+        fs::set_permissions(root.join(name), fs::Permissions::from_mode(0o700))?;
+    }
+    let (success, cancel) = source(&root, &input.image, input.operation_id)?;
+    let reserve = std::net::TcpListener::bind("127.0.0.1:22801")?;
+    drop(reserve);
+    let secret = Uuid::new_v4().to_string();
+    let stdout = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(root.join("main.stdout.private.log"))?;
+    let stderr = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(root.join("main.stderr.private.log"))?;
+    evidence(
+        &root,
+        "planned.json",
+        &json!({"operationId":input.operation_id,"sourceHead":input.expected_source_head,
+        "mainBinary":binary,"mainBinarySha256":input.main_binary_sha256,"workspace":workspace,"pidUnknownUntilSpawn":true}),
+    )?;
+    let http = Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let child = Command::new(binary)
+        .env_clear()
+        .envs([
+            ("PATH", "/usr/local/bin:/usr/bin:/bin".to_owned()),
+            ("HOME", root.join("home").display().to_string()),
+            ("TMPDIR", root.join("tmp").display().to_string()),
+            ("CICD_DATABASE_URL", dsn.trim().to_owned()),
+            (
+                "CICD_MIGRATIONS_DIR",
+                input.migrations_directory.display().to_string(),
+            ),
+            ("CICD_BIND", "127.0.0.1:22801".into()),
+            ("CICD_ROLES", "api,runner".into()),
+            ("CICD_AUTH_SECRET", secret),
+            ("CICD_GIT_ROOT", root.join("git").display().to_string()),
+            ("CICD_GIT_INTERNAL_TOKEN", Uuid::new_v4().to_string()),
+            (
+                "CICD_ARTIFACTS_DIR",
+                root.join("artifacts").display().to_string(),
+            ),
+            ("CICD_RUNNER_MODE", "kubernetes".into()),
+            ("CICD_EMBEDDED_RUNNER_ENABLED", "true".into()),
+            ("CICD_RUNNER_KEEP_WORKSPACE", "false".into()),
+            ("CICD_RUNNER_QUEUE_TIMEOUT_SECONDS", "120".into()),
+            (
+                "CICD_KUBERNETES_RUNNER_CONFIG",
+                input.runner_config.path.display().to_string(),
+            ),
+            (
+                "CICD_KUBERNETES_ADMISSION_FILE",
+                input.admission_file.display().to_string(),
+            ),
+            ("KUBERNETES_SERVICE_HOST", input.api_host.clone()),
+            ("KUBERNETES_SERVICE_PORT_HTTPS", input.api_port.to_string()),
+            (
+                "CICD_QUIESCENCE_DIR",
+                root.join("control").display().to_string(),
+            ),
+            ("CICD_QUIESCENCE_PARTICIPANT", "canary".into()),
+        ])
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr)
+        .kill_on_drop(false)
+        .spawn()?;
+    // All fallible work after spawn is inside caught tasks. The outer owner retains Child.
+    let pid = child.id().unwrap_or(0);
+    let start = process_start(pid).ok();
+    let f = Arc::new(Fixture {
+        input,
+        root,
+        pool,
+        http,
+        child: Mutex::new(child),
+        pid,
+        start,
+        success,
+        cancel,
+    });
+    let case = {
+        let f = f.clone();
+        tokio::spawn(async move {
+            timeout(Duration::from_secs(420), exercise(f))
+                .await
+                .context("HTTP case deadline")?
+        })
+        .await
+    };
+    let stopped = {
+        let f = f.clone();
+        tokio::spawn(async move {
+            timeout(Duration::from_secs(240), f.shutdown())
+                .await
+                .context("normal cleanup deadline")?
+        })
+        .await
+    };
+    if !matches!(&stopped, Ok(Ok(()))) {
+        let _ = evidence(
+            &f.root,
+            "HOLD.json",
+            &json!({"status":"HOLD","pid":f.pid,"operationId":f.input.operation_id,
+            "processStart":f.start,"normalExitProven":false,"ownerMustRetainWorker":true,"reason":"case/cleanup failed; unknown custody is retained"}),
+        );
+        eprintln!(
+            "FORGE_MAIN_CANARY_HOLD operation={} pid={} evidence={}",
+            f.input.operation_id,
+            f.pid,
+            f.root.display()
+        );
+        loop {
+            sleep(Duration::from_secs(30)).await;
+        }
+    }
+    let result = case.context("canary task panicked; main has now exited normally")??;
+    evidence(&f.root, "result.json", &result)?;
     Ok(())
 }
 
 #[test]
 fn canary_scope_requires_ordinary_feature_and_exact_build() {
-    let head="a".repeat(40);
-    let mut v=json!({"schemaVersion":1,"kind":"forge/native-main-canary/v1","operationId":Uuid::new_v4(),
+    let head = "a".repeat(40);
+    let mut v = json!({"schemaVersion":1,"kind":"forge/native-main-canary/v1","operationId":Uuid::new_v4(),
         "expectedSourceHead":head,"expectedExecutorSha256":hash(include_bytes!("../src/execution/kubernetes.rs")),
         "mainBinarySha256":"b".repeat(64),"image":format!("docker.io/library/postgres@sha256:{}","c".repeat(64)),
         "apiHost":"10.0.0.1","apiPort":6443,"admissionFile":"/qualification/admission.json",
@@ -326,11 +821,12 @@ fn canary_scope_requires_ordinary_feature_and_exact_build() {
             "workspaceClaim":"workspace","workspaceClaimUid":Uuid::new_v4(),"jobServiceAccount":"job",
             "builderEnabled":false,"resources":{"cpuMillis":100,"memoryBytes":134217728,"ephemeralStorageBytes":134217728},
             "security":{"runAsUser":10001,"runAsGroup":10001,"fsGroup":10001}}});
-    let i: Input=serde_json::from_value(v.clone()).unwrap();
-    validate_scope(&i,Some(&head)).expect("valid command-only neighbor");
-    assert!(validate_scope(&i,Some(&"0".repeat(40))).is_err());
-    v["expectedConfig"]["builderEnabled"]=json!(true);
-    assert!(validate_scope(&serde_json::from_value(v.clone()).unwrap(),Some(&head)).is_err());
-    v["expectedConfig"]["builderEnabled"]=json!(false);v["image"]=json!("postgres:17.6");
-    assert!(validate_scope(&serde_json::from_value(v).unwrap(),Some(&head)).is_err());
+    let i: Input = serde_json::from_value(v.clone()).unwrap();
+    validate_scope(&i, Some(&head)).expect("valid command-only neighbor");
+    assert!(validate_scope(&i, Some(&"0".repeat(40))).is_err());
+    v["expectedConfig"]["builderEnabled"] = json!(true);
+    assert!(validate_scope(&serde_json::from_value(v.clone()).unwrap(), Some(&head)).is_err());
+    v["expectedConfig"]["builderEnabled"] = json!(false);
+    v["image"] = json!("postgres:17.6");
+    assert!(validate_scope(&serde_json::from_value(v).unwrap(), Some(&head)).is_err());
 }
