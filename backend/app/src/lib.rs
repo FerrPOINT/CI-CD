@@ -5,6 +5,7 @@
 //! checked against `project_memberships` by the API middleware.
 
 pub mod auth;
+pub mod product_token;
 pub mod repository_sync;
 
 const GET: &[&str] = &["GET"];
@@ -715,7 +716,7 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Action::Read,
         Role::Viewer,
     ),
-    work(
+    administration(
         POST,
         "/api/v1/jobs/{job_id}/logs",
         Action::Write,
@@ -739,7 +740,7 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Action::Read,
         Role::Viewer,
     ),
-    work(
+    administration(
         POST,
         "/api/v1/jobs/{job_id}/test-report",
         Action::Write,
@@ -751,7 +752,7 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Action::Read,
         Role::Viewer,
     ),
-    work(
+    administration(
         POST,
         "/api/v1/jobs/{job_id}/artifacts",
         Action::Write,
@@ -1226,6 +1227,34 @@ mod tests {
         assert!(!allows(Role::Developer, "POST", approval_path));
         assert!(allows(Role::Maintainer, "POST", approval_path));
     }
+    #[test]
+    fn human_job_readers_cannot_publish_execution_evidence() {
+        for job in ["first-job", "other-job"] {
+            for resource in ["logs", "test-report", "artifacts"] {
+                let path = format!("/api/v1/jobs/{job}/{resource}");
+                assert!(human_allows(false, "GET", &path), "work reads {path}");
+                assert!(
+                    !human_allows(false, "POST", &path),
+                    "reader cannot publish {path}"
+                );
+                assert!(
+                    human_allows(true, "POST", &path),
+                    "legacy maintenance remains admin-only"
+                );
+            }
+            assert!(human_allows(
+                false,
+                "POST",
+                &format!("/api/v1/jobs/{job}/retry")
+            ));
+            assert!(!human_allows(
+                true,
+                "POST",
+                &format!("/api/v1/runner/leases/{job}/logs")
+            ));
+        }
+    }
+
     #[test]
     fn human_work_never_grants_configuration_or_administration() {
         for (method, path) in [

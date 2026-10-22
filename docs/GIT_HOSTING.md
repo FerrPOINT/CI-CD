@@ -350,3 +350,19 @@ payload; Git/PR acceptance использует ветки с кавычками
 [плане приёмки синхронизации](plans/2026-10-18-repository-sync-complete-test-suite.md).
 Актуальные результаты кандидата и ограничения приведены в
 [отчёте подготовки к merge](reports/2026-10-18-repository-sync-merge-readiness.md).
+
+
+## Две роли и сохранённый product PAT: source candidate
+
+При обязательной application policy cicd_ проверяется по действующей записи,
+центральному UUID владельца и fresh Auth owner proof. Локальный admin flag не
+назначает центрального admin. Прежние git:read/write, API scopes и project pin
+сохраняются. При включённом space admission видимость разрешается только тому
+же центральному владельцу; приложение и пространства проверяются независимо.
+
+Native Git/ref preparation получает минимум исходных deadlines владельца,
+credential и пространства. Durable merge сохраняет original clock после
+перехода к detached owner. Истечение вызывает ограниченный process cleanup и
+unknown outcome с exact ref readback; старый callback не публикуется повторно.
+Это описывает feature-исходники: installed cohort и real job acceptance остаются
+отдельными gates, а закрытые task V1/machine adapters ещё требуют реализации.

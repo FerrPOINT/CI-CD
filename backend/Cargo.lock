@@ -362,6 +362,7 @@ dependencies = [
  "sqlx",
  "subtle",
  "thiserror",
+ "tokio",
  "utoipa",
  "uuid",
 ]
@@ -1685,6 +1686,7 @@ dependencies = [
  "argon2",
  "axum",
  "chrono",
+ "futures-util",
  "jsonwebtoken",
  "pdlc-shared",
  "reqwest 0.12.28",

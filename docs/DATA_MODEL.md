@@ -45,6 +45,13 @@ unique operation keys и immutable receipt/attempt guards сохранены. Н
 upgrade и populated history; рабочая БД не менялась.
 [Состав проверки](FORGE_TASK_DEPLOYMENT_LOCAL_20261017.md).
 
+Additive0100 application_request_clock вводит ephemeral
+forge_request_commit_fences. Insert/delete в одной транзакции оставляет deferred
+COMMIT event, но не постоянную строку: истечение исходного application/credential
+clock отклоняет COMMIT после SQL wait даже при выключенной политике пространств.
+Таблица не назначает роли или доступ и не заменяет lifecycle/data admission.
+Миграция является source candidate, в dev этой задачей не устанавливалась.
+
 PR actions получают namespace admission перед `pull_requests FOR UPDATE`.
 Merge/close/reopen читают актуальное состояние под одной row lock; Git publication
 подтверждается до `status=merged`/`merge_commit_sha`. Branch SHA фиксируется

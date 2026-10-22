@@ -4,15 +4,76 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 
 #[derive(Clone, Copy)]
-pub(super) struct GitDeadline {
+pub(crate) struct GitDeadline {
     instant: Instant,
     until: i64,
 }
 impl GitDeadline {
+    pub(crate) fn request(
+        authority: &pdlc_auth_core::http_authority::RequestAuthority,
+        until: i64,
+    ) -> Result<Option<Self>, ApiError> {
+        let Some(instant) = authority.original_deadline() else {
+            return Ok(None);
+        };
+        // Wall first: scheduling delay can only shorten the original clock.
+        let wall = Utc::now();
+        let remaining = instant
+            .checked_duration_since(Instant::now())
+            .ok_or_else(ApiError::forbidden)?;
+        let duration = chrono::Duration::from_std(remaining).map_err(|_| ApiError::forbidden())?;
+        let local_until = wall
+            .checked_add_signed(duration)
+            .ok_or_else(ApiError::forbidden)?
+            .timestamp();
+        let clock = Self {
+            instant,
+            until: until.min(local_until),
+        };
+        clock.require()?;
+        Ok(Some(clock))
+    }
+    pub(crate) fn intersect(self, other: Self) -> Self {
+        Self {
+            instant: self.instant.min(other.instant),
+            until: self.until.min(other.until),
+        }
+    }
+    /// Freshness only, including lock/COMMIT waits. No role or namespace grant.
+    pub(crate) async fn bind_commit_clock(
+        self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), ApiError> {
+        self.require()?;
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO forge_request_commit_fences(fence_id,valid_until)
+            VALUES($1,to_timestamp(($2::bigint)::double precision))",
+        )
+        .bind(id)
+        .bind(self.until)
+        .execute(&mut **transaction)
+        .await
+        .map_err(ApiError::internal)?;
+        sqlx::query("DELETE FROM forge_request_commit_fences WHERE fence_id=$1")
+            .bind(id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(ApiError::internal)?;
+        self.require()
+    }
     pub(super) fn identity(source: &pdlc_auth_core::service_bridge::VerifiedCentralToken) -> Self {
         Self {
             instant: source.lifetime.monotonic_deadline(),
             until: source.lifetime.local_valid_until(),
+        }
+    }
+    pub(super) fn product_personal(
+        source: &cicd_app::product_token::ConfirmedPersonalToken,
+    ) -> Self {
+        Self {
+            instant: source.owner().monotonic_deadline(),
+            until: source.owner().decision.expires_at.timestamp(),
         }
     }
     pub(super) fn admission(source: &pdlc_auth_core::service_bridge::ConfirmedSpaceRead) -> Self {
@@ -24,7 +85,7 @@ impl GitDeadline {
     pub(super) fn current(self) -> bool {
         Instant::now() < self.instant && Utc::now().timestamp() < self.until
     }
-    pub(super) fn require(self) -> Result<(), ApiError> {
+    pub(crate) fn require(self) -> Result<(), ApiError> {
         if self.current() {
             Ok(())
         } else {

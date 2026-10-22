@@ -10,6 +10,7 @@ pub mod delegated_credentials;
 pub mod dispatch_signal;
 pub mod metrics;
 pub mod outbox;
+pub(crate) mod product_tokens;
 pub mod rate_limit;
 pub(crate) mod schedule;
 use std::path::{Path, PathBuf};

@@ -17,7 +17,7 @@ pub(super) async fn verify(pool: &sqlx::PgPool, profile: Arc<RwLock<Profile>>) {
     let actor = cicd::central_auth::link_central_user(pool, &verified)
         .await
         .unwrap();
-    assert_eq!(actor.role, "developer");
+    assert_eq!(actor.role, "user");
     assert!(
         actor.token_id.is_none(),
         "central PAT must not invent a local API-token row"
@@ -58,14 +58,14 @@ pub(super) async fn verify(pool: &sqlx::PgPool, profile: Arc<RwLock<Profile>>) {
             .bearer_auth("sdlc_pat_fixture_product_roles")
             .send()
     };
-    profile.write().unwrap().scopes = vec!["ci-cd:read"];
+    profile.write().unwrap().scopes = vec!["git:read"];
     let denied = request("git-upload-pack").await.unwrap();
     assert_eq!(
         denied.status(),
         reqwest::StatusCode::FORBIDDEN,
-        "a central PAT without git:read must not become an unrestricted browser session"
+        "a central PAT without ci-cd:read must not become an unrestricted browser session"
     );
-    profile.write().unwrap().scopes = vec!["git:read"];
+    profile.write().unwrap().scopes = vec!["ci-cd:read"];
     let read = request("git-upload-pack").await.unwrap();
     assert_eq!(read.status(), reqwest::StatusCode::OK);
     assert_eq!(
@@ -75,7 +75,7 @@ pub(super) async fn verify(pool: &sqlx::PgPool, profile: Arc<RwLock<Profile>>) {
     assert_eq!(read.headers()["cache-control"], "private, no-store");
     let read_only_write = request("git-receive-pack").await.unwrap();
     assert_eq!(read_only_write.status(), reqwest::StatusCode::FORBIDDEN);
-    profile.write().unwrap().scopes = vec!["git:write"];
+    profile.write().unwrap().scopes = vec!["ci-cd:write"];
     assert_eq!(
         request("git-upload-pack").await.unwrap().status(),
         reqwest::StatusCode::FORBIDDEN
@@ -101,7 +101,7 @@ pub(super) async fn verify(pool: &sqlx::PgPool, profile: Arc<RwLock<Profile>>) {
     );
     // Hold the real ACL query until the original introspection window expires.
     // The successful membership lookup must not mint a new token lifetime.
-    profile.write().unwrap().scopes = vec!["git:read"];
+    profile.write().unwrap().scopes = vec!["ci-cd:read"];
     profile.write().unwrap().expires_in = 1;
     let mut blocked = pool.begin().await.unwrap();
     sqlx::query("LOCK TABLE project_memberships IN ACCESS EXCLUSIVE MODE")
@@ -131,12 +131,12 @@ pub(super) async fn verify(pool: &sqlx::PgPool, profile: Arc<RwLock<Profile>>) {
     let expired = delayed.await.unwrap().unwrap();
     assert_eq!(
         expired.status(),
-        reqwest::StatusCode::UNAUTHORIZED,
-        "a token that expired during ACL IO cannot authorize Git discovery"
+        reqwest::StatusCode::FORBIDDEN,
+        "expired original authority during ACL IO denies Git without a new SSO cycle"
     );
     // Exercise the actual HTTP Git transport, not only the discovery endpoint.
     profile.write().unwrap().expires_in = 300;
-    profile.write().unwrap().scopes = vec!["git:read", "git:write"];
+    profile.write().unwrap().scopes = vec!["ci-cd:read", "ci-cd:write"];
     let checkout = root.join("client");
     let client_git = |args: Vec<String>| {
         let checkout = checkout.clone();

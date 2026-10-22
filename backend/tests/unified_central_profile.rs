@@ -98,8 +98,8 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
             "immutable subject retains the existing random local UUID"
         );
         assert_eq!(
-            claims.role, role,
-            "SSO must not synthesize admin or overwrite a confirmed product role"
+            claims.role, "user",
+            "only current central role grants authority; local assignments remain data"
         );
         assert_eq!(
             claims.exp,
@@ -136,10 +136,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         .execute(&pool)
         .await
         .unwrap();
-    assert_eq!(
-        link_central_user(&pool, &actor).await.unwrap().role,
-        "viewer"
-    );
+    assert_eq!(link_central_user(&pool, &actor).await.unwrap().role, "user");
     let stored: String = sqlx::query_scalar("SELECT role FROM users WHERE id=$1")
         .bind(local)
         .fetch_one(&pool)
@@ -150,10 +147,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         "do not rewrite unknown assignments to repair authority"
     );
     sqlx::query("INSERT INTO forge_confirmed_user_roles(user_id,role,provenance) VALUES($1,'admin','Explicit preserved assignment')").bind(local).execute(&pool).await.unwrap();
-    assert_eq!(
-        link_central_user(&pool, &actor).await.unwrap().role,
-        "admin"
-    );
+    assert_eq!(link_central_user(&pool, &actor).await.unwrap().role, "user");
     sqlx::query("UPDATE users SET role='viewer' WHERE id=$1")
         .bind(local)
         .execute(&pool)
@@ -166,7 +160,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
             .await
             .unwrap();
     assert_eq!(markers, 0, "role changes retire old confirmation");
-    // Even central platform-admin metadata does not replace the local product role.
+    // Current central admin grants administration without rewriting local history.
     profile.write().unwrap().role = "admin".into();
     sqlx::query("UPDATE users SET role='viewer' WHERE id=$1")
         .bind(local)
@@ -182,7 +176,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
             .await
             .unwrap()
             .role,
-        "viewer"
+        "admin"
     );
     sqlx::query("UPDATE users SET enabled=false WHERE id=$1")
         .bind(local)
@@ -224,8 +218,8 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         .unwrap();
     assert_eq!(
         link_central_user(&pool, &fresh).await.unwrap().role,
-        "developer",
-        "preserve the existing new-profile default without admin escalation"
+        "user",
+        "new shadow profiles do not create a third human role or administration"
     );
     let expired = Uuid::new_v4();
     *profile.write().unwrap() = Profile {

@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::api::{ApiError, AppState};
 
 mod deadline;
+pub(crate) use deadline::GitDeadline;
 mod receive_hooks;
 
 /// PR native effects share the same fixed-clock owner and reference preparation
@@ -29,9 +30,16 @@ pub(crate) async fn pr_output(
     args: &[&str],
     input: Bytes,
     proof: Option<&pdlc_auth_core::service_bridge::ConfirmedSpaceRead>,
+    application_clock: Option<GitDeadline>,
     guard: &cicd_infra::sync_git::MutationGuard,
 ) -> Result<std::process::Output, ApiError> {
-    let deadline = proof.map(deadline::GitDeadline::admission);
+    let deadline = match (
+        proof.map(deadline::GitDeadline::admission),
+        application_clock,
+    ) {
+        (Some(space), Some(application)) => Some(space.intersect(application)),
+        (space, application) => space.or(application),
+    };
     let mut command = Command::new("git");
     guard
         .inherit(&mut command)
@@ -445,12 +453,11 @@ async fn check_repo_access(
     };
     identity.require_scope(required_scope)?;
     let common = if admission_active {
-        let actor = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
         Some(
             crate::space_admission::repository(
                 pool,
                 &name,
-                actor,
+                &identity,
                 operation == GitOperation::Write,
             )
             .await?,
@@ -502,6 +509,12 @@ async fn check_repo_access(
                     .central
                     .as_ref()
                     .map(deadline::GitDeadline::identity)
+                    .or_else(|| {
+                        identity
+                            .product_personal
+                            .as_ref()
+                            .map(deadline::GitDeadline::product_personal)
+                    })
             }),
     })
 }

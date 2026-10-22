@@ -2545,9 +2545,18 @@ pub(crate) struct UserInput {
 #[utoipa::path(get, path = "/api/v1/users", tag = "users", responses((status = 200, body = [User])))]
 async fn list_users(
     State(state): State<Arc<AppState>>,
+    identity: Option<axum::Extension<crate::api::authz_mw::VerifiedRequestIdentity>>,
     headers: HeaderMap,
 ) -> ApiResult<Vec<User>> {
     if let Ok(jwks) = std::env::var("CICD_AUTH__CENTRAL_JWKS_URI") {
+        // This adapter reads the Auth directory. A Forge credential remains
+        // product-scoped even when its current owner is a central administrator.
+        if identity
+            .as_ref()
+            .is_some_and(|actor| actor.product_personal.is_some())
+        {
+            return Err(ApiError::forbidden());
+        }
         let token = headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())

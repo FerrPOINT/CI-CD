@@ -915,8 +915,18 @@ pub async fn pull_action(
     State(state): State<Arc<AppState>>,
     Path((id, number)): Path<(Uuid, i32)>,
     permit: Option<axum::Extension<crate::pulls::RepositoryWrite>>,
+    authority: Option<axum::Extension<pdlc_auth_core::http_authority::RequestAuthority>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<crate::pulls::PrAction>,
 ) -> Result<Json<crate::pulls::PullRequest>, ApiError> {
     let storage = storage_by_id(state.pool.as_ref().ok_or_else(ApiError::unavailable)?, id).await?;
-    crate::pulls::pr_action(State(state), Path((storage, number)), permit, Json(input)).await
+    crate::pulls::pr_action(
+        State(state),
+        Path((storage, number)),
+        permit,
+        authority,
+        claims,
+        Json(input),
+    )
+    .await
 }
