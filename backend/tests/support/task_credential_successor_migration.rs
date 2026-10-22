@@ -384,10 +384,10 @@ async fn populated_0094_to_0095_preserves_original_custody_business_and_migratio
                 .cloned()
                 .collect();
             assert_eq!(json!(retained), upgraded, "all 0095 ledger fields retained");
-            assert_eq!(current.as_array().unwrap().last().unwrap()["version"], 99);
+            assert_eq!(current.as_array().unwrap().last().unwrap()["version"], 104);
             assert_eq!(
                 current.as_array().unwrap().len(),
-                upgraded.as_array().unwrap().len() + 4
+                upgraded.as_array().unwrap().len() + 9
             );
             for _ in 0..2 {
                 full.run(&checked).await.unwrap();
