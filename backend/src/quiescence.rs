@@ -3,10 +3,7 @@
 mod kernel;
 use anyhow::{Context, ensure};
 pub use kernel::*;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 use uuid::Uuid;
 /// Admit every request before auth/cache DB effects; only exact existing-execution continuations survive drain.
 pub async fn middleware(
@@ -125,6 +122,7 @@ fn continuation(path: &str) -> bool {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     fn fixture() -> (PathBuf, Gate) {
         let path = std::env::temp_dir().join(format!("forge-quiescence-{}", Uuid::new_v4()));
         let gate = Gate::open(&path).unwrap();

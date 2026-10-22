@@ -917,7 +917,7 @@ async fn read_completed_image(
     scope: &ImageBuildScope,
     daemon: &str,
 ) -> anyhow::Result<RetainedImage> {
-    let observe = || {
+    let observe = || -> anyhow::Result<_> {
         let (root, scope, repository, commit, daemon) = (
             root.to_owned(),
             scope.clone(),
@@ -926,12 +926,12 @@ async fn read_completed_image(
             daemon.to_owned(),
         );
         let effect = crate::quiescence::enter(false)?;
-        tokio::task::spawn_blocking(move || {
+        Ok(tokio::task::spawn_blocking(move || {
             let _effect = effect;
             read_retained(&root, &scope, repository, &commit, &daemon)
-        })
+        }))
     };
-    let before = observe().await??;
+    let before = observe()?.await??;
     let config = root
         .join(format!("image-build-{}", scope.attempt_id.simple()))
         .join("docker-config");
@@ -950,7 +950,7 @@ async fn read_completed_image(
         )
         .await?;
     ensure!(
-        before == observe().await??,
+        before == observe()?.await??,
         "retained image changed during readback"
     );
     Ok(before)
