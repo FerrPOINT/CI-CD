@@ -21,4 +21,5 @@ cicd-domain = { path = "../domain" }
 serde_json.workspace = true
 
 [dev-dependencies]
+axum = "0.8"
 tokio.workspace = true

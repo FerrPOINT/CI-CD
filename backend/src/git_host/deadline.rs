@@ -56,6 +56,10 @@ impl GitDeadline {
         clock.require()?;
         Ok(Some(clock))
     }
+    pub(crate) fn valid_until(self) -> Result<DateTime<Utc>, ApiError> {
+        self.require()?;
+        DateTime::from_timestamp(self.until, 0).ok_or_else(ApiError::forbidden)
+    }
     pub(crate) fn intersect(self, other: Self) -> Self {
         Self {
             instant: self.instant.min(other.instant),
@@ -144,7 +148,7 @@ impl GitDeadline {
             "Git fixed-clock hooks require Linux",
         ))
     }
-    pub(super) fn response(self, mut response: Response) -> Response {
+    pub(crate) fn response(self, mut response: Response) -> Response {
         if let Err(error) = self.require() {
             return git_access_error(error);
         }

@@ -600,15 +600,18 @@ pub(crate) async fn ack_runner_lease(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
+    let owner_clock =
+        lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
+    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?;
     let row = sqlx::query_as::<_, LeaseControlRow>(
         "UPDATE job_leases \
-         SET acknowledged_at = COALESCE(acknowledged_at, now()), last_renewed_at = now() \
+         SET acknowledged_at = COALESCE(acknowledged_at, now()), last_renewed_at = now(), lease_expires_at = LEAST(lease_expires_at, COALESCE($6::timestamptz,lease_expires_at)) \
          WHERE id = $1 \
            AND runner_id = $2 \
            AND lease_status = 'active' \
            AND lease_token_hash = $3 \
            AND generation = $4 \
-           AND lease_expires_at > now() \
+           AND lease_expires_at > now() AND ($6::timestamptz IS NULL OR clock_timestamp() < $6) \
            AND (acknowledged_at IS NOT NULL OR ack_deadline IS NULL OR ack_deadline > now()) \
          RETURNING lease_expires_at, now() + ($5::bigint * interval '1 second') AS renew_after, \
                    cancel_requested_at IS NOT NULL AS cancel_requested",
@@ -618,10 +621,14 @@ pub(crate) async fn ack_runner_lease(
     .bind(token_hash)
     .bind(input.fencing_token)
     .bind(RENEW_AFTER_SECONDS)
+    .bind(owner_until)
     .fetch_optional(db)
     .await
     .map_err(ApiError::internal)?;
 
+    if let Some(clock) = owner_clock {
+        clock.require()?;
+    }
     match row {
         Some(row) => Ok(Json(control_response(row))),
         None => Err(lease_mutation_error(db, lease_id, runner.id).await),
@@ -651,16 +658,19 @@ pub(crate) async fn renew_runner_lease(
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
+    let owner_clock =
+        lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
+    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?;
     let row = sqlx::query_as::<_, LeaseControlRow>(
         "UPDATE job_leases \
-         SET lease_expires_at = now() + ($5::bigint * interval '1 second'), \
+         SET lease_expires_at = LEAST(now() + ($5::bigint * interval '1 second'),COALESCE($7::timestamptz,now() + ($5::bigint * interval '1 second'))), \
              last_renewed_at = now() \
          WHERE id = $1 \
            AND runner_id = $2 \
            AND lease_status = 'active' \
            AND lease_token_hash = $3 \
            AND generation = $4 \
-           AND lease_expires_at > now() \
+           AND lease_expires_at > now() AND ($7::timestamptz IS NULL OR clock_timestamp() < $7) \
            AND acknowledged_at IS NOT NULL \
          RETURNING lease_expires_at, now() + ($6::bigint * interval '1 second') AS renew_after, \
                    cancel_requested_at IS NOT NULL AS cancel_requested",
@@ -671,10 +681,14 @@ pub(crate) async fn renew_runner_lease(
     .bind(input.fencing_token)
     .bind(LEASE_TTL_SECONDS)
     .bind(RENEW_AFTER_SECONDS)
+    .bind(owner_until)
     .fetch_optional(db)
     .await
     .map_err(ApiError::internal)?;
 
+    if let Some(clock) = owner_clock {
+        clock.require()?;
+    }
     match row {
         Some(row) => Ok(Json(control_response(row))),
         None => Err(lease_mutation_error(db, lease_id, runner.id).await),
@@ -791,7 +805,7 @@ pub(crate) async fn resolve_runner_lease_secrets(
     )
     .bind(lease_id)
     .bind(runner.id)
-    .bind(token_hash)
+    .bind(&token_hash)
     .bind(input.fencing_token)
     .fetch_optional(db)
     .await
@@ -809,6 +823,8 @@ pub(crate) async fn resolve_runner_lease_secrets(
         return Err(ApiError::forbidden());
     }
 
+    let owner_clock =
+        lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
     let pairs = crate::platform::project_secret_pairs_for_names_with_config(
         db,
         row.project_id,
@@ -818,7 +834,13 @@ pub(crate) async fn resolve_runner_lease_secrets(
     .await?;
     let response_body = RunnerSecretResolveResponse {
         protocol_version: PROTOCOL_VERSION,
-        expires_at: Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS),
+        expires_at: owner_clock
+            .map(|clock| clock.valid_until())
+            .transpose()?
+            .map_or(
+                Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS),
+                |until| until.min(Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS)),
+            ),
         items: pairs
             .into_iter()
             .map(|(name, value)| RunnerSecretItem {
@@ -832,7 +854,10 @@ pub(crate) async fn resolve_runner_lease_secrets(
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    Ok(response)
+    match owner_clock {
+        Some(clock) => Ok(clock.response(response)),
+        None => Ok(response),
+    }
 }
 
 #[utoipa::path(
@@ -914,7 +939,7 @@ pub(crate) async fn upload_runner_lease_artifact(
     )
     .bind(lease_id)
     .bind(runner.id)
-    .bind(token_hash)
+    .bind(&token_hash)
     .bind(fencing_token)
     .bind(attempt_id)
     .fetch_optional(db)
@@ -928,6 +953,8 @@ pub(crate) async fn upload_runner_lease_artifact(
         return Err(ApiError::forbidden());
     }
 
+    let owner_clock =
+        lease_owner_clock(db, lease_id, runner.id, &token_hash, fencing_token).await?;
     let artifact = crate::platform::store_job_artifact_with_config(
         db,
         &state.config.artifacts,
@@ -938,6 +965,9 @@ pub(crate) async fn upload_runner_lease_artifact(
         body,
     )
     .await?;
+    if let Some(clock) = owner_clock {
+        clock.require()?;
+    }
     Ok(Json(artifact))
 }
 
@@ -1220,7 +1250,7 @@ async fn claim_next_work(
              LEFT JOIN pipeline_plans pp ON pp.pipeline_id = p.id \
              LEFT JOIN repository_catalog rc ON rc.id=pr.repository_id \
              LEFT JOIN git_groups gg ON gg.id=rc.group_id \
-             WHERE q.state = 'queued' \
+             WHERE q.state = 'queued' AND NOT EXISTS (SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                 AND NOT EXISTS(SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                AND NOT EXISTS(SELECT 1 FROM repository_catalog nr JOIN forge_namespace_bindings nb ON nb.resource_id=nr.group_id WHERE nr.id=pr.repository_id AND nb.state<>'active') \
                AND q.not_before <= now() \
@@ -1327,6 +1357,10 @@ async fn claim_next_work(
             }
             Err(error) => return Err(ApiError::internal(error)),
         };
+        let owner_clock = crate::pipeline_authority::confirm(db, row.pipeline_id).await?;
+        if let Some(clock) = owner_clock {
+            clock.bind_commit_clock(&mut tx).await?;
+        }
         let checkout_url = match row.catalog_kind.as_deref() {
             Some("external") => row
                 .catalog_external_url
@@ -1974,7 +2008,13 @@ async fn lease_artifact_row(
     .fetch_optional(db)
     .await
     .map_err(ApiError::internal)?;
-    row.ok_or_else(|| ApiError::gone("lease is no longer active"))
+    let row = row.ok_or_else(|| ApiError::gone("lease is no longer active"))?;
+    if let Some(clock) =
+        lease_owner_clock(db, lease_id, runner_id, token_hash, fencing_token).await?
+    {
+        clock.require()?;
+    }
+    Ok(row)
 }
 
 #[utoipa::path(
@@ -2514,4 +2554,19 @@ mod tests {
             .is_err()
         );
     }
+}
+
+async fn lease_owner_clock(
+    db: &PgPool,
+    lease_id: Uuid,
+    runner: Uuid,
+    token_hash: &str,
+    generation: i64,
+) -> Result<Option<crate::git_host::GitDeadline>, ApiError> {
+    if !crate::central_auth::application_policy_required()? {
+        return Ok(None);
+    }
+    let pipeline:Uuid=sqlx::query_scalar("SELECT s.pipeline_id FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id WHERE l.id=$1 AND l.runner_id=$2 AND l.lease_token_hash=$3 AND l.generation=$4 AND l.lease_status='active' AND l.lease_expires_at>clock_timestamp()")
+        .bind(lease_id).bind(runner).bind(token_hash).bind(generation).fetch_optional(db).await.map_err(ApiError::internal)?.ok_or_else(||ApiError::gone("lease is no longer active"))?;
+    crate::pipeline_authority::confirm(db, pipeline).await
 }

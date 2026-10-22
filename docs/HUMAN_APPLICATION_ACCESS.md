@@ -128,3 +128,39 @@ Native fixture task_git_owner использует реальные HTTP, Postgr
 разрешённый candidate push, отсутствие legacy pipeline, отзыв Fleet, отказ Auth,
 пустой/разрешённый space admission и запрет позднего custom hook/ref update после
 истечения исходного owner proof. Это изолированная qualification, а не dev job.
+
+
+## Владелец CI и новые runner stages
+
+Аддитивная migration0101 сохраняет pipeline_human_owners по центральному UUID
+в той же транзакции, что pipeline/plan/jobs/queue. Owner берётся из проверенного
+HTTP origin, а не из JSON, email или исторического local admin. Replay original
+key не может заменить владельца. COMMIT ограничен исходным request proof.
+
+При app policy обычный Git push передаёт доверенный in-memory origin владельцу
+native receive. После успешного native outcome backend читает сохранённые hook
+updates и точный текущий OID каждой ссылки, затем использует прежнее CI decision
+и idempotency key. Новый owner header/credential не вводится. Task Git по-прежнему
+не создаёт legacy pipeline. Самостоятельный legacy callback без подтверждённого
+human origin не может поставить CI в очередь. Custom hooks сохраняются; unknown
+Git outcome не повторяется автоматически и требует exact ref readback.
+
+Перед embedded preparation/spawn и внешним offer подтверждается текущий ci-cd
+владельца. Внешние ACK/renew, secrets и artifact phases дополнительно пересекают
+native lease с текущим owner. ACK/renew и secret envelope не продлевают исходное
+окно подтверждения. Runner credential продолжает доказывать только собственную
+custody/scopes; он не обходит human admission. Task pipelines сохраняют отдельные
+Tracker/child/assignment проверки; внешний runner не захватывает embedded-only
+native task. Технический учёт результата не считается правом нового запуска.
+
+Полная native fixture подтверждает Git/API ownership, успешную обычную shell
+команду в disposable workspace, отказ до lease/workspace после отзыва, remote
+poll rollback, ACK/renew/secrets при разрешённом доступе, отзыв и Auth503.
+Срок secrets/lease ограничен исходным30s proof. Проверки old product PAT,
+space composition и позднего SQL/Git эффекта сохранены в той же fixture.
+
+Исторические pipeline без подтверждённого owner не получают первого admin
+автоматически. При app policy новый запуск такого pipeline закрывается как
+migration pending. Владение schedules/deployments и полноценная миграция текущих
+автоматизаций должны быть подтверждены до активации; один native fixture не
+является полной квалификацией всех artifact publication/rollback/cohort paths.

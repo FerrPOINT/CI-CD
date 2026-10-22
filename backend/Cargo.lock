@@ -352,6 +352,7 @@ dependencies = [
 name = "cicd-app"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "chrono",
  "cicd-domain",
  "jsonwebtoken",

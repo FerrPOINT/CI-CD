@@ -178,10 +178,13 @@ async fn tracker_bound(
         + current(&value, intent).map_err(|_| {
             ApiError::conflict("Текущий Tracker task assignment или lease не совпадает")
         })?;
-    if Instant::now() >= until {
-        return Err(ApiError::conflict("Lease истёк во время readback"));
-    }
-    Ok(until)
+    crate::task_owner::intersect(
+        value["receipt"]["task"]["owner_subject"]
+            .as_str()
+            .ok_or_else(ApiError::forbidden)?,
+        until,
+    )
+    .await
 }
 
 pub(crate) async fn authorize_saved(
@@ -438,6 +441,9 @@ pub(crate) async fn before_delegated_effect(
     attempt: Uuid,
     config: &crate::runner::RuntimeRunnerConfig,
 ) -> Result<(), ApiError> {
+    if let Some(clock) = crate::pipeline_authority::confirm(pool, pipeline).await? {
+        clock.require()?;
+    }
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let Some(record) = ledger::find_task_pipeline(&mut tx, pipeline, false)
         .await
@@ -445,7 +451,8 @@ pub(crate) async fn before_delegated_effect(
     else {
         return Ok(());
     };
-    if record.delegated_credential.is_none() {
+    if record.delegated_credential.is_none() && !crate::central_auth::application_policy_required()?
+    {
         return Ok(());
     }
     if !ledger::task_attempt_submitted(&mut tx, pipeline, attempt)

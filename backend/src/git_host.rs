@@ -72,6 +72,7 @@ pub(crate) async fn pr_output(
 struct GitAccess {
     bootstrap: bool,
     deadline: Option<deadline::GitDeadline>,
+    origin: Option<crate::pipeline_authority::Origin>,
 }
 impl GitAccess {
     fn response(self, response: Response) -> Response {
@@ -411,6 +412,7 @@ async fn check_repo_access(
             Ok(GitAccess {
                 bootstrap: true,
                 deadline: None,
+                origin: None,
             })
         } else {
             Err(ApiError::not_found())
@@ -474,6 +476,7 @@ async fn check_repo_access(
         return Ok(GitAccess {
             bootstrap: false,
             deadline: common.as_ref().map(deadline::GitDeadline::admission),
+            origin: crate::pipeline_authority::Origin::from_identity(&identity)?,
         });
     }
     let bootstrap = if claims.role == "service_account" {
@@ -501,6 +504,7 @@ async fn check_repo_access(
     identity.require_scope(required_scope)?;
     Ok(GitAccess {
         bootstrap,
+        origin: crate::pipeline_authority::Origin::from_identity(&identity)?,
         deadline: common
             .as_ref()
             .map(deadline::GitDeadline::admission)
@@ -841,6 +845,9 @@ async fn run_git_service(
             None
         };
         run_git_service_owned(
+            &state,
+            access.origin,
+            storage.as_deref(),
             &path,
             &service,
             body,
@@ -856,6 +863,9 @@ async fn run_git_service(
 }
 
 async fn run_git_service_owned(
+    state: &AppState,
+    origin: Option<crate::pipeline_authority::Origin>,
+    storage: Option<&str>,
     path: &Path,
     service: &str,
     body: Bytes,
@@ -884,10 +894,21 @@ async fn run_git_service_owned(
     }
     command.arg(service).arg("--stateless-rpc").arg(path);
     let output = deadline::output(&mut command, body, proof).await;
+    let notify = if output.as_ref().is_ok_and(|output| output.status.success())
+        && !task_variant
+        && crate::central_auth::application_policy_required()?
+    {
+        notify_human_push(state, path, storage, origin, proof, hooks.as_ref()).await
+    } else {
+        Ok(())
+    };
     if let Some(hooks) = hooks {
         hooks.cleanup();
     }
     let output = output?;
+    if let Err(error) = notify {
+        tracing::warn!(error=?error,"Accepted Git update has no authorized CI notification; no automatic native retry");
+    }
     if !output.status.success() {
         if task_variant {
             return Err(ApiError::service_unavailable(
@@ -1103,6 +1124,13 @@ pub async fn internal_git_push(
             return Err(ApiError::unauthorized());
         }
     }
+    process_git_push(&state, event).await
+}
+
+async fn process_git_push(
+    state: &AppState,
+    event: GitPushEvent,
+) -> Result<axum::Json<serde_json::Value>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let name = crate::repository_catalog::resolve_storage(pool, &event.repository).await?;
     let repository_id: Uuid =
@@ -1431,4 +1459,55 @@ mod tests {
             }
         }
     }
+}
+
+async fn notify_human_push(
+    state: &AppState,
+    path: &Path,
+    storage: Option<&str>,
+    origin: Option<crate::pipeline_authority::Origin>,
+    proof: Option<GitDeadline>,
+    hooks: Option<&receive_hooks::ReceiveHooks>,
+) -> Result<(), ApiError> {
+    let origin = origin
+        .ok_or_else(ApiError::forbidden)?
+        .restrict(proof.ok_or_else(ApiError::forbidden)?);
+    let storage = storage.ok_or_else(ApiError::forbidden)?;
+    let updates = hooks.ok_or_else(ApiError::forbidden)?.updates()?;
+    crate::pipeline_authority::with_origin(Some(origin), async {
+        for (old, new, reference) in updates {
+            if is_zero_object_id(&new) {
+                continue;
+            }
+            proof.ok_or_else(ApiError::forbidden)?.require()?;
+            let observed = deadline::output(
+                Command::new("git")
+                    .arg("--git-dir")
+                    .arg(path)
+                    .arg("rev-parse")
+                    .arg("--verify")
+                    .arg(&reference),
+                Bytes::new(),
+                proof,
+            )
+            .await?;
+            if !observed.status.success() || String::from_utf8_lossy(&observed.stdout).trim() != new
+            {
+                continue;
+            }
+            let _ = process_git_push(
+                state,
+                GitPushEvent {
+                    repository_id: None,
+                    repository: storage.into(),
+                    ref_name: reference,
+                    old_rev: Some(old),
+                    new_rev: Some(new),
+                },
+            )
+            .await?;
+        }
+        Ok(())
+    })
+    .await
 }

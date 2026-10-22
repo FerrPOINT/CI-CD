@@ -344,20 +344,21 @@ pub(crate) async fn require_auth(
     if let Some(permit) = write_permit.as_ref() {
         parts.extensions.insert(permit.clone());
     }
+    let pipeline_origin = crate::pipeline_authority::Origin::from_identity(&identity)?;
     let local_user = claims.sub;
     let central_authority = identity.central.clone();
     let product_authority = identity.product_personal.clone();
     parts.extensions.insert(claims);
     parts.extensions.insert(identity);
     let req = axum::extract::Request::from_parts(parts, body);
-    let dispatch = async {
+    let dispatch = crate::pipeline_authority::with_origin(pipeline_origin, async {
         let response = next.run(req).await;
         match (read_proof, write_permit) {
             (Some(proof), _) => crate::space_admission::read_response(proof, response),
             (_, Some(permit)) => permit.response(response),
             _ => Ok(response),
         }
-    };
+    });
     if let Some(verified) = central_authority {
         return pdlc_auth_core::human_request::with_human_request(
             local_user,
@@ -848,7 +849,7 @@ pub(crate) struct VerifiedRequestIdentity {
     pub(crate) product_personal: Option<cicd_app::product_token::ConfirmedPersonalToken>,
 }
 impl VerifiedRequestIdentity {
-    fn original_deadline(&self) -> Result<Option<std::time::Instant>, ApiError> {
+    pub(crate) fn original_deadline(&self) -> Result<Option<std::time::Instant>, ApiError> {
         if let Some(source) = &self.central {
             if !source.lifetime.is_current() {
                 return Err(ApiError::forbidden());

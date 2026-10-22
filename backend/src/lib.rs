@@ -10,6 +10,7 @@ pub mod delegated_credentials;
 pub mod dispatch_signal;
 pub mod metrics;
 pub mod outbox;
+pub(crate) mod pipeline_authority;
 pub(crate) mod product_tokens;
 pub mod rate_limit;
 pub(crate) mod schedule;
@@ -54,6 +55,7 @@ pub mod store;
 pub mod task_delivery;
 pub mod task_git;
 pub mod task_links;
+pub(crate) mod task_owner;
 pub mod workspace_projects;
 
 pub use cicd_domain as domain_types;

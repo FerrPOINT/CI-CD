@@ -173,6 +173,10 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
     let instance = Uuid::new_v4();
     // This isolated test process initializes its configuration before any reader starts.
     unsafe {
+        std::env::set_var(
+            "CICD_SECRETS_KEY",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        );
         std::env::set_var("CICD_NAMESPACE__REGISTRY_INSTANCE_ID", registry.to_string());
         std::env::set_var("CICD_NAMESPACE__INSTANCE_ID", instance.to_string());
         std::env::set_var("CICD_AUTH__CENTRAL_ISSUER", &issuer);
@@ -268,6 +272,260 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
         &["-c", &header, "push", "origin", "HEAD:refs/heads/source"],
     )
     .await;
+    sqlx::query("INSERT INTO repository_push_configs(repository_id,configuration_id) VALUES($1,$2) ON CONFLICT(repository_id) DO UPDATE SET configuration_id=excluded.configuration_id")
+        .bind(repo.id).bind(project).execute(&pool).await.unwrap();
+    git_ok(
+        &work,
+        &["-c", &header, "push", "origin", "HEAD:refs/heads/ci-owner"],
+    )
+    .await;
+    let git_pipeline: Uuid =
+        sqlx::query_scalar("SELECT id FROM pipelines WHERE project_id=$1 AND git_ref='ci-owner'")
+            .bind(project)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let saved: Uuid =
+        sqlx::query_scalar("SELECT owner_subject FROM pipeline_human_owners WHERE pipeline_id=$1")
+            .bind(git_pipeline)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        saved, subject,
+        "native Git completion retains its authenticated central owner"
+    );
+    let response = http
+        .post(format!("{origin}/api/v1/projects/{project}/pipelines"))
+        .bearer_auth(token)
+        .json(&json!({"git_ref":"source"}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let value: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let api_pipeline: Uuid = serde_json::from_value(value["pipeline"]["id"].clone()).unwrap();
+    let saved: Uuid =
+        sqlx::query_scalar("SELECT owner_subject FROM pipeline_human_owners WHERE pipeline_id=$1")
+            .bind(api_pipeline)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(saved, subject);
+    let denied_job:Uuid=sqlx::query_scalar("SELECT j.id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 ORDER BY s.position,j.position LIMIT 1").bind(api_pipeline).fetch_one(&pool).await.unwrap();
+    let allowed_job:Uuid=sqlx::query_scalar("SELECT j.id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 ORDER BY s.position,j.position LIMIT 1").bind(git_pipeline).fetch_one(&pool).await.unwrap();
+    let allowed_marker = root.join("allowed-ci-effect");
+    sqlx::query("UPDATE jobs SET command=$2 WHERE id=$1")
+        .bind(allowed_job)
+        .bind(format!("touch '{}'", allowed_marker.display()))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut allowed_runtime = cicd::config::RuntimeConfig::test_default();
+    allowed_runtime.git.root = bare.parent().unwrap().to_path_buf();
+    allowed_runtime.artifacts.root = root.join("allowed-artifacts");
+    allowed_runtime.runner.mode = cicd::config::RunnerMode::HostShell;
+    cicd::runner::run_job_with_config(
+        pool.clone(),
+        allowed_job,
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        cicd::runner::RuntimeRunnerConfig::from_config(&allowed_runtime),
+    )
+    .await;
+    let allowed_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id=$1")
+        .bind(allowed_job)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        allowed_status, "success",
+        "admitted ordinary CI runs through native workspace, lease and completion"
+    );
+    assert!(allowed_marker.exists());
+    let marker = root.join("revoked-ci-effect");
+    sqlx::query("UPDATE jobs SET command=$2 WHERE id=$1")
+        .bind(denied_job)
+        .bind(format!("touch '{}'", marker.display()))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut runtime = cicd::config::RuntimeConfig::test_default();
+    runtime.git.root = bare.parent().unwrap().to_path_buf();
+    runtime.artifacts.root = root.join("artifacts");
+    runtime.runner.mode = cicd::config::RunnerMode::HostShell;
+    owner.write().unwrap().applications.clear();
+    cicd::runner::run_job_with_config(
+        pool.clone(),
+        denied_job,
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        cicd::runner::RuntimeRunnerConfig::from_config(&runtime),
+    )
+    .await;
+    assert!(
+        !marker.exists(),
+        "a saved pipeline cannot start a command after app revocation"
+    );
+    let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM job_leases WHERE job_id=$1")
+        .bind(denied_job)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        leases, 0,
+        "owner admission precedes native lease/workspace allocation"
+    );
+    // Real external runner protocol: a machine lease does not preserve revoked human access.
+    owner.write().unwrap().applications = vec!["ci-cd".into()];
+    let response = http
+        .post(format!("{origin}/api/v1/projects/{project}/pipelines"))
+        .bearer_auth(token)
+        .json(&json!({"git_ref":"source"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let remote_value: serde_json::Value = response.json().await.unwrap();
+    let remote_pipeline: Uuid =
+        serde_json::from_value(remote_value["pipeline"]["id"].clone()).unwrap();
+    let remote_job:Uuid=sqlx::query_scalar("SELECT j.id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 ORDER BY s.position,j.position LIMIT 1").bind(remote_pipeline).fetch_one(&pool).await.unwrap();
+    sqlx::query("UPDATE jobs SET required_secrets=ARRAY['FIXTURE_TOKEN'] WHERE id=$1")
+        .bind(remote_job)
+        .execute(&pool)
+        .await
+        .unwrap();
+    owner.write().unwrap().role = "admin".into();
+    let response = http
+        .post(format!("{origin}/api/v1/projects/{project}/secrets"))
+        .bearer_auth(token)
+        .json(&json!({"key":"FIXTURE_TOKEN","value":"fixture-only-secret"}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert!(status.is_success(), "fixture secret setup: {status} {body}");
+    owner.write().unwrap().role = "user".into();
+    sqlx::query("UPDATE job_queue SET priority=10000 WHERE job_id=$1")
+        .bind(remote_job)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let runner = Uuid::new_v4();
+    let runner_token = "cicd_runner_owned_fixture";
+    sqlx::query("INSERT INTO runners(id,name,status,credential_hash,credential_expires_at,capabilities,last_seen_at) VALUES($1,'owned-protocol','online',$2,now()+interval '1 hour',$3,now())").bind(runner).bind(cicd::auth::hash_token(runner_token)).bind(json!({"executorKinds":["shell"]})).execute(&pool).await.unwrap();
+    let poll_url = format!("{origin}/api/v1/runner/work:poll");
+    let poll = json!({"protocolVersion":1,"capacity":{"freeSlots":1},"waitSeconds":0,"tags":[]});
+    owner.write().unwrap().applications.clear();
+    assert_eq!(
+        http.post(&poll_url)
+            .bearer_auth(runner_token)
+            .json(&poll)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let pending: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id=$1")
+        .bind(remote_job)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        pending, "queued",
+        "denied remote offer transaction rolls back its claim"
+    );
+    owner.write().unwrap().applications = vec!["ci-cd".into()];
+    let response = http
+        .post(&poll_url)
+        .bearer_auth(runner_token)
+        .json(&poll)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let offer: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{offer}");
+    assert_eq!(offer["attempt"]["jobId"], remote_job.to_string());
+    let lease = offer["leaseId"].as_str().unwrap();
+    let credential = offer["leaseToken"].as_str().unwrap();
+    let fencing = offer["fencingToken"].as_i64().unwrap();
+    let control = json!({"protocolVersion":1,"leaseToken":credential,"fencingToken":fencing});
+    for action in ["ack", "renew"] {
+        let response = http
+            .post(format!("{origin}/api/v1/runner/leases/{lease}/{action}"))
+            .bearer_auth(runner_token)
+            .json(&control)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let value: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{action}: {value}");
+        let until = chrono::DateTime::parse_from_rfc3339(value["leaseExpiresAt"].as_str().unwrap())
+            .unwrap();
+        assert!(
+            until <= chrono::Utc::now() + chrono::Duration::seconds(30),
+            "runner renew cannot add a 120s lease to a 30s owner proof"
+        );
+    }
+    let secrets = json!({"protocolVersion":1,"leaseToken":credential,"fencingToken":fencing,"secretNames":["FIXTURE_TOKEN"]});
+    let secret_url = format!("{origin}/api/v1/runner/leases/{lease}/secrets:resolve");
+    let response = http
+        .post(&secret_url)
+        .bearer_auth(runner_token)
+        .json(&secrets)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let value: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let until = chrono::DateTime::parse_from_rfc3339(value["expiresAt"].as_str().unwrap()).unwrap();
+    assert!(
+        until <= chrono::Utc::now() + chrono::Duration::seconds(30),
+        "secret envelope preserves original owner clock"
+    );
+    owner.write().unwrap().applications.clear();
+    assert_eq!(
+        http.post(format!("{origin}/api/v1/runner/leases/{lease}/renew"))
+            .bearer_auth(runner_token)
+            .json(&control)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        http.post(&secret_url)
+            .bearer_auth(runner_token)
+            .json(&secrets)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    owner.write().unwrap().unavailable = true;
+    assert_eq!(
+        http.post(format!("{origin}/api/v1/runner/leases/{lease}/renew"))
+            .bearer_auth(runner_token)
+            .json(&control)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    owner.write().unwrap().unavailable = false;
+    owner.write().unwrap().applications = vec!["ci-cd".into()];
+    sqlx::query("UPDATE repository_push_configs SET configuration_id=NULL WHERE repository_id=$1")
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let collection = format!("{origin}/api/v1/catalog/repositories/{}/pulls", repo.id);
     let input = json!({"title":"Application clock fixture","source_branch":"source","target_branch":"fixture"});
     let response = http

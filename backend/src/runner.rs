@@ -1214,6 +1214,7 @@ async fn run_job_inner(
         return Ok(ExecutionOutcome::Finished); // terminal already
     }
 
+    let owner_clock = crate::pipeline_authority::confirm(&pool, job.pipeline_id).await?;
     let lease = if job.status == "queued" {
         let Some(lease) = claim_embedded_job_lease(&pool, job_id).await? else {
             return Ok(ExecutionOutcome::Finished);
@@ -1505,6 +1506,9 @@ async fn run_job_inner(
         Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Legacy) => None,
         Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Permit(until)) => Some(until),
     };
+    if let Some(clock) = owner_clock {
+        clock.require()?;
+    }
     let mut guard = running.lock().await;
     let active: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN job_leases l ON l.attempt_id=a.id \
@@ -1576,6 +1580,9 @@ async fn run_job_inner(
                 .await;
             return Ok(ExecutionOutcome::Held);
         }
+    }
+    if let Some(clock) = owner_clock {
+        clock.require()?;
     }
     let mut child = match child.spawn() {
         Ok(child) => child,

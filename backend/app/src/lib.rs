@@ -5,6 +5,7 @@
 //! checked against `project_memberships` by the API middleware.
 
 pub mod auth;
+pub mod native_owner;
 pub mod product_token;
 pub mod repository_sync;
 

@@ -179,6 +179,7 @@ async fn create_pipeline_bound(
     task: Option<&super::sdlc_workspace::task_pipeline::Submission>,
     expected_commit: Option<&str>,
 ) -> Result<PipelineTriggerOutcome, ApiError> {
+    let human_origin = crate::pipeline_authority::require_creation(task.is_some())?;
     crate::repository_catalog::require_project_writable(pool, project_id).await?;
     let storage_name =
         crate::repository_catalog::local_storage_for_project(pool, project_id).await?;
@@ -270,6 +271,7 @@ async fn create_pipeline_bound(
                     return Err(ApiError::conflict("Tracker lease expired during replay"));
                 }
             }
+            crate::pipeline_authority::replay(&mut tx, pipeline_id, human_origin).await?;
             let pipeline = sqlx::query_as::<_, Pipeline>(
                 "SELECT id, project_id, git_ref, status, created_at, started_at, finished_at \
                  FROM pipelines WHERE id = $1",
@@ -332,6 +334,13 @@ async fn create_pipeline_bound(
     .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
+    crate::pipeline_authority::record(
+        &mut tx,
+        pipeline.id,
+        human_origin,
+        source.starts_with("deployment-"),
+    )
+    .await?;
     sqlx::query(
         "INSERT INTO pipeline_plans \
          (pipeline_id, config_source, parser_version, git_ref, resolved_commit_sha, config_sha256, plan_sha256, raw_config, plan) \

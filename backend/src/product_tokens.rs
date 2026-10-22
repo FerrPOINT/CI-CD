@@ -6,7 +6,7 @@ use sqlx::PgPool;
 use std::time::Duration;
 
 static READER: tokio::sync::OnceCell<ApplicationAccessClient> = tokio::sync::OnceCell::const_new();
-async fn reader() -> Result<&'static ApplicationAccessClient, ApiError> {
+pub(crate) async fn reader() -> Result<&'static ApplicationAccessClient, ApiError> {
     READER
         .get_or_try_init(|| async {
             let issuer = std::env::var("CICD_AUTH__CENTRAL_ISSUER").map_err(|_| {

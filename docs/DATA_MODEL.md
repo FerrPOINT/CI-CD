@@ -1292,3 +1292,14 @@ Changing users.role or central_sub retires its confirmation, so an old grant
 cannot silently return after reassignment. Standalone native role semantics are
 unchanged. Release migration may record only assignments whose origin is verified;
 unknown history is not a reason to copy administrative privileges.
+
+
+### Центральный владелец pipeline
+
+Migration0101 добавляет pipeline_human_owners: pipeline_id (PK/FK),
+owner_subject (центральный UUID), requires_admin и recorded_at. Связь создаётся
+транзакционно с pipeline из проверенного origin. Она не является credential,
+ролью или миграционным доказательством старого локального назначения. Существующие
+записи не заполняются по email/первому администратору; unresolved active/queued
+pipeline входят в отчёт миграции до включения app policy. Task machine journals
+сохраняют самостоятельную модель custody/assignment/lease.
