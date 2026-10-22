@@ -12,6 +12,9 @@ use std::{
     },
 };
 use uuid::Uuid;
+#[path = "generation.rs"]
+mod generation;
+pub use generation::{AdoptionHandoff, RootMapping, RetiredCompose, CustodyFile, load_adoption_handoff, adoption_root_mappings, custody_files, retired_compose_binding, wait_for_enrollment};
 
 #[derive(Clone)]
 pub struct Gate {
@@ -298,6 +301,7 @@ impl Gate {
         }
     }
     pub fn enter(&self, new_work: bool) -> anyhow::Result<Lease> {
+        generation::admission(self, IDENTITY.get())?;
         if new_work {
             ensure!(!self.requested()?, "Forge draining: new work closed")
         }
@@ -348,6 +352,7 @@ impl Gate {
         kind: &str,
         custody_roots: Vec<CustodyRoot>,
     ) -> anyhow::Result<(Participant, Identity)> {
+        generation::validate_registration(self,id,kind,&custody_roots)?;
         ensure!(
             safe_name(id) && safe_name(kind),
             "invalid participant identity"
@@ -562,6 +567,10 @@ impl Coordinator {
     }
     /// Only the live coordinator, after dropping its fence, can explicitly resume its own operation.
     pub fn resume(self) -> anyhow::Result<()> {
+        generation::standalone_resume(&self.gate)?;
+        self.remove_request()
+    }
+    fn remove_request(self) -> anyhow::Result<()> {
         let r: Request = read(&self.gate.root.join("request.json"))?;
         ensure!(
             r.operation_id == self.operation,

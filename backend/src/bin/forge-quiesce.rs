@@ -13,6 +13,9 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Explicit owner handoff; native source/destination proof is verified by Base.
+    AdoptPrepare { #[arg(long)] operation:Uuid, #[arg(long)] handoff:PathBuf, #[arg(long)] handoff_sha256:String },
+    AdoptCommit { #[arg(long)] operation:Uuid, #[arg(long)] handoff:PathBuf, #[arg(long)] handoff_sha256:String },
     /// Persistent request; no idle or backup acknowledgement.
     Request {
         #[arg(long)]
@@ -36,6 +39,8 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let gate = Gate::open(&args.directory)?;
     match args.command {
+        Command::AdoptPrepare{operation,handoff,handoff_sha256}=>adopt(gate,operation,handoff,handoff_sha256,false).await?,
+        Command::AdoptCommit{operation,handoff,handoff_sha256}=>adopt(gate,operation,handoff,handoff_sha256,true).await?,
         Command::Request { operation } => {
             let _owner = Coordinator::request(gate, operation)?;
             println!(
@@ -78,6 +83,8 @@ async fn main() -> anyhow::Result<()> {
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             };
+            pool.close().await;
+            owner.verify_adoption_seals()?;
             owner.publish_held(&fence, &expected)?;
             println!(
                 "{}",
@@ -95,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
                             owner.request_exit(&fence,&expected)?;exiting=true;rx=read_command();
                         } else {
                             ensure!(line.trim()==format!("resume {operation}") && (!exiting || exited),"fence ended without authorized completed resume; admission remains closed");
-                            drop(fence);owner.resume()?;break;
+                            owner.verify_adoption_seals()?;owner.resume_enrolled(&fence,&expected)?;drop(fence);break;
                         }
                     }
                     _=tokio::time::sleep(std::time::Duration::from_millis(100))=>{
@@ -123,4 +130,22 @@ fn read_command() -> tokio::sync::oneshot::Receiver<std::io::Result<String>> {
         let _ = tx.send(result);
     });
     rx
+}
+
+async fn adopt(gate:Gate,operation:Uuid,path:PathBuf,sha:String,commit:bool)->anyhow::Result<()>{
+    let (handoff,bytes,old)=cicd::quiescence::load_adoption_handoff(&path,&sha)?;
+    ensure!(handoff.operation_id==operation,"handoff operation differs");
+    let owner=Coordinator::for_adoption(gate,operation)?;
+    let fence=owner.try_fence()?.context("old effects still own the kernel fence; HOLD")?;
+    ensure!(owner.gate().all_exited(&old)?,"old local kernel owners remain; HOLD");
+    owner.gate().verify_no_effect_records(&fence)?;
+    let config=cicd::config::RuntimeConfig::from_env()?;
+    let pool=sqlx::postgres::PgPoolOptions::new().max_connections(1).acquire_timeout(std::time::Duration::from_secs(3)).connect(&config.database.url).await?;
+    let seals=cicd::quiescence::adoption_preflight(&fence,&pool,&handoff,&old).await?;
+    pool.close().await;
+    if commit {owner.verify_adoption_seals()?;owner.commit_adoption(&fence,&handoff,&bytes,&old)?;}
+    else{owner.prepare_adoption(&fence,&handoff,&bytes,&old,seals)?;}
+    println!("{}",serde_json::json!({"schema":if commit{"forge/quiescence-adoption-committed/v1"}else{"forge/quiescence-adoption-prepared/v1"},
+        "operationId":operation,"generationId":handoff.generation_id,"handoffSha256":sha,"admissionClosed":true,"nativeRetirementVerifiedBy":"external-owner"}));
+    Ok(())
 }

@@ -46,6 +46,7 @@ async fn run(args: Args) -> anyhow::Result<bool> {
             .map(cicd::quiescence::CustodyRoot::delivery),
     );
     cicd::quiescence::initialize("local-delivery", custody)?;
+    cicd::quiescence::wait_for_enrollment().await?;
     let _effect = cicd::quiescence::enter(true)?;
     ensure!(
         std::fs::metadata(&args.command_file)?.len() <= 16 * 1024,

@@ -37,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
 async fn run_main() -> anyhow::Result<()> {
     let args = Args::parse();
     quiescence::initialize("migration", vec![])?;
+    quiescence::wait_for_enrollment().await?;
     let _effect = quiescence::enter(true)?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_secs(10))

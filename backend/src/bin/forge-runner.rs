@@ -240,6 +240,7 @@ async fn run() -> anyhow::Result<()> {
         "external-runner",
         vec![cicd::quiescence::CustodyRoot::workspace(root.clone())],
     )?;
+    cicd::quiescence::wait_for_enrollment().await?;
     if cli.inspect_workspaces {
         println!(
             "{}",

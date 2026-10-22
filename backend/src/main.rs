@@ -38,6 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(cicd::quiescence::CustodyRoot::delivery),
     );
     cicd::quiescence::initialize("server", custody)?;
+    cicd::quiescence::wait_for_enrollment().await?;
     let startup = cicd::quiescence::enter(true)?;
     let git = config.git.to_git_config();
     if git.internal_token.is_none() {

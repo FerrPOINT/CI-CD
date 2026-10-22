@@ -808,6 +808,10 @@ pub async fn verify_idle(
     pool: &sqlx::PgPool,
     expected: &[Identity],
 ) -> anyhow::Result<()> {
+    verify_database_idle(pool).await?;
+    verify_roots(pool,expected,None).await
+}
+async fn verify_database_idle(pool:&sqlx::PgPool)->anyhow::Result<()> {
     let (jobs,attempts,leases,leased_queue,unacked,sync_runs,unknown_refs,uploads):(i64,i64,i64,i64,i64,i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM jobs WHERE status='running'),(SELECT count(*) FROM execution_attempts WHERE status='running'),(SELECT count(*) FROM job_leases WHERE lease_status='active'),(SELECT count(*) FROM job_queue WHERE state='leased'),(SELECT count(*) FROM job_leases WHERE runner_id IS NOT NULL AND completion_received_at IS NULL),(SELECT count(*) FROM repository_sync_runs WHERE state IN ('running','stopping','reconciling')),(SELECT count(*) FROM repository_sync_refs WHERE state='unknown'),(SELECT count(*) FROM artifact_upload_sessions WHERE status='open')").fetch_one(pool).await?;
     ensure!(
         [
@@ -831,13 +835,21 @@ pub async fn verify_idle(
         !sql_active,
         "database statements/transactions remain in flight"
     );
+    Ok(())
+}
+async fn verify_roots(pool:&sqlx::PgPool,expected:&[Identity],adoption:Option<&AdoptionHandoff>)->anyhow::Result<()> {
     let mut roots = std::collections::BTreeSet::new();
     for identity in expected {
         for root in &identity.custody_roots {
             ensure!(root.path.is_absolute(), "relative custody root rejected");
             if roots.insert((root.kind.clone(), root.path.clone())) {
                 match root.kind.as_str() {
-                    "workspace" => workspace_idle(&root.path)?,
+                    "workspace" => {
+                        if let Some(handoff)=adoption{
+                            let binding=adoption_root_mappings(handoff).into_iter().find(|b|b.destination==*root).context("mapped workspace missing")?;
+                            workspace_idle_bound(&root.path,&binding.source.path,handoff.source_docker_daemon_id.as_deref(),handoff.source_workspace_volume.as_deref())?;
+                        }else{workspace_idle(&root.path)?;}
+                    },
                     "local-delivery" => delivery_idle(&root.path)?,
                     "git" => {
                         plain(&root.path, true)?;
@@ -888,6 +900,9 @@ fn json(path: &Path) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 fn workspace_idle(root: &Path) -> anyhow::Result<()> {
+    workspace_idle_bound(root,root,None,None)
+}
+fn workspace_idle_bound(root:&Path,recorded_root:&Path,daemon_override:Option<&str>,volume_override:Option<&str>)->anyhow::Result<()> {
     plain(root, true)?;
     let workspaces = crate::runner_workspace::OwnedWorkspace::inventory(root)?;
     ensure!(
@@ -927,16 +942,17 @@ fn workspace_idle(root: &Path) -> anyhow::Result<()> {
                     .and_then(|v| Uuid::parse_str(v).ok())
                     .context("Compose job identity missing")?;
                 let project = format!("sdlc-build-job-{}", attempt.simple());
-                let daemon = std::env::var("CICD_RUNNER_DOCKER_DAEMON_ID")
-                    .context("Compose daemon identity unavailable")?;
-                let volume = std::env::var("CICD_RUNNER_WORKSPACE_VOLUME")
-                    .context("Compose workspace volume identity unavailable")?;
+                let retired=retired_compose_binding(root,path.file_name().and_then(|v|v.to_str()).context("invalid Compose custody name")?)?;
+                let daemon=retired.as_ref().map(|b|b.daemon_id.clone()).or_else(||daemon_override.map(str::to_owned)).or_else(||std::env::var("CICD_RUNNER_DOCKER_DAEMON_ID").ok()).context("Compose daemon identity unavailable")?;
+                let volume=retired.as_ref().map(|b|b.workspace_volume.clone()).or_else(||volume_override.map(str::to_owned)).or_else(||std::env::var("CICD_RUNNER_WORKSPACE_VOLUME").ok()).context("Compose workspace volume identity unavailable")?;
+                let recorded_root=retired.as_ref().map(|b|b.source_root.as_path()).unwrap_or(recorded_root);
+                let recorded_manifest=recorded_root.join(".compose-control").join(path.file_name().context("Compose name missing")?).join("compose.json");
                 ensure!(
                     !daemon.is_empty()
                         && !volume.is_empty()
                         && journal["project"] == project
                         && journal["daemon_id"] == daemon
-                        && journal["manifest"].as_str() == manifest_path.to_str()
+                        && journal["manifest"].as_str() == recorded_manifest.to_str()
                         && manifest["name"] == project
                         && path.file_name().and_then(|v| v.to_str()) == Some(project.as_str())
                         && labels["sdlc.control-volume"] == volume
@@ -1012,4 +1028,30 @@ fn delivery_idle(root: &Path) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// Base owns native source retirement and destination selector proof. This checks local custody only.
+pub async fn adoption_preflight(fence:&Fence,pool:&sqlx::PgPool,handoff:&AdoptionHandoff,old:&[Identity])->anyhow::Result<Vec<RetiredCompose>>{
+    verify_database_idle(pool).await?;
+    let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE status='queued') OR EXISTS(SELECT 1 FROM job_queue WHERE state='queued') OR EXISTS(SELECT 1 FROM repository_sync_runs WHERE state='queued') OR EXISTS(SELECT 1 FROM schedule_fires WHERE status='pending') OR EXISTS(SELECT 1 FROM outbox_messages WHERE delivered_at IS NULL AND failed_at IS NULL) OR EXISTS(SELECT 1 FROM repository_sync_refs WHERE direction='pull' AND state='applied' AND NOT event_delivered)").fetch_one(pool).await?;
+    ensure!(!pending,"pending source work cannot cross generation adoption");
+    let bindings=adoption_root_mappings(handoff);
+    let mapped:Vec<_>=old.iter().map(|identity|{
+        let mut mapped=identity.clone();mapped.custody_roots=bindings.iter().filter(|b|identity.custody_roots.contains(&b.source)).map(|b|b.destination.clone()).collect();mapped
+    }).collect();
+    verify_roots(pool,&mapped,Some(handoff)).await?;
+    let mut seals=vec![];
+    for binding in bindings.iter().filter(|b|b.destination.kind=="workspace"){
+        let control=binding.destination.path.join(".compose-control");
+        if !control.try_exists()?{continue}
+        for entry in std::fs::read_dir(&control)?{
+            ensure!(seals.len()<4096,"retired Compose custody inventory overflow");
+            let path=entry?.path();let name=path.file_name().and_then(|p|p.to_str()).context("retired Compose name invalid")?.to_owned();
+            // Build and execution records remain in place, with their bytes sealed; never cleanup here.
+            seals.push(RetiredCompose{root:binding.destination.path.clone(),source_root:binding.source.path.clone(),name,files:custody_files(&path)?,
+                daemon_id:handoff.source_docker_daemon_id.clone().unwrap_or_default(),workspace_volume:handoff.source_workspace_volume.clone().unwrap_or_default()});
+        }
+    }
+    seals.sort_by(|a,b|(&a.root,&a.name).cmp(&(&b.root,&b.name)));
+    let _=fence;Ok(seals)
 }
