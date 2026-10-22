@@ -104,7 +104,10 @@ async fn git_ok(root: &std::path::Path, args: &[&str]) {
 #[ignore = "requires owned FORGE_PRODUCT_TRANSPORT_TEST_DATABASE_URL and isolated process"]
 async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
     let url = std::env::var("FORGE_PRODUCT_TRANSPORT_TEST_DATABASE_URL").unwrap();
-    let pool = PgPool::connect(&url).await.unwrap();
+    let pool = cicd::request_database::pool_options()
+        .connect(&url)
+        .await
+        .unwrap();
     let name: String = sqlx::query_scalar("SELECT current_database()")
         .fetch_one(&pool)
         .await
@@ -114,6 +117,16 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
         "refuse working database"
     );
     cicd::migrations().await.unwrap().run(&pool).await.unwrap();
+    let uncovered: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+         WHERE n.nspname='public' AND c.relkind='r' AND c.relname<>'_sqlx_migrations'
+         AND NOT EXISTS(SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND t.tgname='forge_human_request_clock')"
+    ).fetch_all(&pool).await.unwrap();
+    assert!(
+        uncovered.is_empty(),
+        "new product tables must retain human clock coverage: {uncovered:?}"
+    );
+
     let local = Uuid::new_v4();
     let subject = Uuid::new_v4();
     let project = Uuid::new_v4();
@@ -511,6 +524,107 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
         .execute(&pool)
         .await
         .unwrap();
+    // Generic administrative writes must not commit after their original owner proof.
+    // Hold a real row lock until the short proof expires, then observe durable state.
+    owner.write().unwrap().role = "admin".into();
+    let original_name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1")
+        .bind(project)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let mut row_lock = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM projects WHERE id=$1 FOR UPDATE")
+        .bind(project)
+        .execute(&mut *row_lock)
+        .await
+        .unwrap();
+    owner.write().unwrap().expires_ms = 1500;
+    let request = http
+        .patch(format!("{origin}/api/v1/projects/{project}"))
+        .bearer_auth(token)
+        .json(&json!({"name":"must-not-survive-expired-proof"}));
+    let pending = tokio::spawn(async move { request.send().await.unwrap() });
+    let mut blocked = false;
+    for _ in 0..100 {
+        blocked = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'UPDATE projects SET name%')")
+            .fetch_one(&pool).await.unwrap();
+        if blocked {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        blocked,
+        "the real administrative SQL must reach the held row lock"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+    row_lock.rollback().await.unwrap();
+    let response = pending.await.unwrap();
+    assert!(
+        !response.status().is_success(),
+        "expired generic write must fail"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let actual: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1")
+        .bind(project)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        actual, original_name,
+        "HTTP expiry must prevent the durable generic write"
+    );
+    // A later deferred trigger must not let COMMIT outlive the original clock.
+    sqlx::raw_sql(
+        "CREATE FUNCTION qa_late_generic_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$;
+        CREATE CONSTRAINT TRIGGER zz_qa_late_generic_commit AFTER UPDATE ON projects
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION qa_late_generic_commit();",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let response = http
+        .patch(format!("{origin}/api/v1/projects/{project}"))
+        .bearer_auth(token)
+        .json(&json!({"name":"must-not-survive-late-commit"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(!response.status().is_success());
+    tokio::time::sleep(std::time::Duration::from_millis(2300)).await;
+    let actual: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1")
+        .bind(project)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        actual, original_name,
+        "a late deferred trigger cannot outlive the original proof"
+    );
+    sqlx::raw_sql("DROP TRIGGER zz_qa_late_generic_commit ON projects; DROP FUNCTION qa_late_generic_commit();")
+        .execute(&pool).await.unwrap();
+    owner.write().unwrap().expires_ms = 30000;
+    let response = http
+        .patch(format!("{origin}/api/v1/projects/{project}"))
+        .bearer_auth(token)
+        .json(&json!({"name":"fresh-administrator-write"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "a fresh current administrator may still update the project"
+    );
+    let actual: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1")
+        .bind(project)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        actual, "fresh-administrator-write",
+        "pool reuse does not retain an expired prior request"
+    );
     owner.write().unwrap().role = "admin".into();
     let response = http
         .post(format!("{origin}/api/v1/projects/{project}/secrets"))

@@ -13,6 +13,7 @@ pub mod outbox;
 pub(crate) mod pipeline_authority;
 pub(crate) mod product_tokens;
 pub mod rate_limit;
+pub mod request_database;
 pub(crate) mod schedule;
 use std::path::{Path, PathBuf};
 

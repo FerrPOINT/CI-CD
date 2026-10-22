@@ -1303,3 +1303,13 @@ owner_subject (центральный UUID), requires_admin и recorded_at. Св
 записи не заполняются по email/первому администратору; unresolved active/queued
 pipeline входят в отчёт миграции до включения app policy. Task machine journals
 сохраняют самостоятельную модель custody/assignment/lease.
+
+### Исходный human clock обычных SQL-записей
+
+0104 добавляет `forge_human_request_commit_clock()` и idempotent installer
+`forge_install_human_request_clocks()` для deferred constraint triggers на
+product tables. Новых human grants, owner rows или изменения старых migration
+checksums нет. Значение `forge.request_valid_until` задаётся serving SQLx pool
+из исходного request proof и очищается перед повторным использованием.
+Новые таблицы также должны получить этот guard. Полный контракт:
+[HUMAN_APPLICATION_ACCESS](HUMAN_APPLICATION_ACCESS.md#обычные-sql-записи-и-исходный-срок-подтверждения).

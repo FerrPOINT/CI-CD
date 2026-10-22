@@ -216,3 +216,26 @@ COMMIT без metadata/audit/file, отзыв перед chunk, откат chunk
 таблицы не заполняются догадками. Independent space activation остаётся OFF.
 Восстановление pre-policy копии отдельно проверяет возврат исходной схемы;
 это не доказывает совместимость прежнего binary после новой activation.
+
+## Обычные SQL-записи и исходный срок подтверждения
+
+Serving SQLx pool создаётся через `request_database::pool_options()`. При первом
+открытии и повторном checkout соединение получает исходный clock человеческого
+запроса. Технический checkout и release очищают это состояние; credential,
+роль или разрешение из clock не возникают.
+
+Аддитивная0104 ставит deferred COMMIT guard на все product tables. Миграции,
+добавляющие таблицы, вызывают `forge_install_human_request_clocks()`; native
+регрессия проверяет полноту покрытия. Обычные autocommit-записи больше не могут
+сохраниться после истечения прав во время row lock. Ошибка guard возвращает503.
+
+Один deferred trigger недостаточен: последующее deferred действие может
+задержать уже начатый COMMIT. Поэтому SQLx checkout ограничивает PostgreSQL17
+statement/transaction timeout остатком того же исходного proof, сохраняя более
+строгие defaults. При release defaults восстанавливаются. Это использует
+[штатные PostgreSQL timeouts](https://www.postgresql.org/docs/17/runtime-config-client.html#RUNTIME-CONFIG-CLIENT-STATEMENT),
+а не новый TTL. SQL timestamp дополнительно проверяется при COMMIT.
+
+Native HTTP/PG regression воспроизводит row-lock expiry и поздний deferred
+COMMIT и проверяет свежую разрешённую запись после повторного использования
+пула. Git/ref/files/runner effects сохраняют собственные ранее описанные guards.

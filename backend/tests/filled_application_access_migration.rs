@@ -105,7 +105,7 @@ async fn filled_schema_preserves_history_and_does_not_invent_execution_owners() 
     cicd::migrations().await.unwrap().run(&pool).await.unwrap();
     assert_eq!(fingerprints(&pool, &control).await, before);
     println!(
-        "Filled Forge migration95->103: {} original tables/columns and receipts preserved; repeat, no fabricated owners/roles, space activation remains OFF",
+        "Filled Forge migration95->104: {} original tables/columns and receipts preserved; repeat, no fabricated owners/roles, space activation remains OFF",
         control.len()
     );
 }
