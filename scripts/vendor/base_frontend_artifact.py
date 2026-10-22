@@ -8,19 +8,41 @@ import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
 SCHEMA = 'base-frontend-artifact/v1'
 MAX_BYTES = 1024**3
 MAX_FILES = 10000
+METADATA_BYTES = 4 * 1024**2
 
 
-def file_hash(path):
+class FrontendMismatch(ValueError):
+    """Stable diagnostic code without configuration values or secret content."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def file_hash(path, *, max_bytes=None):
+    before = path.stat()
+    limit = before.st_size if max_bytes is None else max_bytes
+    if type(limit) is not int or limit < 0 or before.st_size > limit:
+        raise ValueError('Frontend file exceeds its byte budget')
     result = hashlib.sha256()
+    size = 0
     with path.open('rb') as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b''):
+        while block := stream.read(min(1024 * 1024, limit - size + 1)):
+            size += len(block)
+            if size > limit:
+                raise ValueError('Frontend file grew beyond its byte budget')
             result.update(block)
+    after = path.stat()
+    stamp = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+    if size != before.st_size or stamp(before) != stamp(after):
+        raise ValueError('Frontend file changed during inspection')
     return result.hexdigest()
 
 
@@ -40,7 +62,69 @@ def git(root, *arguments):
 
 
 def linked(path):
-    return path.is_symlink() or getattr(path, 'is_junction', lambda: False)()
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISLNK(metadata.st_mode) or bool(getattr(metadata, 'st_file_attributes', 0) & 0x400)
+
+
+def checked_path(path):
+    path = Path(path)
+    if any(linked(parent) for parent in (path, *path.parents)):
+        raise ValueError('Frontend payload path cannot contain links or junctions')
+    return path
+
+
+def copy_file(source, target, expected):
+    """Bound bytes before writing; only the trusted original digest can publish."""
+    source, target = checked_path(source), checked_path(target)
+    length, expected_hash = expected['bytes'], expected['sha256']
+    if (type(length) is not int or not 0 <= length <= MAX_BYTES
+            or not isinstance(expected_hash, str) or not re.fullmatch(r'[a-f0-9]{64}', expected_hash)):
+        raise ValueError('Invalid frontend transfer budget or digest')
+    before = source.stat()
+    if not stat.S_ISREG(before.st_mode) or before.st_size != length:
+        raise ValueError('Frontend payload changed before bounded transfer')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    checked_path(target)
+    remaining, digest, created = length, hashlib.sha256(), None
+    try:
+        with source.open('rb') as incoming, target.open('xb') as outgoing:
+            created = os.fstat(outgoing.fileno())
+            while chunk := incoming.read(min(1024 * 1024, remaining + 1)):
+                if len(chunk) > remaining:
+                    raise ValueError('Frontend payload grew beyond its transfer budget')
+                outgoing.write(chunk)
+                digest.update(chunk)
+                remaining -= len(chunk)
+        after = source.stat()
+        stamp = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+        if remaining or digest.hexdigest() != expected_hash or stamp(before) != stamp(after):
+            raise ValueError('Frontend payload changed during bounded transfer')
+    except BaseException:
+        if created is not None:
+            try:
+                current = target.lstat()
+                if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
+                    target.unlink()
+            except FileNotFoundError:
+                pass
+        raise
+
+
+def copy_payload(source, target, files):
+    source, target = Path(source), Path(target)
+    if (not isinstance(files, dict) or len(files) > MAX_FILES
+            or any(not isinstance(row, dict) or type(row.get('bytes')) is not int or row['bytes'] < 0 for row in files.values())
+            or sum(row['bytes'] for row in files.values()) > MAX_BYTES):
+        raise ValueError('Frontend payload exceeds its transfer budget')
+    for name, expected in files.items():
+        if (not isinstance(name, str) or name.startswith('/') or '\\' in name or ':' in name
+                or any(ord(c) < 32 or ord(c) == 127 for c in name)
+                or any(part in ('', '.', '..') for part in name.split('/'))):
+            raise ValueError('Unsafe frontend payload path')
+        copy_file(source / name, target / name, expected)
 
 
 def identity(root, node, pnpm, environment):
@@ -48,7 +132,7 @@ def identity(root, node, pnpm, environment):
     if Path(git(root, 'rev-parse', '--show-toplevel')).resolve() != root:
         raise ValueError('Frontend artifact requires the product Git root')
     if git(root, 'status', '--porcelain', '--untracked-files=normal'):
-        raise ValueError('Frontend artifact requires a clean candidate source')
+        raise FrontendMismatch('source_dirty', 'Frontend artifact requires a clean candidate source')
     revision = git(root, 'rev-parse', 'HEAD')
     if not re.fullmatch(r'[a-f0-9]{40}', revision):
         raise ValueError('Exact candidate revision required')
@@ -61,10 +145,25 @@ def identity(root, node, pnpm, environment):
         raise ValueError('Actual pnpm must match the product packageManager')
     if not re.fullmatch(r'\d+\.\d+\.\d+', node):
         raise ValueError('Exact Node version required')
-    pin = root / '.base-ui-revision'
+    pin_name = '.base-ui-revision'
+    references = package.get('dependencies', {})
+    pinned_uri = isinstance(references, dict) and any(
+        isinstance(references.get(name), str) and references[name].startswith('file:../../.local/sdk/')
+        for name in ('@sdlc/ui', '@pdlc/ui'))
+    if 'frontend_ui_pin_file' in quality or pinned_uri:
+        # New explicit contracts require the coherent Base tooling package;
+        # legacy standalone copies keep their original stdlib-only path.
+        if __package__:
+            from .quality_support import ui_pin_name, local_ui_directory
+        else:
+            from quality_support import ui_pin_name, local_ui_directory
+        pin_name = ui_pin_name(quality)
+    pin = root / pin_name
     ui = pin.read_text(encoding='utf-8').strip() if pin.is_file() else None
     if ui is None and product != 'services-base' or ui is not None and not re.fullmatch(r'[a-f0-9]{40}', ui):
         raise ValueError('Exact Base UI pin required for the consumer')
+    if 'frontend_ui_pin_file' in quality or pinned_uri:
+        local_ui_directory(package, ui)
     values = {name: value for name, value in environment.items() if name.startswith('VITE_') or name in {
         'NODE_ENV', 'NODE_OPTIONS', 'BROWSERSLIST', 'BROWSERSLIST_ENV', 'SOURCE_DATE_EPOCH'}}
     if environment.get('SPEC'):
@@ -73,13 +172,17 @@ def identity(root, node, pnpm, environment):
         if linked(spec) or not spec.resolve().is_relative_to(root) or not spec.is_file():
             raise ValueError('SPEC must be a regular product-owned generation input')
         values['SPEC'] = {'path': spec.resolve().relative_to(root).as_posix(), 'sha256': file_hash(spec)}
-    return {'schema': SCHEMA, 'product': product, 'source_revision': revision, 'base_ui_revision': ui,
+    identity = {'schema': SCHEMA, 'product': product, 'source_revision': revision, 'base_ui_revision': ui,
             'node_version': node, 'pnpm_version': pnpm,
             'build_platform': {'os': platform.system().lower(), 'architecture': platform.machine().lower()},
             'build_environment_sha256': hashlib.sha256(encoded(values)).hexdigest()}
+    if 'frontend_ui_pin_file' in quality:
+        identity['base_ui_pin_file'] = pin_name
+    return identity
 
 
 def payload(directory):
+    checked_path(directory)
     if linked(directory) or not directory.is_dir():
         raise ValueError('Frontend payload must be a regular directory, without links')
     records, size = {}, 0
@@ -98,29 +201,30 @@ def payload(directory):
         size += length
         if size > MAX_BYTES or len(records) >= MAX_FILES:
             raise ValueError('Frontend payload exceeds the artifact budget')
-        records[name] = {'bytes': length, 'sha256': file_hash(path)}
+        records[name] = {'bytes': length, 'sha256': file_hash(path, max_bytes=length)}
     if not records.get('index.html', {}).get('bytes'):
         raise ValueError('Frontend payload requires a nonempty index.html')
     return records
 
 
-def seal(root, dist, output, *, node, pnpm, environment=None):
+def seal(root, dist, output, *, node, pnpm, environment=None, prepared=False):
     root, dist, output = Path(root).resolve(), Path(dist), Path(output)
     environment = os.environ if environment is None else environment
     before = identity(root, node, pnpm, environment)
     if output.exists():
         raise ValueError('Choose a new frontend artifact destination')
-    if not output.resolve().is_relative_to(root / '.local') or not dist.resolve().is_relative_to(root):
+    prepared_dist = root.parent / '.local/frontend' / root.name / 'source' / root.name / 'frontend/dist'
+    owned_dist = dist.resolve() == prepared_dist.resolve() if prepared else dist.resolve().is_relative_to(root)
+    if not output.resolve().is_relative_to(root / '.local') or not owned_dist:
         raise ValueError('Source/output must stay in the product and its owned .local directory')
     files = payload(dist)
-    output.mkdir(parents=True)
-    for name in files:
-        target = output / 'dist' / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(dist / name, target)
+    checked_path(output).mkdir(parents=True)
+    copy_payload(dist, output / 'dist', files)
     if payload(output / 'dist') != files or identity(root, node, pnpm, environment) != before:
         raise ValueError('Frontend source or payload changed during publication')
     manifest = {**before, 'files': files}
+    if len(encoded(manifest)) > METADATA_BYTES:
+        raise ValueError('Frontend manifest exceeds its byte budget')
     path = output / 'manifest.json'
     with path.open('xb') as stream:
         stream.write(encoded(manifest))
@@ -135,19 +239,31 @@ def verify(root, artifact, expected_sha256, *, node, pnpm, environment=None):
     artifact = Path(artifact)
     path = artifact / 'manifest.json'
     if (not re.fullmatch(r'[a-f0-9]{64}', expected_sha256) or linked(artifact) or linked(path)
-            or not path.is_file() or path.stat().st_size > 4 * 1024**2 or file_hash(path) != expected_sha256):
-        raise ValueError('Frontend manifest digest differs from the trusted producer')
-    manifest = json.loads(path.read_text(encoding='utf-8'))
+            or not path.is_file() or path.stat().st_size > METADATA_BYTES):
+        raise FrontendMismatch('manifest_digest', 'Frontend manifest digest differs from the trusted producer')
+    with checked_path(path).open('rb') as stream:
+        raw = stream.read(METADATA_BYTES + 1)
+    if len(raw) > METADATA_BYTES or hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise FrontendMismatch('manifest_digest', 'Frontend manifest digest differs from the trusted producer')
+    manifest = json.loads(raw)
     expected = identity(Path(root), node, pnpm, os.environ if environment is None else environment)
     if not isinstance(manifest, dict) or set(manifest) != set(expected) | {'files'}:
         raise ValueError('Unsupported frontend artifact manifest')
-    if any(manifest.get(name) != value for name, value in expected.items()):
-        raise ValueError('Frontend candidate, pin, toolchain or build environment differs')
-    if {p.name for p in artifact.iterdir()} != {'manifest.json', 'dist', 'SHA256SUMS'} or payload(artifact / 'dist') != manifest['files']:
-        raise ValueError('Frontend payload is missing, corrupt or contains undeclared files')
+    for name, value in expected.items():
+        if manifest.get(name) != value:
+            raise FrontendMismatch(name, 'Frontend candidate, pin, toolchain or build environment differs')
+    try:
+        actual_payload = payload(artifact / 'dist')
+    except ValueError as error:
+        raise FrontendMismatch('payload', str(error)) from error
+    if {p.name for p in artifact.iterdir()} != {'manifest.json', 'dist', 'SHA256SUMS'} or actual_payload != manifest['files']:
+        raise FrontendMismatch('payload', 'Frontend payload is missing, corrupt or contains undeclared files')
     sums = artifact / 'SHA256SUMS'
-    if linked(sums) or sums.read_bytes() != checksums(manifest, expected_sha256):
-        raise ValueError('Frontend checksum list differs from the trusted manifest')
+    expected_sums = checksums(manifest, expected_sha256)
+    with checked_path(sums).open('rb') as stream:
+        actual_sums = stream.read(len(expected_sums) + 1)
+    if actual_sums != expected_sums:
+        raise FrontendMismatch('checksums', 'Frontend checksum list differs from the trusted manifest')
     return manifest
 
 
