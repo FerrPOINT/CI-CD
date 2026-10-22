@@ -270,7 +270,7 @@ impl Execution {
         if self.directory.join("effect-identity.json").exists(){let effect:Value=read(&self.directory.join("effect-identity.json"))?;return Ok(effect["serviceAccount"].as_str().context("effective service account missing")?.into())}Ok(self.config.job_service_account.clone())
     }
     pub fn termination_proof(&self)->anyhow::Result<Value>{let terminal=self.terminal_record()?;Ok(json!({"clusterCaSha256":self.config.cluster_ca_sha256,"namespaceUid":self.config.namespace_uid,"workspaceClaimUid":self.config.workspace_claim_uid,"podUid":terminal.pod_uid}))}
-    pub async fn recovery_masks(&self,names:&[String])->anyhow::Result<Vec<String>>{let value=self.get(&self.path()).await?.ok_or(Held)?;self.identity(&value)?;let env=value["spec"]["containers"][0]["env"].as_array().context("original env missing")?;let mut masks=Vec::new();for name in names {let value=env.iter().find(|v|v["name"]==*name).and_then(|v|v["value"].as_str()).context("original declared secret missing")?;if !value.is_empty(){masks.push(value.into());}}Ok(masks)}
+    pub async fn recovery_masks(&self,names:&[String])->anyhow::Result<Vec<String>>{let value=self.get(&self.path()).await?.ok_or(Held)?;self.identity(&value)?;let env=value["spec"]["containers"][0]["env"].as_array().context("original env missing")?;let mut masks=Vec::new();for name in names {let value=env.iter().rev().find(|v|v["name"]==*name).and_then(|v|v["value"].as_str()).context("original declared secret missing")?;if !value.is_empty(){masks.push(value.into());}}Ok(masks)}
     pub fn scope(&self)->&Scope{&self.intent.scope}
     pub fn image(&self)->&str{&self.intent.image}
     pub fn config(&self)->&Config{&self.config}

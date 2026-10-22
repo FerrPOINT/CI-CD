@@ -1922,17 +1922,21 @@ async fn execute_kubernetes(
     execution.save_external_recovery(&offer.lease_token,&offer.attempt.artifacts,&offer.attempt.secrets)?;
     execution.start().await.map_err(|_|UnconfirmedExecution)?;
     let deadline=std::time::Instant::now()+Duration::from_secs(offer.attempt.timeout_seconds as u64);
+    let mut timed_out=false;
     let terminal=loop {
         if let Some(terminal)=execution.observe().await.map_err(|_|UnconfirmedExecution)? {break terminal}
         let cancel=match &log {Some(context)=>poll_lease_cancel_requested(context).await.map_err(|_|UnconfirmedExecution)?,None=>false};
-        if cancel || std::time::Instant::now()>=deadline {execution.cancel().await.map_err(|_|UnconfirmedExecution)?;}
+        timed_out|=std::time::Instant::now()>=deadline;
+        if cancel || timed_out {execution.cancel().await.map_err(|_|UnconfirmedExecution)?;}
         tokio::time::sleep(Duration::from_secs(1)).await;
     };
     if let Some(context)=&log {
+        if !execution.cancelled(){
         execution.stream_logs(|line|{let context=context.clone();async move{append_log_lines(&context,vec![RunnerLogLine{stream:"stdout",message:protocol_log_message(&mask_secrets(&line,&context.masks))}]).await}}).await.map_err(|_|UnconfirmedExecution)?;
-        if !execution.cancelled(){upload_declared_artifacts(context,offer,workspace.checkout()).await.map_err(|_|UnconfirmedExecution)?;}
+        upload_declared_artifacts(context,offer,workspace.checkout()).await.map_err(|_|UnconfirmedExecution)?;
+        }
     }
-    let result=ExecutionResult{outcome:if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"},exit_code:Some(terminal.exit_code),diagnostic:None};
+    let result=ExecutionResult{outcome:if timed_out{"failed"}else if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"},exit_code:Some(terminal.exit_code),diagnostic:None};
     Ok((result,workspace))
 }
 
@@ -1960,14 +1964,15 @@ async fn recover_kubernetes(client:&reqwest::Client,base:&str,credential:&str,ro
         terminal=execution.observe().await?;if terminal.is_none(){tokio::time::sleep(Duration::from_secs(1)).await;}
     }
     let terminal=terminal.context("terminal missing")?;
+    let cancel_requested=match poll_lease_cancel_requested(&context).await{Ok(cancel)=>cancel,Err(_)=>{revoked=true;false}};
     // Read the original server projection; expiry alone is not an accepted ACK.
     let response=client.get(format!("{base}/api/v1/runner/leases/{}/receipt",offer.lease_id)).bearer_auth(credential).send().await?;
     let receipt:LeaseReceipt=response_json(response).await?;
-    let outcome=if receipt.terminal_acknowledged{receipt.terminal_status.as_deref().context("terminal status missing")?}else if matches!(receipt.terminal_status.as_deref(),Some("failed"|"canceled")){revoked=true;receipt.terminal_status.as_deref().unwrap()}else if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"};
+    let outcome=if receipt.terminal_acknowledged{receipt.terminal_status.as_deref().context("terminal status missing")?}else if matches!(receipt.terminal_status.as_deref(),Some("failed"|"canceled")){revoked=true;receipt.terminal_status.as_deref().unwrap()}else if cancel_requested{"canceled"}else if let Some(intended)=record.terminal_status.as_deref(){intended}else if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"};
     if receipt.terminal_acknowledged {
         workspace.record_completion(outcome).or_else(|_|workspace.record_recovered_termination(outcome))?;workspace.acknowledge_completion(outcome)?;execution.acknowledge().await?;if !keep_workspace{workspace.cleanup_after_ack().await?;}execution.finish_workspace_cleanup()?;return Ok(())
     }
-    if !revoked {
+    if !revoked && outcome!="canceled" {
         execution.stream_logs(|line|{let context=context.clone();async move{append_log_lines(&context,vec![RunnerLogLine{stream:"stdout",message:protocol_log_message(&mask_secrets(&line,&context.masks))}]).await}}).await?;
         if outcome!="canceled"{upload_declared_artifacts(&context,&offer,workspace.checkout()).await?;}
     }
