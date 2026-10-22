@@ -78,6 +78,16 @@ RUN case "${TARGETARCH:-amd64}" in \
  && rm /tmp/docker-buildx \
  && docker buildx version
 
+# Pinned OCI resolver; controller-only registry auth stays out of job Pods.
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) crane_arch=x86_64; crane_sha=c1d593d01551f2c9a3df5ca0a0be4385a839bd9b86d4a76e18d7b17d16559127 ;; \
+      arm64) crane_arch=arm64; crane_sha=fc0515857bc38e4ddd2d37a5ab03fb5959449c7b2d4ad759bcc1174ac0cad91b ;; \
+      *) exit 1 ;; esac \
+ && curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v0.20.6/go-containerregistry_Linux_${crane_arch}.tar.gz" -o /tmp/crane.tgz \
+ && echo "${crane_sha}  /tmp/crane.tgz" | sha256sum -c - \
+ && tar -xzf /tmp/crane.tgz -C /usr/local/bin crane \
+ && rm /tmp/crane.tgz
+
 WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
 COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner

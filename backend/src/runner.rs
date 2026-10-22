@@ -25,6 +25,9 @@ use crate::{
 #[path = "runner_image_build_admission_tests.rs"]
 mod image_build_admission_tests;
 
+#[path="runner_kubernetes.rs"]
+mod kubernetes;
+
 #[cfg(all(test, feature = "integration"))]
 #[path = "runner_image_build_terminal_tests.rs"]
 mod image_build_terminal_tests;
@@ -831,7 +834,7 @@ pub async fn reconcile_queue_timeouts_with_config(
                            ELSE '[]'::jsonb \
                          END \
                        ) AS executor(kind) \
-                       WHERE btrim(executor.kind) = 'shell' \
+                       WHERE btrim(executor.kind) IN ('shell','kubernetes') \
                      ) \
                    ) \
                ) \
@@ -1030,7 +1033,7 @@ async fn image_build_input(
     let Some(spec) = planned_image_build(job, &snapshot)? else {
         return Ok(None);
     };
-    if config.mode != RunnerMode::Docker {
+    if !matches!(config.mode,RunnerMode::Docker|RunnerMode::Kubernetes) {
         return Err(ApiError::conflict(
             "Backend image builds require the configured Docker runner",
         ));
@@ -1240,6 +1243,9 @@ async fn run_job_inner(
         return Ok(ExecutionOutcome::Held);
     }
 
+    if config.mode==RunnerMode::Kubernetes {
+        return kubernetes::run(&pool,&job,&lease,&running,config).await;
+    }
     let image_input = image_build_input(&pool, &job, config).await?;
     let owned_workspace = prepare_workspace(&pool, &job, &lease, config).await?;
     let workspace = owned_workspace.checkout().to_path_buf();
@@ -2561,7 +2567,7 @@ struct Candidate {
 /// the shared `forge_runner_workspaces` volume rather than the container's
 /// private /tmp. Host-shell mode keeps /tmp.
 fn workspace_root(config: &RuntimeRunnerConfig) -> std::path::PathBuf {
-    if config.mode == RunnerMode::Docker {
+    if matches!(config.mode,RunnerMode::Docker|RunnerMode::Kubernetes) {
         std::path::Path::new("/workspaces").to_path_buf()
     } else {
         std::env::temp_dir()

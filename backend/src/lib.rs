@@ -34,6 +34,7 @@ pub async fn migrations_from_path(
 pub(crate) mod candidate_evidence;
 pub mod delivery_configs;
 pub mod domain;
+pub mod execution;
 pub mod git_host;
 pub mod namespace;
 pub mod platform;

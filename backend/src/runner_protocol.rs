@@ -550,7 +550,7 @@ pub(crate) async fn poll_runner_work(
         .await
         .map_err(ApiError::internal)?;
 
-    if !runner_supports_executor(&runner.capabilities, CURRENT_EXECUTOR_KIND) {
+    if selected_executor(&runner.capabilities).is_none() {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -1366,7 +1366,7 @@ async fn claim_next_work(
                 job_key: row.job_name,
                 git_ref: row.git_ref,
                 commit_sha: row.commit_sha,
-                executor: "shell".to_string(),
+                executor: selected_executor(&runner.capabilities).ok_or_else(||ApiError::conflict("Runner executor unavailable"))?.to_string(),
                 image: row.image,
                 commands: vec![row.command],
                 environment: BTreeMap::new(),
@@ -1650,6 +1650,10 @@ fn validate_capabilities(value: &serde_json::Value) -> Result<(), ApiError> {
         }
     }
     Ok(())
+}
+
+fn selected_executor(capabilities:&serde_json::Value)->Option<&'static str>{
+    if capabilities.get("executorKinds").is_some() && runner_supports_executor(capabilities,"kubernetes"){Some("kubernetes")}else if runner_supports_executor(capabilities,CURRENT_EXECUTOR_KIND){Some(CURRENT_EXECUTOR_KIND)}else{None}
 }
 
 fn runner_supports_executor(capabilities: &serde_json::Value, executor: &str) -> bool {

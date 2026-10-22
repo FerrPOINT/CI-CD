@@ -82,6 +82,12 @@ struct LeaseOffer {
 #[serde(rename_all = "camelCase")]
 struct AttemptSpec {
     id: Uuid,
+    #[serde(default)]
+    job_id: Uuid,
+    #[serde(default="shell_executor")]
+    executor: String,
+    #[serde(default)]
+    image: String,
     job_key: String,
     git_ref: String,
     commit_sha: Option<String>,
@@ -372,6 +378,7 @@ async fn reconcile_workspaces(
         }
         let workspace = cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
         workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
+        if kubernetes_mode(){cicd::execution::kubernetes::Execution::reopen(root,record.attempt_id,record.generation)?.acknowledge().await?;}
         workspace.acknowledge_completion(outcome)?;
         if !keep_workspace {
             workspace.cleanup_after_ack().await?;
@@ -868,6 +875,9 @@ async fn complete_executed_attempt(
         }
     };
     if completion.is_ok() {
+        if kubernetes_mode(){
+            cicd::execution::kubernetes::Execution::reopen(&workspace_root_for_checkout(workspace.checkout())?,offer.attempt.id,offer.fencing_token)?.acknowledge().await?;
+        }
         workspace.acknowledge_completion(outcome)?;
     }
     if completion.is_ok() && !keep_workspace {
@@ -886,6 +896,10 @@ async fn execute_attempt(
 ) -> anyhow::Result<(ExecutionResult, cicd::runner_workspace::OwnedWorkspace)> {
     let owned_workspace = prepare_workspace(cli, offer).await?;
     let workspace = owned_workspace.checkout();
+    if kubernetes_mode() {
+        return execute_kubernetes(cli,offer,log_context,secret_env,owned_workspace).await;
+    }
+    if offer.attempt.executor!="shell" {bail!("unsupported offered executor");}
     let mut last_exit_code = None;
     let mut result = ExecutionResult {
         outcome: "success",
@@ -1354,9 +1368,13 @@ async fn ensure_success(response: reqwest::Response) -> anyhow::Result<()> {
     bail!("API returned {status}: {body}");
 }
 
+fn kubernetes_mode()->bool {std::env::var("CICD_RUNNER_MODE").is_ok_and(|v|v=="kubernetes")}
+fn shell_executor()->String{"shell".into()}
+fn workspace_root_for_checkout(path:&Path)->anyhow::Result<PathBuf>{Ok(path.parent().and_then(Path::parent).context("workspace root missing")?.to_path_buf())}
+
 fn runner_capabilities() -> serde_json::Value {
     json!({
-        "executorKinds": ["shell"],
+        "executorKinds": [if kubernetes_mode(){"kubernetes"}else{"shell"}],
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
     })
@@ -1396,6 +1414,9 @@ mod tests {
             fencing_token: 1,
             attempt: AttemptSpec {
                 id: Uuid::new_v4(),
+                job_id: Uuid::new_v4(),
+                executor: "shell".into(),
+                image: "test".into(),
                 job_key: "test".to_string(),
                 git_ref: "main".to_string(),
                 commit_sha: None,
@@ -1873,4 +1894,29 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(work_dir);
     }
+}
+
+async fn execute_kubernetes(
+    cli:&Cli,offer:&LeaseOffer,log:Option<LogContext>,secrets:&[(String,String)],workspace:cicd::runner_workspace::OwnedWorkspace
+)->anyhow::Result<(ExecutionResult,cicd::runner_workspace::OwnedWorkspace)>{
+    use cicd::execution::kubernetes::{Config,Execution,Scope};
+    if offer.attempt.executor!="kubernetes" {bail!("Kubernetes runner refuses shell executor");}
+    let source=offer.attempt.commit_sha.clone().context("Kubernetes execution requires exact source pin")?;
+    let image=cicd::execution::kubernetes::resolve_image(&offer.attempt.image).await?;
+    let execution=Execution::prepare(Config::from_env()?,&workspace_root(cli),Scope{job_id:offer.attempt.job_id,attempt_id:offer.attempt.id,lease_id:offer.lease_id,generation:offer.fencing_token,source_commit:source},workspace.checkout(),&image,&["sh".into(),"-lc".into(),offer.attempt.commands.join("\n")],secrets,offer.attempt.timeout_seconds as u64)?;
+    execution.start().await.map_err(|_|UnconfirmedExecution)?;
+    let deadline=std::time::Instant::now()+Duration::from_secs(offer.attempt.timeout_seconds as u64);
+    let terminal=loop {
+        if let Some(terminal)=execution.observe().await.map_err(|_|UnconfirmedExecution)? {break terminal}
+        let cancel=match &log {Some(context)=>poll_lease_cancel_requested(context).await.map_err(|_|UnconfirmedExecution)?,None=>false};
+        if cancel || std::time::Instant::now()>=deadline {execution.cancel().await.map_err(|_|UnconfirmedExecution)?;}
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    };
+    if let Some(context)=&log {
+        let output=execution.logs().await.map_err(|_|UnconfirmedExecution)?;
+        for line in output.lines(){append_log_lines(context,vec![RunnerLogLine{stream:"stdout",message:protocol_log_message(&mask_secrets(line,&context.masks))}]).await.map_err(|_|UnconfirmedExecution)?;}
+        if !execution.cancelled(){upload_declared_artifacts(context,offer,workspace.checkout()).await.map_err(|_|UnconfirmedExecution)?;}
+    }
+    let result=ExecutionResult{outcome:if execution.cancelled(){"canceled"}else if terminal.exit_code==0{"success"}else{"failed"},exit_code:Some(terminal.exit_code),diagnostic:None};
+    Ok((result,workspace))
 }
