@@ -398,37 +398,98 @@ pub(crate) fn read_response(
 /// A display descriptor, never a reusable repository/Git capability.
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct HumanAdmissionWindowV1 {
-    pub schema_version:u32,
-    pub enforced:bool,
-    pub remaining_millis:Option<u64>,
-    pub scope_revision:Option<String>,
+    pub schema_version: u32,
+    pub enforced: bool,
+    pub remaining_millis: Option<u64>,
+    pub scope_revision: Option<String>,
 }
 #[utoipa::path(get,path="/api/v1/space-admission",tag="spaces",responses((status=200,body=HumanAdmissionWindowV1),(status=403),(status=503)))]
 pub async fn human_window(
-    axum::extract::State(state):axum::extract::State<std::sync::Arc<crate::api::AppState>>,
-    request:axum::extract::Request,
-)->Result<axum::response::Response,ApiError>{
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::api::AppState>>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ApiError> {
     use axum::response::IntoResponse;
-    let pool=state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     if !active(pool).await? {
-        return Ok(([(axum::http::header::CACHE_CONTROL,"private, no-store")],axum::Json(HumanAdmissionWindowV1{schema_version:1,enforced:false,remaining_millis:None,scope_revision:None})).into_response());
+        return Ok((
+            [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+            axum::Json(HumanAdmissionWindowV1 {
+                schema_version: 1,
+                enforced: false,
+                remaining_millis: None,
+                scope_revision: None,
+            }),
+        )
+            .into_response());
     }
-    let identity=request.extensions().get::<crate::api::authz_mw::VerifiedRequestIdentity>().cloned().ok_or_else(ApiError::forbidden)?;
+    let identity = request
+        .extensions()
+        .get::<crate::api::authz_mw::VerifiedRequestIdentity>()
+        .cloned()
+        .ok_or_else(ApiError::forbidden)?;
     drop(request);
-    let scope=catalog_read(pool,Some(identity.clone())).await?.ok_or_else(ApiError::forbidden)?;
-    let actor=identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
-    let admission=scope.proof.admission().map_err(owner_error)?;
-    let mut read=scope.proof.readable_spaces().map_err(owner_error)?;
-    read.sort_by_key(|s|(s.registry_instance_id,s.space_id));
-    let subject=pdlc_shared::space_access::CentralIdentity{issuer:actor.issuer.clone(),subject:actor.context.user_id.clone()};
-    let write:Vec<_>=read.iter().filter(|s|admission.has_active_space(&subject,s,chrono::Utc::now().timestamp(),actor.lifetime.local_valid_until())).collect();
-    let native:Vec<(uuid::Uuid,String)>=sqlx::query_as("SELECT project_id,role FROM project_memberships WHERE user_id=$1 ORDER BY project_id")
-        .bind(identity.claims.sub).fetch_all(pool).await.map_err(ApiError::internal)?;
-    let mut token_scopes=identity.claims.token_scopes.clone();token_scopes.sort_unstable();
-    let bytes=serde_json::to_vec(&(&subject,&identity.claims.role,token_scopes,identity.claims.token_project_id,read.clone(),write,native)).map_err(|_|ApiError::service_unavailable("display_admission_unavailable"))?;
-    use sha2::{Digest,Sha256};
-    let revision=format!("{:x}",Sha256::digest(bytes));
-    let remaining=u64::try_from(scope.proof.monotonic_deadline().checked_duration_since(std::time::Instant::now()).ok_or_else(ApiError::forbidden)?.as_millis()).map_err(|_|ApiError::forbidden())?;
-    if remaining==0 || remaining>60_000{return Err(ApiError::forbidden());}
-    scope.response(axum::Json(HumanAdmissionWindowV1{schema_version:1,enforced:true,remaining_millis:Some(remaining),scope_revision:Some(revision)}).into_response())
+    let scope = catalog_read(pool, Some(identity.clone()))
+        .await?
+        .ok_or_else(ApiError::forbidden)?;
+    let actor = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
+    let admission = scope.proof.admission().map_err(owner_error)?;
+    let mut read = scope.proof.readable_spaces().map_err(owner_error)?;
+    read.sort_by_key(|s| (s.registry_instance_id, s.space_id));
+    let subject = pdlc_shared::space_access::CentralIdentity {
+        issuer: actor.issuer.clone(),
+        subject: actor.context.user_id.clone(),
+    };
+    let write: Vec<_> = read
+        .iter()
+        .filter(|s| {
+            admission.has_active_space(
+                &subject,
+                s,
+                chrono::Utc::now().timestamp(),
+                actor.lifetime.local_valid_until(),
+            )
+        })
+        .collect();
+    let native: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT project_id,role FROM project_memberships WHERE user_id=$1 ORDER BY project_id",
+    )
+    .bind(identity.claims.sub)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    let mut token_scopes = identity.claims.token_scopes.clone();
+    token_scopes.sort_unstable();
+    let bytes = serde_json::to_vec(&(
+        &subject,
+        &identity.claims.role,
+        token_scopes,
+        identity.claims.token_project_id,
+        read.clone(),
+        write,
+        native,
+    ))
+    .map_err(|_| ApiError::service_unavailable("display_admission_unavailable"))?;
+    use sha2::{Digest, Sha256};
+    let revision = format!("{:x}", Sha256::digest(bytes));
+    let remaining = u64::try_from(
+        scope
+            .proof
+            .monotonic_deadline()
+            .checked_duration_since(std::time::Instant::now())
+            .ok_or_else(ApiError::forbidden)?
+            .as_millis(),
+    )
+    .map_err(|_| ApiError::forbidden())?;
+    if remaining == 0 || remaining > 60_000 {
+        return Err(ApiError::forbidden());
+    }
+    scope.response(
+        axum::Json(HumanAdmissionWindowV1 {
+            schema_version: 1,
+            enforced: true,
+            remaining_millis: Some(remaining),
+            scope_revision: Some(revision),
+        })
+        .into_response(),
+    )
 }

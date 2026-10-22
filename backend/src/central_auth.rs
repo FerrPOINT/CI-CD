@@ -176,8 +176,19 @@ pub async fn link_central_user(
         return Err(crate::api::ApiError::unauthorized());
     }
     let ctx = &verified.context;
-    if !matches!(verified.subject_role.as_deref(), Some("member" | "user" | "operator" | "admin" | "platform_admin" | "platform_operator" | "editor" | "platform_editor"))
-        || crate::namespace::registered_machine(&ctx.user_id)
+    if !matches!(
+        verified.subject_role.as_deref(),
+        Some(
+            "member"
+                | "user"
+                | "operator"
+                | "admin"
+                | "platform_admin"
+                | "platform_operator"
+                | "editor"
+                | "platform_editor"
+        )
+    ) || crate::namespace::registered_machine(&ctx.user_id)
         || crate::delegated_credentials::has_grant(ctx)
         || crate::delegated_credentials::configured_subject(&ctx.user_id)
     {
@@ -230,11 +241,23 @@ pub async fn link_central_user(
         return Err(crate::api::ApiError::forbidden());
     }
     let confirmed = if matches!(product_role.as_str(), "admin" | "maintainer") {
-        sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM forge_confirmed_user_roles WHERE user_id=$1 AND role=$2)")
-            .bind(user_id).bind(&product_role).fetch_one(pool).await.map_err(crate::api::ApiError::internal)?
-    } else { false };
-    let effective_role = confirmed_product_role(&product_role, verified.subject_role.as_deref(), confirmed).to_owned();
-    if !verified.lifetime.is_current() { return Err(crate::api::ApiError::unauthorized()); }
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM forge_confirmed_user_roles WHERE user_id=$1 AND role=$2)",
+        )
+        .bind(user_id)
+        .bind(&product_role)
+        .fetch_one(pool)
+        .await
+        .map_err(crate::api::ApiError::internal)?
+    } else {
+        false
+    };
+    let effective_role =
+        confirmed_product_role(&product_role, verified.subject_role.as_deref(), confirmed)
+            .to_owned();
+    if !verified.lifetime.is_current() {
+        return Err(crate::api::ApiError::unauthorized());
+    }
     let now = chrono::Utc::now();
     Ok(AccessClaims {
         service_account_name: None,
@@ -444,19 +467,47 @@ mod child_expiry_tests {
 
 /// Stored shadow privileges need current central authority or explicit provenance.
 fn confirmed_product_role<'a>(stored: &'a str, central: Option<&str>, confirmed: bool) -> &'a str {
-    if matches!(stored,"admin"|"maintainer") && !confirmed && !matches!(central,Some("admin"|"platform_admin")) {"viewer"}else{stored}
+    if matches!(stored, "admin" | "maintainer")
+        && !confirmed
+        && !matches!(central, Some("admin" | "platform_admin"))
+    {
+        "viewer"
+    } else {
+        stored
+    }
 }
 #[cfg(test)]
 mod product_role_confirmation_tests {
     use super::*;
     #[test]
-    fn unknown_shadow_privilege_is_not_transferred_but_confirmed_native_roles_survive(){
-        assert_eq!(confirmed_product_role("admin",Some("member"),false),"viewer");
-        assert_eq!(confirmed_product_role("maintainer",Some("member"),false),"viewer");
-        assert_eq!(confirmed_product_role("admin",Some("member"),true),"admin");
-        assert_eq!(confirmed_product_role("maintainer",Some("member"),true),"maintainer");
-        assert_eq!(confirmed_product_role("admin",Some("admin"),false),"admin");
-        assert_eq!(confirmed_product_role("viewer",Some("admin"),false),"viewer");
-        assert_eq!(confirmed_product_role("developer",Some("member"),false),"developer");
+    fn unknown_shadow_privilege_is_not_transferred_but_confirmed_native_roles_survive() {
+        assert_eq!(
+            confirmed_product_role("admin", Some("member"), false),
+            "viewer"
+        );
+        assert_eq!(
+            confirmed_product_role("maintainer", Some("member"), false),
+            "viewer"
+        );
+        assert_eq!(
+            confirmed_product_role("admin", Some("member"), true),
+            "admin"
+        );
+        assert_eq!(
+            confirmed_product_role("maintainer", Some("member"), true),
+            "maintainer"
+        );
+        assert_eq!(
+            confirmed_product_role("admin", Some("admin"), false),
+            "admin"
+        );
+        assert_eq!(
+            confirmed_product_role("viewer", Some("admin"), false),
+            "viewer"
+        );
+        assert_eq!(
+            confirmed_product_role("developer", Some("member"), false),
+            "developer"
+        );
     }
 }
