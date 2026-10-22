@@ -45,10 +45,11 @@ GitDeadline/ref-transaction hook. Namespace proof дополнительно с�
 Central human PAT использует `ci-cd:read/write` также для Git в составе Forge;
 технические Git credentials сохраняют свои точные `git:*` scopes и project pin.
 После обязательной app policy public Git и legacy operator token не обходят
-проверку. Этот flag не включает space policy. Старый task V1 не считается
-доказательством нынешнего human access и отклоняется после активации любого
-нового слоя; совместимый current-owner adapter и реальное задание остаются
-открытым gate до активации.
+проверку. Этот flag не включает space policy. Сам task V1 не считается
+доказательством нынешнего human access: при app policy отдельный adapter
+подтверждает текущего владельца через зарегистрированный Tracker readback
+и Auth. При одной space policy без app policy прежний V1 остаётся запрещён.
+Реальное установленное задание остаётся gate до активации.
 
 Отдельные product PAT и HTTP/Git paths проверяются native fixtures; это не
 полная квалификация всех credentials и installed cohort. Request/body
@@ -95,8 +96,8 @@ handler и body используют общий RequestAuthority с тем же 
 пространств. Он не создаёт bearer/session и сохраняет original owner/credential
 clock. API и Git scopes остаются независимыми; каталог фильтруется по admission
 до pagination. Эта source-композиция проходит отдельную native qualification;
-полные task V1/current-owner delegation, SQL/effect fencing и очереди ещё
-являются gate активации.
+полная квалификация всех SQL/effect fences, очередей и installed delegation
+ещё является gate активации.
 
 ### Назначение credential при чтении центрального справочника
 
@@ -106,3 +107,24 @@ GET /api/v1/users остаётся адаптером центрального �
 до пересылки. Для этого адаптера требуется центральный credential; пользователями
 управляют через Admin Console. Административные операции самого Forge, например
 настройка runners, пересекают текущую роль владельца и scopes продуктового токена.
+
+
+## Task Git child и текущий владелец
+
+Adapter task_git сохраняет строгий GitContextV1 и независимую проверку
+child introspection, exact scopes/grant, assignment/lease, зарегистрированного
+Tracker SourceBinding, project/repository, ref и OID CAS. Из подтверждённого
+SourceBinding берётся центральный owner UUID. Auth должен сейчас допускать
+ci-cd, task-tracker и fleet-control. Header сам по себе owner не подтверждает;
+reader token не подменяет child credential и не создаёт human principal.
+
+При независимой space policy общий SDK owner read дополнительно подтверждает
+точное пространство и активную ревизию локальной проекции. Сроки child, Tracker
+lease, owner и пространства пересекаются до Git IO, callback и ref preparation.
+Новый readback callback не продлевает исходный GitDeadline операции. Потеря Auth
+даёт503; отсутствие приложения или пространства —403 без SSO fallback.
+
+Native fixture task_git_owner использует реальные HTTP, PostgreSQL и Git:
+разрешённый candidate push, отсутствие legacy pipeline, отзыв Fleet, отказ Auth,
+пустой/разрешённый space admission и запрет позднего custom hook/ref update после
+истечения исходного owner proof. Это изолированная qualification, а не dev job.

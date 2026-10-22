@@ -671,17 +671,20 @@ pub async fn git_info_refs(
         },
         None => return ApiError::unavailable().into_response(),
     };
-    // Existing task V1 is a different capability; it cannot inherit human admission.
+    // Task V1 uses its own verified owner/lease adapter, never human fallback.
     let application_active = match crate::central_auth::application_policy_required() {
         Ok(active) => active,
         Err(error) => return error.into_response(),
     };
-    if (admission_active || application_active) && headers.contains_key(crate::task_git::HEADER) {
+    if admission_active && !application_active && headers.contains_key(crate::task_git::HEADER) {
         return ApiError::forbidden().into_response();
     }
     let access = match crate::task_git::admit(&state, &repo, &headers).await {
         Err(e) => return git_access_error(e),
-        Ok(Some(_)) => GitAccess::default(),
+        Ok(Some(task)) => GitAccess {
+            deadline: Some(task.deadline),
+            ..GitAccess::default()
+        },
         Ok(None) => {
             match check_repo_access(&state, &repo, &headers, operation, admission_active).await {
                 Ok(access) => access,
@@ -936,20 +939,23 @@ pub async fn git_service_endpoint(
         },
         None => return ApiError::unavailable().into_response(),
     };
-    // Existing task V1 is a different capability; it cannot inherit human admission.
+    // Task V1 uses its own verified owner/lease adapter, never human fallback.
     let application_active = match crate::central_auth::application_policy_required() {
         Ok(active) => active,
         Err(error) => return error.into_response(),
     };
-    if (admission_active || application_active) && headers.contains_key(crate::task_git::HEADER) {
+    if admission_active && !application_active && headers.contains_key(crate::task_git::HEADER) {
         return ApiError::forbidden().into_response();
     }
     let task = match crate::task_git::admit(&state, &repo, &headers).await {
         Ok(task) => task,
         Err(e) => return git_access_error(e),
     };
-    let access = if task.is_some() {
-        GitAccess::default()
+    let access = if let Some(task) = task.as_ref() {
+        GitAccess {
+            deadline: Some(task.deadline),
+            ..GitAccess::default()
+        }
     } else {
         match check_repo_access(&state, &repo, &headers, operation, admission_active).await {
             Ok(allowed) => allowed,

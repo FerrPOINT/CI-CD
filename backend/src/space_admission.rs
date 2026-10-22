@@ -15,7 +15,7 @@ pub(crate) async fn active(pool: &PgPool) -> Result<bool, ApiError> {
         .map_err(ApiError::internal)
 }
 
-async fn client() -> Result<&'static SpaceAdmissionClient, ApiError> {
+pub(crate) async fn client() -> Result<&'static SpaceAdmissionClient, ApiError> {
     CLIENT
         .get_or_try_init(|| async {
             let url = std::env::var("CICD_SPACES__ADMISSION_URL")

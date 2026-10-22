@@ -9,6 +9,29 @@ pub(crate) struct GitDeadline {
     until: i64,
 }
 impl GitDeadline {
+    pub(crate) fn native(instant: Instant) -> Result<Self, ApiError> {
+        let wall = Utc::now();
+        let remaining = instant
+            .checked_duration_since(Instant::now())
+            .ok_or_else(ApiError::forbidden)?;
+        let until = wall
+            .checked_add_signed(
+                chrono::Duration::from_std(remaining).map_err(|_| ApiError::forbidden())?,
+            )
+            .ok_or_else(ApiError::forbidden)?
+            .timestamp();
+        let clock = Self { instant, until };
+        clock.require()?;
+        Ok(clock)
+    }
+    pub(crate) fn owner(
+        proof: &pdlc_auth_core::application_access::VerifiedApplicationAccess,
+    ) -> Self {
+        Self {
+            instant: proof.monotonic_deadline(),
+            until: proof.decision.expires_at.timestamp(),
+        }
+    }
     pub(crate) fn request(
         authority: &pdlc_auth_core::http_authority::RequestAuthority,
         until: i64,
@@ -76,7 +99,7 @@ impl GitDeadline {
             until: source.owner().decision.expires_at.timestamp(),
         }
     }
-    pub(super) fn admission(source: &pdlc_auth_core::service_bridge::ConfirmedSpaceRead) -> Self {
+    pub(crate) fn admission(source: &pdlc_auth_core::service_bridge::ConfirmedSpaceRead) -> Self {
         Self {
             instant: source.monotonic_deadline(),
             until: source.valid_until(),

@@ -12,7 +12,6 @@ use pdlc_shared::resource_context::{NamespaceRef, OwnerCommand};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::Row;
-use std::time::Instant;
 use uuid::Uuid;
 
 pub(crate) mod hooks;
@@ -206,6 +205,7 @@ fn identity(
 pub(crate) struct Authorization {
     pub context: GitContext,
     pub token: String,
+    pub deadline: crate::git_host::GitDeadline,
 }
 
 fn one_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, ApiError> {
@@ -240,21 +240,29 @@ pub(crate) async fn admit(
         .strip_prefix("Bearer ")
         .ok_or_else(ApiError::forbidden)?
         .to_owned();
-    verify(state, &context, &token).await?;
-    Ok(Some(Authorization { context, token }))
+    let deadline = verify(state, &context, &token).await?;
+    Ok(Some(Authorization {
+        context,
+        token,
+        deadline,
+    }))
 }
 
-async fn verify(state: &AppState, context: &GitContext, token: &str) -> Result<(), ApiError> {
+async fn verify(
+    state: &AppState,
+    context: &GitContext,
+    token: &str,
+) -> Result<crate::git_host::GitDeadline, ApiError> {
     context.validate()?;
     let (ctx, child_until) = crate::central_auth::try_central_child(token)
         .await?
         .ok_or_else(ApiError::forbidden)?;
     identity(&ctx, &state.config.sdlc_workspace, context)?;
-    let until = verify_context(state, context).await?;
-    if Instant::now() >= until.min(child_until) {
-        return Err(ApiError::forbidden());
-    }
-    Ok(())
+    let clock = verify_context(state, context)
+        .await?
+        .intersect(crate::git_host::GitDeadline::native(child_until)?);
+    clock.require()?;
+    Ok(clock)
 }
 
 /// Server-only caller supplies its current assignment/run and proposed exact OID CAS.
@@ -277,15 +285,16 @@ pub async fn prepare_delegation(
     {
         return Err(ApiError::forbidden());
     }
-    let until = verify_context(state, context).await?;
+    let clock = verify_context(state, context).await?;
     let request = delegation_request(context, key, ttl)?;
-    if Instant::now() >= until {
-        return Err(ApiError::forbidden());
-    }
+    clock.require()?;
     Ok(request)
 }
 
-async fn verify_context(state: &AppState, context: &GitContext) -> Result<Instant, ApiError> {
+async fn verify_context(
+    state: &AppState,
+    context: &GitContext,
+) -> Result<crate::git_host::GitDeadline, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let mut conn = pool.acquire().await.map_err(ApiError::internal)?;
     if !cicd_infra::sdlc_workspace::task_project_matches(
@@ -331,11 +340,65 @@ async fn verify_context(state: &AppState, context: &GitContext) -> Result<Instan
         context.source.task_id,
     )
     .await?;
-    let until = start + context.current(&value)?;
-    if Instant::now() >= until {
-        return Err(ApiError::forbidden());
+    let mut clock = crate::git_host::GitDeadline::native(start + context.current(&value)?)?;
+    if crate::central_auth::application_policy_required()? {
+        // The registered Tracker readback above, not the caller header, proves
+        // this exact task owner. A child grant is still independently required.
+        let subject =
+            Uuid::parse_str(&context.source.owner_subject).map_err(|_| ApiError::forbidden())?;
+        if subject.to_string() != context.source.owner_subject {
+            return Err(ApiError::forbidden());
+        }
+        let owner = crate::product_tokens::current_owner(subject).await?;
+        if !owner.decision.enforced
+            || !owner.permits(&["ci-cd", "task-tracker", "fleet-control"], false)
+        {
+            return Err(ApiError::forbidden());
+        }
+        clock = clock.intersect(crate::git_host::GitDeadline::owner(&owner));
+        if crate::space_admission::active(pool).await? {
+            let space = pdlc_shared::space_access::SpaceRef {
+                registry_instance_id: context.source.namespace.registry_instance_id,
+                space_id: context.source.namespace.namespace_id,
+            };
+            let proof = crate::space_admission::client()
+                .await?
+                .confirm_owner_many_read(
+                    &crate::central_auth::BRIDGE,
+                    &owner,
+                    "ci-cd",
+                    std::slice::from_ref(&space),
+                )
+                .await
+                .map_err(crate::space_admission::owner_error)?;
+            let admission = proof
+                .admission()
+                .map_err(crate::space_admission::owner_error)?;
+            if !proof
+                .readable_spaces()
+                .map_err(crate::space_admission::owner_error)?
+                .contains(&space)
+            {
+                return Err(ApiError::forbidden());
+            }
+            let row: Option<(i64,String)> = sqlx::query_as(
+                "SELECT revision,state FROM forge_space_catalog WHERE registry_instance_id=$1 AND space_id=$2")
+                .bind(space.registry_instance_id).bind(space.space_id).fetch_optional(pool).await.map_err(ApiError::internal)?;
+            let (revision, state) = row.ok_or_else(ApiError::forbidden)?;
+            if state != "active"
+                || !admission.spaces.iter().any(|item| {
+                    item.space == space
+                        && item.revision == revision
+                        && item.state == pdlc_shared::space_access::SpaceState::Active
+                })
+            {
+                return Err(ApiError::forbidden());
+            }
+            clock = clock.intersect(crate::git_host::GitDeadline::admission(&proof));
+        }
     }
-    Ok(until)
+    clock.require()?;
+    Ok(clock)
 }
 
 #[derive(Deserialize, Serialize, utoipa::ToSchema)]

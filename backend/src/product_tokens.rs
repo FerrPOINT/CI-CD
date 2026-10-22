@@ -35,17 +35,24 @@ pub(crate) async fn authenticate(
     let local = cicd_app::product_token::lookup(pool, token)
         .await
         .map_err(store_error)?;
-    let mut owners =
-        reader()
-            .await?
-            .resolve(&[local.owner()])
-            .await
-            .map_err(|error| match error {
-                ApplicationAccessError::Forbidden => ApiError::forbidden(),
-                _ => ApiError::service_unavailable("Current owner admission unavailable"),
-            })?;
-    let owner = owners
-        .remove(&local.owner())
-        .ok_or_else(ApiError::forbidden)?;
+    let owner = current_owner(local.owner()).await?;
     local.confirm(owner).map_err(store_error)
+}
+/// Identity/admission read only. The caller must independently prove credential
+/// custody and its immutable owner before using this result for an operation.
+pub(crate) async fn current_owner(
+    subject: uuid::Uuid,
+) -> Result<pdlc_auth_core::application_access::VerifiedApplicationAccess, ApiError> {
+    if subject.is_nil() {
+        return Err(ApiError::forbidden());
+    }
+    let mut owners = reader()
+        .await?
+        .resolve(&[subject])
+        .await
+        .map_err(|error| match error {
+            ApplicationAccessError::Forbidden => ApiError::forbidden(),
+            _ => ApiError::service_unavailable("Current owner admission unavailable"),
+        })?;
+    owners.remove(&subject).ok_or_else(ApiError::forbidden)
 }

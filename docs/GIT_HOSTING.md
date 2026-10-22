@@ -366,3 +366,14 @@ credential и пространства. Durable merge сохраняет origina
 unknown outcome с exact ref readback; старый callback не публикуется повторно.
 Это описывает feature-исходники: installed cohort и real job acceptance остаются
 отдельными gates, а закрытые task V1/machine adapters ещё требуют реализации.
+
+
+## Текущий допуск владельца task Git
+
+При обязательной application policy Task Git V1 дополнительно проверяет
+текущие ci-cd/task-tracker/fleet-control владельца, подтверждённого readback
+Tracker. Строгий child grant и прежние exact OID/ref/lease/custody ограничения
+сохраняются. Исходные сроки пересекаются до IO и custom hook/ref preparation;
+callback не обновляет окно операции. Независимая space policy дополнительно
+ограничивает точное пространство. Подробности и native fixture:
+[HUMAN_APPLICATION_ACCESS](HUMAN_APPLICATION_ACCESS.md#task-git-child-и-текущий-владелец).
