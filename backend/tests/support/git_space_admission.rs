@@ -746,7 +746,7 @@ pub(super) async fn verify(
     repository_read(
         &http,
         origin,
-        &format!("/api/v1/repos/{}/tree", unbound_name),
+        &format!("/api/v1/repos/{unbound_name}/tree"),
         403,
     )
     .await;
