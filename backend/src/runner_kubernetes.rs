@@ -490,7 +490,10 @@ async fn run_inner(
         sqlx::query("UPDATE execution_attempts SET status=$2,finished_at=now(),exit_code=$3 WHERE id=$1 AND status='running'").bind(lease.attempt_id).bind(status).bind(terminal.exit_code).execute(pool).await.map_err(ApiError::internal)?;
         complete_embedded_job_lease(pool, lease.id, status, None).await?;
     }
-    if !terminal_acknowledged(pool, job.id, lease).await.map_err(ApiError::internal)? {
+    if !terminal_acknowledged(pool, job.id, lease)
+        .await
+        .map_err(ApiError::internal)?
+    {
         return Ok(ExecutionOutcome::Held);
     }
     // Terminal job projection is independent of a retryable physical cleanup failure.
@@ -705,7 +708,11 @@ pub(super) async fn reconcile_terminal(
         else {
             continue;
         };
-        let lease = EmbeddedJobLease { id: scope.lease_id, attempt_id: scope.attempt_id, generation: scope.generation };
+        let lease = EmbeddedJobLease {
+            id: scope.lease_id,
+            attempt_id: scope.attempt_id,
+            generation: scope.generation,
+        };
         let ack = terminal_acknowledged(pool, scope.job_id, &lease).await?;
         match execution.reconcile().await {
             Ok(Some(_terminal))
@@ -720,7 +727,11 @@ pub(super) async fn reconcile_terminal(
                         continue;
                     }
                 }
-                refresh_stage(pool.clone(), scope.job_id).await.map_err(|_| sqlx::Error::Protocol("terminal parent projection unavailable".into()))?;
+                refresh_stage(pool.clone(), scope.job_id)
+                    .await
+                    .map_err(|_| {
+                        sqlx::Error::Protocol("terminal parent projection unavailable".into())
+                    })?;
                 if execution.acknowledge().await.is_err() {
                     tracing::warn!(job_id = %scope.job_id, attempt_id = %scope.attempt_id, stage = "recovered-terminal-cleanup", "Kubernetes custody cleanup held");
                     continue;
@@ -765,8 +776,12 @@ pub(super) async fn reconcile_terminal(
             Ok(None) if matches!(job_status.as_str(), "failed" | "canceled") => {
                 let _ = execution.cancel().await;
             }
-            Err(_) => tracing::warn!(job_id = %scope.job_id, attempt_id = %scope.attempt_id, stage = "native-terminal-readback", "Kubernetes reconciliation held"),
-            Ok(Some(_)) => tracing::warn!(job_id = %scope.job_id, attempt_id = %scope.attempt_id, stage = "embedded-terminal-authority", "Kubernetes reconciliation held"),
+            Err(_) => {
+                tracing::warn!(job_id = %scope.job_id, attempt_id = %scope.attempt_id, stage = "native-terminal-readback", "Kubernetes reconciliation held")
+            }
+            Ok(Some(_)) => {
+                tracing::warn!(job_id = %scope.job_id, attempt_id = %scope.attempt_id, stage = "embedded-terminal-authority", "Kubernetes reconciliation held")
+            }
             _ => {}
         }
     }

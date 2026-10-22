@@ -356,8 +356,10 @@ async fn image_build_terminal_pg_atomic_success_expiry_cancel_and_reconcile() {
 #[tokio::test]
 #[ignore = "requires disposable CICD_TEST_DATABASE_URL; Kubernetes config must be absent; no native effects"]
 async fn kubernetes_claim_pg_projects_running_before_operator_failure() {
-    assert!(std::env::var_os("CICD_KUBERNETES_RUNNER_CONFIG").is_none(),
-        "this DB-only fixture must not have native Kubernetes authority");
+    assert!(
+        std::env::var_os("CICD_KUBERNETES_RUNNER_CONFIG").is_none(),
+        "this DB-only fixture must not have native Kubernetes authority"
+    );
     let fixture = Fixture::new().await;
     let pool = fixture.pool.clone();
     let project = fixture.project;
