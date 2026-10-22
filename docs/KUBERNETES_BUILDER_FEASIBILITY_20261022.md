@@ -1,6 +1,8 @@
 # Strict rootless BuildKit: feasibility gate, 2026-10-22
 
-**FAIL; migration/cutover HOLD.** Source implementation не является подтверждением
+**FAIL; image-build HOLD.** Image-build выделен пользователем в отдельный этап;
+этот gate не блокирует cutover двух систем с текущими обычными OCI jobs.
+Source implementation не является подтверждением
 нативной сборки. Native evidence предоставил migration owner; эта source lane
 runtime не меняла.
 
@@ -34,4 +36,4 @@ Kubernetes example upstream использует профиль и process-sandb
 разрешённые userns/process/proc возможности и полный build/push/cancel/recovery,
 затем рассматривать rollout. Изменение профиля/worker — новый проверяемый input,
 не переименование FAIL в PASS. Обычный OCI executor и recovery source checks
-можно квалифицировать независимо; они не снимают этот blocker.
+квалифицируются независимо; они не снимают отдельный image-build blocker.

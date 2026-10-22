@@ -25,11 +25,8 @@ PVC root заранее имеет configured fsGroup, group rwx и setgid (на
   "workspaceClaim": "forge-workspaces",
   "workspaceClaimUid": "<exact Bound PVC UUID>",
   "jobServiceAccount": "forge-job",
-  "builderServiceAccount": "forge-builder-job",
+  "builderEnabled": false,
   "allowedImages": [],
-  "builderImage": "<approved rootless BuildKit repository@sha256:digest>",
-  "registryPrefix": "registry.example.test/pdlc-a",
-  "registrySecret": null,
   "resources": {
     "cpuMillis": 2000,
     "memoryBytes": 2147483648,
@@ -112,6 +109,17 @@ Logs маскируются перед существующим job_logs API/DB.
 
 ## Typed image build
 
+Обычные OCI/command jobs не требуют builder config, endpoint или native build gate.
+Additive поле schemaVersion=1 builderEnabled по умолчанию false.
+При явном true обязательны прежние builderServiceAccount (отдельный от job SA),
+digest-pinned builderImage, registryPrefix; optional registrySecret остаётся
+только builder mount. Старые полные config принимаются, но их наличие не включает
+builder и не подтверждает native qualification. Новый explicit image-build при
+закрытом флаге возвращает kubernetes_image_build_unqualified до подготовки
+workspace/Pod и без host fallback; retained custody продолжает reconciliation.
+Включение допустимо только после отдельной owner qualification.
+
+
 Backend сохраняет прежние authenticated task intent, immutable plan,
 exact object export, Tracker authority, lease/generation и atomic completion.
 Private bounded exporter используется повторно; mutable checkout не является
@@ -128,10 +136,11 @@ cap_drop ALL, no escalation, readonly rootfs. Writable state — bounded `/tmp`
 Scoped build-output0770 должен принадлежать configured fsGroup; иначе fail closed.
 Broad PVC chown, privileged, unconfined и no-process-sandbox fallback отсутствуют.
 
-Текущий native gate на выбранном стенде — **FAIL**, cutover удерживается:
+Текущий native build gate на выбранном стенде — **FAIL**, image-build закрыт:
 [Feasibility report](KUBERNETES_BUILDER_FEASIBILITY_20261022.md).
 Owner обязан отдельно доказать native kernel/userns/security feasibility.
-Неудача этого gate удерживает runtime rollout. После build backend сверяет
+Image-build выделен пользователем в отдельный этап; этот FAIL не блокирует
+независимую квалификацию двух систем и текущих обычных OCI jobs. После build backend сверяет
 registry manifest/config digests, source/attempt labels и создаёт прежний
 `forge/oci-candidate/v1` descriptor с config image ID. Retained registry candidate
 дополнительно связывает manifest ref, Namespace/PVC и original lease/generation.

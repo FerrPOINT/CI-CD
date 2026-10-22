@@ -48,7 +48,13 @@ async fn run_inner(
     if retained {
         running.lock().await.insert(job.id, u32::MAX);
     }
+    let kube = Config::from_env()
+        .map_err(|_| ApiError::conflict("Kubernetes operator config unavailable"))?;
     let input = image_build_input(pool, job, config).await?;
+    if !retained && input.is_some() {
+        kube.require_image_build()
+            .map_err(|error| ApiError::conflict(error.to_string()))?;
+    }
     let workspace = if retained {
         let records = crate::runner_workspace::OwnedWorkspace::inventory(&root)
             .map_err(|_| ApiError::conflict("Retained workspace inventory unavailable"))?;
@@ -68,8 +74,6 @@ async fn run_inner(
     } else {
         prepare_workspace(pool, job, lease, config).await?
     };
-    let kube = Config::from_env()
-        .map_err(|_| ApiError::conflict("Kubernetes operator config unavailable"))?;
     let secrets = if retained {
         Vec::new()
     } else {
@@ -157,7 +161,7 @@ async fn run_inner(
     let deployment = deployment::prepare(pool, job, lease, config, &kube)
         .await
         .map_err(|_| {
-            ApiError::conflict("Configured Kubernetes deployment unavailable; no launch performed")
+            ApiError::conflict("kubernetes_workspace_deploy_unsupported: exact configured recipe unavailable or unqualified; no launch performed")
         })?;
     let execution = if retained {
         Execution::reopen(&root, lease.attempt_id, lease.generation)

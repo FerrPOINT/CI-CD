@@ -37,6 +37,9 @@ pub struct Config {
     pub schema_version: u32,
     pub installation_sha256: String,
     pub installation: String,
+    #[serde(default)]
+    pub builder_enabled: bool,
+    #[serde(default)]
     pub builder_service_account: String,
     pub cluster_ca_sha256: String,
     pub namespace: String,
@@ -46,7 +49,9 @@ pub struct Config {
     pub job_service_account: String,
     #[serde(default)]
     pub allowed_images: Vec<String>,
+    #[serde(default)]
     pub builder_image: String,
+    #[serde(default)]
     pub registry_prefix: String,
     #[serde(default)]
     pub registry_secret: Option<String>,
@@ -88,8 +93,6 @@ impl Config {
                 && dns(&self.namespace)
                 && dns(&self.workspace_claim)
                 && dns(&self.job_service_account)
-                && dns(&self.builder_service_account)
-                && self.builder_service_account != self.job_service_account
                 && dns(&self.installation),
             "invalid runner config identity"
         );
@@ -109,26 +112,12 @@ impl Config {
         }
         ensure!(
             self.allowed_images.len() <= 128
-                && self.allowed_images.iter().all(|v| digest_image(v))
-                && digest_image(&self.builder_image),
+                && self.allowed_images.iter().all(|v| digest_image(v)),
             "pinned image digest allowlist required"
         );
-        ensure!(
-            !self.registry_prefix.is_empty()
-                && !self.registry_prefix.contains(['@', ' ', '\\'])
-                && reqwest::Url::parse(&format!("https://{}", self.registry_prefix)).is_ok_and(
-                    |u| u.host_str().is_some()
-                        && u.username().is_empty()
-                        && u.password().is_none()
-                        && u.query().is_none()
-                        && u.fragment().is_none()
-                ),
-            "invalid approved registry prefix"
-        );
-        ensure!(
-            self.registry_secret.as_ref().is_none_or(|s| dns(s)),
-            "invalid registry secret name"
-        );
+        if self.builder_enabled {
+            self.validate_builder()?;
+        }
         ensure!(
             self.resources.cpu_millis > 0
                 && self.resources.cpu_millis <= 4000
@@ -151,6 +140,39 @@ impl Config {
         for recipe in &self.deployment_recipes {
             recipe.validate(self)?;
         }
+        Ok(())
+    }
+    /// Explicit operator enablement is separate from native qualification evidence.
+    pub fn require_image_build(&self) -> anyhow::Result<()> {
+        ensure!(
+            self.builder_enabled,
+            "kubernetes_image_build_unqualified: image build is disabled; builderEnabled requires separate native qualification"
+        );
+        self.validate_builder()
+    }
+    fn validate_builder(&self) -> anyhow::Result<()> {
+        ensure!(
+            dns(&self.builder_service_account)
+                && self.builder_service_account != self.job_service_account
+                && digest_image(&self.builder_image),
+            "invalid enabled Kubernetes builder identity or pinned image"
+        );
+        ensure!(
+            !self.registry_prefix.is_empty()
+                && !self.registry_prefix.contains(['@', ' ', '\\'])
+                && reqwest::Url::parse(&format!("https://{}", self.registry_prefix)).is_ok_and(
+                    |u| u.host_str().is_some()
+                        && u.username().is_empty()
+                        && u.password().is_none()
+                        && u.query().is_none()
+                        && u.fragment().is_none()
+                ),
+            "invalid approved registry prefix"
+        );
+        ensure!(
+            self.registry_secret.as_ref().is_none_or(|s| dns(s)),
+            "invalid registry secret name"
+        );
         Ok(())
     }
 }
@@ -246,7 +268,7 @@ impl Execution {
             digest_image(image)
                 && (config.allowed_images.is_empty()
                     || config.allowed_images.iter().any(|v| v == image)
-                    || image == config.builder_image),
+                    || (config.builder_enabled && image == config.builder_image)),
             "image outside operator allowlist"
         );
         ensure!(
@@ -688,6 +710,7 @@ impl Execution {
         Ok(())
     }
     pub fn build_template(&mut self, registry: &str) -> anyhow::Result<()> {
+        self.config.require_image_build()?;
         ensure!(
             self.intent.image == self.config.builder_image
                 && registry.starts_with(&format!("{}/", self.config.registry_prefix)),
@@ -1026,6 +1049,7 @@ mod tests {
             schema_version: 1,
             installation_sha256: "d".repeat(64),
             installation: "fixture".into(),
+            builder_enabled: false,
             builder_service_account: "forge-builder-job".into(),
             cluster_ca_sha256: "c".repeat(64),
             namespace: "app-a".into(),
@@ -1049,6 +1073,38 @@ mod tests {
                 fs_group: 1000,
             },
         }
+    }
+    #[test]
+    fn command_config_omits_builder_and_legacy_full_config_stays_closed() {
+        let mut legacy = serde_json::to_value(config()).unwrap();
+        legacy.as_object_mut().unwrap().remove("builderEnabled");
+        let legacy: Config = serde_json::from_value(legacy).unwrap();
+        legacy.validate().unwrap();
+        assert!(!legacy.builder_enabled);
+        assert!(legacy.require_image_build().unwrap_err().to_string().starts_with("kubernetes_image_build_unqualified:"));
+        let mut command = serde_json::to_value(config()).unwrap();
+        for key in ["builderEnabled", "builderServiceAccount", "builderImage", "registryPrefix", "registrySecret"] {
+            command.as_object_mut().unwrap().remove(key);
+        }
+        let command: Config = serde_json::from_value(command).unwrap();
+        command.validate().unwrap();
+        assert!(!command.builder_enabled);
+        assert!(command.builder_image.is_empty());
+        assert!(command.require_image_build().is_err());
+        let mut enabled = config();
+        enabled.builder_enabled = true;
+        enabled.validate().unwrap();
+        enabled.require_image_build().unwrap();
+        enabled.builder_image = "registry.test/buildkit:latest".into();
+        assert!(enabled.validate().is_err());
+        enabled = config();
+        enabled.builder_enabled = true;
+        enabled.builder_service_account = enabled.job_service_account.clone();
+        assert!(enabled.validate().is_err());
+        enabled = config();
+        enabled.builder_enabled = true;
+        enabled.registry_prefix.clear();
+        assert!(enabled.validate().is_err());
     }
     #[test]
     fn pod_is_single_attempt_without_controller_or_host_authority() {
@@ -1320,6 +1376,25 @@ mod lifecycle_tests {
             operation_id: "candidate".into(),
             epoch: Uuid::new_v4().to_string(),
         }
+    }
+    #[tokio::test]
+    async fn disabled_builder_has_no_effect_and_command_execution_still_starts() {
+        let (mut execution, state, task) = fixture().await;
+        execution.config.builder_service_account.clear();
+        execution.config.builder_image.clear();
+        execution.config.registry_prefix.clear();
+        execution.config.validate().unwrap();
+        execution.intent.config = execution.config.clone();
+        let original = execution.manifest.clone();
+        let error = execution.build_template("registry.test/forge/attempt").unwrap_err();
+        assert!(error.to_string().starts_with("kubernetes_image_build_unqualified:"));
+        assert_eq!(execution.manifest, original);
+        assert_eq!(fs::read_dir(&execution.directory).unwrap().count(), 0);
+        assert_eq!(state.lock().unwrap().creates, 0);
+        execution.start_with_admission(|| Ok(grant(&execution.config))).await.unwrap();
+        assert_eq!(state.lock().unwrap().creates, 1);
+        task.abort();
+        fs::remove_dir_all(&execution.directory).unwrap();
     }
     #[tokio::test]
     async fn cancel_requires_stopped_uid_before_ack_and_never_recreates() {
