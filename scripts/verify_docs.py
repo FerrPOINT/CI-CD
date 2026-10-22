@@ -314,7 +314,7 @@ def check_current_state() -> None:
     # routes in router must match documented current-state marker
     router = ROOT / "frontend/src/app/router.tsx"
     if router.exists():
-        n = len(re.findall(r"path: '/", read_text(router)))
+        n = len(re.findall(r"""path:\s*['"]/""", read_text(router)))
         documented = re.search(r"Frontend:\s*(\d+)\s+маршрут", text)
         if not documented and n:
             fail(f"CURRENT_STATE route count missing: router has {n} paths")
@@ -610,7 +610,7 @@ def frontend_route_paths() -> set[str]:
         fail("frontend/src/app/router.tsx missing")
         return set()
     routes = set()
-    for path in re.findall(r"path:\s*'([^']+)'", read_text(router)):
+    for path in re.findall(r"""path:\s*['"]([^'"]+)['"]""", read_text(router)):
         if path == "*" or normalize_frontend_route(path) in MANIFEST_EXEMPT_ROUTES:
             continue
         routes.add(normalize_frontend_route(path))

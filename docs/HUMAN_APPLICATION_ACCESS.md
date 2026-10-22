@@ -1,8 +1,8 @@
 # Человеческие роли и приложения Forge
 
 Статус: feature-исходники, не установленная политика. Канон — Base
-[HUMAN_APPLICATION_ACCESS](../../services-base/docs/platform/HUMAN_APPLICATION_ACCESS.md)
-и [ADR0011](../../services-base/docs/adr/0011-human-roles-application-access.md).
+[HUMAN_APPLICATION_ACCESS](https://github.com/FerrPOINT/services-base/blob/651f20033b52493ded0939a97ca7872b3d62f7aa/docs/platform/HUMAN_APPLICATION_ACCESS.md)
+и [ADR0011](https://github.com/FerrPOINT/services-base/blob/651f20033b52493ded0939a97ca7872b3d62f7aa/docs/adr/0011-human-roles-application-access.md).
 
 Human user/admin определяется текущим Auth. Новый linked profile хранит
 историческую локальную developer запись без auto-admin; response claims получают
