@@ -789,7 +789,11 @@ mod tests {
         );
         tx.rollback().await.unwrap();
         drop(other);
-        assert!(verify_idle(&fence, &pool, std::slice::from_ref(&identity)).await.is_ok());
+        assert!(
+            verify_idle(&fence, &pool, std::slice::from_ref(&identity))
+                .await
+                .is_ok()
+        );
         let handoff:AdoptionHandoff=serde_json::from_value(serde_json::json!({
             "schemaVersion":1,"schema":"forge/quiescence-adoption/v1","operationId":Uuid::new_v4(),"generationId":Uuid::new_v4(),
             "sourceExitedReceipt":{"path":"/fixture/source-exited.json","sha256":"1".repeat(64)},"retiredProcesses":[],
@@ -797,14 +801,64 @@ mod tests {
             "participants":[{"sourceParticipants":["server"],"participant":"destination","kind":"server","roots":[]}],
             "sourceDockerDaemonId":null,"sourceWorkspaceVolume":null
         })).unwrap();
-        assert!(adoption_preflight(&fence,&pool,&handoff,std::slice::from_ref(&identity),coordinator.gate()).await.is_ok());
-        assert!(verify_recoverable_idle(&fence,&pool,std::slice::from_ref(&identity)).await.is_ok());
-        sqlx::query("UPDATE jobs SET status='queued' WHERE id=$1").bind(job).execute(&pool).await.unwrap();
-        assert!(verify_idle(&fence,&pool,std::slice::from_ref(&identity)).await.is_ok());
-        assert!(adoption_preflight(&fence,&pool,&handoff,std::slice::from_ref(&identity),coordinator.gate()).await.is_err());
-        assert!(verify_recoverable_idle(&fence,&pool,std::slice::from_ref(&identity)).await.is_err());
-        sqlx::query("UPDATE jobs SET status='success' WHERE id=$1").bind(job).execute(&pool).await.unwrap();
-        assert!(adoption_preflight(&fence,&pool,&handoff,std::slice::from_ref(&identity),coordinator.gate()).await.is_ok());
+        assert!(
+            adoption_preflight(
+                &fence,
+                &pool,
+                &handoff,
+                std::slice::from_ref(&identity),
+                coordinator.gate()
+            )
+            .await
+            .is_ok()
+        );
+        assert!(
+            verify_recoverable_idle(&fence, &pool, std::slice::from_ref(&identity))
+                .await
+                .is_ok()
+        );
+        sqlx::query("UPDATE jobs SET status='queued' WHERE id=$1")
+            .bind(job)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            verify_idle(&fence, &pool, std::slice::from_ref(&identity))
+                .await
+                .is_ok()
+        );
+        assert!(
+            adoption_preflight(
+                &fence,
+                &pool,
+                &handoff,
+                std::slice::from_ref(&identity),
+                coordinator.gate()
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            verify_recoverable_idle(&fence, &pool, std::slice::from_ref(&identity))
+                .await
+                .is_err()
+        );
+        sqlx::query("UPDATE jobs SET status='success' WHERE id=$1")
+            .bind(job)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            adoption_preflight(
+                &fence,
+                &pool,
+                &handoff,
+                std::slice::from_ref(&identity),
+                coordinator.gate()
+            )
+            .await
+            .is_ok()
+        );
         drop(fence);
         coordinator.resume().unwrap();
         pool.close().await;
@@ -824,9 +878,9 @@ pub async fn verify_idle(
     expected: &[Identity],
 ) -> anyhow::Result<()> {
     verify_database_idle(pool).await?;
-    verify_roots(pool,expected,None,&[]).await
+    verify_roots(pool, expected, None, &[]).await
 }
-async fn verify_database_idle(pool:&sqlx::PgPool)->anyhow::Result<()> {
+async fn verify_database_idle(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     let (jobs,attempts,leases,leased_queue,unacked,sync_runs,unknown_refs,uploads):(i64,i64,i64,i64,i64,i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM jobs WHERE status='running'),(SELECT count(*) FROM execution_attempts WHERE status='running'),(SELECT count(*) FROM job_leases WHERE lease_status='active'),(SELECT count(*) FROM job_queue WHERE state='leased'),(SELECT count(*) FROM job_leases WHERE runner_id IS NOT NULL AND completion_received_at IS NULL),(SELECT count(*) FROM repository_sync_runs WHERE state IN ('running','stopping','reconciling')),(SELECT count(*) FROM repository_sync_refs WHERE state='unknown'),(SELECT count(*) FROM artifact_upload_sessions WHERE status='open')").fetch_one(pool).await?;
     ensure!(
         [
@@ -852,7 +906,12 @@ async fn verify_database_idle(pool:&sqlx::PgPool)->anyhow::Result<()> {
     );
     Ok(())
 }
-async fn verify_roots(pool:&sqlx::PgPool,expected:&[Identity],adoption:Option<&AdoptionHandoff>,retired:&[RetiredCompose])->anyhow::Result<()> {
+async fn verify_roots(
+    pool: &sqlx::PgPool,
+    expected: &[Identity],
+    adoption: Option<&AdoptionHandoff>,
+    retired: &[RetiredCompose],
+) -> anyhow::Result<()> {
     let mut roots = std::collections::BTreeSet::new();
     for identity in expected {
         for root in &identity.custody_roots {
@@ -860,11 +919,22 @@ async fn verify_roots(pool:&sqlx::PgPool,expected:&[Identity],adoption:Option<&A
             if roots.insert((root.kind.clone(), root.path.clone())) {
                 match root.kind.as_str() {
                     "workspace" => {
-                        if let Some(handoff)=adoption{
-                            let binding=adoption_root_mappings(handoff).into_iter().find(|b|b.destination==*root).context("mapped workspace missing")?;
-                            workspace_idle_bound(&root.path,&binding.source.path,handoff.source_docker_daemon_id.as_deref(),handoff.source_workspace_volume.as_deref(),retired)?;
-                        }else{workspace_idle_bound(&root.path,&root.path,None,None,retired)?;}
-                    },
+                        if let Some(handoff) = adoption {
+                            let binding = adoption_root_mappings(handoff)
+                                .into_iter()
+                                .find(|b| b.destination == *root)
+                                .context("mapped workspace missing")?;
+                            workspace_idle_bound(
+                                &root.path,
+                                &binding.source.path,
+                                handoff.source_docker_daemon_id.as_deref(),
+                                handoff.source_workspace_volume.as_deref(),
+                                retired,
+                            )?;
+                        } else {
+                            workspace_idle_bound(&root.path, &root.path, None, None, retired)?;
+                        }
+                    }
                     "local-delivery" => delivery_idle(&root.path)?,
                     "git" => {
                         plain(&root.path, true)?;
@@ -915,9 +985,15 @@ fn json(path: &Path) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 fn workspace_idle(root: &Path) -> anyhow::Result<()> {
-    workspace_idle_bound(root,root,None,None,&[])
+    workspace_idle_bound(root, root, None, None, &[])
 }
-fn workspace_idle_bound(root:&Path,recorded_root:&Path,daemon_override:Option<&str>,volume_override:Option<&str>,inherited:&[RetiredCompose])->anyhow::Result<()> {
+fn workspace_idle_bound(
+    root: &Path,
+    recorded_root: &Path,
+    daemon_override: Option<&str>,
+    volume_override: Option<&str>,
+    inherited: &[RetiredCompose],
+) -> anyhow::Result<()> {
     plain(root, true)?;
     let workspaces = crate::runner_workspace::OwnedWorkspace::inventory(root)?;
     ensure!(
@@ -957,13 +1033,47 @@ fn workspace_idle_bound(root:&Path,recorded_root:&Path,daemon_override:Option<&s
                     .and_then(|v| Uuid::parse_str(v).ok())
                     .context("Compose job identity missing")?;
                 let project = format!("sdlc-build-job-{}", attempt.simple());
-                let inherited=inherited.iter().find(|entry|entry.root==root && path.file_name().is_some_and(|n|n==entry.name.as_str()));
-                if let Some(entry)=inherited{ensure!(custody_files(&path)?==entry.files,"retired predecessor custody changed");}
-                let retired=if let Some(entry)=inherited{Some(entry.clone())}else if daemon_override.is_none() && volume_override.is_none(){retired_compose_binding(root,path.file_name().and_then(|v|v.to_str()).context("invalid Compose custody name")?)?}else{None};
-                let daemon=retired.as_ref().map(|b|b.daemon_id.clone()).or_else(||daemon_override.map(str::to_owned)).or_else(||std::env::var("CICD_RUNNER_DOCKER_DAEMON_ID").ok()).context("Compose daemon identity unavailable")?;
-                let volume=retired.as_ref().map(|b|b.workspace_volume.clone()).or_else(||volume_override.map(str::to_owned)).or_else(||std::env::var("CICD_RUNNER_WORKSPACE_VOLUME").ok()).context("Compose workspace volume identity unavailable")?;
-                let recorded_root=retired.as_ref().map(|b|b.source_root.as_path()).unwrap_or(recorded_root);
-                let recorded_manifest=recorded_root.join(".compose-control").join(path.file_name().context("Compose name missing")?).join("compose.json");
+                let inherited = inherited.iter().find(|entry| {
+                    entry.root == root && path.file_name().is_some_and(|n| n == entry.name.as_str())
+                });
+                if let Some(entry) = inherited {
+                    ensure!(
+                        custody_files(&path)? == entry.files,
+                        "retired predecessor custody changed"
+                    );
+                }
+                let retired = if let Some(entry) = inherited {
+                    Some(entry.clone())
+                } else if daemon_override.is_none() && volume_override.is_none() {
+                    retired_compose_binding(
+                        root,
+                        path.file_name()
+                            .and_then(|v| v.to_str())
+                            .context("invalid Compose custody name")?,
+                    )?
+                } else {
+                    None
+                };
+                let daemon = retired
+                    .as_ref()
+                    .map(|b| b.daemon_id.clone())
+                    .or_else(|| daemon_override.map(str::to_owned))
+                    .or_else(|| std::env::var("CICD_RUNNER_DOCKER_DAEMON_ID").ok())
+                    .context("Compose daemon identity unavailable")?;
+                let volume = retired
+                    .as_ref()
+                    .map(|b| b.workspace_volume.clone())
+                    .or_else(|| volume_override.map(str::to_owned))
+                    .or_else(|| std::env::var("CICD_RUNNER_WORKSPACE_VOLUME").ok())
+                    .context("Compose workspace volume identity unavailable")?;
+                let recorded_root = retired
+                    .as_ref()
+                    .map(|b| b.source_root.as_path())
+                    .unwrap_or(recorded_root);
+                let recorded_manifest = recorded_root
+                    .join(".compose-control")
+                    .join(path.file_name().context("Compose name missing")?)
+                    .join("compose.json");
                 ensure!(
                     !daemon.is_empty()
                         && !volume.is_empty()
@@ -1048,44 +1158,102 @@ fn delivery_idle(root: &Path) -> anyhow::Result<()> {
 }
 
 /// Base owns native source retirement and destination selector proof. This checks local custody only.
-pub async fn adoption_preflight(fence:&Fence,pool:&sqlx::PgPool,handoff:&AdoptionHandoff,old:&[Identity],gate:&Gate)->anyhow::Result<Vec<RetiredCompose>>{
+pub async fn adoption_preflight(
+    fence: &Fence,
+    pool: &sqlx::PgPool,
+    handoff: &AdoptionHandoff,
+    old: &[Identity],
+    gate: &Gate,
+) -> anyhow::Result<Vec<RetiredCompose>> {
     verify_database_idle(pool).await?;
     verify_no_pending_work(pool).await?;
-    let bindings=adoption_root_mappings(handoff);
-    let mapped:Vec<_>=old.iter().map(|identity|{
-        let mut mapped=identity.clone();mapped.custody_roots=bindings.iter().filter(|b|identity.custody_roots.contains(&b.source)).map(|b|b.destination.clone()).collect();mapped
-    }).collect();
-    let inherited=inherited_compose(gate,handoff)?;
-    verify_roots(pool,&mapped,Some(handoff),&inherited).await?;
-    let mut seals=vec![];
-    for binding in bindings.iter().filter(|b|b.destination.kind=="workspace"){
-        let control=binding.destination.path.join(".compose-control");
-        if !control.try_exists()?{continue}
-        for entry in std::fs::read_dir(&control)?{
-            ensure!(seals.len()<4096,"retired Compose custody inventory overflow");
-            let path=entry?.path();let name=path.file_name().and_then(|p|p.to_str()).context("retired Compose name invalid")?.to_owned();
+    let bindings = adoption_root_mappings(handoff);
+    let mapped: Vec<_> = old
+        .iter()
+        .map(|identity| {
+            let mut mapped = identity.clone();
+            mapped.custody_roots = bindings
+                .iter()
+                .filter(|b| identity.custody_roots.contains(&b.source))
+                .map(|b| b.destination.clone())
+                .collect();
+            mapped
+        })
+        .collect();
+    let inherited = inherited_compose(gate, handoff)?;
+    verify_roots(pool, &mapped, Some(handoff), &inherited).await?;
+    let mut seals = vec![];
+    for binding in bindings
+        .iter()
+        .filter(|b| b.destination.kind == "workspace")
+    {
+        let control = binding.destination.path.join(".compose-control");
+        if !control.try_exists()? {
+            continue;
+        }
+        for entry in std::fs::read_dir(&control)? {
+            ensure!(
+                seals.len() < 4096,
+                "retired Compose custody inventory overflow"
+            );
+            let path = entry?.path();
+            let name = path
+                .file_name()
+                .and_then(|p| p.to_str())
+                .context("retired Compose name invalid")?
+                .to_owned();
             // Build and execution records remain in place, with their bytes sealed; never cleanup here.
-            if let Some(previous)=inherited.iter().find(|entry|entry.root==binding.destination.path && entry.name==name){seals.push(previous.clone());}
-            else{seals.push(RetiredCompose{root:binding.destination.path.clone(),source_root:binding.source.path.clone(),name,files:custody_files(&path)?,
-                daemon_id:handoff.source_docker_daemon_id.clone().unwrap_or_default(),workspace_volume:handoff.source_workspace_volume.clone().unwrap_or_default()});}
+            if let Some(previous) = inherited
+                .iter()
+                .find(|entry| entry.root == binding.destination.path && entry.name == name)
+            {
+                seals.push(previous.clone());
+            } else {
+                seals.push(RetiredCompose {
+                    root: binding.destination.path.clone(),
+                    source_root: binding.source.path.clone(),
+                    name,
+                    files: custody_files(&path)?,
+                    daemon_id: handoff.source_docker_daemon_id.clone().unwrap_or_default(),
+                    workspace_volume: handoff.source_workspace_volume.clone().unwrap_or_default(),
+                });
+            }
         }
     }
-    seals.sort_by(|a,b|(&a.root,&a.name).cmp(&(&b.root,&b.name)));
-    let _=fence;Ok(seals)
+    seals.sort_by(|a, b| (&a.root, &a.name).cmp(&(&b.root, &b.name)));
+    let _ = fence;
+    Ok(seals)
 }
 
-async fn verify_no_pending_work(pool:&sqlx::PgPool)->anyhow::Result<()> {
+async fn verify_no_pending_work(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE status='queued') OR EXISTS(SELECT 1 FROM job_queue WHERE state='queued') OR EXISTS(SELECT 1 FROM repository_sync_runs WHERE state='queued') OR EXISTS(SELECT 1 FROM schedule_fires WHERE status='pending') OR EXISTS(SELECT 1 FROM outbox_messages WHERE delivered_at IS NULL AND failed_at IS NULL) OR EXISTS(SELECT 1 FROM repository_sync_refs WHERE direction='pull' AND state='applied' AND NOT event_delivered)").fetch_one(pool).await?;
-    ensure!(!pending,"pending source work cannot cross generation adoption");
+    ensure!(
+        !pending,
+        "pending source work cannot cross generation adoption"
+    );
     Ok(())
 }
-pub async fn verify_recoverable_idle(fence:&Fence,pool:&sqlx::PgPool,expected:&[Identity])->anyhow::Result<()>{
-    verify_idle(fence,pool,expected).await?;verify_no_pending_work(pool).await
+pub async fn verify_recoverable_idle(
+    fence: &Fence,
+    pool: &sqlx::PgPool,
+    expected: &[Identity],
+) -> anyhow::Result<()> {
+    verify_idle(fence, pool, expected).await?;
+    verify_no_pending_work(pool).await
 }
-pub async fn verify_idle_at(fence:&Fence,pool:&sqlx::PgPool,expected:&[Identity],gate:&Gate,require_recoverable:bool)->anyhow::Result<()>{
+pub async fn verify_idle_at(
+    fence: &Fence,
+    pool: &sqlx::PgPool,
+    expected: &[Identity],
+    gate: &Gate,
+    require_recoverable: bool,
+) -> anyhow::Result<()> {
     verify_database_idle(pool).await?;
-    let retired=retired_compose_all(gate)?;
-    verify_roots(pool,expected,None,&retired).await?;
-    if require_recoverable{verify_no_pending_work(pool).await?;}
-    let _=fence;Ok(())
+    let retired = retired_compose_all(gate)?;
+    verify_roots(pool, expected, None, &retired).await?;
+    if require_recoverable {
+        verify_no_pending_work(pool).await?;
+    }
+    let _ = fence;
+    Ok(())
 }

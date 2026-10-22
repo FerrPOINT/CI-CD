@@ -14,7 +14,11 @@ use std::{
 use uuid::Uuid;
 #[path = "generation.rs"]
 mod generation;
-pub use generation::{AdoptionHandoff, RootMapping, RetiredCompose, CustodyFile, load_adoption_handoff, adoption_status, retired_compose_all, inherited_compose, adoption_root_mappings, custody_files, retired_compose_binding, wait_for_enrollment};
+pub use generation::{
+    AdoptionHandoff, CustodyFile, RetiredCompose, RootMapping, adoption_root_mappings,
+    adoption_status, custody_files, inherited_compose, load_adoption_handoff, retired_compose_all,
+    retired_compose_binding, wait_for_enrollment,
+};
 
 #[derive(Clone)]
 pub struct Gate {
@@ -352,7 +356,7 @@ impl Gate {
         kind: &str,
         custody_roots: Vec<CustodyRoot>,
     ) -> anyhow::Result<(Participant, Identity)> {
-        generation::validate_registration(self,id,kind,&custody_roots)?;
+        generation::validate_registration(self, id, kind, &custody_roots)?;
         ensure!(
             safe_name(id) && safe_name(kind),
             "invalid participant identity"
