@@ -33,6 +33,8 @@ async fn run(args: Args) -> anyhow::Result<bool> {
         );
     }
     let config = RuntimeConfig::from_env()?;
+    cicd::quiescence::initialize("local-delivery", config.sdlc_workspace.local_delivery_root.iter().cloned().map(cicd::quiescence::CustodyRoot::delivery).collect())?;
+    let _effect = cicd::quiescence::enter(true)?;
     ensure!(
         std::fs::metadata(&args.command_file)?.len() <= 16 * 1024,
         "command exceeds bound"

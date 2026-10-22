@@ -230,6 +230,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     validate_cli(&cli)?;
     let root = workspace_root(&cli);
+    cicd::quiescence::initialize("external-runner", vec![cicd::quiescence::CustodyRoot::workspace(root.clone())])?;
     if cli.inspect_workspaces {
         println!(
             "{}",
@@ -247,7 +248,9 @@ async fn main() -> anyhow::Result<()> {
         .retry(reqwest::retry::never())
         .build()
         .context("build runner HTTP client")?;
+    let startup = cicd::quiescence::enter(true)?;
     let credential = ensure_credential(&client, &base, &cli).await?;
+    drop(startup);
 
     if cli.reconcile_workspaces {
         reconcile_workspaces(&client, &base, &credential, &root, cli.keep_workspace).await?;
@@ -257,6 +260,10 @@ async fn main() -> anyhow::Result<()> {
     reconcile_workspaces(&client, &base, &credential, &root, true).await?;
 
     loop {
+        let Ok(_effect) = cicd::quiescence::enter(true) else {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         heartbeat(&client, &base, &credential, &cli, 0, &[]).await?;
         let poll_started = tokio::time::Instant::now();
         match poll_work(&client, &base, &credential, &cli).await? {
@@ -359,6 +366,7 @@ async fn reconcile_workspaces(
     root: &Path,
     keep_workspace: bool,
 ) -> anyhow::Result<()> {
+    let _effect = cicd::quiescence::enter(false)?;
     let mut unresolved = 0;
     for record in cicd::runner_workspace::OwnedWorkspace::inventory(root)? {
         if kubernetes_mode()
@@ -607,6 +615,7 @@ async fn run_offer(
     cli: &Cli,
     offer: LeaseOffer,
 ) -> anyhow::Result<()> {
+    let _effect = cicd::quiescence::enter(false)?;
     eprintln!(
         "accepted offer lease={} attempt={} job={}",
         offer.lease_id, offer.attempt.id, offer.attempt.job_key

@@ -399,7 +399,9 @@ impl OwnedWorkspace {
 
     /// Caller must first obtain a durable terminal acknowledgement from the owner.
     pub async fn cleanup_after_ack(self) -> anyhow::Result<()> {
+        let effect = crate::quiescence::enter(false)?;
         tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             self.verify_owner()?;
             ensure!(
                 self.read_record(self.completion_paths().0)?

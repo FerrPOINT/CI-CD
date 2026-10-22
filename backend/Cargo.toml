@@ -57,6 +57,10 @@ name = "forge-delivery"
 path = "src/bin/forge-delivery.rs"
 
 [[bin]]
+name = "forge-quiesce"
+path = "src/bin/forge-quiesce.rs"
+
+[[bin]]
 name = "forge-pg-migrate"
 path = "src/bin/forge-pg-migrate.rs"
 

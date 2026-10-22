@@ -627,7 +627,9 @@ async fn run_git_service(
     // The owner waiter retains the guard until native Git exits, even if HTTP is cancelled.
     let path = path.to_owned();
     let service = service.to_owned();
+    let effect = crate::quiescence::enter(true).map_err(|_| ApiError::service_unavailable("Forge draining"))?;
     tokio::spawn(async move {
+        let _effect = effect;
         let _namespace_lease = if let Some(storage) = &storage {
             Some(crate::repository_catalog::write_lease(&state, storage).await?)
         } else {

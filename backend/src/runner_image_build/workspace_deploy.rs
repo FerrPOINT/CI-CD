@@ -457,7 +457,9 @@ impl PreparedDeployment {
             "commands_sha256":self.commands_sha256,"task_binding":self.task_intent.binding,
             "agent_id":self.task_intent.agent_id,"tracker_lease_id":self.task_intent.tracker_lease_id});
         let directory = directory.to_owned();
+        let effect = crate::quiescence::enter(false)?;
         tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             private_directory(&directory)?;
             write_new(
                 &directory.join("deployment-start.json"),
@@ -480,7 +482,9 @@ impl PreparedDeployment {
             "unknown observation"
         );
         let directory = directory.to_owned();
+        let effect = crate::quiescence::enter(false)?;
         tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             private_directory(&directory)?;
             if name == "deployment-running.json" {
                 let created: serde_json::Value = serde_json::from_slice(&read_private(
@@ -509,7 +513,9 @@ impl PreparedDeployment {
         let directory = directory.to_owned();
         let artifact = self.artifact_path.clone();
         let scope = self.scope.clone();
+        let effect = crate::quiescence::enter(false)?;
         tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             private_directory(&directory)?;
             let original: serde_json::Value = serde_json::from_slice(&read_private(&directory.join("deployment-start.json"),65536)?)?;
             ensure!(original["scope"] == serde_json::to_value(scope)? && original["manifest_sha256"] == digest(&manifest),
@@ -919,7 +925,9 @@ async fn read_completed_image(
             source.source_commit.clone(),
             daemon.to_owned(),
         );
+        let effect = crate::quiescence::enter(false)?;
         tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             read_retained(&root, &scope, repository, &commit, &daemon)
         })
     };

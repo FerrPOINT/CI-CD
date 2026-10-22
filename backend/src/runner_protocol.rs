@@ -562,6 +562,7 @@ pub(crate) async fn poll_runner_work(
     let poll_started = tokio::time::Instant::now();
     let wait_budget = StdDuration::from_secs(input.wait_seconds as u64);
     loop {
+        if !crate::quiescence::accepting() { return Ok(StatusCode::NO_CONTENT.into_response()) }
         let notified = crate::dispatch_signal::runner_work_notifier().notified();
         match claim_next_work(db, &runner, &runner_tags).await? {
             Some(offer) => return Ok(Json(offer).into_response()),

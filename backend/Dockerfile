@@ -17,6 +17,7 @@ COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
 RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
  && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs \
+ && printf 'fn main() {}\n' > src/bin/forge-quiesce.rs \
  && printf 'fn main() {}\n' > src/bin/forge-delivery.rs && printf 'fn main() {}\n' > src/bin/forge-pg-migrate.rs \
  && printf '\n' > domain/src/lib.rs \
  && printf '\n' > app/src/lib.rs \
@@ -91,6 +92,7 @@ RUN case "${TARGETARCH:-amd64}" in \
 WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
 COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner
+COPY --from=build /app/target/release/forge-quiesce /usr/local/bin/forge-quiesce
 COPY --from=build /app/migrations /app/migrations
 RUN mkdir -p /var/lib/forge/git /var/lib/forge/artifacts /workspaces \
  && chown -R cicd:cicd /var/lib/forge /workspaces

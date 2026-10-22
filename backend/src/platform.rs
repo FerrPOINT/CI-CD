@@ -539,6 +539,7 @@ pub async fn artifact_retention_loop(pool: PgPool) {
 pub async fn artifact_retention_loop_with_config(pool: PgPool, artifacts: ArtifactsConfig) {
     loop {
         tokio::time::sleep(StdDuration::from_secs(ARTIFACT_RETENTION_INTERVAL_SECONDS)).await;
+        let Ok(_effect) = crate::quiescence::enter(true) else { continue };
         match purge_expired_artifacts_with_config(&pool, &artifacts, ARTIFACT_RETENTION_BATCH_LIMIT)
             .await
         {

@@ -860,7 +860,11 @@ pub async fn pr_action(
     Json(input): Json<PrAction>,
 ) -> Result<Json<PullRequest>, ApiError> {
     // An accepted native merge keeps its admission and row lock if the HTTP caller disconnects.
-    tokio::spawn(pr_action_owned(state, repo, number, input))
+    let effect = crate::quiescence::enter(true).map_err(|_| ApiError::service_unavailable("Forge draining"))?;
+    tokio::spawn(async move {
+        let _effect = effect;
+        pr_action_owned(state, repo, number, input).await
+    })
         .await
         .map_err(|_| {
             ApiError::service_unavailable(
