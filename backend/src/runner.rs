@@ -125,9 +125,10 @@ pub async fn run_job_with_config(
     running: RunningJobs,
     config: RuntimeRunnerConfig,
 ) {
-    let existing = sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id=$1")
-        .bind(job_id).fetch_optional(&pool).await;
-    let new_work = !matches!(existing, Ok(Some(ref status)) if status == "running");
+    let new_work = if std::env::var_os("CICD_QUIESCENCE_DIR").is_some() {
+        let existing = sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id=$1").bind(job_id).fetch_optional(&pool).await;
+        !matches!(existing, Ok(Some(ref status)) if status == "running")
+    } else { true };
     let Ok(_effect) = crate::quiescence::enter(new_work) else { return };
     {
         let mut guard = running.lock().await;
@@ -2388,6 +2389,7 @@ pub async fn maintenance_loop_with_config(pool: PgPool, config: RuntimeRunnerCon
             Ok(()) => {}
             Err(error) => tracing::error!(%error, "runner maintenance failed"),
         }
+        drop(_effect);
         tokio::time::sleep(Duration::from_secs(RUNNER_RECONCILE_INTERVAL_SECONDS)).await;
     }
 }

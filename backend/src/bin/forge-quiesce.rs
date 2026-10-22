@@ -33,6 +33,7 @@ async fn main()->anyhow::Result<()> {
             let fence=loop {
                 owner.gate().verify_participants(&expected)?;
                 if let Some(fence)=owner.try_fence()? {
+                    owner.gate().verify_no_effect_records(&fence)?;
                     let check=tokio::time::timeout(std::time::Duration::from_secs(3),cicd::quiescence::verify_idle(&fence,&pool,&expected)).await;
                     if matches!(check,Ok(Ok(()))){owner.gate().verify_participants(&expected)?;break fence}
                     // Release promptly: existing execution ACK/reconciliation/cleanup must continue.

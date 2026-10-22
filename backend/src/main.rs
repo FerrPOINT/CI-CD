@@ -13,8 +13,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (the storage crate itself is transport-agnostic; ADR-0012).
     let config = RuntimeConfig::from_env()?;
     let workspace = if matches!(config.runner.mode, cicd::config::RunnerMode::Docker | cicd::config::RunnerMode::Kubernetes) { std::path::PathBuf::from("/workspaces") } else { std::env::temp_dir() };
-    let mut custody = vec![cicd::quiescence::CustodyRoot::workspace(workspace)];
+    let mut custody = vec![cicd::quiescence::CustodyRoot::workspace(workspace), cicd::quiescence::CustodyRoot::git(config.git.root.clone())];
     custody.extend(config.sdlc_workspace.local_delivery_root.iter().cloned().map(cicd::quiescence::CustodyRoot::delivery));
+    custody.extend(std::env::var_os("CICD_LOCAL_PG_ROOT").map(std::path::PathBuf::from).map(cicd::quiescence::CustodyRoot::delivery));
     cicd::quiescence::initialize("server", custody)?;
     let startup = cicd::quiescence::enter(true)?;
     let git = config.git.to_git_config();

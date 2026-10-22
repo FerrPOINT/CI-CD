@@ -628,8 +628,10 @@ async fn run_git_service(
     let path = path.to_owned();
     let service = service.to_owned();
     let effect = crate::quiescence::enter(true).map_err(|_| ApiError::service_unavailable("Forge draining"))?;
+    let callback = storage.as_deref().map(crate::quiescence::git_hook_owner).transpose().map_err(|_| ApiError::service_unavailable("Git callback admission unavailable"))?;
     tokio::spawn(async move {
         let _effect = effect;
+        let _callback = callback;
         let _namespace_lease = if let Some(storage) = &storage {
             Some(crate::repository_catalog::write_lease(&state, storage).await?)
         } else {
@@ -964,6 +966,7 @@ pub async fn internal_git_push(
     }
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let name = crate::repository_catalog::resolve_storage(pool, &event.repository).await?;
+    crate::quiescence::require_git_hook_owner(&name).map_err(|_| ApiError::service_unavailable("Forge draining; no admitted Git callback owner"))?;
     let repository_id: Uuid =
         sqlx::query_scalar("SELECT id FROM repository_catalog WHERE storage_name=$1")
             .bind(&name)

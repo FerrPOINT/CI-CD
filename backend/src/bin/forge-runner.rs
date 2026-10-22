@@ -266,7 +266,13 @@ async fn main() -> anyhow::Result<()> {
         };
         heartbeat(&client, &base, &credential, &cli, 0, &[]).await?;
         let poll_started = tokio::time::Instant::now();
-        match poll_work(&client, &base, &credential, &cli).await? {
+        let offer = match poll_work(&client, &base, &credential, &cli).await {
+            Ok(offer) => offer,
+            Err(_) if !cicd::quiescence::accepting() => { drop(_effect); tokio::time::sleep(Duration::from_secs(1)).await; continue; }
+            Err(error) => return Err(error),
+        };
+        drop(_effect);
+        match offer {
             Some(offer) => {
                 run_offer(&client, &base, &credential, &cli, offer).await?;
                 if cli.once {

@@ -291,3 +291,6 @@ Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` prox
 ## Общая база
 
 Подключение версий, границы контрактов и проверки описаны в [BASE_INTEGRATION](BASE_INTEGRATION.md).
+
+Приостановка producers и source-owned writer closure перед backup описаны в
+[FORGE_QUIESCENCE](FORGE_QUIESCENCE.md) и [ADR-0033](adr/0033-product-local-quiescence.md).

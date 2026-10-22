@@ -4,6 +4,9 @@
 //! an advisory lock so concurrent instances cannot race. `--dry-run` lists
 //! pending migrations without touching the database.
 
+#[path="../../src/quiescence/kernel.rs"]
+#[allow(dead_code)]
+mod quiescence;
 use anyhow::Context;
 use clap::Parser;
 use std::path::PathBuf;
@@ -27,6 +30,8 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    quiescence::initialize("migration", vec![])?;
+    let _effect = quiescence::enter(true)?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_secs(10))
         .connect(&args.database_url)

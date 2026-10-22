@@ -39,7 +39,7 @@ pub async fn supervisor(pool: PgPool, config: crate::config::RuntimeConfig) {
             tokio::time::sleep(Duration::from_secs(2)).await;
             continue;
         };
-        if crate::quiescence::accepting() {
+        if let Ok(_producer) = crate::quiescence::enter(true) {
         if let Err(error) = deliver_events(&store, &config).await {
             tracing::warn!(%error,"sync pipeline delivery pending");
         }
@@ -85,6 +85,7 @@ pub async fn supervisor(pool: PgPool, config: crate::config::RuntimeConfig) {
                 });
             }
         }
+        drop(_effect);
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }

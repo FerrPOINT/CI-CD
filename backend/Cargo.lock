@@ -424,8 +424,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
  "sqlx",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

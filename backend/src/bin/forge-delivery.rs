@@ -33,7 +33,9 @@ async fn run(args: Args) -> anyhow::Result<bool> {
         );
     }
     let config = RuntimeConfig::from_env()?;
-    cicd::quiescence::initialize("local-delivery", config.sdlc_workspace.local_delivery_root.iter().cloned().map(cicd::quiescence::CustodyRoot::delivery).collect())?;
+    let mut custody:Vec<_> = config.sdlc_workspace.local_delivery_root.iter().cloned().map(cicd::quiescence::CustodyRoot::delivery).collect();
+    custody.extend(std::env::var_os("CICD_LOCAL_PG_ROOT").map(std::path::PathBuf::from).map(cicd::quiescence::CustodyRoot::delivery));
+    cicd::quiescence::initialize("local-delivery", custody)?;
     let _effect = cicd::quiescence::enter(true)?;
     ensure!(
         std::fs::metadata(&args.command_file)?.len() <= 16 * 1024,
