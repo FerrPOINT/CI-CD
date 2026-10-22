@@ -7,7 +7,6 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::json;
-use sqlx::PgPool;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
