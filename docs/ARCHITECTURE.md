@@ -53,6 +53,10 @@ runtime qualification. GET читает history без effects. Existing platfor
 Процессный lock и durable filesystem journal не являются общей транзакцией с
 DB или протоколом orchestration stop. [ADR-0020](adr/0020-owner-local-manifest-delivery.md).
 
+Kubernetes source adapter и его ограниченные operator contracts описаны в
+[Kubernetes runner](KUBERNETES_RUNNER.md). Source completion, native builder
+feasibility и installed qualification проверяются отдельно.
+
 Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), внешний `forge-runner` shell MVP поверх runner protocol, платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.
 
 Human identity, браузерные сессии и личные API-токены принадлежат Central Auth
@@ -197,7 +201,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_ARTIFACTS_DIR` | локальное хранилище артефактов |
 | `CICD_ARTIFACT_RETENTION_DAYS` | TTL новых артефактов; default 30, диапазон `1..3650` |
 | `CICD_EMBEDDED_RUNNER_ENABLED` | `true` по умолчанию; `false` отключает embedded execution в backend |
-| `CICD_RUNNER_MODE` | `host` в local compose; `docker`/`host` в backend binary |
+| `CICD_RUNNER_MODE` | `host` в local compose; `docker`/`host`/`kubernetes` в backend binary |
 | `CICD_RUNNER_DOCKER_NETWORK` | Docker network для embedded job-контейнеров; default сохраняет standalone Compose, umbrella deployment передаёт своё имя сети |
 | `CICD_RUNNER_SHARED_SOURCES_VOLUME` | Опциональный read-only volume, монтируемый в job как `/runner-sources`; отделён от writable workspace и Cargo cache |
 | `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS` | safety timeout queued job без compatible runner-а; default 86400, `0` отключает |

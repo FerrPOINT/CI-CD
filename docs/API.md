@@ -1,5 +1,14 @@
 # API v1 Specification — Forge CI/CD
 
+Source candidate `/api/v1/runner/leases/{lease_id}/complete` принимает optional
+`terminationProof` {`clusterCaSha256`, `namespaceUid`, `workspaceClaimUid`, `podUid`}.
+Legacy omission не меняет поведение. Только failure/canceled completion после
+expiry может использовать исключение: original runner/token/attempt/current
+generation, matching terminal DB projection и actual exact-UID stopped readback
+из protected Kubernetes custody. Success, чужие/старые identities и новый lease
+закрыты. Статусы/очередь не переоткрываются; duplicate termination ACK идемпотентен.
+[Полный контракт](KUBERNETES_RUNNER.md).
+
 Source candidate task-child delivery использует existing v1 `variablesSha256`
 commitment с closed kind-tagged payload; old/unbound credentials остаются закрытыми.
 Existing exact workspace/candidate/delivery routes и DTO не меняются, SAT не

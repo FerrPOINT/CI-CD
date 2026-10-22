@@ -24,6 +24,9 @@ use crate::{
     body_limits,
 };
 
+#[path="runner_protocol_termination.rs"]
+mod termination;
+
 const PROTOCOL_VERSION: i32 = 1;
 const HEARTBEAT_INTERVAL_SECONDS: i32 = 15;
 const POLL_WAIT_MAX_SECONDS: i32 = 30;
@@ -279,6 +282,8 @@ pub(crate) struct RunnerLogAppendResponse {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RunnerCompleteRequest {
+    #[serde(default)]
+    termination_proof: Option<termination::Proof>,
     protocol_version: i32,
     lease_token: String,
     fencing_token: i64,
@@ -1086,6 +1091,9 @@ pub(crate) async fn complete_runner_lease(
 
     let Some(row) = row else {
         drop(tx);
+        if input.termination_proof.is_some() && state.config.runner.mode==crate::config::RunnerMode::Kubernetes {
+            return termination::complete(db,&runner,lease_id,&input).await;
+        }
         return Err(lease_mutation_error(db, lease_id).await);
     };
 

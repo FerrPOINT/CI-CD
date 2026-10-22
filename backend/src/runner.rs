@@ -1038,32 +1038,17 @@ async fn image_build_input(
             "Backend image builds require the configured Docker runner",
         ));
     }
-    let mut conn = pool.acquire().await.map_err(ApiError::internal)?;
-    let record = cicd_infra::sdlc_workspace::find_task_pipeline(&mut conn, job.pipeline_id, false)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::conflict("Image build requires authenticated task intent"))?;
+    Ok(Some((spec,task_job_source(pool,job,config).await?)))
+}
+
+async fn task_job_source(pool:&PgPool,job:&JobRow,config:&RuntimeRunnerConfig)->Result<crate::runner_workspace::preparation::PreparationSource,ApiError>{
+    let mut conn=pool.acquire().await.map_err(ApiError::internal)?;
+    let record=cicd_infra::sdlc_workspace::find_task_pipeline(&mut conn,job.pipeline_id,false).await.map_err(ApiError::internal)?.ok_or_else(||ApiError::conflict("Authenticated task source required"))?;
     drop(conn);
-    if record.project_id != job.project_id
-        || Some(record.intent.source_commit.as_str()) != job.commit_sha.as_deref()
-    {
-        return Err(ApiError::conflict(
-            "Image build task source differs from pipeline",
-        ));
-    }
-    let storage = crate::repository_catalog::local_storage_for_project(pool, job.project_id)
-        .await?
-        .ok_or_else(|| ApiError::conflict("Hosted build source is unavailable"))?;
-    let storage = crate::git_host::validate_repo_name(&storage).map_err(ApiError::conflict)?;
-    Ok(Some((
-        spec,
-        crate::runner_workspace::preparation::PreparationSource {
-            project_id: job.project_id,
-            repository_id: record.intent.repository_id,
-            repository: config.git_root.join(format!("{storage}.git")),
-            source_commit: record.intent.source_commit.clone(),
-        },
-    )))
+    if record.project_id!=job.project_id || Some(record.intent.source_commit.as_str())!=job.commit_sha.as_deref(){return Err(ApiError::conflict("Task source differs from pipeline"));}
+    let storage=crate::repository_catalog::local_storage_for_project(pool,job.project_id).await?.ok_or_else(||ApiError::conflict("Hosted source unavailable"))?;
+    let storage=crate::git_host::validate_repo_name(&storage).map_err(ApiError::conflict)?;
+    Ok(crate::runner_workspace::preparation::PreparationSource{project_id:job.project_id,repository_id:record.intent.repository_id,repository:config.git_root.join(format!("{storage}.git")),source_commit:record.intent.source_commit.clone()})
 }
 
 async fn image_build_attempt_active(
@@ -1231,6 +1216,11 @@ async fn run_job_inner(
     };
     let attempt_id = lease.attempt_id;
 
+
+    if config.mode==RunnerMode::Kubernetes {
+        return kubernetes::run(&pool,&job,&lease,&running,config).await;
+    }
+
     if !matches!(
         crate::api::sdlc_workspace::task_pipeline::already_submitted(
             &pool,
@@ -1243,9 +1233,6 @@ async fn run_job_inner(
         return Ok(ExecutionOutcome::Held);
     }
 
-    if config.mode==RunnerMode::Kubernetes {
-        return kubernetes::run(&pool,&job,&lease,&running,config).await;
-    }
     let image_input = image_build_input(&pool, &job, config).await?;
     let owned_workspace = prepare_workspace(&pool, &job, &lease, config).await?;
     let workspace = owned_workspace.checkout().to_path_buf();
@@ -2393,6 +2380,7 @@ async fn poll_and_dispatch_with_config(
     config: &RuntimeRunnerConfig,
 ) -> Result<(), sqlx::Error> {
     reconcile_runtime_state_with_config(pool, config).await?;
+    if config.mode==RunnerMode::Kubernetes{kubernetes::reconcile_terminal(pool,&running,config).await?;}
 
     let enqueued = crate::store::enqueue_missing_ready_jobs(pool).await?;
     if enqueued > 0 {
