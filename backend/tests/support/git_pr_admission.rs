@@ -63,7 +63,7 @@ async fn wait_query(pool: &PgPool, pattern: &str) {
     let mut observer = sqlx::PgConnection::connect_with(&pool.connect_options())
         .await
         .unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(3),async {
+    let observed = tokio::time::timeout(std::time::Duration::from_secs(3),async {
         loop {
             let found:bool=sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE $1)",
@@ -71,7 +71,13 @@ async fn wait_query(pool: &PgPool, pattern: &str) {
             if found {break}
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-    }).await.expect("request reached actual protected SQL wait");
+    }).await;
+    if observed.is_err() {
+        let active: Vec<(String,Option<String>,String)> = sqlx::query_as(
+            "SELECT state,wait_event_type,query FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()"
+        ).fetch_all(&mut observer).await.unwrap();
+        panic!("request did not reach protected SQL wait {pattern}: {active:?}");
+    }
 }
 async fn delayed_post(
     http: &reqwest::Client,
