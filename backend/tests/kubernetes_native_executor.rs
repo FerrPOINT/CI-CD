@@ -917,12 +917,15 @@ async fn actual_kubernetes_executor_native() -> Result<()> {
 fn private_abi_rejects_wrong_build_and_builder_scope() {
     let config: Config = serde_json::from_value(json!({
         "schemaVersion":1,"installationSha256":"a".repeat(64),"installation":"qa-forge",
-        "clusterCaSha256":"b".repeat(64),"namespace":"qa-forge","namespaceUid":"ns",
-        "workspaceClaim":"workspace","workspaceClaimUid":"pvc","jobServiceAccount":"job",
+        "clusterCaSha256":"b".repeat(64),"namespace":"qa-forge","namespaceUid":"11111111-1111-4111-8111-111111111111",
+        "workspaceClaim":"workspace","workspaceClaimUid":"22222222-2222-4222-8222-222222222222","jobServiceAccount":"job",
         "resources":{"cpuMillis":100,"memoryBytes":134217728,"ephemeralStorageBytes":134217728},
         "security":{"runAsUser":10001,"runAsGroup":10001,"fsGroup":10001}
     }))
     .unwrap();
+    config
+        .validate()
+        .expect("native fixture Config must satisfy the Kubernetes UID contract");
     let mut input = Input {
         schema_version: 1,
         kind: "forge/native-kubernetes-executor/v1".into(),
