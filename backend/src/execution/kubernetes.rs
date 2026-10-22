@@ -111,8 +111,7 @@ impl Config {
             );
         }
         ensure!(
-            self.allowed_images.len() <= 128
-                && self.allowed_images.iter().all(|v| digest_image(v)),
+            self.allowed_images.len() <= 128 && self.allowed_images.iter().all(|v| digest_image(v)),
             "pinned image digest allowlist required"
         );
         if self.builder_enabled {
@@ -1081,9 +1080,21 @@ mod tests {
         let legacy: Config = serde_json::from_value(legacy).unwrap();
         legacy.validate().unwrap();
         assert!(!legacy.builder_enabled);
-        assert!(legacy.require_image_build().unwrap_err().to_string().starts_with("kubernetes_image_build_unqualified:"));
+        assert!(
+            legacy
+                .require_image_build()
+                .unwrap_err()
+                .to_string()
+                .starts_with("kubernetes_image_build_unqualified:")
+        );
         let mut command = serde_json::to_value(config()).unwrap();
-        for key in ["builderEnabled", "builderServiceAccount", "builderImage", "registryPrefix", "registrySecret"] {
+        for key in [
+            "builderEnabled",
+            "builderServiceAccount",
+            "builderImage",
+            "registryPrefix",
+            "registrySecret",
+        ] {
             command.as_object_mut().unwrap().remove(key);
         }
         let command: Config = serde_json::from_value(command).unwrap();
@@ -1386,12 +1397,21 @@ mod lifecycle_tests {
         execution.config.validate().unwrap();
         execution.intent.config = execution.config.clone();
         let original = execution.manifest.clone();
-        let error = execution.build_template("registry.test/forge/attempt").unwrap_err();
-        assert!(error.to_string().starts_with("kubernetes_image_build_unqualified:"));
+        let error = execution
+            .build_template("registry.test/forge/attempt")
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("kubernetes_image_build_unqualified:")
+        );
         assert_eq!(execution.manifest, original);
         assert_eq!(fs::read_dir(&execution.directory).unwrap().count(), 0);
         assert_eq!(state.lock().unwrap().creates, 0);
-        execution.start_with_admission(|| Ok(grant(&execution.config))).await.unwrap();
+        execution
+            .start_with_admission(|| Ok(grant(&execution.config)))
+            .await
+            .unwrap();
         assert_eq!(state.lock().unwrap().creates, 1);
         task.abort();
         fs::remove_dir_all(&execution.directory).unwrap();
