@@ -846,15 +846,16 @@ async fn run_git_service(
         };
         run_git_service_owned(
             &state,
-            access.origin,
-            storage.as_deref(),
-            &path,
-            &service,
-            body,
-            hooks,
-            task.is_some(),
-            mutation_guard.as_ref(),
-            access.deadline,
+            GitServiceRequest {
+                access,
+                storage: storage.as_deref(),
+                path: &path,
+                service: &service,
+                body,
+                hooks,
+                task_variant: task.is_some(),
+                guard: mutation_guard.as_ref(),
+            },
         )
         .await
     })
@@ -862,18 +863,36 @@ async fn run_git_service(
     .map_err(|_| ApiError::service_unavailable("Git service waiter unavailable"))?
 }
 
-async fn run_git_service_owned(
-    state: &AppState,
-    origin: Option<crate::pipeline_authority::Origin>,
-    storage: Option<&str>,
-    path: &Path,
-    service: &str,
+struct GitServiceRequest<'a> {
+    access: GitAccess,
+    storage: Option<&'a str>,
+    path: &'a Path,
+    service: &'a str,
     body: Bytes,
     hooks: Option<receive_hooks::ReceiveHooks>,
     task_variant: bool,
-    guard: Option<&cicd_infra::sync_git::MutationGuard>,
-    proof: Option<deadline::GitDeadline>,
+    guard: Option<&'a cicd_infra::sync_git::MutationGuard>,
+}
+
+async fn run_git_service_owned(
+    state: &AppState,
+    request: GitServiceRequest<'_>,
 ) -> Result<Vec<u8>, ApiError> {
+    let GitServiceRequest {
+        access,
+        storage,
+        path,
+        service,
+        body,
+        hooks,
+        task_variant,
+        guard,
+    } = request;
+    let GitAccess {
+        origin,
+        deadline: proof,
+        ..
+    } = access;
     let mut command = Command::new("git");
     command.kill_on_drop(true);
     if task_variant {
@@ -1296,6 +1315,57 @@ pub async fn delete_repository(
     }))
 }
 
+async fn notify_human_push(
+    state: &AppState,
+    path: &Path,
+    storage: Option<&str>,
+    origin: Option<crate::pipeline_authority::Origin>,
+    proof: Option<GitDeadline>,
+    hooks: Option<&receive_hooks::ReceiveHooks>,
+) -> Result<(), ApiError> {
+    let origin = origin
+        .ok_or_else(ApiError::forbidden)?
+        .restrict(proof.ok_or_else(ApiError::forbidden)?);
+    let storage = storage.ok_or_else(ApiError::forbidden)?;
+    let updates = hooks.ok_or_else(ApiError::forbidden)?.updates()?;
+    crate::pipeline_authority::with_origin(Some(origin), async {
+        for (old, new, reference) in updates {
+            if is_zero_object_id(&new) {
+                continue;
+            }
+            proof.ok_or_else(ApiError::forbidden)?.require()?;
+            let observed = deadline::output(
+                Command::new("git")
+                    .arg("--git-dir")
+                    .arg(path)
+                    .arg("rev-parse")
+                    .arg("--verify")
+                    .arg(&reference),
+                Bytes::new(),
+                proof,
+            )
+            .await?;
+            if !observed.status.success() || String::from_utf8_lossy(&observed.stdout).trim() != new
+            {
+                continue;
+            }
+            let _ = process_git_push(
+                state,
+                GitPushEvent {
+                    repository_id: None,
+                    repository: storage.into(),
+                    ref_name: reference,
+                    old_rev: Some(old),
+                    new_rev: Some(new),
+                },
+            )
+            .await?;
+        }
+        Ok(())
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1459,55 +1529,4 @@ mod tests {
             }
         }
     }
-}
-
-async fn notify_human_push(
-    state: &AppState,
-    path: &Path,
-    storage: Option<&str>,
-    origin: Option<crate::pipeline_authority::Origin>,
-    proof: Option<GitDeadline>,
-    hooks: Option<&receive_hooks::ReceiveHooks>,
-) -> Result<(), ApiError> {
-    let origin = origin
-        .ok_or_else(ApiError::forbidden)?
-        .restrict(proof.ok_or_else(ApiError::forbidden)?);
-    let storage = storage.ok_or_else(ApiError::forbidden)?;
-    let updates = hooks.ok_or_else(ApiError::forbidden)?.updates()?;
-    crate::pipeline_authority::with_origin(Some(origin), async {
-        for (old, new, reference) in updates {
-            if is_zero_object_id(&new) {
-                continue;
-            }
-            proof.ok_or_else(ApiError::forbidden)?.require()?;
-            let observed = deadline::output(
-                Command::new("git")
-                    .arg("--git-dir")
-                    .arg(path)
-                    .arg("rev-parse")
-                    .arg("--verify")
-                    .arg(&reference),
-                Bytes::new(),
-                proof,
-            )
-            .await?;
-            if !observed.status.success() || String::from_utf8_lossy(&observed.stdout).trim() != new
-            {
-                continue;
-            }
-            let _ = process_git_push(
-                state,
-                GitPushEvent {
-                    repository_id: None,
-                    repository: storage.into(),
-                    ref_name: reference,
-                    old_rev: Some(old),
-                    new_rev: Some(new),
-                },
-            )
-            .await?;
-        }
-        Ok(())
-    })
-    .await
 }

@@ -231,14 +231,14 @@ pub(crate) async fn require_auth(
         authority.restrict_to(deadline);
     }
     let claims = identity.claims.clone();
-    if is_platform_token {
-        if !crate::central_auth::personal_scope_allows(
+    if is_platform_token
+        && !crate::central_auth::personal_scope_allows(
             bearer.unwrap_or_default(),
             &claims.token_scopes,
             &method,
-        ) {
-            return Err(ApiError::forbidden());
-        }
+        )
+    {
+        return Err(ApiError::forbidden());
     }
     // Role::parse maps machine principals ("service_account") to the
     // developer class; token scopes still constrain every route.
