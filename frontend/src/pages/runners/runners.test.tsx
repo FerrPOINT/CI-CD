@@ -49,6 +49,24 @@ function setup(count: number) {
 afterEach(() => vi.clearAllMocks())
 
 describe('RunnersPage', () => {
+  it.each([
+    ['online', 'success'],
+    ['paused', 'warning'],
+    ['offline', 'muted'],
+  ])('keeps %s readable without relying on the status dot alone', (status, tone) => {
+    mocks.useRunners.mockReturnValue({
+      data: [{ ...runner(1), status }],
+      isLoading: false,
+      error: null,
+      refetch: mocks.refetch,
+    })
+    render(<RunnersPage />)
+    const label = screen.getByText(`runners.status_${status}`, { selector: 'span.base-badge' })
+    expect(label).toHaveAttribute('data-tone', tone)
+    expect(label).toHaveAttribute('data-appearance', 'dot')
+    expect(mocks.register).not.toHaveBeenCalled()
+    expect(mocks.remove).not.toHaveBeenCalled()
+  })
   it('shows one compact list with search, status filtering and pagination', async () => {
     setup(24)
     expect(screen.getAllByRole('button', { name: /runners.deleteRunner/ })).toHaveLength(20)

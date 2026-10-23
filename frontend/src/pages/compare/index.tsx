@@ -1,5 +1,18 @@
-import { useEffect, useState } from "react";
-import {NamespaceLink as Link, ResourceList, ResourceListRow, DiffBlock, Button, Input, Label} from '@pdlc/ui/ui'
+import { useEffect, useState, type ComponentProps } from "react";
+import {
+  Badge,
+  PageHeader,
+  SectionHeader,
+  NamespaceLink as Link,
+  ResourceList,
+  ResourceListRow,
+  DiffBlock,
+  Button,
+  Input,
+  Label,
+  EmptyState,
+  Notice,
+} from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, FileDiff, GitCompareArrows } from "lucide-react";
@@ -8,13 +21,14 @@ import type { ChangeStatus, Comparison } from "@/api/types";
 import { QueryState } from "@/shared/ui/query-state";
 import { useDebouncedValue } from "@pdlc/ui/lib";
 
-
-const changeStatusStyles: Record<ChangeStatus, string> = {
-  added: "bg-success/15 text-text-primary",
-  modified: "bg-warning/15 text-text-primary",
-  deleted: "bg-danger/15 text-text-primary",
+const changeStatusTones: Record<
+  ChangeStatus,
+  ComponentProps<typeof Badge>["tone"]
+> = {
+  added: "success",
+  modified: "warning",
+  deleted: "danger",
 };
-
 
 function ComparisonResults({ comparison }: { comparison: Comparison }) {
   const { t } = useTranslation();
@@ -29,12 +43,9 @@ function ComparisonResults({ comparison }: { comparison: Comparison }) {
 
   if (comparison.files.length === 0) {
     return (
-      <p
-        role="status"
-        className="border-y border-border py-6 text-center text-sm text-text-muted"
-      >
-        {t("compare.noChanges")}
-      </p>
+      <div role="status">
+        <EmptyState message={t("compare.noChanges")} />
+      </div>
     );
   }
 
@@ -48,12 +59,16 @@ function ComparisonResults({ comparison }: { comparison: Comparison }) {
         <span className="font-mono text-text-primary">+{totalAdditions}</span>
         <span className="font-mono text-text-primary">−{totalDeletions}</span>
       </div>
-      <h2 className="text-sm font-semibold uppercase tracking-wide">
-        {t("compare.filesChanged")}{" "}
-        <span className="font-normal text-text-muted">
-          ({comparison.files.length})
-        </span>
-      </h2>
+      <SectionHeader
+        title={
+          <>
+            {t("compare.filesChanged")}{" "}
+            <span className="font-normal text-text-muted">
+              ({comparison.files.length})
+            </span>
+          </>
+        }
+      />
       <ResourceList asChild>
         <ul>
           {comparison.files.map((file) => (
@@ -67,11 +82,9 @@ function ComparisonResults({ comparison }: { comparison: Comparison }) {
                   <code className="min-w-0 break-all text-xs">{file.path}</code>
                 </div>
                 <div className="flex shrink-0 items-center gap-3 pl-6 text-xs sm:pl-0">
-                  <span
-                    className={`rounded px-2 py-0.5 font-medium ${changeStatusStyles[file.status]}`}
-                  >
+                  <Badge tone={changeStatusTones[file.status]}>
                     {t(`compare.status_${file.status}`)}
-                  </span>
+                  </Badge>
                   {file.binary ? (
                     <span className="text-text-muted">
                       {t("compare.binaryFile")}
@@ -89,13 +102,15 @@ function ComparisonResults({ comparison }: { comparison: Comparison }) {
       </ResourceList>
       {comparison.patch.trim() && (
         <div className="min-w-0 space-y-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide">
-            {t("compare.patch")}
-          </h2>
+          <SectionHeader title={<>{t("compare.patch")}</>} />
           <DiffBlock
             patch={comparison.patch}
             aria-label={t("compare.patch")}
-            notice={comparison.patch_truncated ? t("compare.patchTruncated") : undefined}
+            notice={
+              comparison.patch_truncated
+                ? t("compare.patchTruncated")
+                : undefined
+            }
           />
         </div>
       )}
@@ -164,9 +179,15 @@ export function ComparePage() {
           <ChevronRight className="h-3 w-3" aria-hidden />
           <span>{t("repositoryBrowser.compare")}</span>
         </div>
-        <div className="mt-2 flex items-center gap-3">
-          <GitCompareArrows className="h-6 w-6 text-accent" aria-hidden />
-          <h1 className="text-2xl font-bold">{t("compare.title")}</h1>
+        <div className="mt-2">
+          <PageHeader
+            title={t("compare.title")}
+            leading={
+              <>
+                <GitCompareArrows className="h-6 w-6 text-accent" aria-hidden />
+              </>
+            }
+          />
         </div>
       </div>
 
@@ -181,7 +202,7 @@ export function ComparePage() {
             id="compare-from"
             required
             list="compare-refs-from"
-            className="min-h-10 font-mono"
+            className="font-mono"
             value={from}
             onChange={(event) => setFrom(event.target.value)}
           />
@@ -201,7 +222,7 @@ export function ComparePage() {
             id="compare-to"
             required
             list="compare-refs-to"
-            className="min-h-10 font-mono"
+            className="font-mono"
             value={to}
             onChange={(event) => setTo(event.target.value)}
           />
@@ -211,56 +232,72 @@ export function ComparePage() {
             ))}
           </datalist>
         </div>
-        <Button type="submit" className="h-10" disabled={sameRef}>
+        <Button type="submit" disabled={sameRef}>
           {t("compare.compareAction")}
         </Button>
         {sameRef && (
-          <p
+          <Notice
             role="alert"
-            className="border-l-2 border-danger pl-2 text-sm text-text-primary sm:col-span-4"
+            className="sm:col-span-4"
+            tone="danger"
+            appearance="inline"
           >
             {t("compare.refsMustDiffer")}
-          </p>
+          </Notice>
         )}
         {(fromRefs.isLoading || toRefs.isLoading) && (
-          <p role="status" className="text-xs text-text-muted sm:col-span-4">
+          <Notice
+            role="status"
+            className="sm:col-span-4"
+            tone="neutral"
+            appearance="inline"
+          >
             {t("compare.loadingRefs")}
-          </p>
+          </Notice>
         )}
         {((fromRefs.data?.length ?? 0) > 50 ||
           (toRefs.data?.length ?? 0) > 50) && (
-          <p role="status" className="text-xs text-text-muted sm:col-span-4">
+          <Notice
+            role="status"
+            className="sm:col-span-4"
+            tone="warning"
+            appearance="inline"
+          >
             {t("compare.refSuggestionsLimited")}
-          </p>
+          </Notice>
         )}
         {Boolean(fromRefs.error || toRefs.error) && (
-          <div
+          <Notice
             role="alert"
-            className="flex flex-wrap items-center gap-2 text-xs text-text-secondary sm:col-span-4"
+            className="sm:col-span-4"
+            tone="warning"
+            appearance="panel"
+            actions={
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+
+                onClick={() => {
+                  if (fromRefs.error) void fromRefs.refetch();
+                  if (toRefs.error) void toRefs.refetch();
+                }}
+              >
+                {t("common.retry")}
+              </Button>
+            }
           >
             <span>{t("compare.refsUnavailable")}</span>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="min-h-10 sm:min-h-10"
-              onClick={() => {
-                if (fromRefs.error) void fromRefs.refetch();
-                if (toRefs.error) void toRefs.refetch();
-              }}
-            >
-              {t("common.retry")}
-            </Button>
-          </div>
+          </Notice>
         )}
       </form>
 
       {!canCompare ? (
-        <p role="status" className="py-4 text-sm text-text-muted">
+        <Notice role="status" tone="neutral" appearance="inline">
           {fromParam && toParam
             ? t("compare.refsMustDiffer")
             : t("compare.chooseRefs")}
-        </p>
+        </Notice>
       ) : (
         <QueryState
           data={comparison}

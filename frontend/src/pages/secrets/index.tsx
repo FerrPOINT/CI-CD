@@ -7,14 +7,25 @@ import {
   KeyRound,
   Plus,
   RotateCw,
-  Search,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import {toast, Button, Input, Label, ResourceList, ResourceListRow, ConfirmDialog} from '@pdlc/ui/ui'
+import {
+  PageHeader,
+  toast,
+  Button,
+  Input,
+  InputWithAction,
+  Label,
+  ResourceList,
+  ResourceListRow,
+  ConfirmDialog,
+  SearchInput,
+  Notice,
+  EmptyState,
+} from "@pdlc/ui/ui";
 import { useDeleteSecret, useSecrets, useUpsertSecret } from "@/api/hooks";
 import type { SecretMetadata } from "@/api/types";
-
 
 import { QueryState } from "@/shared/ui/query-state";
 
@@ -113,20 +124,24 @@ export function SecretsPage() {
 
   return (
     <div className="min-w-0 space-y-5">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-bold sm:text-2xl">{t("secrets.title")}</h1>
-        <Button
-          type="button"
-          size="sm"
-          className="min-h-10 sm:min-h-10"
-          aria-expanded={showForm && editingKey === null}
-          disabled={upsert.isPending}
-          onClick={openNewForm}
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-          {t("secrets.add")}
-        </Button>
-      </header>
+      <PageHeader
+        title={t("secrets.title")}
+        actions={
+          <>
+            <Button
+              type="button"
+              size="sm"
+
+              aria-expanded={showForm && editingKey === null}
+              disabled={upsert.isPending}
+              onClick={openNewForm}
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              {t("secrets.add")}
+            </Button>
+          </>
+        }
+      />
 
       <div className="flex items-start gap-2 border-y border-border py-3 text-xs text-text-secondary">
         <ShieldCheck className="h-4 w-4 shrink-0 text-accent" aria-hidden />
@@ -156,7 +171,7 @@ export function SecretsPage() {
                 <Input
                   id="secret-key"
                   ref={keyRef}
-                  className="min-h-10 min-w-0"
+                  className="min-w-0"
                   required
                   disabled={upsert.isPending}
                   autoComplete="off"
@@ -172,40 +187,30 @@ export function SecretsPage() {
           </div>
           <div className="min-w-0 space-y-1.5">
             <Label htmlFor="secret-value">{t("secrets.value")}</Label>
-            <div className="relative">
-              <Input
-                id="secret-value"
-                ref={valueRef}
-                type={showValue ? "text" : "password"}
-                className="min-h-10 min-w-0 pr-12"
-                required
-                disabled={upsert.isPending}
-                autoComplete="new-password"
-                value={form.value}
-                onChange={(event) => {
-                  setForm({ ...form, value: event.target.value });
-                  setSaveError("");
-                }}
-              />
-              <Button
-                variant="ghost"
-                type="button"
-                aria-label={t(
-                  showValue ? "secrets.hideValue" : "secrets.showValue",
-                )}
-                title={t(showValue ? "secrets.hideValue" : "secrets.showValue")}
-                aria-pressed={showValue}
-                disabled={upsert.isPending}
-                className="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center rounded-md text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-                onClick={() => setShowValue(!showValue)}
-              >
-                {showValue ? (
+            <InputWithAction
+              id="secret-value"
+              ref={valueRef}
+              type={showValue ? "text" : "password"}
+              className="min-w-0"
+              required
+              disabled={upsert.isPending}
+              autoComplete="new-password"
+              value={form.value}
+              onChange={(event) => {
+                setForm({ ...form, value: event.target.value });
+                setSaveError("");
+              }}
+              action={{
+                label: t(showValue ? "secrets.hideValue" : "secrets.showValue"),
+                pressed: showValue,
+                onAction: () => setShowValue(!showValue),
+                icon: showValue ? (
                   <EyeOff className="h-4 w-4" aria-hidden />
                 ) : (
                   <Eye className="h-4 w-4" aria-hidden />
-                )}
-              </Button>
-            </div>
+                ),
+              }}
+            />
           </div>
           {isReplacing && (
             <p className="text-xs text-text-secondary sm:col-span-2">
@@ -213,15 +218,20 @@ export function SecretsPage() {
             </p>
           )}
           {saveError && (
-            <p role="alert" className="text-sm text-danger sm:col-span-2">
+            <Notice
+              role="alert"
+              className="sm:col-span-2"
+              tone="danger"
+              appearance="inline"
+            >
               {saveError}
-            </p>
+            </Notice>
           )}
           <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
             <Button
               type="button"
               variant="outline"
-              className="min-h-10 sm:min-h-10"
+
               disabled={upsert.isPending}
               onClick={closeForm}
             >
@@ -229,7 +239,7 @@ export function SecretsPage() {
             </Button>
             <Button
               type="submit"
-              className="min-h-10 sm:min-h-10"
+
               disabled={upsert.isPending || !form.key.trim() || !form.value}
             >
               {t(isReplacing ? "secrets.replace" : "secrets.save")}
@@ -249,16 +259,10 @@ export function SecretsPage() {
       >
         {() => (
           <section aria-label={t("secrets.title")} className="space-y-3">
-            <div className="relative max-w-xl">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-                aria-hidden
-              />
-              <Input
-                type="search"
+            <div className="max-w-xl">
+              <SearchInput
                 aria-label={t("secrets.search")}
                 placeholder={t("secrets.search")}
-                className="min-h-10 pl-9"
                 value={search}
                 onChange={(event) => {
                   setSearch(event.target.value);
@@ -273,12 +277,9 @@ export function SecretsPage() {
               })}
             </p>
             {filteredSecrets.length === 0 ? (
-              <p
-                role="status"
-                className="border-y border-border py-6 text-sm text-text-muted"
-              >
-                {t("secrets.noMatches")}
-              </p>
+              <div role="status">
+                <EmptyState message={t("secrets.noMatches")} />
+              </div>
             ) : (
               <ResourceList asChild>
                 <ul>
@@ -315,12 +316,13 @@ export function SecretsPage() {
                           })}
                           title={t("secrets.replaceFor", { name: secret.key })}
                           disabled={upsert.isPending}
-                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+                          size="icon" className="shrink-0"
                           onClick={() => openReplaceForm(secret)}
                         >
                           <RotateCw className="h-4 w-4" aria-hidden />
                         </Button>
                         <Button
+                          size="icon"
                           variant="destructive-outline"
                           type="button"
                           aria-label={t("secrets.deleteFor", {
@@ -328,7 +330,7 @@ export function SecretsPage() {
                           })}
                           title={t("secrets.deleteFor", { name: secret.key })}
                           disabled={remove.isPending}
-                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-danger hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+                          className="shrink-0"
                           onClick={() => {
                             setPendingDelete(secret);
                             setDeleteError("");
@@ -351,7 +353,7 @@ export function SecretsPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={currentPage === 1}
                   onClick={() => setPage(currentPage - 1)}
                 >
@@ -364,7 +366,7 @@ export function SecretsPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={currentPage === totalPages}
                   onClick={() => setPage(currentPage + 1)}
                 >

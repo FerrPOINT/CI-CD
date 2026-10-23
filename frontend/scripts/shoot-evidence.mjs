@@ -38,7 +38,6 @@ const byName = Object.fromEntries(projects.map(p => [p.name, p]))
 const platform = pickProject(byName, ['forge-demo-platform', 'platform-core'])
 const platformPipes = await getJson(`/projects/${platform.id}/pipelines`)
 const pipeline = platformPipes.find(p => p.status === 'success') ?? platformPipes[0]
-const failedPipe = platformPipes.find(p => p.status === 'failed')
 const pipeDetail = await getJson(`/pipelines/${pipeline.id}`)
 const jobId = pipeDetail.stages.flatMap(s => s.jobs)[0]?.id
 const pullRequests = await getJson('/repos/platform-core/pulls')

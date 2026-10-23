@@ -172,13 +172,11 @@ export function AppShell() {
             <>
               {navigationTrigger}
 
-              <NavLink
-                to="/"
-                className="flex items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-                aria-label={t("app.name")}
-              >
-                <PlatformMark size="shell" withName={false} />
-              </NavLink>
+              <Button asChild variant="ghost" size="icon">
+                <NavLink to="/" aria-label={t("app.name")}>
+                  <PlatformMark size="shell" withName={false} />
+                </NavLink>
+              </Button>
             </>
           }
           actions={

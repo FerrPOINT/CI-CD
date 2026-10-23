@@ -7,6 +7,8 @@ import {
   ProjectAvatar,
   SectionNavigation,
   SectionNavigationItem,
+  ErrorState,
+  LoadingState,
 } from "@pdlc/ui/ui";
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
@@ -64,19 +66,11 @@ export function ConfigurationContext({
       repository.data &&
       (!namespace || workspaceKey(ref) !== workspaceKey(namespace)))
   )
-    return (
-      <p role="alert" className="text-danger">
-        Конфигурация принадлежит другому проекту.
-      </p>
-    );
+    return <ErrorState message="Конфигурация принадлежит другому проекту." />;
   if (config.isError || repository.isError)
-    return (
-      <p role="alert" className="text-danger">
-        Конфигурация недоступна.
-      </p>
-    );
+    return <ErrorState message="Конфигурация недоступна." />;
   if (config.isPending || (config.data.repository_id && repository.isPending))
-    return <p role="status">Загружаем конфигурацию…</p>;
+    return <LoadingState message="Загружаем конфигурацию…" />;
   return (
     <div className="space-y-4">
       <nav

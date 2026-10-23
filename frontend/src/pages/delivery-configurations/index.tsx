@@ -1,10 +1,13 @@
 import { useState } from "react";
 import {
+  PageHeader,
   Button,
   Input,
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
+  LoadingState,
+  ErrorState,
 } from "@pdlc/ui/ui";
 import { useConfigurations } from "@/api/workspaces";
 export function DeliveryConfigurationsPage() {
@@ -13,7 +16,7 @@ export function DeliveryConfigurationsPage() {
   const configs = useConfigurations(undefined, offset, search);
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-semibold">Непривязанные CI-конфигурации</h1>
+      <PageHeader title="Непривязанные CI-конфигурации" />
       <p className="text-text-muted">
         Существующие настройки и история сохранены. Подключите конфигурацию на
         странице нужного репозитория.
@@ -29,9 +32,9 @@ export function DeliveryConfigurationsPage() {
         }}
       />
       {configs.isPending ? (
-        <p role="status">Загружаем конфигурации…</p>
+        <LoadingState message="Загружаем конфигурации…" />
       ) : configs.isError ? (
-        <p role="alert">Конфигурации недоступны.</p>
+        <ErrorState message="Конфигурации недоступны." />
       ) : (
         <ResourceList asChild variant="bordered" density="comfortable">
           <ul>

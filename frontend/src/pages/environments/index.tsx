@@ -1,16 +1,23 @@
-import {PageNavigation, Checkbox, Button, toast, Input, Label, Select, ResourceList, ResourceListRow, ConfirmDialog} from '@pdlc/ui/ui'
+import { TextLink, FormField } from "@pdlc/ui/ui";
+import {
+  Notice,
+  PageNavigation,
+  Checkbox,
+  Button,
+  toast,
+  Input,
+  Select,
+  ResourceList,
+  ResourceListRow,
+  ConfirmDialog,
+  SearchInput,
+  PageHeader,
+  SectionHeader,
+} from "@pdlc/ui/ui";
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams, useSearchParams } from "react-router";
-import {
-  AlertCircle,
-  ChevronDown,
-  Globe,
-  Plus,
-  RotateCcw,
-  Search,
-  Trash2,
-} from "lucide-react";
+import { ChevronDown, Globe, Plus, RotateCcw, Trash2 } from "lucide-react";
 
 import {
   useCreateDeployment,
@@ -22,7 +29,6 @@ import {
   useRollbackDeployment,
 } from "@/api/hooks";
 import type { Deployment, Environment, EnvironmentStatus } from "@/api/types";
-
 
 import { QueryState } from "@/shared/ui/query-state";
 
@@ -132,87 +138,91 @@ export function EnvironmentsPage() {
 
   return (
     <div className="min-w-0 space-y-5">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Globe className="h-5 w-5 text-accent" aria-hidden />
-          <h1 className="text-xl font-bold sm:text-2xl">
-            {t("environments.title")}
-          </h1>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          className="min-h-10 sm:min-h-10"
-          aria-expanded={showForm}
-          onClick={() => {
-            setShowForm(!showForm);
-            setFormError(null);
-          }}
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-          {t("environments.create")}
-        </Button>
-      </header>
+      <PageHeader
+        title={t("environments.title")}
+        leading={<Globe className="h-5 w-5 text-accent" aria-hidden />}
+        actions={
+          <Button
+            type="button"
+            size="sm"
+
+            aria-expanded={showForm}
+            onClick={() => {
+              setShowForm(!showForm);
+              setFormError(null);
+            }}
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+            {t("environments.create")}
+          </Button>
+        }
+      />
 
       {showForm && (
         <form
           onSubmit={createEnvironment}
           className="grid gap-3 border-y border-border py-4 sm:grid-cols-2"
         >
-          <div className="space-y-1.5">
-            <Label htmlFor="env-name">{t("environments.name")}</Label>
-            <Input
-              id="env-name"
-              required
-              value={form.name}
-              onChange={(event) =>
-                setForm({ ...form, name: event.target.value })
-              }
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="env-url">{t("environments.url")}</Label>
-            <Input
-              id="env-url"
-              type="url"
-              placeholder="https://app.example.com"
-              value={form.url}
-              onChange={(event) =>
-                setForm({ ...form, url: event.target.value })
-              }
-            />
-          </div>
-          <label className="flex min-h-10 items-center gap-2 text-sm text-text-secondary">
-            <Checkbox
-              checked={form.protected}
-              onCheckedChange={(checked) =>
-                setForm({ ...form, protected: checked === true })
-              }
-            />
-            {t("environments.protected")}
-          </label>
-          {form.protected && (
-            <div className="space-y-1.5">
-              <Label htmlFor="env-required-approvals">
-                {t("environments.requiredApprovals")}
-              </Label>
+          <FormField id="env-name" label={t("environments.name")} required>
+            {(attrs) => (
               <Input
-                id="env-required-approvals"
-                type="number"
-                min={1}
-                max={10}
-                required
-                value={form.required_approvals}
+                {...attrs}
+                value={form.name}
                 onChange={(event) =>
-                  setForm({
-                    ...form,
-                    required_approvals: Number(event.target.value) || 1,
-                  })
+                  setForm({ ...form, name: event.target.value })
                 }
               />
-            </div>
+            )}
+          </FormField>
+          <FormField id="env-url" label={t("environments.url")}>
+            {(attrs) => (
+              <Input
+                {...attrs}
+                type="url"
+                placeholder="https://app.example.com"
+                value={form.url}
+                onChange={(event) =>
+                  setForm({ ...form, url: event.target.value })
+                }
+              />
+            )}
+          </FormField>
+          <Checkbox
+            checked={form.protected}
+            onCheckedChange={(checked) =>
+              setForm({ ...form, protected: checked === true })
+            }
+          >
+            {t("environments.protected")}
+          </Checkbox>
+          {form.protected && (
+            <FormField
+              id="env-required-approvals"
+              label={t("environments.requiredApprovals")}
+              required
+            >
+              {(attrs) => (
+                <Input
+                  {...attrs}
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={form.required_approvals}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      required_approvals: Number(event.target.value) || 1,
+                    })
+                  }
+                />
+              )}
+            </FormField>
           )}
-          {formError && <InlineError message={formError} />}
+          {formError && (
+            <Notice role="alert" tone="danger" appearance="inline">
+              {formError}
+            </Notice>
+          )}
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <Button type="submit" disabled={createEnv.isPending}>
               {t("environments.create")}
@@ -243,16 +253,10 @@ export function EnvironmentsPage() {
         {() => (
           <section aria-label={t("environments.title")} className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              <div className="relative min-w-0 flex-1 sm:max-w-xl">
-                <Search
-                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-                  aria-hidden
-                />
-                <Input
-                  type="search"
+              <div className="min-w-0 flex-1 sm:max-w-xl">
+                <SearchInput
                   aria-label={t("environments.search")}
                   placeholder={t("environments.search")}
-                  className="min-h-10 pl-9"
                   value={search}
                   onChange={(event) => {
                     setSearch(event.target.value);
@@ -292,12 +296,9 @@ export function EnvironmentsPage() {
               })}
             </p>
             {filtered.length === 0 ? (
-              <p
-                role="status"
-                className="border-y border-border py-6 text-sm text-text-muted"
-              >
+              <Notice tone="neutral" appearance="inline" role="status">
                 {t("environments.noMatches")}
-              </p>
+              </Notice>
             ) : (
               <ResourceList asChild>
                 <ul>
@@ -336,15 +337,15 @@ export function EnvironmentsPage() {
                               </div>
                               {env.url &&
                                 (safeUrl ? (
-                                  <a
+                                  <TextLink
                                     href={safeUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="block w-fit max-w-full truncate text-xs text-accent underline-offset-2 hover:underline"
+                                    className="block w-fit max-w-full truncate text-xs"
                                     title={env.url}
                                   >
                                     {env.url}
-                                  </a>
+                                  </TextLink>
                                 ) : (
                                   <span
                                     className="block max-w-full truncate text-xs text-text-muted"
@@ -365,7 +366,7 @@ export function EnvironmentsPage() {
                               })}
                               aria-expanded={expanded}
                               aria-controls={`deployments-${env.id}`}
-                              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-accent hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent"
+                              size="icon" className="shrink-0"
                               onClick={() =>
                                 setSelectedEnvId(expanded ? null : env.id)
                               }
@@ -376,6 +377,7 @@ export function EnvironmentsPage() {
                               />
                             </Button>
                             <Button
+                              size="icon"
                               variant="destructive-outline"
                               type="button"
                               aria-label={t("environments.deleteFor", {
@@ -384,7 +386,7 @@ export function EnvironmentsPage() {
                               title={t("environments.deleteFor", {
                                 name: env.name,
                               })}
-                              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-danger hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent"
+                              className="shrink-0"
                               onClick={() => {
                                 setPendingEnv(env);
                                 setDeleteError(null);
@@ -423,9 +425,9 @@ export function EnvironmentsPage() {
       </QueryState>
 
       {!isLoading && !error && selectedEnvId && !selectedEnvironment && (
-        <p role="alert" className="text-danger">
+        <Notice role="alert" tone="danger" appearance="inline">
           Указанное окружение недоступно в этой CI-конфигурации.
-        </p>
+        </Notice>
       )}
       <ConfirmDialog
         open={pendingEnv !== null}
@@ -546,37 +548,46 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
       aria-label={t("environments.deployments")}
       className="min-w-0 space-y-3"
     >
-      <h2 className="text-sm font-semibold">{t("environments.deployments")}</h2>
+      <SectionHeader title={t("environments.deployments")} />
       {!isLoading && !error && requestedDeployment && !selectedDeployment && (
-        <p role="alert">Указанный деплой не найден в выбранном окружении.</p>
+        <Notice role="alert" tone="danger" appearance="inline">
+          Указанный деплой не найден в выбранном окружении.
+        </Notice>
       )}
       <form
         onSubmit={createDeployment}
         className="flex flex-wrap items-end gap-2"
       >
-        <div className="min-w-0 flex-1 space-y-1 sm:max-w-xs">
-          <Label htmlFor={`git-ref-${environmentId}`}>
-            {t("deployments.gitRef")}
-          </Label>
-          <Input
+        <div className="min-w-0 flex-1 sm:max-w-xs">
+          <FormField
             id={`git-ref-${environmentId}`}
+            label={t("deployments.gitRef")}
             required
-            placeholder="main"
-            className="min-h-10"
-            value={gitRef}
-            onChange={(event) => setGitRef(event.target.value)}
-          />
+          >
+            {(attrs) => (
+              <Input
+                {...attrs}
+                placeholder="main"
+                value={gitRef}
+                onChange={(event) => setGitRef(event.target.value)}
+              />
+            )}
+          </FormField>
         </div>
         <Button
           type="submit"
           size="sm"
-          className="min-h-10 sm:min-h-10"
+
           disabled={createDep.isPending}
         >
           {t("deployments.create")}
         </Button>
       </form>
-      {formError && <InlineError message={formError} />}
+      {formError && (
+        <Notice role="alert" tone="danger" appearance="inline">
+          {formError}
+        </Notice>
+      )}
       <QueryState
         data={deployments}
         isLoading={isLoading}
@@ -589,11 +600,10 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
         {() => (
           <div className="space-y-2">
             {deployments.length > pageSize && (
-              <Input
-                type="search"
+              <SearchInput
                 aria-label={t("deployments.search")}
                 placeholder={t("deployments.search")}
-                className="min-h-10 sm:max-w-xs"
+                containerClassName="sm:max-w-xs"
                 value={search}
                 onChange={(event) => {
                   setSearch(event.target.value);
@@ -602,9 +612,9 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
               />
             )}
             {filtered.length === 0 ? (
-              <p role="status" className="py-3 text-sm text-text-muted">
+              <Notice role="status" tone="neutral" appearance="inline">
                 {t("deployments.noMatches")}
-              </p>
+              </Notice>
             ) : (
               <ResourceList asChild>
                 <ul>
@@ -669,7 +679,7 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                                   aria-label={t("deployments.approveFor", {
                                     ref: deployment.git_ref,
                                   })}
-                                  className="min-h-10 sm:min-h-10"
+
                                   onClick={() => {
                                     setAction({ deployment, kind: "approved" });
                                     setActionError(null);
@@ -684,7 +694,7 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                                   aria-label={t("deployments.rejectFor", {
                                     ref: deployment.git_ref,
                                   })}
-                                  className="min-h-10 sm:min-h-10"
+
                                   onClick={() => {
                                     setAction({ deployment, kind: "rejected" });
                                     setActionError(null);
@@ -702,7 +712,7 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                               aria-label={t("deployments.rollbackFor", {
                                 ref: deployment.git_ref,
                               })}
-                              className="min-h-10 sm:min-h-10"
+
                               onClick={() => {
                                 setAction({ deployment, kind: "rollback" });
                                 setActionError(null);
@@ -773,18 +783,6 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
         }
       />
     </section>
-  );
-}
-
-function InlineError({ message }: { message: string }) {
-  return (
-    <p
-      role="alert"
-      className="flex items-center gap-2 text-sm text-text-primary"
-    >
-      <AlertCircle className="h-4 w-4 shrink-0 text-danger" aria-hidden />
-      {message}
-    </p>
   );
 }
 

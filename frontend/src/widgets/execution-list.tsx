@@ -3,6 +3,10 @@ import { useSearchParams } from "react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  TextLink,
+  EmptyState,
+  Badge,
+  SectionHeader,
   Button,
   NamespaceLink as Link,
   Dialog,
@@ -11,6 +15,8 @@ import {
   DialogDescription,
   ResourceList,
   ResourceListRow,
+  Notice,
+  LoadingState,
 } from "@pdlc/ui/ui";
 import { type NamespaceLocation, withNamespaceLocation } from "@pdlc/ui/lib";
 import type { components } from "@/api/schema";
@@ -164,18 +170,19 @@ export function ExecutionList({
       Сбросить фильтры
     </Button>
   ) : (
-    <Link
-      className="text-accent underline"
-      to={
-        repositoryId
-          ? `/catalog/repositories/${repositoryId}?tab=configurations`
-          : namespace
-            ? workspacePath(namespace, "repositories")
-            : "/repositories"
-      }
-    >
-      Открыть репозитории и CI-конфигурации
-    </Link>
+    <Button asChild variant="link">
+      <Link
+        to={
+          repositoryId
+            ? `/catalog/repositories/${repositoryId}?tab=configurations`
+            : namespace
+              ? workspacePath(namespace, "repositories")
+              : "/repositories"
+        }
+      >
+        Открыть репозитории и CI-конфигурации
+      </Link>
+    </Button>
   );
   const errorMessage = denied
     ? "Нет доступа к этому списку."
@@ -191,28 +198,28 @@ export function ExecutionList({
       aria-busy={list.isFetching || undefined}
     >
       {!preview && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold">
-            {deployment ? "Деплои" : "Пайплайны"}
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setFiltersOpen(true)}
-            >
-              Фильтры{activeKeys.length ? ` (${activeKeys.length})` : ""}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={list.isFetching}
-              onClick={() => void list.refetch()}
-            >
-              Обновить
-            </Button>
-          </div>
-        </div>
+        <SectionHeader
+          title={<>{deployment ? "Деплои" : "Пайплайны"}</>}
+          actions={
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setFiltersOpen(true)}
+              >
+                Фильтры{activeKeys.length ? ` (${activeKeys.length})` : ""}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={list.isFetching}
+                onClick={() => void list.refetch()}
+              >
+                Обновить
+              </Button>
+            </>
+          }
+        />
       )}
       {!!activeKeys.length && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -270,26 +277,30 @@ export function ExecutionList({
         </DialogContent>
       </Dialog>
       {list.isError && (
-        <div
+        <Notice
           role="alert"
-          className="flex flex-wrap items-center gap-2 rounded-md border border-border p-3"
+
+          tone="danger"
+          appearance="panel"
+          actions={
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void list.refetch()}
+            >
+              Повторить
+            </Button>
+          }
         >
           <p>
             {display
               ? "Не удалось обновить. Показаны последние загруженные данные."
               : errorMessage}
           </p>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void list.refetch()}
-          >
-            Повторить
-          </Button>
-        </div>
+        </Notice>
       )}
       {list.isPending ? (
-        <p role="status">Загружаем запуски…</p>
+        <LoadingState message="Загружаем запуски…" />
       ) : (
         display && (
           <>
@@ -302,14 +313,14 @@ export function ExecutionList({
                       : `/pipelines/${row.pipeline_id ?? row.id}`;
                     const tone =
                       row.status === "success"
-                        ? "text-success"
+                        ? "success"
                         : row.status === "failed"
-                          ? "text-danger"
+                          ? "danger"
                           : ["running", "queued", "pending"].includes(
                                 row.status,
                               )
-                            ? "text-warning"
-                            : "text-text-muted";
+                            ? "warning"
+                            : "muted";
                     const seconds =
                       row.started_at && row.finished_at
                         ? Math.max(
@@ -325,33 +336,40 @@ export function ExecutionList({
                       <ResourceListRow asChild key={row.id}>
                         <li className="flex min-w-0 flex-wrap items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
-                            <Link
-                              className="font-semibold text-accent underline-offset-2 hover:underline"
-                              to={withNamespaceLocation(target, row.namespace)}
-                            >
-                              {deployment ? "Деплой" : "Пайплайн"} #
-                              {row.id.slice(0, 8)}
-                            </Link>
+                            <TextLink asChild>
+                              <Link
+                                className="font-semibold"
+                                to={withNamespaceLocation(
+                                  target,
+                                  row.namespace,
+                                )}
+                              >
+                                {deployment ? "Деплой" : "Пайплайн"} #
+                                {row.id.slice(0, 8)}
+                              </Link>
+                            </TextLink>
                             <div className="mt-1 flex flex-wrap gap-x-2 text-sm">
-                              <Link
-                                className="text-accent"
-                                to={withNamespaceLocation(
-                                  `/catalog/repositories/${row.repository_id}`,
-                                  row.namespace,
-                                )}
-                              >
-                                {row.repository_name}
-                              </Link>
+                              <TextLink asChild>
+                                <Link
+                                  to={withNamespaceLocation(
+                                    `/catalog/repositories/${row.repository_id}`,
+                                    row.namespace,
+                                  )}
+                                >
+                                  {row.repository_name}
+                                </Link>
+                              </TextLink>
                               <span aria-hidden>·</span>
-                              <Link
-                                className="text-accent"
-                                to={withNamespaceLocation(
-                                  `/delivery-configs/${row.configuration_id}/settings`,
-                                  row.namespace,
-                                )}
-                              >
-                                {row.configuration_name}
-                              </Link>
+                              <TextLink asChild>
+                                <Link
+                                  to={withNamespaceLocation(
+                                    `/delivery-configs/${row.configuration_id}/settings`,
+                                    row.namespace,
+                                  )}
+                                >
+                                  {row.configuration_name}
+                                </Link>
+                              </TextLink>
                             </div>
                             <p className="mt-1 break-words text-sm text-text-muted">
                               {row.git_ref} ·{" "}
@@ -366,45 +384,48 @@ export function ExecutionList({
                             {row.commit_sha && (
                               <p className="mt-1 text-xs text-text-muted">
                                 Коммит{" "}
-                                <Link
-                                  className="font-mono text-accent"
-                                  to={withNamespaceLocation(
-                                    `/catalog/repositories/${row.repository_id}?tab=files&ref=${encodeURIComponent(row.commit_sha)}`,
-                                    row.namespace,
-                                  )}
-                                >
-                                  {row.commit_sha.slice(0, 8)}
-                                </Link>
+                                <TextLink asChild>
+                                  <Link
+                                    className="font-mono"
+                                    to={withNamespaceLocation(
+                                      `/catalog/repositories/${row.repository_id}?tab=files&ref=${encodeURIComponent(row.commit_sha)}`,
+                                      row.namespace,
+                                    )}
+                                  >
+                                    {row.commit_sha.slice(0, 8)}
+                                  </Link>
+                                </TextLink>
                               </p>
                             )}
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className={`rounded-md bg-surface-raised px-2 py-1 text-sm font-medium ${tone}`}
-                            >
-                              {statusLabel(row.status)}
-                            </span>
+                            <Badge tone={tone}>{statusLabel(row.status)}</Badge>
                             {row.approval_state && (
                               <span className="text-sm text-text-muted">
                                 {approvalLabel(row.approval_state)}
                               </span>
                             )}
-                            <Link
-                              className="text-accent underline"
-                              to={withNamespaceLocation(target, row.namespace)}
-                            >
-                              Открыть
-                            </Link>
-                            {deployment && row.pipeline_id && (
+                            <Button asChild variant="link">
                               <Link
-                                className="text-sm text-accent"
                                 to={withNamespaceLocation(
-                                  `/pipelines/${row.pipeline_id}`,
+                                  target,
                                   row.namespace,
                                 )}
                               >
-                                Пайплайн
+                                Открыть
                               </Link>
+                            </Button>
+                            {deployment && row.pipeline_id && (
+                              <Button asChild variant="link">
+                                <Link
+                                  to={withNamespaceLocation(
+                                    `/pipelines/${row.pipeline_id}`,
+                                    row.namespace,
+                                  )}
+                                >
+                                  Пайплайн
+                                </Link>
+                              </Button>
                             )}
                           </div>
                         </li>
@@ -415,23 +436,23 @@ export function ExecutionList({
               </ResourceList>
             )}
             {!display.items.length && (
-              <div className="space-y-3 rounded-lg border border-dashed border-border p-6 text-center">
-                <p>
-                  {activeKeys.length
+              <EmptyState
+                message={
+                  activeKeys.length
                     ? "По выбранным фильтрам ничего не найдено."
                     : emptyConfigurations.data?.total === 0
                       ? "Нет CI-конфигураций."
-                      : `${deployment ? "Деплоев" : "Пайплайнов"} пока нет.`}
-                </p>
-                <p className="text-sm text-text-muted">
-                  {activeKeys.length
+                      : `${deployment ? "Деплоев" : "Пайплайнов"} пока нет.`
+                }
+                description={
+                  activeKeys.length
                     ? "Измените условия или сбросьте фильтры."
                     : emptyConfigurations.data?.total === 0
                       ? "Создайте CI-конфигурацию в репозитории."
-                      : "Запустите настроенную CI-конфигурацию в репозитории."}
-                </p>
-                {!preview && emptyAction}
-              </div>
+                      : "Запустите настроенную CI-конфигурацию в репозитории."
+                }
+                action={!preview ? emptyAction : undefined}
+              />
             )}
             {!preview && (
               <div className="flex flex-wrap items-center justify-between gap-2">

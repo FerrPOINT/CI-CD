@@ -8,7 +8,12 @@ import {
   RefreshCw,
   Rocket,
 } from 'lucide-react'
-import { ProjectNavigationGroup, SidebarItem } from '@pdlc/ui/ui'
+import {
+  ProjectNavigationGroup,
+  SidebarItem,
+  Notice,
+  LoadingState,
+} from "@pdlc/ui/ui";
 import { withNamespaceLocation } from '@pdlc/ui/lib'
 import {
   useWorkspaceCatalog,
@@ -44,15 +49,13 @@ export function WorkspaceNavigation({
   ] as const
   if (malformed || catalog.isError)
     return (
-      <p role="alert" className="p-3 text-sm text-warning">
+      <Notice role="alert" tone="warning" appearance="inline">
         Проекты недоступны
-      </p>
+      </Notice>
     )
   if (catalog.isPending)
     return (
-      <p role="status" className="p-3 text-sm text-text-muted">
-        Загружаем проекты…
-      </p>
+      <LoadingState message="Загружаем проекты…" />
     )
   const projects = catalog.data.filter(
     (project) => all || (ref && workspaceKey(project) === workspaceKey(ref)),
@@ -71,22 +74,22 @@ export function WorkspaceNavigation({
           open={!collapsed.includes(disclosureKey(project))}
           status={
             !project.group_id
-              ? 'Git не подключён'
-              : project.state === 'archived'
-                ? 'В архиве'
+              ? "Git не подключён"
+              : project.state === "archived"
+                ? "В архиве"
                 : project.stale
-                  ? 'Метаданные устарели'
+                  ? "Метаданные устарели"
                   : undefined
           }
           active={!!ref && workspaceKey(ref) === workspaceKey(project)}
           onToggle={() => toggle(disclosureKey(project))}
         >
           {sections.map(([section, label, Icon]) => {
-            const path = workspacePath(project, section)
+            const path = workspacePath(project, section);
             const to = withNamespaceLocation(
-              path + (all ? '?project_scope=all' : ''),
+              path + (all ? "?project_scope=all" : ""),
               project,
-            )
+            );
             return (
               <SidebarItem
                 key={section}
@@ -105,7 +108,7 @@ export function WorkspaceNavigation({
                   <span className="base-sidebar-item-label">{label}</span>
                 </NavLink>
               </SidebarItem>
-            )
+            );
           })}
         </ProjectNavigationGroup>
       ))}

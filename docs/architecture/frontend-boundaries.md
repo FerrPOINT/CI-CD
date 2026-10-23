@@ -9,14 +9,24 @@ frontend/src/
 ├── api/          # typed wrapper/hooks + generated OpenAPI DTO schema.d.ts
 ├── app/          # router.tsx (21 маршрут), route smoke, providers
 ├── pages/        # 20 рабочих страниц + login (feature-папки)
-├── shared/       # ui-kit (shadcn), i18n (ru/en), theme
+├── shared/       # продуктовые UI-адаптеры, i18n (ru/en), подключение Base
 └── widgets/      # AppShell (sidebar/header/Outlet)
 ```
 
 ## Правила границ
 
+- Native поле с иконкой действия использует InputWithAction Base. В редакторе
+  секретов Forge сохраняет value/type, showValue, callbacks и pending; Base задаёт
+  геометрию, доступный trigger и native ref. Раскрытие не запускает запись и не
+  создаёт input/change. Для поиска использовать SearchInput с готовой очисткой.
+
 - `pages/*` не делают fetch напрямую — только через `api/` hooks.
 - `shared/ui` не импортирует `api`/`pages`.
+- Общие primitives, states, tokens и каркас импортируются из публичного `@pdlc/ui`.
+  `shared/ui` сохраняет предметные адаптеры: например, QueryState с пояснением
+  запрета доступа Forge и CapabilityCallout с продуктовым статусом capability.
+  Оформление Notice, LoadingState, ErrorState и EmptyState принадлежит Base;
+  запросы, права, retry и неизвестный результат операции — Forge.
 - i18n: все пользовательские строки через `t()`; ключи en/ru в паритете, leaf-значения не пустые, runtime switch i18next и динамические ключи для стабильных API contract values покрыты `frontend/src/shared/i18n/i18n-contract.test.ts`.
 - Статусы отображаются текстом + цветом (не только цветом).
 - Страница должна показывать фактический статус capability: `Current verified`, `Configuration only` или `Target approved`; target-функции не оформляются как готовые action controls.
@@ -70,3 +80,20 @@ or `detail-with-aside`; they do not select Forge-specific shell geometry.
 - [UI/API Contract](../contracts/UI_API_CONTRACT.md) — query and state boundary.
 - [User Guide](../USER_GUIDE.md) — operator route behavior.
 - [Base UI Shell Standard](https://github.com/FerrPOINT/services-base/blob/main/docs/platform/UI_SHELL_STANDARD.md) — shared shell rules.
+
+
+## Общие размеры и переход по знаку платформы
+
+Button/Input и TabsTrigger используют размеры и typography/padding Base.
+Служебные h-10/min-h-10 и прежние smaller responsive overrides не копируются
+в owner pages/dev-preview. Ширина дерева/таблиц/панелей и композиция содержимого
+остаются Forge. Custom PlatformHeader оформляет native NavLink логотипа через
+Button asChild/ghost/icon; routing и namespace не заменяются кнопочными handlers.
+Оставшиеся icon actions и file/tree compositions классифицируются отдельно:
+наличие общего Button не разрешает копировать вокруг него skin.
+
+Иконки submit/очистки/перелистывания repository browser, скачивания артефактов,
+раскрытия deployments и редактирования releases/schedules/secrets используют
+Button size=icon. Локальные width/padding/hover/focus-скины удалены; callbacks,
+aria-label, disabled/pending, URL и submit остаются прежними. Это source-перенос,
+а не установка UI pin или разрешение сетевых операций в QA.

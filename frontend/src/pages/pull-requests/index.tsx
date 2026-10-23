@@ -1,14 +1,24 @@
+import { FormField } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
-import {Select, NamespaceLink as Link, ResourceList, ResourceListRow, toast, InitialsAvatar as UserAvatar, Button, Input, Label, Textarea} from '@pdlc/ui/ui'
+import {
+  Select,
+  NamespaceLink as Link,
+  ResourceList,
+  ResourceListRow,
+  toast,
+  InitialsAvatar as UserAvatar,
+  Button,
+  Input,
+  Label,
+  Textarea,
+  SearchInput,
+  Badge,
+  Notice,
+  PageHeader,
+} from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import {
-  ChevronRight,
-  FileDiff,
-  GitPullRequest,
-  Plus,
-  Search,
-} from "lucide-react";
+import { ChevronRight, FileDiff, GitPullRequest, Plus } from "lucide-react";
 
 import {
   useCreatePullRequest,
@@ -27,11 +37,11 @@ import { PullRequestActions } from "./actions";
 const pageSize = 20;
 const pullRequestStatuses: PullRequestStatus[] = ["open", "closed", "merged"];
 
-const statusStyles: Record<PullRequestStatus, string> = {
-  open: "bg-accent/15 text-accent",
-  closed: "bg-danger/15 text-danger",
-  merged: "bg-success/15 text-success",
-};
+const statusTones = {
+  open: "info",
+  closed: "danger",
+  merged: "success",
+} as const;
 
 function CreatePullRequestForm({
   repo,
@@ -101,108 +111,138 @@ function CreatePullRequestForm({
       onSubmit={handleSubmit}
       className="grid gap-4 border-y border-border py-4 sm:grid-cols-2"
     >
-      <div className="space-y-1.5 sm:col-span-2">
-        <Label htmlFor="pr-title">{t("pulls.titleField")}</Label>
-        <Input
-          id="pr-title"
-          required
-          value={form.title}
-          onChange={(event) => setForm({ ...form, title: event.target.value })}
-        />
+      <div className="sm:col-span-2">
+        <FormField id="pr-title" label={t("pulls.titleField")} required>
+          {(attrs) => (
+            <Input
+              {...attrs}
+              value={form.title}
+              onChange={(event) =>
+                setForm({ ...form, title: event.target.value })
+              }
+            />
+          )}
+        </FormField>
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="pr-source">{t("pulls.sourceBranch")}</Label>
-        <Input
-          id="pr-source"
-          required
-          list="pr-source-refs"
-          className="font-mono"
-          value={form.source_branch}
-          onChange={(event) =>
-            setForm({ ...form, source_branch: event.target.value })
-          }
-        />
-        <datalist id="pr-source-refs">
-          {sourceRefs.data
-            ?.filter((ref) => ref.kind === "branch")
-            .slice(0, 50)
-            .map((ref) => (
-              <option key={ref.name} value={ref.name} />
-            ))}
-        </datalist>
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="pr-target">{t("pulls.targetBranch")}</Label>
-        <Input
-          id="pr-target"
-          required
-          list="pr-target-refs"
-          className="font-mono"
-          value={form.target_branch}
-          onChange={(event) =>
-            setForm({ ...form, target_branch: event.target.value })
-          }
-        />
-        <datalist id="pr-target-refs">
-          {targetRefs.data
-            ?.filter((ref) => ref.kind === "branch")
-            .slice(0, 50)
-            .map((ref) => (
-              <option key={ref.name} value={ref.name} />
-            ))}
-        </datalist>
-      </div>
+      <FormField id="pr-source" label={t("pulls.sourceBranch")} required>
+        {(attrs) => (
+          <>
+            <Input
+              {...attrs}
+              list="pr-source-refs"
+              className="font-mono"
+              value={form.source_branch}
+              onChange={(event) =>
+                setForm({ ...form, source_branch: event.target.value })
+              }
+            />
+            <datalist id="pr-source-refs">
+              {sourceRefs.data
+                ?.filter((ref) => ref.kind === "branch")
+                .slice(0, 50)
+                .map((ref) => (
+                  <option key={ref.name} value={ref.name} />
+                ))}
+            </datalist>
+          </>
+        )}
+      </FormField>
+      <FormField id="pr-target" label={t("pulls.targetBranch")} required>
+        {(attrs) => (
+          <>
+            <Input
+              {...attrs}
+              list="pr-target-refs"
+              className="font-mono"
+              value={form.target_branch}
+              onChange={(event) =>
+                setForm({ ...form, target_branch: event.target.value })
+              }
+            />
+            <datalist id="pr-target-refs">
+              {targetRefs.data
+                ?.filter((ref) => ref.kind === "branch")
+                .slice(0, 50)
+                .map((ref) => (
+                  <option key={ref.name} value={ref.name} />
+                ))}
+            </datalist>
+          </>
+        )}
+      </FormField>
       {sameBranch && (
-        <p role="alert" className="text-sm text-danger sm:col-span-2">
+        <Notice
+          role="alert"
+          tone="danger"
+          appearance="inline"
+          className="sm:col-span-2"
+        >
           {t("pulls.branchesMustDiffer")}
-        </p>
+        </Notice>
       )}
       {refsLoading && (
-        <p role="status" className="text-xs text-text-muted sm:col-span-2">
+        <Notice
+          role="status"
+          tone="neutral"
+          appearance="inline"
+          className="sm:col-span-2"
+        >
           {t("pulls.loadingRefs")}
-        </p>
+        </Notice>
       )}
       {((sourceRefs.data?.length ?? 0) > 50 ||
         (targetRefs.data?.length ?? 0) > 50) && (
-        <p role="status" className="text-xs text-text-muted sm:col-span-2">
+        <Notice
+          role="status"
+          tone="neutral"
+          appearance="inline"
+          className="sm:col-span-2"
+        >
           {t("pulls.refSuggestionsLimited")}
-        </p>
+        </Notice>
       )}
       {Boolean(refsError) && (
-        <div
+        <Notice
+          tone="warning"
+          appearance="inline"
           role="alert"
-          className="flex flex-wrap items-center gap-2 text-xs text-text-secondary sm:col-span-2"
-        >
-          <span>{t("pulls.refsUnavailable")}</span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="min-h-10 sm:min-h-10"
-            onClick={() => {
-              if (sourceRefs.error) void sourceRefs.refetch();
-              if (targetRefs.error) void targetRefs.refetch();
-            }}
-          >
-            {t("common.retry")}
-          </Button>
-        </div>
-      )}
-      <div className="space-y-1.5 sm:col-span-2">
-        <Label htmlFor="pr-description">{t("pulls.descriptionField")}</Label>
-        <Textarea
-          id="pr-description"
-          rows={3}
-          value={form.description}
-          onChange={(event) =>
-            setForm({ ...form, description: event.target.value })
+          className="sm:col-span-2"
+          actions={
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+
+              onClick={() => {
+                if (sourceRefs.error) void sourceRefs.refetch();
+                if (targetRefs.error) void targetRefs.refetch();
+              }}
+            >
+              {t("common.retry")}
+            </Button>
           }
-        />
+        >
+          {t("pulls.refsUnavailable")}
+        </Notice>
+      )}
+      <div className="sm:col-span-2">
+        <FormField id="pr-description" label={t("pulls.descriptionField")}>
+          {(attrs) => (
+            <Textarea
+              {...attrs}
+              rows={3}
+              value={form.description}
+              onChange={(event) =>
+                setForm({ ...form, description: event.target.value })
+              }
+            />
+          )}
+        </FormField>
       </div>
       <div className="flex flex-wrap gap-2 sm:col-span-2">
         <Button
           type="submit"
-          className="min-h-10"
+
           disabled={createPullRequest.isPending || sameBranch}
         >
           {t("pulls.create")}
@@ -210,7 +250,7 @@ function CreatePullRequestForm({
         <Button
           type="button"
           variant="ghost"
-          className="min-h-10"
+
           onClick={onClose}
         >
           {t("common.cancel")}
@@ -249,11 +289,9 @@ function PullRequestRow({
                 <span className="text-text-muted">#{pullRequest.number}</span>{" "}
                 {pullRequest.title}
               </Link>
-              <span
-                className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${statusStyles[pullRequest.status]}`}
-              >
+              <Badge tone={statusTones[pullRequest.status]}>
                 {t(`pulls.status_${pullRequest.status}`)}
-              </span>
+              </Badge>
             </div>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
               <code className="break-all">{pullRequest.source_branch}</code>
@@ -270,14 +308,15 @@ function PullRequestRow({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 pl-6 sm:pl-0">
-          <Link
-            to={`${detailHref}?view=diff`}
-            aria-label={`${t("pulls.viewDiff")} #${pullRequest.number}`}
-            title={`${t("pulls.viewDiff")} #${pullRequest.number}`}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-          >
-            <FileDiff className="h-4 w-4" aria-hidden />
-          </Link>
+          <Button asChild variant="ghost" size="icon">
+            <Link
+              to={`${detailHref}?view=diff`}
+              aria-label={`${t("pulls.viewDiff")} #${pullRequest.number}`}
+              title={`${t("pulls.viewDiff")} #${pullRequest.number}`}
+            >
+              <FileDiff className="h-4 w-4" aria-hidden />
+            </Link>
+          </Button>
           <PullRequestActions repo={repo} pullRequest={pullRequest} compact />
         </div>
       </li>
@@ -373,35 +412,38 @@ export function PullRequestsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
-            <Link to="/repositories" className="hover:text-text-primary">
-              {t("navigation.repositories")}
-            </Link>
-            <ChevronRight className="h-3 w-3" aria-hidden />
-            <Link
-              to={`/repositories/${encodeURIComponent(repo)}`}
-              className="break-all hover:text-text-primary"
-            >
-              {repo}
-            </Link>
-            <ChevronRight className="h-3 w-3" aria-hidden />
-            <span>{t("repositoryBrowser.pullRequests")}</span>
-          </div>
-          <div className="mt-2 flex items-center gap-3">
-            <GitPullRequest className="h-6 w-6 text-accent" aria-hidden />
-            <h1 className="text-2xl font-bold">{t("pulls.title")}</h1>
-          </div>
+      <div>
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
+          <Link to="/repositories" className="hover:text-text-primary">
+            {t("navigation.repositories")}
+          </Link>
+          <ChevronRight className="h-3 w-3" aria-hidden />
+          <Link
+            to={`/repositories/${encodeURIComponent(repo)}`}
+            className="break-all hover:text-text-primary"
+          >
+            {repo}
+          </Link>
+          <ChevronRight className="h-3 w-3" aria-hidden />
+          <span>{t("repositoryBrowser.pullRequests")}</span>
         </div>
-        <Button
-          type="button"
-          className="min-h-10 self-start sm:self-auto"
-          onClick={() => setShowForm((value) => !value)}
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-          {t("pulls.create")}
-        </Button>
+        <div className="mt-2">
+          <PageHeader
+            title={t("pulls.title")}
+            leading={
+              <GitPullRequest className="h-6 w-6 text-accent" aria-hidden />
+            }
+            actions={
+              <Button
+                type="button"
+                onClick={() => setShowForm((value) => !value)}
+              >
+                <Plus className="h-4 w-4" aria-hidden />
+                {t("pulls.create")}
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       {showForm && (
@@ -425,16 +467,10 @@ export function PullRequestsPage() {
               className="space-y-3"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="relative min-w-0 flex-1">
-                  <Search
-                    className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-text-muted"
-                    aria-hidden
-                  />
-                  <Input
-                    type="search"
+                <div className="min-w-0 flex-1">
+                  <SearchInput
                     aria-label={t("pulls.search")}
                     placeholder={t("pulls.search")}
-                    className="min-h-10 pl-9"
                     maxLength={200}
                     value={searchDraft}
                     onChange={(event) => setSearchDraft(event.target.value)}
@@ -477,12 +513,9 @@ export function PullRequestsPage() {
                 {isFetching && <span>{t("common.loading")}</span>}
               </p>
               {result.total === 0 ? (
-                <p
-                  role="status"
-                  className="border-y border-border py-6 text-sm text-text-muted"
-                >
+                <Notice tone="neutral" appearance="inline" role="status">
                   {t("pulls.noMatches")}
-                </p>
+                </Notice>
               ) : (
                 <ResourceList asChild>
                   <ul>
@@ -506,7 +539,7 @@ export function PullRequestsPage() {
                     type="button"
                     size="sm"
                     variant="outline"
-                    className="min-h-10 sm:min-h-10"
+
                     disabled={page === 1 || isFetching}
                     onClick={() => changePage(page - 1)}
                   >
@@ -519,7 +552,7 @@ export function PullRequestsPage() {
                     type="button"
                     size="sm"
                     variant="outline"
-                    className="min-h-10 sm:min-h-10"
+
                     disabled={page === pageCount || isFetching}
                     onClick={() => changePage(page + 1)}
                   >

@@ -31,4 +31,13 @@ export default tseslint.config(
       globals: globals.node,
     },
   },
+  {
+    files: ['scripts/**/*.mjs', 'eslint.config.js'],
+    languageOptions: { globals: globals.node },
+  },
+  {
+    // This Node harness also contains callbacks evaluated in the browser page.
+    files: ['scripts/shoot-evidence.mjs'],
+    languageOptions: { globals: globals.browser },
+  },
 )

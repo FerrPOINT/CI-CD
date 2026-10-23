@@ -1,5 +1,39 @@
-import {Disclosure, NamespaceLink as Link, ResourceList, ResourceListRow, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, Button, Input, toast} from '@pdlc/ui/ui'
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Notice,
+  Badge,
+  PageHeader,
+  SectionHeader,
+  CardContent,
+  ConfirmDialog,
+  SearchInput,
+  LoadingState,
+  EmptyState,
+} from "@pdlc/ui/ui";
+import {
+  DescriptionItem,
+  CodeBlock,
+  Disclosure,
+  NamespaceLink as Link,
+  ResourceList,
+  ResourceListRow,
+  Card,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Button,
+  Input,
+  toast,
+} from "@pdlc/ui/ui";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
@@ -17,10 +51,7 @@ import {
   useJobAttempts,
 } from "@/api/hooks";
 
-
-
 import type { Job, TestReport } from "@/api/types";
-
 
 import {
   ChevronRight,
@@ -40,12 +71,12 @@ import {
 
 import type { PipelinePlan, Status } from "@/api/types";
 
-const statusColors: Record<string, string> = {
-  queued: "bg-text-muted",
-  running: "bg-warning",
-  success: "bg-success",
-  failed: "bg-danger",
-  canceled: "bg-text-muted",
+const statusTones: Record<string, ComponentProps<typeof Badge>["tone"]> = {
+  queued: "muted",
+  running: "warning",
+  success: "success",
+  failed: "danger",
+  canceled: "muted",
 };
 
 export function PipelineDetailPage() {
@@ -65,34 +96,31 @@ export function PipelineDetailPage() {
       logPanelRef.current?.scrollIntoView?.({ block: "start" });
   }, [selectedJobId]);
 
-  if (isLoading)
-    return (
-      <p role="status" className="text-sm text-text-muted">
-        {t("common.loading")}
-      </p>
-    );
+  if (isLoading) return <LoadingState message={t("common.loading")} />;
   if (error && !data) {
     if (error instanceof ApiError && error.status === 403)
       return <ForbiddenPage />;
     return (
-      <div
+      <Notice
         role="alert"
-        className="flex flex-wrap items-center gap-3 text-sm text-danger"
+        tone="danger"
+        appearance="inline"
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+
+            onClick={() => void refetch()}
+          >
+            {t("common.retry")}
+          </Button>
+        }
       >
         <span>{t("pipelines.loadError")}</span>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-10"
-          onClick={() => void refetch()}
-        >
-          {t("common.retry")}
-        </Button>
-      </div>
+      </Notice>
     );
   }
-  if (!data)
-    return <p className="text-sm text-text-muted">{t("common.noData")}</p>;
+  if (!data) return <EmptyState message={t("common.noData")} />;
 
   const { pipeline, stages, plan } = data;
   const selectedJob = stages
@@ -143,63 +171,71 @@ export function PipelineDetailPage() {
             <ChevronRight className="h-3 w-3" />
             <span>#{pipeline.id.slice(0, 8)}</span>
           </div>
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold">#{pipeline.id.slice(0, 8)}</h1>
-            {(pipeline.status === "queued" ||
-              pipeline.status === "running") && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="min-h-10 gap-1 text-danger hover:text-danger sm:min-h-10"
-                disabled={cancelPipeline.isPending}
-                onClick={() => setConfirmCancel(true)}
-              >
-                <Ban className="h-4 w-4" /> {t("pipelines.cancel")}
-              </Button>
-            )}
-            {(pipeline.status === "failed" ||
-              pipeline.status === "canceled") && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="min-h-10 gap-1 sm:min-h-10"
-                disabled={retryPipeline.isPending}
-                onClick={handleRetry}
-              >
-                <RotateCcw className="h-4 w-4" /> {t("pipelines.retry")}
-              </Button>
-            )}
-            <code className="rounded bg-surface-raised px-2 py-1 text-sm">
-              {pipeline.git_ref}
-            </code>
-            <span
-              role="status"
-              className="flex items-center gap-1.5 text-sm text-text-secondary"
-            >
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${statusColors[pipeline.status]}`}
-                aria-hidden
-              />
-              {t(`pipelines.${pipeline.status}`)}
-            </span>
+          <div className="mt-2">
+            <PageHeader
+              title={`#${pipeline.id.slice(0, 8)}`}
+              actions={
+                <>
+                  {(pipeline.status === "queued" ||
+                    pipeline.status === "running") && (
+                    <Button
+                      size="sm"
+                      variant="destructive-outline"
+                      disabled={cancelPipeline.isPending}
+                      onClick={() => setConfirmCancel(true)}
+                    >
+                      <Ban className="h-4 w-4" /> {t("pipelines.cancel")}
+                    </Button>
+                  )}
+                  {(pipeline.status === "failed" ||
+                    pipeline.status === "canceled") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={retryPipeline.isPending}
+                      onClick={handleRetry}
+                    >
+                      <RotateCcw className="h-4 w-4" /> {t("pipelines.retry")}
+                    </Button>
+                  )}
+                </>
+              }
+              context={
+                <div className="flex min-w-0 flex-wrap items-center gap-3">
+                  <Badge tone="muted">
+                    <code>{pipeline.git_ref}</code>
+                  </Badge>
+                  <Badge
+                    role="status"
+                    appearance="dot"
+                    tone={statusTones[pipeline.status]}
+                  >
+                    {t(`pipelines.${pipeline.status}`)}
+                  </Badge>
+                </div>
+              }
+            />
           </div>
         </div>
 
         {error && (
-          <div
+          <Notice
             role="alert"
-            className="flex flex-wrap items-center gap-2 text-sm text-danger"
+            tone="danger"
+            appearance="inline"
+            actions={
+              <Button
+                type="button"
+                variant="outline"
+
+                onClick={() => void refetch()}
+              >
+                {t("common.retry")}
+              </Button>
+            }
           >
             <span>{t("pipelines.loadError")}</span>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-10"
-              onClick={() => void refetch()}
-            >
-              {t("common.retry")}
-            </Button>
-          </div>
+          </Notice>
         )}
 
         {plan && <PipelinePlanCard plan={plan} />}
@@ -209,94 +245,78 @@ export function PipelineDetailPage() {
           data-pipeline-layout="stage-grid"
         >
           {stages.map((stage) => (
-            <Card key={stage.id} className="min-w-0 p-4">
-              <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
-                <h3 className="min-w-0 break-words text-sm font-semibold">
-                  {stage.name}
-                </h3>
-                <span className="flex shrink-0 items-center gap-1.5 text-xs text-text-muted">
-                  <span
-                    className={`h-2.5 w-2.5 rounded-full ${statusColors[stage.status]}`}
-                    aria-hidden
-                  />
-                  {t(`pipelines.${stage.status}`)}
-                </span>
-              </div>
-              <div className="mt-3 space-y-3">
-                {stage.jobs.map((job) => (
-                  <JobCard
-                    key={job.id}
-                    job={job}
-                    onStatus={handleStatus}
-                    onShowLogs={() => setSelectedJobId(job.id)}
-                    pending={updateStatus.isPending}
-                  />
-                ))}
-              </div>
+            <Card key={stage.id} className="min-w-0">
+              <CardContent>
+                <SectionHeader
+                  title={stage.name}
+                  context={
+                    <Badge appearance="dot" tone={statusTones[stage.status]}>
+                      {t(`pipelines.${stage.status}`)}
+                    </Badge>
+                  }
+                />
+                <ResourceList className="mt-3">
+                  {stage.jobs.map((job) => (
+                    <JobCard
+                      key={job.id}
+                      job={job}
+                      onStatus={handleStatus}
+                      onShowLogs={() => setSelectedJobId(job.id)}
+                      pending={updateStatus.isPending}
+                    />
+                  ))}
+                </ResourceList>
+              </CardContent>
             </Card>
           ))}
         </div>
 
         {selectedJob && (
           <div ref={logPanelRef} className="scroll-mt-16">
-            <Card className="p-4">
-              <div className="flex items-center justify-between border-b border-border pb-3">
-                <div className="flex items-center gap-2">
-                  <Terminal className="h-4 w-4 text-accent" />
-                  <h3 className="text-sm font-semibold">
-                    {t("jobs.logs")} — {selectedJob.name}
-                  </h3>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="min-h-10 sm:min-h-10"
-                  onClick={() => setSelectedJobId(null)}
-                >
-                  {t("common.close")}
-                </Button>
-              </div>
-              <JobLogPanel
-                jobId={selectedJob.id}
-                live={
-                  selectedJob.status === "queued" ||
-                  selectedJob.status === "running"
-                }
-                logMessage={logMessage}
-                setLogMessage={setLogMessage}
-              />
+            <Card>
+              <CardContent>
+                <SectionHeader
+                  title={
+                    <>
+                      <Terminal className="h-4 w-4 text-accent" />
+                      {t("jobs.logs")} — {selectedJob.name}
+                    </>
+                  }
+                  actions={
+                    <Button
+                      size="sm"
+                      variant="outline"
+
+                      onClick={() => setSelectedJobId(null)}
+                    >
+                      {t("common.close")}
+                    </Button>
+                  }
+                />
+                <JobLogPanel
+                  jobId={selectedJob.id}
+                  live={
+                    selectedJob.status === "queued" ||
+                    selectedJob.status === "running"
+                  }
+                  logMessage={logMessage}
+                  setLogMessage={setLogMessage}
+                />
+              </CardContent>
             </Card>
           </div>
         )}
         {selectedJob && <JobTestReportPanel jobId={selectedJob.id} />}
-        <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>{t("pipelines.cancelTitle")}</AlertDialogTitle>
-              <AlertDialogDescription>
-                {t("pipelines.cancelDescription")}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel
-                className="min-h-10"
-                disabled={cancelPipeline.isPending}
-              >
-                {t("pipelines.keepRunning")}
-              </AlertDialogCancel>
-              <AlertDialogAction
-                className="min-h-10"
-                disabled={cancelPipeline.isPending}
-                onClick={(event) => {
-                  event.preventDefault();
-                  handleCancel();
-                }}
-              >
-                {t("pipelines.confirmCancel")}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <ConfirmDialog
+          open={confirmCancel}
+          onOpenChange={setConfirmCancel}
+          title={t("pipelines.cancelTitle")}
+          description={t("pipelines.cancelDescription")}
+          cancelLabel={t("pipelines.keepRunning")}
+          confirmLabel={t("pipelines.confirmCancel")}
+          isPending={cancelPipeline.isPending}
+          onConfirm={handleCancel}
+        />
       </div>
     </ConfigurationContext>
   );
@@ -322,17 +342,14 @@ function JobCard({
   )?.error_tail;
 
   return (
-    <div className="min-w-0 border-t border-border py-3 first:border-t-0">
+    <ResourceListRow>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span
-            className={`h-2 w-2 rounded-full ${statusColors[job.status]}`}
-          />
           <span className="break-words text-sm font-medium">{job.name}</span>
         </div>
-        <span className="text-xs text-text-muted">
+        <Badge appearance="dot" tone={statusTones[job.status]}>
           {t(`pipelines.${job.status}`)}
-        </span>
+        </Badge>
       </div>
       <p className="mt-2 min-w-0 break-words text-xs text-text-muted">
         <code className="rounded bg-surface-raised px-1 py-0.5">
@@ -381,25 +398,20 @@ function JobCard({
         </div>
       )}
       {latestDiagnostic && (
-        <p className="mt-2 min-w-0 break-words rounded border border-danger/30 bg-danger/10 px-2 py-1 text-xs text-danger">
+        <Notice tone="danger" appearance="inline">
           {latestDiagnostic}
-        </p>
+        </Notice>
       )}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <Button
           size="sm"
           variant="outline"
-          className="min-h-10 sm:min-h-10"
+
           onClick={onShowLogs}
         >
           <Terminal className="h-3 w-3" /> {t("jobs.logs")}
         </Button>
-        <Button
-          asChild
-          size="sm"
-          variant="outline"
-          className="min-h-10 sm:min-h-10"
-        >
+        <Button asChild size="sm" variant="outline">
           <Link to={`/jobs/${job.id}/artifacts`}>
             <Package className="h-3 w-3" /> {t("artifacts.title")}
           </Link>
@@ -408,22 +420,14 @@ function JobCard({
       {(job.status === "queued" || job.status === "running") && (
         <Disclosure
           className="group mt-2 text-sm text-text-muted"
-          summary={
-            <>
-              <ChevronRight
-                className="h-4 w-4 transition-transform group-open:rotate-90"
-                aria-hidden
-              />
-              {t("jobs.manualStatus")}
-            </>
-          }
+          summary={<>{t("jobs.manualStatus")}</>}
         >
           <div className="flex flex-wrap gap-2 pb-1">
             {job.status === "queued" && (
               <Button
                 size="sm"
                 variant="outline"
-                className="min-h-10 sm:min-h-10"
+
                 disabled={pending}
                 onClick={() => onStatus(job.id, "running")}
               >
@@ -435,7 +439,7 @@ function JobCard({
                 <Button
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={pending}
                   onClick={() => onStatus(job.id, "success")}
                 >
@@ -444,7 +448,7 @@ function JobCard({
                 <Button
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={pending}
                   onClick={() => onStatus(job.id, "failed")}
                 >
@@ -453,7 +457,7 @@ function JobCard({
                 <Button
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={pending}
                   onClick={() => onStatus(job.id, "canceled")}
                 >
@@ -464,82 +468,47 @@ function JobCard({
           </div>
         </Disclosure>
       )}
-    </div>
+    </ResourceListRow>
   );
 }
 
 function PipelinePlanCard({ plan }: { plan: PipelinePlan }) {
   const { t } = useTranslation();
   return (
-    <Card className="min-w-0 px-4">
-      <Disclosure
-        className="group"
-        summary={
-          <>
-            <span className="flex min-w-0 items-center gap-2">
-              <FileCode2 className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-              <span className="text-sm font-semibold">
-                {t("pipelines.planTitle")}
-              </span>
+    <Disclosure
+      className="min-w-0"
+      summary={
+        <>
+          <span className="flex min-w-0 items-center gap-2">
+            <FileCode2 className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+            <span className="text-sm font-semibold">
+              {t("pipelines.planTitle")}
             </span>
-            <span className="flex min-w-0 items-center gap-2 text-xs text-text-muted">
-              <span className="break-all">{plan.config_source}</span>
-              <ChevronRight
-                className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90"
-                aria-hidden
-              />
-            </span>
-          </>
-        }
-      >
-        <dl className="grid min-w-0 gap-3 border-t border-border py-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
-          <PlanFact
-            label={t("pipelines.planParser")}
-            value={plan.parser_version}
-          />
-          <PlanFact
-            label={t("pipelines.planCommit")}
-            value={plan.resolved_commit_sha ?? "-"}
-            mono
-          />
-          <PlanFact
-            label={t("pipelines.planEdges")}
-            value={String(planDependencyCount(plan.plan))}
-          />
-          <PlanFact
-            label={t("pipelines.planConfigHash")}
-            value={plan.config_sha256}
-            mono
-          />
-          <PlanFact
-            label={t("pipelines.planHash")}
-            value={plan.plan_sha256}
-            mono
-          />
-        </dl>
-      </Disclosure>
-    </Card>
-  );
-}
-
-function PlanFact({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-text-muted">{label}</dt>
-      <dd
-        className={`mt-1 break-all ${mono ? "font-mono text-[11px]" : "font-medium"}`}
-      >
-        {value}
-      </dd>
-    </div>
+          </span>
+          <span className="flex min-w-0 items-center gap-2 text-xs text-text-muted">
+            <span className="break-all">{plan.config_source}</span>
+          </span>
+        </>
+      }
+    >
+      <dl className="grid min-w-0 gap-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        <DescriptionItem label={t("pipelines.planParser")}>
+          {plan.parser_version}
+        </DescriptionItem>
+        <DescriptionItem label={t("pipelines.planCommit")} technical>
+          {plan.resolved_commit_sha ?? "-"}
+        </DescriptionItem>
+        <DescriptionItem label={t("pipelines.planEdges")}>
+          {String(planDependencyCount(plan.plan))}
+        </DescriptionItem>
+        <DescriptionItem label={t("pipelines.planConfigHash")} technical>
+          {plan.config_sha256}
+        </DescriptionItem>
+        <DescriptionItem label={t("pipelines.planHash")} technical>
+          {plan.plan_sha256}
+        </DescriptionItem>
+      </dl>
+    </Disclosure>
   );
 }
 
@@ -674,20 +643,23 @@ function JobLogPanel({
   return (
     <div className="mt-3 space-y-3">
       {attemptsQuery.isError && (
-        <div
+        <Notice
           role="alert"
-          className="flex flex-wrap items-center gap-2 text-sm text-danger"
+          tone="danger"
+          appearance="inline"
+          actions={
+            <Button
+              type="button"
+              variant="outline"
+
+              onClick={() => void attemptsQuery.refetch()}
+            >
+              {t("common.retry")}
+            </Button>
+          }
         >
           <span>{t("jobs.attemptsError")}</span>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-10"
-            onClick={() => void attemptsQuery.refetch()}
-          >
-            {t("common.retry")}
-          </Button>
-        </div>
+        </Notice>
       )}
       {attempts.length > 0 && (
         <div className="space-y-2">
@@ -700,7 +672,7 @@ function JobLogPanel({
                 variant={
                   attempt.id === selectedAttempt?.id ? "default" : "outline"
                 }
-                className="min-h-10 sm:min-h-10"
+
                 onClick={() => setSelectedAttemptId(attempt.id)}
               >
                 {t("jobs.attempt")} #{attempt.attempt_no} ·{" "}
@@ -727,29 +699,29 @@ function JobLogPanel({
             </div>
           )}
           {selectedAttempt?.error_tail && (
-            <p className="rounded-md border border-danger/40 bg-danger/10 p-2 text-xs text-danger">
+            <Notice tone="danger" appearance="inline">
               {selectedAttempt.error_tail}
-            </p>
+            </Notice>
           )}
         </div>
       )}
       {selectedAttempt && (
         <>
           <div className="flex flex-wrap gap-2">
-            <Input
-              type="search"
+            <SearchInput
               aria-label={t("jobs.searchLogs")}
               value={logSearch}
               onChange={(e) => setLogSearch(e.target.value)}
               placeholder={t("jobs.searchLogs")}
-              className="min-h-10 min-w-40 flex-1 font-mono text-sm"
+              containerClassName="min-w-40 flex-1"
+              className="font-mono"
             />
             {logSearch && (
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                className="min-h-10 sm:min-h-10"
+
                 onClick={() => setLogSearch("")}
               >
                 {t("common.clear")}
@@ -759,7 +731,7 @@ function JobLogPanel({
               type="button"
               size="sm"
               variant="outline"
-              className="min-h-10 sm:min-h-10"
+
               onClick={() => void logPages.refetch()}
             >
               <RotateCcw className="h-4 w-4" aria-hidden />{" "}
@@ -767,52 +739,61 @@ function JobLogPanel({
             </Button>
           </div>
           {initialLogsError && (
-            <div
+            <Notice
               role="alert"
-              className="flex flex-wrap items-center gap-2 text-sm text-danger"
+              tone="danger"
+              appearance="inline"
+              actions={
+                <Button
+                  type="button"
+                  variant="outline"
+
+                  onClick={() => void logPages.refetch()}
+                >
+                  {t("common.retry")}
+                </Button>
+              }
             >
               <span>{t("jobs.logsError")}</span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-10"
-                onClick={() => void logPages.refetch()}
-              >
-                {t("common.retry")}
-              </Button>
-            </div>
+            </Notice>
           )}
           {nextLogsError && (
-            <div
+            <Notice
               role="alert"
-              className="flex flex-wrap items-center gap-2 text-sm text-danger"
+              tone="danger"
+              appearance="inline"
+              actions={
+                <Button
+                  type="button"
+                  variant="outline"
+
+                  onClick={loadNextLogPage}
+                >
+                  {t("common.retry")}
+                </Button>
+              }
             >
               <span>{t("jobs.logsPageError")}</span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-10"
-                onClick={loadNextLogPage}
-              >
-                {t("common.retry")}
-              </Button>
-            </div>
+            </Notice>
           )}
           {refreshLogsError && (
-            <div
+            <Notice
               role="alert"
-              className="flex flex-wrap items-center gap-2 text-sm text-danger"
+              tone="danger"
+              appearance="inline"
+              actions={
+                <Button
+                  type="button"
+                  variant="outline"
+
+                  onClick={() => void logPages.refetch()}
+                >
+                  {t("common.retry")}
+                </Button>
+              }
             >
               <span>{t("jobs.logsRefreshError")}</span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-10"
-                onClick={() => void logPages.refetch()}
-              >
-                {t("common.retry")}
-              </Button>
-            </div>
+            </Notice>
           )}
           {tailMode &&
             logPages.hasNextPage &&
@@ -822,7 +803,7 @@ function JobLogPanel({
                 type="button"
                 size="sm"
                 variant="outline"
-                className="min-h-10 sm:min-h-10"
+
                 disabled={logPages.isFetchingNextPage}
                 onClick={loadNextLogPage}
               >
@@ -833,7 +814,7 @@ function JobLogPanel({
               </Button>
             )}
           {!initialLogsError && (
-            <pre
+            <CodeBlock
               ref={logViewportRef}
               role="log"
               aria-label={t("jobs.logs")}
@@ -849,7 +830,8 @@ function JobLogPanel({
                 followTailRef.current = nearBottom;
                 setShowLatestLogs(!nearBottom);
               }}
-              className="max-h-80 overflow-auto rounded-md bg-zinc-950 p-3 text-xs text-green-400"
+              className="max-h-80"
+              wrap={false}
             >
               {logPages.isLoading
                 ? t("common.loading")
@@ -861,7 +843,7 @@ function JobLogPanel({
                           `${String(l.sequence).padStart(3, "0")}  ${l.message}`,
                       )
                       .join("\n")}
-            </pre>
+            </CodeBlock>
           )}
           {tailMode &&
             showLatestLogs &&
@@ -871,7 +853,7 @@ function JobLogPanel({
                 type="button"
                 size="sm"
                 variant="outline"
-                className="min-h-10 sm:min-h-10"
+
                 onClick={scrollToLatestLog}
               >
                 <ArrowDownToLine className="h-4 w-4" aria-hidden />{" "}
@@ -886,7 +868,7 @@ function JobLogPanel({
                 type="button"
                 size="sm"
                 variant="outline"
-                className="min-h-10 sm:min-h-10"
+
                 disabled={logPages.isFetchingNextPage}
                 onClick={loadNextLogPage}
               >
@@ -905,15 +887,7 @@ function JobLogPanel({
       {canAppend && (
         <Disclosure
           className="group text-sm text-text-muted"
-          summary={
-            <>
-              <ChevronRight
-                className="h-4 w-4 transition-transform group-open:rotate-90"
-                aria-hidden
-              />
-              {t("jobs.manualLog")}
-            </>
-          }
+          summary={<>{t("jobs.manualLog")}</>}
         >
           <form
             className="flex flex-wrap gap-2"
@@ -934,13 +908,13 @@ function JobLogPanel({
               value={logMessage}
               onChange={(e) => setLogMessage(e.target.value)}
               placeholder={t("jobs.logMessage")}
-              className="min-h-10 min-w-40 flex-1 font-mono text-sm"
+              className="min-w-40 flex-1 font-mono text-sm"
               disabled={appendLog.isPending}
             />
             <Button
               type="submit"
               size="sm"
-              className="min-h-10 sm:min-h-10"
+
               disabled={appendLog.isPending || !logMessage.trim()}
             >
               {t("jobs.append")}
@@ -967,20 +941,23 @@ function JobTestReportPanel({ jobId }: { jobId: string }) {
   if (isLoading) return null;
   if (isError)
     return (
-      <div
+      <Notice
         role="alert"
-        className="flex flex-wrap items-center gap-2 text-sm text-danger"
+        tone="danger"
+        appearance="inline"
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+
+            onClick={() => void refetch()}
+          >
+            {t("common.retry")}
+          </Button>
+        }
       >
         <span>{t("jobs.reportError")}</span>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-10"
-          onClick={() => void refetch()}
-        >
-          {t("common.retry")}
-        </Button>
-      </div>
+      </Notice>
     );
   if (reports.length === 0) return null;
   const total = reports.reduce<{
@@ -998,65 +975,69 @@ function JobTestReportPanel({ jobId }: { jobId: string }) {
     { total: 0, passed: 0, failed: 0, skipped: 0 },
   );
   return (
-    <Card className="p-4">
-      <div className="flex items-center gap-2 border-b border-border pb-3">
-        <ClipboardCheck className="h-4 w-4 text-accent" />
-        <h3 className="text-sm font-semibold">
-          {t("jobs.testReport", "Тест-отчёты")} — {selectedLabel(total)}
-        </h3>
-      </div>
-      <ResourceList asChild>
-        <div className="mt-3 md:hidden">
-          {reports.map((r: TestReport) => (
-            <ResourceListRow asChild key={r.id}>
-              <div className="text-sm">
-                <p className="font-medium">{r.suite_name}</p>
-                <p className="mt-1 text-xs text-text-muted">
-                  ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} /{" "}
-                  {r.tests_total}
-                  {r.duration_ms != null && ` · ${r.duration_ms}ms`}
-                </p>
-              </div>
-            </ResourceListRow>
-          ))}
-        </div>
-      </ResourceList>
-      <div className="mt-3 hidden overflow-hidden md:block">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t("jobs.suite", "Набор")}</TableHead>
-              <TableHead>✓</TableHead>
-              <TableHead>✗</TableHead>
-              <TableHead>⇢</TableHead>
-              <TableHead>{t("jobs.total", "Всего")}</TableHead>
-              <TableHead>{t("jobs.duration", "Время")}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+    <Card>
+      <CardContent>
+        <SectionHeader
+          title={
+            <>
+              <ClipboardCheck className="h-4 w-4 text-accent" />
+              {t("jobs.testReport", "Тест-отчёты")} — {selectedLabel(total)}
+            </>
+          }
+        />
+        <ResourceList asChild>
+          <div className="mt-3 md:hidden">
             {reports.map((r: TestReport) => (
-              <TableRow key={r.id}>
-                <TableCell className="font-medium">{r.suite_name}</TableCell>
-                <TableCell className="text-emerald-500">
-                  {r.tests_passed}
-                </TableCell>
-                <TableCell
-                  className={r.tests_failed > 0 ? "text-destructive" : ""}
-                >
-                  {r.tests_failed}
-                </TableCell>
-                <TableCell className="text-text-muted">
-                  {r.tests_skipped}
-                </TableCell>
-                <TableCell>{r.tests_total}</TableCell>
-                <TableCell className="text-text-muted">
-                  {r.duration_ms != null ? `${r.duration_ms}ms` : "-"}
-                </TableCell>
-              </TableRow>
+              <ResourceListRow asChild key={r.id}>
+                <div className="text-sm">
+                  <p className="font-medium">{r.suite_name}</p>
+                  <p className="mt-1 text-xs text-text-muted">
+                    ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} /{" "}
+                    {r.tests_total}
+                    {r.duration_ms != null && ` · ${r.duration_ms}ms`}
+                  </p>
+                </div>
+              </ResourceListRow>
             ))}
-          </TableBody>
-        </Table>
-      </div>
+          </div>
+        </ResourceList>
+        <div className="mt-3 hidden md:block">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("jobs.suite", "Набор")}</TableHead>
+                <TableHead>✓</TableHead>
+                <TableHead>✗</TableHead>
+                <TableHead>⇢</TableHead>
+                <TableHead>{t("jobs.total", "Всего")}</TableHead>
+                <TableHead>{t("jobs.duration", "Время")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {reports.map((r: TestReport) => (
+                <TableRow key={r.id}>
+                  <TableCell className="font-medium">{r.suite_name}</TableCell>
+                  <TableCell className="text-success">
+                    {r.tests_passed}
+                  </TableCell>
+                  <TableCell
+                    className={r.tests_failed > 0 ? "text-destructive" : ""}
+                  >
+                    {r.tests_failed}
+                  </TableCell>
+                  <TableCell className="text-text-muted">
+                    {r.tests_skipped}
+                  </TableCell>
+                  <TableCell>{r.tests_total}</TableCell>
+                  <TableCell className="text-text-muted">
+                    {r.duration_ms != null ? `${r.duration_ms}ms` : "-"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
     </Card>
   );
 

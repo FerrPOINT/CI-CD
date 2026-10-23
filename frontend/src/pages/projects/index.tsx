@@ -2,12 +2,15 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
+  PageHeader,
   Button,
   Input,
   ProjectAvatar,
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
+  LoadingState,
+  ErrorState,
 } from "@pdlc/ui/ui";
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
@@ -29,10 +32,14 @@ export function ProjectsPage() {
   });
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Проекты</h1>
-        <WorkspaceLinks />
-      </div>
+      <PageHeader
+        title="Проекты"
+        actions={
+          <>
+            <WorkspaceLinks />
+          </>
+        }
+      />
       <Input
         aria-label="Поиск проектов"
         placeholder="Поиск по имени или ключу…"
@@ -44,11 +51,11 @@ export function ProjectsPage() {
         className="max-w-md"
       />
       {catalog.isPending ? (
-        <p role="status">Загружаем проекты…</p>
+        <LoadingState message="Загружаем проекты…" />
       ) : catalog.isError ? (
-        <p role="alert" className="text-danger">
-          Каталог проектов недоступен: {catalog.error.message}
-        </p>
+        <ErrorState
+          message={"Каталог проектов недоступен: " + catalog.error.message}
+        />
       ) : (
         <>
           <ResourceList asChild variant="bordered" density="comfortable">

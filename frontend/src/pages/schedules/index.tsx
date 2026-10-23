@@ -1,8 +1,22 @@
-import {Disclosure, toast, Button, Input, Label, ResourceList, ResourceListRow, Checkbox, ConfirmDialog} from '@pdlc/ui/ui'
+import {
+  PageHeader,
+  Disclosure,
+  toast,
+  Button,
+  Input,
+  Label,
+  ResourceList,
+  ResourceListRow,
+  Checkbox,
+  ConfirmDialog,
+  SearchInput,
+  Notice,
+  EmptyState,
+} from "@pdlc/ui/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
-import { Clock, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Clock, Pencil, Plus, Trash2 } from "lucide-react";
 
 import {
   useCreateSchedule,
@@ -11,7 +25,6 @@ import {
   useUpdateSchedule,
 } from "@/api/hooks";
 import type { Schedule } from "@/api/types";
-
 
 import { QueryState } from "@/shared/ui/query-state";
 
@@ -113,22 +126,24 @@ export function SchedulesPage() {
 
   return (
     <div className="min-w-0 space-y-5">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-bold sm:text-2xl">
-          {t("schedules.title")}
-        </h1>
-        <Button
-          type="button"
-          size="sm"
-          className="min-h-10 sm:min-h-10"
-          aria-expanded={showForm && editing === null}
-          disabled={saving}
-          onClick={openCreateForm}
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-          {t("schedules.create")}
-        </Button>
-      </header>
+      <PageHeader
+        title={t("schedules.title")}
+        actions={
+          <>
+            <Button
+              type="button"
+              size="sm"
+
+              aria-expanded={showForm && editing === null}
+              disabled={saving}
+              onClick={openCreateForm}
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              {t("schedules.create")}
+            </Button>
+          </>
+        }
+      />
 
       <p className="border-y border-border py-3 text-xs text-text-secondary">
         {t("schedules.utcNotice")}
@@ -146,7 +161,7 @@ export function SchedulesPage() {
             <Input
               id="schedule-cron"
               ref={cronRef}
-              className="min-h-10 min-w-0 font-mono"
+              className="min-w-0 font-mono"
               required
               disabled={saving}
               placeholder="0 4 * * 1"
@@ -161,7 +176,7 @@ export function SchedulesPage() {
             <Label htmlFor="schedule-ref">{t("schedules.gitRef")}</Label>
             <Input
               id="schedule-ref"
-              className="min-h-10 min-w-0"
+              className="min-w-0"
               required
               disabled={saving}
               value={form.git_ref}
@@ -183,15 +198,20 @@ export function SchedulesPage() {
             {t("schedules.enabled")}
           </label>
           {saveError && (
-            <p role="alert" className="text-sm text-danger sm:col-span-2">
+            <Notice
+              role="alert"
+              className="sm:col-span-2"
+              tone="danger"
+              appearance="inline"
+            >
               {saveError}
-            </p>
+            </Notice>
           )}
           <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
             <Button
               type="button"
               variant="outline"
-              className="min-h-10 sm:min-h-10"
+
               disabled={saving}
               onClick={closeForm}
             >
@@ -199,7 +219,7 @@ export function SchedulesPage() {
             </Button>
             <Button
               type="submit"
-              className="min-h-10 sm:min-h-10"
+
               disabled={saving || !form.cron.trim() || !form.git_ref.trim()}
             >
               {t(editing ? "schedules.save" : "schedules.create")}
@@ -219,16 +239,10 @@ export function SchedulesPage() {
       >
         {() => (
           <section aria-label={t("schedules.title")} className="space-y-3">
-            <div className="relative max-w-xl">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-                aria-hidden
-              />
-              <Input
-                type="search"
+            <div className="max-w-xl">
+              <SearchInput
                 aria-label={t("schedules.search")}
                 placeholder={t("schedules.search")}
-                className="min-h-10 pl-9"
                 value={search}
                 onChange={(event) => {
                   setSearch(event.target.value);
@@ -243,12 +257,9 @@ export function SchedulesPage() {
               })}
             </p>
             {filteredSchedules.length === 0 ? (
-              <p
-                role="status"
-                className="border-y border-border py-6 text-sm text-text-muted"
-              >
-                {t("schedules.noMatches")}
-              </p>
+              <div role="status">
+                <EmptyState message={t("schedules.noMatches")} />
+              </div>
             ) : (
               <ResourceList asChild>
                 <ul>
@@ -291,12 +302,13 @@ export function SchedulesPage() {
                               name: schedule.cron,
                             })}
                             disabled={saving}
-                            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+                            size="icon" className="shrink-0"
                             onClick={() => openEditForm(schedule)}
                           >
                             <Pencil className="h-4 w-4" aria-hidden />
                           </Button>
                           <Button
+                            size="icon"
                             variant="destructive-outline"
                             type="button"
                             aria-label={t("schedules.deleteFor", {
@@ -306,7 +318,7 @@ export function SchedulesPage() {
                               name: schedule.cron,
                             })}
                             disabled={deleteSchedule.isPending}
-                            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-danger hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+                            className="shrink-0"
                             onClick={() => {
                               setPendingDelete(schedule);
                               setDeleteError("");
@@ -350,7 +362,7 @@ export function SchedulesPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={currentPage === 1}
                   onClick={() => setPage(currentPage - 1)}
                 >
@@ -363,7 +375,7 @@ export function SchedulesPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={currentPage === totalPages}
                   onClick={() => setPage(currentPage + 1)}
                 >

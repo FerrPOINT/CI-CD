@@ -2,6 +2,9 @@ import { RequireAdministrator } from "@pdlc/ui/auth";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CardContent,
+  Card,
+  SectionHeader,
   Button,
   Input,
   Label,
@@ -12,6 +15,8 @@ import {
   DialogTitle,
   ResourceList,
   ResourceListRow,
+  LoadingState,
+  Notice,
 } from "@pdlc/ui/ui";
 import { useSessionCommand } from "@pdlc/ui/lib";
 import { api, ApiError } from "@/api/client";
@@ -144,49 +149,53 @@ function AdministrativeRepositoryConfigurations({
   }
   return (
     <section className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-semibold">CI-конфигурации</h2>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            disabled={!writable && !journal.command}
-            onClick={() => {
-              setError(undefined);
-              setManagement("create");
-            }}
-          >
-            {journal.command ? "Проверить создание" : "Создать конфигурацию"}
-          </Button>
-          {writable && (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setError(undefined);
-                  setManagement("attach");
-                }}
-              >
-                Подключить конфигурацию
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setError(undefined);
-                  setManagement("push");
-                }}
-              >
-                Автозапуск
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
+      <SectionHeader
+        title={<>CI-конфигурации</>}
+        actions={
+          <>
+            <Button
+              type="button"
+              disabled={!writable && !journal.command}
+              onClick={() => {
+                setError(undefined);
+                setManagement("create");
+              }}
+            >
+              {journal.command ? "Проверить создание" : "Создать конфигурацию"}
+            </Button>
+            {writable && (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setError(undefined);
+                    setManagement("attach");
+                  }}
+                >
+                  Подключить конфигурацию
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setError(undefined);
+                    setManagement("push");
+                  }}
+                >
+                  Автозапуск
+                </Button>
+              </>
+            )}
+          </>
+        }
+      />
       {configs.isPending ? (
-        <p role="status">Загружаем конфигурации…</p>
+        <LoadingState message="Загружаем конфигурации…" />
       ) : configs.isError ? (
-        <p role="alert">Конфигурации недоступны.</p>
+        <Notice role="alert" tone="danger" appearance="inline">
+          Конфигурации недоступны.
+        </Notice>
       ) : (
         <ResourceList asChild variant="bordered" density="comfortable">
           <ul>
@@ -255,9 +264,9 @@ function AdministrativeRepositoryConfigurations({
         </nav>
       )}
       {error && management === null && (
-        <p role="alert" className="text-danger">
+        <Notice role="alert" tone="danger" appearance="inline">
           {error}
-        </p>
+        </Notice>
       )}
       <Dialog
         open={management !== null}
@@ -274,165 +283,181 @@ function AdministrativeRepositoryConfigurations({
                 : "Автозапуск при Git push"}
           </DialogTitle>
           {management === "create" && (
-            <form
-              onSubmit={create}
-              className="max-w-xl space-y-3 rounded-lg border border-border bg-surface p-4"
-            >
-              <Label htmlFor="config-name">Название</Label>
-              <Input
-                id="config-name"
-                name="name"
-                required
-                maxLength={255}
-                disabled={!writable || busy || !!journal.command}
-                defaultValue={journal.command?.name}
-              />
-              <Label htmlFor="config-branch">Ветка по умолчанию</Label>
-              <Input
-                id="config-branch"
-                name="branch"
-                required
-                defaultValue={journal.command?.default_branch ?? "main"}
-                disabled={!writable || busy || !!journal.command}
-              />
-              {journal.command && (
-                <p className="text-sm text-warning">
-                  Сначала проверим результат предыдущей операции.
-                </p>
-              )}
-              <Button disabled={busy || (!writable && !journal.command)}>
-                {journal.command ? "Проверить и продолжить" : "Создать"}
-              </Button>
-            </form>
+            <Card asChild className="max-w-xl">
+              <form onSubmit={create}>
+                <CardContent className="space-y-3">
+                  <Label htmlFor="config-name">Название</Label>
+                  <Input
+                    id="config-name"
+                    name="name"
+                    required
+                    maxLength={255}
+                    disabled={!writable || busy || !!journal.command}
+                    defaultValue={journal.command?.name}
+                  />
+                  <Label htmlFor="config-branch">Ветка по умолчанию</Label>
+                  <Input
+                    id="config-branch"
+                    name="branch"
+                    required
+                    defaultValue={journal.command?.default_branch ?? "main"}
+                    disabled={!writable || busy || !!journal.command}
+                  />
+                  {journal.command && (
+                    <p className="text-sm text-warning">
+                      Сначала проверим результат предыдущей операции.
+                    </p>
+                  )}
+                  <Button disabled={busy || (!writable && !journal.command)}>
+                    {journal.command ? "Проверить и продолжить" : "Создать"}
+                  </Button>
+                </CardContent>
+              </form>
+            </Card>
           )}
           {writable && (
             <>
               {management === "push" && (
-                <form
-                  className="max-w-xl space-y-3 rounded-lg border border-border bg-surface p-4"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void execute(() =>
-                      api(`/catalog/repositories/${repositoryId}/push-config`, {
-                        method: "PUT",
-                        body: JSON.stringify({
-                          configuration_id: selectedPush || null,
+                <Card asChild className="max-w-xl">
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void execute(() =>
+                        api(
+                          `/catalog/repositories/${repositoryId}/push-config`,
+                          {
+                            method: "PUT",
+                            body: JSON.stringify({
+                              configuration_id: selectedPush || null,
+                            }),
+                          },
+                        ).then(() => {
+                          setPushDraft(null);
+                          setManagement(null);
                         }),
-                      }).then(() => {
-                        setPushDraft(null);
-                        setManagement(null);
-                      }),
-                    );
-                  }}
-                >
-                  <p className="text-sm text-text-muted">
-                    Push запускает одну выбранную конфигурацию. Остальные
-                    доступны вручную и по расписанию.
-                  </p>
-                  {push.isError || choices.isError ? (
-                    <p role="alert">Настройки автозапуска недоступны.</p>
-                  ) : !push.data || !choices.data ? (
-                    <p role="status">Загружаем настройки…</p>
-                  ) : (
-                    <label className="block text-sm">
-                      Конфигурация
-                      <SearchableSelect
-                        label="Конфигурация автозапуска"
-                        value={selectedPush}
-                        selectedLabel={selected.data?.name}
-                        placeholder="Отключён"
-                        options={choices.data.items.map((config) => ({
-                          value: config.id,
-                          label: config.name,
-                        }))}
-                        search={search}
-                        onSearch={(value) => {
-                          setSearch(value);
-                          setChoiceOffset(0);
-                        }}
-                        offset={choiceOffset}
-                        pageSize={50}
-                        total={choices.data.total}
-                        onPage={setChoiceOffset}
-                        onChange={setPushDraft}
-                        disabled={busy}
-                      />
-                    </label>
-                  )}
-                  <Button
-                    disabled={
-                      busy ||
-                      !push.data ||
-                      !choices.data ||
-                      selectedPush === (push.data.configuration_id ?? "")
-                    }
+                      );
+                    }}
                   >
-                    Сохранить автозапуск
-                  </Button>
-                </form>
+                    <CardContent className="space-y-3">
+                      <p className="text-sm text-text-muted">
+                        Push запускает одну выбранную конфигурацию. Остальные
+                        доступны вручную и по расписанию.
+                      </p>
+                      {push.isError || choices.isError ? (
+                        <Notice role="alert" tone="danger" appearance="inline">
+                          Настройки автозапуска недоступны.
+                        </Notice>
+                      ) : !push.data || !choices.data ? (
+                        <LoadingState message="Загружаем настройки…" />
+                      ) : (
+                        <label className="block text-sm">
+                          Конфигурация
+                          <SearchableSelect
+                            label="Конфигурация автозапуска"
+                            value={selectedPush}
+                            selectedLabel={selected.data?.name}
+                            placeholder="Отключён"
+                            options={choices.data.items.map((config) => ({
+                              value: config.id,
+                              label: config.name,
+                            }))}
+                            search={search}
+                            onSearch={(value) => {
+                              setSearch(value);
+                              setChoiceOffset(0);
+                            }}
+                            offset={choiceOffset}
+                            pageSize={50}
+                            total={choices.data.total}
+                            onPage={setChoiceOffset}
+                            onChange={setPushDraft}
+                            disabled={busy}
+                          />
+                        </label>
+                      )}
+                      <Button
+                        disabled={
+                          busy ||
+                          !push.data ||
+                          !choices.data ||
+                          selectedPush === (push.data.configuration_id ?? "")
+                        }
+                      >
+                        Сохранить автозапуск
+                      </Button>
+                    </CardContent>
+                  </form>
+                </Card>
               )}
               {management === "attach" && (
-                <form
-                  className="max-w-xl space-y-3 rounded-lg border border-border bg-surface p-4"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void execute(() =>
-                      api(
-                        `/catalog/repositories/${repositoryId}/delivery-configs/${attachConfiguration}`,
-                        { method: "PUT" },
-                      ).then(() => {
-                        setAttachConfiguration("");
-                        setManagement(null);
-                      }),
-                    );
-                  }}
-                >
-                  <p className="text-sm text-text-muted">
-                    Прежняя история и настройки сохраняются.
-                  </p>
-                  {unbound.isError ? (
-                    <p role="alert">Конфигурации недоступны.</p>
-                  ) : (
-                    <label className="block text-sm">
-                      Конфигурация
-                      <SearchableSelect
-                        label="Конфигурация подключения"
-                        placeholder="Выберите конфигурацию"
-                        allowEmpty={false}
-                        value={attachConfiguration}
-                        selectedLabel={selectedAttach.data?.name}
-                        onChange={setAttachConfiguration}
-                        options={(unbound.data?.items ?? []).map((config) => ({
-                          value: config.id,
-                          label: config.name,
-                        }))}
-                        loading={unbound.isPending}
-                        search={unboundSearch}
-                        onSearch={(value) => {
-                          setUnboundSearch(value);
-                          setUnboundOffset(0);
-                        }}
-                        offset={unboundOffset}
-                        pageSize={50}
-                        total={unbound.data?.total ?? 0}
-                        onPage={setUnboundOffset}
-                        disabled={busy}
-                      />
-                    </label>
-                  )}
-                  <div className="flex gap-2">
-                    <Button disabled={busy || !attachConfiguration}>
-                      Подключить
-                    </Button>
-                  </div>
-                </form>
+                <Card asChild className="max-w-xl">
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void execute(() =>
+                        api(
+                          `/catalog/repositories/${repositoryId}/delivery-configs/${attachConfiguration}`,
+                          { method: "PUT" },
+                        ).then(() => {
+                          setAttachConfiguration("");
+                          setManagement(null);
+                        }),
+                      );
+                    }}
+                  >
+                    <CardContent className="space-y-3">
+                      <p className="text-sm text-text-muted">
+                        Прежняя история и настройки сохраняются.
+                      </p>
+                      {unbound.isError ? (
+                        <Notice role="alert" tone="danger" appearance="inline">
+                          Конфигурации недоступны.
+                        </Notice>
+                      ) : (
+                        <label className="block text-sm">
+                          Конфигурация
+                          <SearchableSelect
+                            label="Конфигурация подключения"
+                            placeholder="Выберите конфигурацию"
+                            allowEmpty={false}
+                            value={attachConfiguration}
+                            selectedLabel={selectedAttach.data?.name}
+                            onChange={setAttachConfiguration}
+                            options={(unbound.data?.items ?? []).map(
+                              (config) => ({
+                                value: config.id,
+                                label: config.name,
+                              }),
+                            )}
+                            loading={unbound.isPending}
+                            search={unboundSearch}
+                            onSearch={(value) => {
+                              setUnboundSearch(value);
+                              setUnboundOffset(0);
+                            }}
+                            offset={unboundOffset}
+                            pageSize={50}
+                            total={unbound.data?.total ?? 0}
+                            onPage={setUnboundOffset}
+                            disabled={busy}
+                          />
+                        </label>
+                      )}
+                      <div className="flex gap-2">
+                        <Button disabled={busy || !attachConfiguration}>
+                          Подключить
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </form>
+                </Card>
               )}
             </>
           )}
           {error && (
-            <p role="alert" className="text-danger">
+            <Notice role="alert" tone="danger" appearance="inline">
               {error}
-            </p>
+            </Notice>
           )}
         </DialogContent>
       </Dialog>

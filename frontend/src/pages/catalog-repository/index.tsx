@@ -1,5 +1,10 @@
 import { useApplicationAccess } from "@pdlc/ui/auth";
 import {
+  CardContent,
+  Card,
+  PageHeader,
+  SectionHeader,
+  CopyButton,
   LoadingState,
   NamespaceLink as Link,
   Button,
@@ -11,6 +16,8 @@ import {
   DialogContent,
   DialogTitle,
   ProjectAvatar,
+  ErrorState,
+  Notice,
 } from "@pdlc/ui/ui";
 import { useState, type FormEvent } from "react";
 
@@ -39,7 +46,6 @@ export function CatalogRepositoryPage() {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [showPullForm, setShowPullForm] = useState(false);
-  const [copied, setCopied] = useState(false);
   const tab = params.get("tab") ?? "git";
   function tabLocation(nextTab: string) {
     const next = new URLSearchParams(params);
@@ -122,22 +128,14 @@ export function CatalogRepositoryPage() {
   if (repository.isPending)
     return <LoadingState message="Загружаем репозиторий…" />;
   if (malformed || repository.isError || !repo)
-    return (
-      <p role="alert" className="text-danger">
-        Репозиторий недоступен.
-      </p>
-    );
+    return <ErrorState message="Репозиторий недоступен." />;
   if (
     ref &&
     (!repo.namespace ||
       ref.namespace_id !== repo.namespace.namespace_id ||
       ref.registry_instance_id !== repo.namespace.registry_instance_id)
   )
-    return (
-      <p role="alert" className="text-danger">
-        Репозиторий принадлежит другому проекту.
-      </p>
-    );
+    return <ErrorState message="Репозиторий принадлежит другому проекту." />;
   const clone = repo.clone_url ?? repo.external_url;
   return (
     <div className="space-y-5">
@@ -158,20 +156,24 @@ export function CatalogRepositoryPage() {
           {project.data.name} · {project.data.project_key}
         </p>
       )}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">{repo.public_name}</h1>
-        {canAdmin && repo.kind === "hosted" && (
-          <Link
-            className="text-accent"
-            to={withNamespaceLocation(
-              `/catalog/repositories/${id}/sync`,
-              repo.namespace ?? null,
+      <PageHeader
+        title={repo.public_name}
+        actions={
+          <>
+            {canAdmin && repo.kind === "hosted" && (
+              <Link
+                className="text-accent"
+                to={withNamespaceLocation(
+                  `/catalog/repositories/${id}/sync`,
+                  repo.namespace ?? null,
+                )}
+              >
+                Синхронизация с внешним репозиторием
+              </Link>
             )}
-          >
-            Синхронизация с внешним репозиторием
-          </Link>
-        )}
-      </div>
+          </>
+        }
+      />
       <SectionNavigation aria-label="Разделы репозитория">
         {[
           ["git", "Git / PR"],
@@ -194,19 +196,17 @@ export function CatalogRepositoryPage() {
       </SectionNavigation>
       {!["git", "files", "pipelines", "deployments", "configurations"].includes(
         tab,
-      ) && <p role="alert">Раздел репозитория не найден.</p>}
+      ) && <ErrorState message="Раздел репозитория не найден." />}
       {tab === "files" && repo.kind === "external" && (
-        <p role="status">
+        <Notice role="status" tone="neutral" appearance="inline">
           Файлы внешнего репозитория доступны у Git-провайдера.
-        </p>
+        </Notice>
       )}
       {tab === "files" &&
         repo.kind === "hosted" &&
         repo.storage_name &&
         (repo.availability ? (
-          <p role="alert" className="text-danger">
-            Git-хранилище недоступно.
-          </p>
+          <ErrorState message="Git-хранилище недоступно." />
         ) : (
           <RepositoryBrowserPage repositoryName={repo.storage_name} embedded />
         ))}
@@ -239,10 +239,10 @@ export function CatalogRepositoryPage() {
       )}
       <div hidden={tab !== "git"} className="space-y-5">
         {repo.availability && (
-          <p role="alert" className="text-danger">
+          <Notice role="alert" tone="warning" appearance="inline">
             Git-хранилище недоступно. История каталога сохранена; для push и
             merge требуется восстановить исходные данные.
-          </p>
+          </Notice>
         )}
         <div className="space-y-2">
           <Label htmlFor="repository-clone-url">
@@ -255,26 +255,19 @@ export function CatalogRepositoryPage() {
               value={clone ?? ""}
               className="font-mono"
             />
-            <Button
-              type="button"
+            <CopyButton
               variant="outline"
-              onClick={() => {
-                void navigator.clipboard
-                  .writeText(clone ?? "")
-                  .then(() => {
-                    setError(undefined);
-                    setCopied(true);
-                  })
-                  .catch(() => {
-                    setCopied(false);
-                    setError(
-                      "Не удалось скопировать. Выделите URL и скопируйте вручную.",
-                    );
-                  });
-              }}
+              value={clone ?? ""}
+              copiedLabel="Скопировано"
+              onCopied={() => setError(undefined)}
+              onCopyError={() =>
+                setError(
+                  "Не удалось скопировать. Выделите URL и скопируйте вручную.",
+                )
+              }
             >
-              {copied ? "Скопировано" : "Копировать"}
-            </Button>
+              Копировать
+            </CopyButton>
           </div>
         </div>
         {repo.kind === "external" && (
@@ -284,26 +277,30 @@ export function CatalogRepositoryPage() {
           </p>
         )}
         {error && (
-          <p role="alert" className="text-danger">
+          <Notice role="alert" tone="danger" appearance="inline">
             {error}
-          </p>
+          </Notice>
         )}
         {repo.kind === "hosted" && (
           <section className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="font-semibold">Pull requests</h2>
-              {repo.state === "active" && !repo.availability && (
-                <Button type="button" onClick={() => setShowPullForm(true)}>
-                  Создать PR
-                </Button>
-              )}
-            </div>
+            <SectionHeader
+              title={<>Pull requests</>}
+              actions={
+                <>
+                  {repo.state === "active" && !repo.availability && (
+                    <Button type="button" onClick={() => setShowPullForm(true)}>
+                      Создать PR
+                    </Button>
+                  )}
+                </>
+              }
+            />
             {pulls.isPending ? (
               <LoadingState message="Загружаем PR…" />
             ) : pulls.isError ? (
-              <p role="alert" className="text-danger">
+              <Notice role="alert" tone="danger" appearance="inline">
                 PR недоступны.
-              </p>
+              </Notice>
             ) : pulls.data?.length === 0 ? (
               <p className="text-text-muted">PR пока нет.</p>
             ) : (
@@ -336,23 +333,24 @@ export function CatalogRepositoryPage() {
             >
               <DialogContent aria-describedby={undefined}>
                 <DialogTitle>Создать PR</DialogTitle>
-                <form
-                  onSubmit={createPull}
-                  className="max-w-xl space-y-3 rounded-lg border border-border bg-surface p-4"
-                >
-                  <Label htmlFor="pr-title">Название</Label>
-                  <Input id="pr-title" name="title" required />
-                  <Label htmlFor="pr-source">Исходная ветка</Label>
-                  <Input id="pr-source" name="source_branch" required />
-                  <Label htmlFor="pr-target">Целевая ветка</Label>
-                  <Input
-                    id="pr-target"
-                    name="target_branch"
-                    defaultValue="main"
-                    required
-                  />
-                  <Button disabled={busy}>Создать PR</Button>
-                </form>
+                <Card asChild className="max-w-xl">
+                  <form onSubmit={createPull}>
+                    <CardContent className="space-y-3">
+                      <Label htmlFor="pr-title">Название</Label>
+                      <Input id="pr-title" name="title" required />
+                      <Label htmlFor="pr-source">Исходная ветка</Label>
+                      <Input id="pr-source" name="source_branch" required />
+                      <Label htmlFor="pr-target">Целевая ветка</Label>
+                      <Input
+                        id="pr-target"
+                        name="target_branch"
+                        defaultValue="main"
+                        required
+                      />
+                      <Button disabled={busy}>Создать PR</Button>
+                    </CardContent>
+                  </form>
+                </Card>
               </DialogContent>
             </Dialog>
           )}

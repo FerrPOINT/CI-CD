@@ -268,6 +268,14 @@ slice, например `pdlc4.slice`. Transfer, job и сервисы врем�
 нужные CPU/RAM budgets. Параметр не передаётся окружению job. Без параметра
 сохраняется прежнее поведение; индивидуальные ограничения resource class остаются.
 
+## Разработка UI со справочником Base
+
+[Порядок для разработчика и ИИ](https://github.com/FerrPOINT/services-base/blob/ae2b41291eee5af752daff89f760fba5aff41783/base-modules/ui/reference/guides/agent.md): версия UI → check → поиск/карточка
+→ один пример → интеграция → проверка поведения.
+Из корня подготовленного React-продукта: `pnpm --dir frontend exec pdlc-ui`.
+Полный каталог и запуск Storybook/API для offline-поиска не нужны. Общие
+компоненты и брендинг исправляются в Base, данные и правила остаются у продукта.
+
 ## Единое пространство PDLC
 
 [Согласованная M:N-модель и план](docs/plans/unified-spaces-20261019.md): реализация в работе. Source, tests,

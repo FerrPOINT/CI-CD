@@ -1,7 +1,17 @@
 import { useApplicationAccess } from "@pdlc/ui/auth";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Input, NamespaceLink as Link } from "@pdlc/ui/ui";
+import {
+  PageHeader,
+  CardTitle,
+  Card,
+  CardContent,
+  Button,
+  Input,
+  NamespaceLink as Link,
+  LoadingState,
+  ErrorState,
+} from "@pdlc/ui/ui";
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
 import type { components } from "@/api/schema";
@@ -19,14 +29,18 @@ export function RepositoriesPage() {
   });
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Репозитории</h1>
-        {canAdmin && (
-          <Link to="/projects?project_scope=all" className="text-accent">
-            Добавить репозиторий в проект
-          </Link>
-        )}
-      </div>
+      <PageHeader
+        title="Репозитории"
+        actions={
+          <>
+            {canAdmin && (
+              <Link to="/projects?project_scope=all" className="text-accent">
+                Добавить репозиторий в проект
+              </Link>
+            )}
+          </>
+        }
+      />
       <Input
         className="max-w-md"
         aria-label="Поиск репозиториев"
@@ -38,36 +52,38 @@ export function RepositoriesPage() {
         }}
       />
       {catalog.isPending ? (
-        <p role="status">Загружаем репозитории…</p>
+        <LoadingState message="Загружаем репозитории…" />
       ) : catalog.isError ? (
-        <p role="alert" className="text-danger">
-          Каталог недоступен.
-        </p>
+        <ErrorState message="Каталог недоступен." />
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {catalog.data.items.map((repo) => (
-            <Link
-              key={repo.id}
-              to={withNamespaceLocation(
-                `/catalog/repositories/${repo.id}?project_scope=all`,
-                repo.namespace ?? null,
-              )}
-              className="rounded-lg border border-border bg-surface p-4 hover:bg-surface-raised"
-            >
-              <h2 className="font-semibold">{repo.public_name}</h2>
-              <p className="mt-2 text-sm text-text-muted">
-                {repo.kind === "hosted" ? "Git в Forge" : "Внешний Git"} ·{" "}
-                {repo.availability
-                  ? "Хранилище недоступно"
-                  : !repo.namespace
-                    ? "Не подключён к проекту"
-                    : repo.state === "archived"
-                      ? "В архиве"
-                      : repo.ready
-                        ? "Подключён"
-                        : "Инициализируется"}
-              </p>
-            </Link>
+            <Card asChild interactive key={repo.id}>
+              <Link
+                to={withNamespaceLocation(
+                  `/catalog/repositories/${repo.id}?project_scope=all`,
+                  repo.namespace ?? null,
+                )}
+              >
+                <CardContent>
+                  <CardTitle asChild>
+                    <h2>{repo.public_name}</h2>
+                  </CardTitle>
+                  <p className="mt-2 text-sm text-text-muted">
+                    {repo.kind === "hosted" ? "Git в Forge" : "Внешний Git"} ·{" "}
+                    {repo.availability
+                      ? "Хранилище недоступно"
+                      : !repo.namespace
+                        ? "Не подключён к проекту"
+                        : repo.state === "archived"
+                          ? "В архиве"
+                          : repo.ready
+                            ? "Подключён"
+                            : "Инициализируется"}
+                  </p>
+                </CardContent>
+              </Link>
+            </Card>
           ))}
           {!catalog.data.items.length && (
             <p className="text-text-muted">Репозиториев пока нет.</p>

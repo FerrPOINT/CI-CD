@@ -1,13 +1,29 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
-import { ChevronLeft, ChevronRight, History, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, History, Search } from "lucide-react";
 
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-import {Select, InitialsAvatar as UserAvatar, Button, Card, Input, Label, ResourceList, ResourceListRow, Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@pdlc/ui/ui'
-
-
+import {
+  PageHeader,
+  Select,
+  InitialsAvatar as UserAvatar,
+  Button,
+  Card,
+  Label,
+  ResourceList,
+  ResourceListRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  SearchInput,
+  Notice,
+  EmptyState,
+} from "@pdlc/ui/ui";
 
 const pageSize = 20;
 const maxAuditPage = Math.floor(2_147_483_647 / pageSize) + 1;
@@ -117,27 +133,35 @@ export function AuditLogPage() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-center gap-2">
-        <History className="h-5 w-5 text-accent" aria-hidden />
-        <h1 className="text-2xl font-bold">{t("auditLog.title")}</h1>
-      </header>
+      <PageHeader
+        title={t("auditLog.title")}
+        leading={
+          <>
+            <History className="h-5 w-5 text-accent" aria-hidden />
+          </>
+        }
+      />
 
       {auditQuery.error && auditQuery.data && (
-        <div
+        <Notice
           role="alert"
-          className="flex flex-wrap items-center gap-3 border-y border-border py-3 text-sm text-text-secondary"
+
+          tone="warning"
+          appearance="panel"
+          actions={
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+
+              onClick={() => void auditQuery.refetch()}
+            >
+              {t("common.retry")}
+            </Button>
+          }
         >
           <span>{t("auditLog.refreshFailed")}</span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="min-h-10 sm:min-h-10"
-            onClick={() => void auditQuery.refetch()}
-          >
-            {t("common.retry")}
-          </Button>
-        </div>
+        </Notice>
       )}
 
       <QueryState
@@ -170,37 +194,27 @@ export function AuditLogPage() {
                   role="search"
                   className="flex min-w-0 gap-2"
                 >
-                  <div className="relative min-w-0 flex-1">
-                    <Search
-                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-                      aria-hidden
-                    />
-                    <Input
-                      type="search"
+                  <div className="min-w-0 flex-1">
+                    <SearchInput
                       aria-label={t("auditLog.search")}
                       placeholder={t("auditLog.search")}
                       maxLength={128}
                       value={searchDraft}
                       onChange={(event) => setSearchDraft(event.target.value)}
-                      className="min-h-10 pl-9 pr-10"
+                      clear={
+                        searchDraft || query
+                          ? {
+                              label: t("auditLog.clearSearch"),
+                              onClear: clearSearch,
+                            }
+                          : undefined
+                      }
                     />
-                    {(searchDraft || query) && (
-                      <Button
-                        variant="ghost"
-                        type="button"
-                        aria-label={t("auditLog.clearSearch")}
-                        title={t("auditLog.clearSearch")}
-                        className="absolute right-0 top-0 inline-flex h-10 w-10 items-center justify-center text-text-muted hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-                        onClick={clearSearch}
-                      >
-                        <X className="h-4 w-4" aria-hidden />
-                      </Button>
-                    )}
                   </div>
                   <Button
                     type="submit"
                     size="sm"
-                    className="min-h-10 sm:min-h-10"
+
                     disabled={searchDraft.trim() === query}
                   >
                     <Search className="h-4 w-4" aria-hidden />
@@ -246,12 +260,9 @@ export function AuditLogPage() {
               </p>
 
               {result.total === 0 ? (
-                <p
-                  role="status"
-                  className="border-y border-border py-6 text-sm text-text-muted"
-                >
-                  {t("auditLog.noMatches")}
-                </p>
+                <div role="status">
+                  <EmptyState message={t("auditLog.noMatches")} />
+                </div>
               ) : (
                 <>
                   <ResourceList asChild>
@@ -372,7 +383,7 @@ export function AuditLogPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="min-h-10 sm:min-h-10"
+
                     disabled={page === 1 || auditQuery.isFetching}
                     onClick={() => changePage(page - 1)}
                   >
@@ -386,7 +397,7 @@ export function AuditLogPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="min-h-10 sm:min-h-10"
+
                     disabled={page === pageCount || auditQuery.isFetching}
                     onClick={() => changePage(page + 1)}
                   >

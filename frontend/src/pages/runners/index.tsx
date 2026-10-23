@@ -1,19 +1,31 @@
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Search, Server, Trash2 } from "lucide-react";
-import {toast, Select, Button, Input, Label, ResourceList, ResourceListRow, ConfirmDialog} from '@pdlc/ui/ui'
+import { Plus, Server, Trash2 } from "lucide-react";
+import {
+  Badge,
+  PageHeader,
+  toast,
+  Select,
+  Button,
+  Input,
+  Label,
+  ResourceList,
+  ResourceListRow,
+  ConfirmDialog,
+  SearchInput,
+  EmptyState,
+} from "@pdlc/ui/ui";
 import { useDeleteRunner, useRegisterRunner, useRunners } from "@/api/hooks";
 import type { Runner, RunnerStatus } from "@/api/types";
-
 
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
 
-function statusDotClass(status: RunnerStatus): string {
-  if (status === "online") return "bg-success";
-  if (status === "paused") return "bg-warning";
-  return "bg-text-muted";
+function runnerTone(status: RunnerStatus) {
+  if (status === "online") return "success";
+  if (status === "paused") return "warning";
+  return "muted";
 }
 
 export function RunnersPage() {
@@ -75,22 +87,26 @@ export function RunnersPage() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("runners.title")}</h1>
-        <Button
-          size="sm"
-          className="min-h-10 sm:min-h-10"
-          aria-expanded={showForm}
-          disabled={registerRunner.isPending}
-          onClick={() => {
-            if (showForm) setForm({ name: "", tags: "" });
-            setShowForm(!showForm);
-          }}
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-          {t("runners.register")}
-        </Button>
-      </header>
+      <PageHeader
+        title={t("runners.title")}
+        actions={
+          <>
+            <Button
+              size="sm"
+
+              aria-expanded={showForm}
+              disabled={registerRunner.isPending}
+              onClick={() => {
+                if (showForm) setForm({ name: "", tags: "" });
+                setShowForm(!showForm);
+              }}
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              {t("runners.register")}
+            </Button>
+          </>
+        }
+      />
 
       {showForm && (
         <form
@@ -102,7 +118,7 @@ export function RunnersPage() {
             <Label htmlFor="runner-name">{t("runners.name")}</Label>
             <Input
               id="runner-name"
-              className="min-h-10"
+
               required
               autoFocus
               value={form.name}
@@ -115,7 +131,7 @@ export function RunnersPage() {
             <Label htmlFor="runner-tags">{t("runners.tags")}</Label>
             <Input
               id="runner-tags"
-              className="min-h-10"
+
               placeholder="linux, docker"
               value={form.tags}
               onChange={(event) =>
@@ -130,7 +146,7 @@ export function RunnersPage() {
             <Button
               type="button"
               variant="outline"
-              className="min-h-10 sm:min-h-10"
+
               disabled={registerRunner.isPending}
               onClick={() => {
                 setShowForm(false);
@@ -141,7 +157,7 @@ export function RunnersPage() {
             </Button>
             <Button
               type="submit"
-              className="min-h-10 sm:min-h-10"
+
               disabled={registerRunner.isPending || !form.name.trim()}
             >
               {t("runners.register")}
@@ -162,16 +178,10 @@ export function RunnersPage() {
         {() => (
           <section aria-label={t("runners.title")} className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-              <div className="relative">
-                <Search
-                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-                  aria-hidden
-                />
-                <Input
-                  type="search"
+              <div>
+                <SearchInput
                   aria-label={t("runners.search")}
                   placeholder={t("runners.search")}
-                  className="min-h-10 pl-9"
                   value={search}
                   onChange={(event) => {
                     setSearch(event.target.value);
@@ -216,12 +226,9 @@ export function RunnersPage() {
               })}
             </p>
             {filteredRunners.length === 0 ? (
-              <p
-                role="status"
-                className="border-y border-border py-6 text-sm text-text-muted"
-              >
-                {t("runners.noMatches")}
-              </p>
+              <div role="status">
+                <EmptyState message={t("runners.noMatches")} />
+              </div>
             ) : (
               <ResourceList asChild>
                 <ul>
@@ -257,14 +264,15 @@ export function RunnersPage() {
                                 : t("runners.neverSeen")}
                             </p>
                           </div>
-                          <span className="inline-flex max-w-24 shrink-0 items-center gap-1.5 truncate rounded bg-surface-raised px-2 py-1 text-xs text-text-primary">
-                            <span
-                              aria-hidden
-                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(runner.status)}`}
-                            />
+                          <Badge
+                            appearance="dot"
+                            tone={runnerTone(runner.status)}
+                            className="shrink-0"
+                          >
                             {t(`runners.status_${runner.status}`)}
-                          </span>
+                          </Badge>
                           <Button
+                            size="icon"
                             variant="destructive-outline"
                             type="button"
                             aria-label={t("runners.deleteRunner", {
@@ -274,7 +282,7 @@ export function RunnersPage() {
                               name: runner.name,
                             })}
                             disabled={deleteRunner.isPending}
-                            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-danger hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+                            className="shrink-0"
                             onClick={() => setPendingDelete(runner)}
                           >
                             <Trash2 className="h-4 w-4" aria-hidden />
@@ -295,7 +303,7 @@ export function RunnersPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={currentPage === 1}
                   onClick={() => setPage(currentPage - 1)}
                 >
@@ -308,7 +316,7 @@ export function RunnersPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={currentPage === totalPages}
                   onClick={() => setPage(currentPage + 1)}
                 >

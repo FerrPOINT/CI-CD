@@ -79,6 +79,15 @@ cd frontend && pnpm build
 
 ## Base и воспроизводимость
 
+Поле с одной иконкой действия использует InputWithAction Base; SearchInput уже
+использует его для очистки. Не копировать вокруг Input absolute trigger, padding
+и focus-оформление. Значение секрета, состояние раскрытия, права и запись остаются
+у Forge; сначала проверить доступность контракта в принятом UI pin.
+
+Самостоятельные иконки поиска, навигации, скачивания и редактирования используют
+Button size="icon" с доступным именем. Локальные w-10/p-0, padding, hover/focus
+и disabled-скины не добавлять; submit, pending и обработчики остаются у Forge.
+
 См. [BASE_INTEGRATION](docs/BASE_INTEGRATION.md). Обязательны pinned Base SHA,
 locked/frozen зависимости и проверка актуальных checkout до сборки.
 Rust build toolchain 1.88.0, Node 22.20.0, pnpm 10.28.1; MSRV отдельно.
@@ -95,15 +104,17 @@ Desktop fallback. Pulse — приватный Git/pipeline только в CI/C
 ## Термины PDLC и общие компоненты
 
 Перед изменением платформенных имён прочитайте [интеграцию с Base](docs/PDLC_BASE_INTEGRATION.md) и канонические TERMS/BRANDING.
-Для UI: `pnpm --dir frontend exec pdlc-ui search "задача"` → `show ExportName` → один нужный `example`. В Workflow SSR используйте штатный exporter Base.
+Работа с UI описана в разделе «Разработка UI со справочником Base» ниже.
 Не переносите продуктовые запросы, DTO и права в общий UI. SDK/UI/skills pins независимы; новое имя платформы не меняет SDLC IDs/scopes или Hermes upstream.
 
 ## Общие поля выбора Base
 
 Сначала искать общий UI в Base: search → show → example. Общие исправления
 вносить в Base; продукт передаёт данные, права, преобразования и сохранение.
-Для одного известного значения использовать Select, для нескольких — MultiSelect,
-для каталога с поиском/пагинацией — SearchableSelect из публичного @pdlc/ui.
+Для закрытого списка с одним значением — Select; для нескольких — MultiSelect.
+Одно значение из всех видимых вариантов — RadioGroup, взаимноисключающие режимы — appearance="segmented".
+Вкладки с панелями используют Tabs. Каталог с поиском/пагинацией — SearchableSelect.
+Использовать публичный @pdlc/ui и сверять наличие API по точному UI pin.
 Контракт Select/MultiSelect: options, value/defaultValue, onValueChange;
 HTML children/option/onChange/multiple/size больше не являются их API.
 Видимые raw select и локальные копии оформления не добавлять. Технический form
@@ -112,14 +123,34 @@ bridge принадлежит только Base; SSR использует шта
 Правила выбора и подключения: Base docs/platform/CHOICE_CONTROLS.md.
 UI/SDK/skills pins независимы; установка и production — отдельные операции.
 
-## Единая дизайн-система Base
+## Разработка UI со справочником Base
 
-Перед созданием UI: pdlc-ui search → show → один example. Button, Input,
-Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
+Открытая страница справочника может быть новее зависимости продукта: сверять
+контракт по принятому UI pin. Если поиск пуст, уточнить запрос/фильтры и
+проверить рецепты; отсутствие API проверить отдельно в актуальном Base.
+Общий контракт добавлять в Base вместе с metadata и примером, затем явно
+обновлять UI pin потребителя. Локальная копия не заменяет эту интеграцию.
+
+Перед созданием или изменением UI читать [маршрут разработки со справочником Base](https://github.com/FerrPOINT/services-base/blob/ae2b41291eee5af752daff89f760fba5aff41783/base-modules/ui/reference/guides/agent.md).
+Из корня продукта с подготовленным frontend: `pnpm --dir frontend exec pdlc-ui`.
+Сначала сверить `.base-ui-revision` и выполнить `check` один раз в начале задачи
+или после смены UI pin; затем `search "задача"` либо адресный `show`, при
+необходимости `--section props` или `--section setup`, и один `example`. Использовать точный
+квалифицированный адрес из поиска; композиции доступны через `example recipes`.
+Без подготовленного frontend руководство описывает CLI из отдельного checkout
+того же UI SHA без npm install. Не загружать весь каталог в контекст и не
+подменять принятую версию через npx/dlx/latest или скрытый HTTP fallback.
+Проверить providers/Router/i18n/CSS и cleanup; после интеграции — scoped проверки
+продукта и IAB затронутого поведения. Источники, hosted CI и runtime — разные gates.
+
+Button, Input, Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
 Dialog и Toaster/toast использовать из публичного @pdlc/ui. Общий дефект
 исправлять в Base; продукт сохраняет данные, права и сохранение. Прямой Sonner,
 копии примитивов и продуктовые определения общих tokens не добавлять.
 Брендинг применяется общим runtime; draft preview изолируется BrandingScope.
+Размеры однострочных контролов и типографика/padding TabsTrigger принадлежат
+Base; локальные h-10/min-h-10 и мобильные копии не добавлять. Textarea,
+ширина предметной панели, внешний margin и компоновка сохраняют свой контракт.
 Канонический контракт — Base docs/platform/DESIGN_SYSTEM.md и docs/BRANDING.md.
 UI/SDK/skills pins независимы; source-изменения не означают установку.
 
