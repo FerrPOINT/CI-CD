@@ -305,3 +305,20 @@ GET task links использует repository read admission, POST — write pe
 [Durable merge recovery](docs/adr/0038-durable-pull-merge-recovery.md) добавляет
 сохранённое намерение и readback без повторной публикации. Это source candidate.
 CI/sync/machine и полный serving cohort остаются gates.
+
+## Ручные долгие проверки
+
+Долгие opt-in PostgreSQL/integration и браузерные E2E запускаются только через
+явный `workflow_dispatch` существующего CI. В Actions выберите CI, ветку и
+«Run workflow»; сохранены прежние адресные inputs, если они предусмотрены.
+Обычные PR/push не запускают эти шаги. Быстрые unit, format, typecheck, lint
+и build-проверки сохраняют прежние условия. Команды, assertions, зависимости
+и timeouts долгих сценариев не меняются.
+
+Долгий набор также можно запускать вручную штатными командами проекта. Успешный
+автоматический CI подтверждает быстрый набор; он не подтверждает пропущенную
+integration/live/E2E приёмку. Перед относящейся к данным или безопасности
+поставкой необходимый адресный manual gate остаётся обязательным.
+
+Полный workspace-набор тоже ручной: автоматический backend выполняет короткие
+SDK/domain unit tests; прежний полный набор сохранён с manual predicate.
