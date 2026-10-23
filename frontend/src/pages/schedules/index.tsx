@@ -186,17 +186,17 @@ export function SchedulesPage() {
               }}
             />
           </div>
-          <label className="flex min-h-10 items-center gap-2 text-sm sm:col-span-2">
-            <Checkbox
-              checked={form.enabled}
-              disabled={saving}
-              onCheckedChange={(checked) => {
-                setForm({ ...form, enabled: checked === true });
-                setSaveError("");
-              }}
-            />
+          <Checkbox
+            className="sm:col-span-2"
+            checked={form.enabled}
+            disabled={saving}
+            onCheckedChange={(checked) => {
+              setForm({ ...form, enabled: checked === true });
+              setSaveError("");
+            }}
+          >
             {t("schedules.enabled")}
-          </label>
+          </Checkbox>
           {saveError && (
             <Notice
               role="alert"
@@ -302,7 +302,8 @@ export function SchedulesPage() {
                               name: schedule.cron,
                             })}
                             disabled={saving}
-                            size="icon" className="shrink-0"
+                            size="icon"
+                            className="shrink-0"
                             onClick={() => openEditForm(schedule)}
                           >
                             <Pencil className="h-4 w-4" aria-hidden />

@@ -816,20 +816,17 @@ export function RepositorySyncEditor({
             >
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 {modes.map((mode) => (
-                  <label
+                  <Radio
                     key={mode.value}
-                    className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${draft.direction === mode.value ? "border-accent bg-surface" : "border-border"}`}
+                    appearance="card"
+                    name="direction"
+                    disabled={
+                      !!connection.active_run && mode.value !== "disabled"
+                    }
+                    value={mode.value}
+                    checked={draft.direction === mode.value}
+                    onCheckedChange={() => patch({ direction: mode.value })}
                   >
-                    <Radio
-                      className="mt-1 shrink-0"
-                      name="direction"
-                      disabled={
-                        !!connection.active_run && mode.value !== "disabled"
-                      }
-                      value={mode.value}
-                      checked={draft.direction === mode.value}
-                      onCheckedChange={() => patch({ direction: mode.value })}
-                    />
                     <span className="min-w-0">
                       <strong className="flex items-center gap-2 text-sm">
                         <mode.icon aria-hidden size={14} />
@@ -839,7 +836,7 @@ export function RepositorySyncEditor({
                         {mode.detail}
                       </span>
                     </span>
-                  </label>
+                  </Radio>
                 ))}
               </div>
             </Fieldset>
@@ -849,15 +846,13 @@ export function RepositorySyncEditor({
             >
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {[false, true].map((automatic) => (
-                  <label
+                  <Radio
                     key={String(automatic)}
-                    className={`flex cursor-pointer gap-3 rounded-md border p-3 ${draft.automatic === automatic ? "border-accent" : "border-border"}`}
+                    appearance="card"
+                    name="automatic"
+                    checked={draft.automatic === automatic}
+                    onCheckedChange={() => patch({ automatic })}
                   >
-                    <Radio
-                      name="automatic"
-                      checked={draft.automatic === automatic}
-                      onCheckedChange={() => patch({ automatic })}
-                    />
                     <span>
                       <strong className="block text-sm">
                         {automatic ? "Автоматически" : "Вручную"}
@@ -868,7 +863,7 @@ export function RepositorySyncEditor({
                           : "По кнопке «Синхронизировать сейчас»."}
                       </span>
                     </span>
-                  </label>
+                  </Radio>
                 ))}
               </div>
             </Fieldset>

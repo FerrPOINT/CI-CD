@@ -868,17 +868,14 @@ function RepositorySyncEditor({
                 <Fieldset legend={"Направление синхронизации"}>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     {modes.map((mode) => (
-                      <label
+                      <Radio
                         key={mode.value}
-                        className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${draft.mode === mode.value ? "border-accent bg-surface" : "border-border"}`}
+                        appearance="card"
+                        name="mode"
+                        value={mode.value}
+                        checked={draft.mode === mode.value}
+                        onCheckedChange={() => update("mode", mode.value)}
                       >
-                        <Radio
-                          className="mt-1 shrink-0"
-                          name="mode"
-                          value={mode.value}
-                          checked={draft.mode === mode.value}
-                          onCheckedChange={() => update("mode", mode.value)}
-                        />
                         <span className="min-w-0">
                           <strong className="flex items-center gap-2 text-sm">
                             <mode.icon
@@ -891,7 +888,7 @@ function RepositorySyncEditor({
                             {mode.detail}
                           </span>
                         </span>
-                      </label>
+                      </Radio>
                     ))}
                   </div>
                 </Fieldset>
@@ -904,22 +901,20 @@ function RepositorySyncEditor({
                   <span aria-hidden className="col-span-2 text-sm font-medium">
                     Способ запуска
                   </span>
-                  <label className="flex min-h-10 items-center gap-2 text-sm">
-                    <Radio
-                      name={`launch-${entry.id}`}
-                      checked={!draft.automatic}
-                      onCheckedChange={() => update("automatic", false)}
-                    />
+                  <Radio
+                    name={`launch-${entry.id}`}
+                    checked={!draft.automatic}
+                    onCheckedChange={() => update("automatic", false)}
+                  >
                     Вручную
-                  </label>
-                  <label className="flex min-h-10 items-center gap-2 text-sm">
-                    <Radio
-                      name={`launch-${entry.id}`}
-                      checked={draft.automatic}
-                      onCheckedChange={() => update("automatic", true)}
-                    />
+                  </Radio>
+                  <Radio
+                    name={`launch-${entry.id}`}
+                    checked={draft.automatic}
+                    onCheckedChange={() => update("automatic", true)}
+                  >
                     Автоматически
-                  </label>
+                  </Radio>
                 </Fieldset>
                 <p className="text-xs text-text-secondary">
                   {draft.mode === "disabled"
@@ -1032,14 +1027,13 @@ function RepositorySyncEditor({
                 ]}
               />
             </div>
-            <label className="flex min-h-10 items-center gap-2">
-              <Checkbox
-                disabled={busy}
-                checked={readOnly}
-                onCheckedChange={(checked) => setReadOnly(checked === true)}
-              />
+            <Checkbox
+              disabled={busy}
+              checked={readOnly}
+              onCheckedChange={(checked) => setReadOnly(checked === true)}
+            >
               Только чтение
-            </label>
+            </Checkbox>
           </div>
         </Disclosure>
       </main>
