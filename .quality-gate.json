@@ -3,6 +3,18 @@
   "product": "CI-CD",
   "components": {
     "tooling": [
+      ".github/workflows/ci.yml",
+      "scripts/tests/test_build_pin.py",
+      "scripts/tests/test_forge_backup_umbrella.py",
+      "scripts/tests/test_frontend_toolchain.py",
+      "scripts/tests/test_observability_contract.py",
+      "scripts/tests/test_oci_offline_fixture.py",
+      "scripts/tests/test_postgres_delivery.py",
+      "scripts/tests/test_postgres_rejection.py",
+      "scripts/tests/test_tls_profile.py",
+      "scripts/tests/test_umbrella_operations_docs.py",
+      "scripts/tests/test_verify_docs.py",
+      "scripts/tests/test_tooling_ownership.py",
       "backend/Dockerfile.umbrella",
       "backend/Dockerfile",
       "scripts/tests/test_backend_release_ownership.py",
@@ -45,6 +57,75 @@
     ]
   },
   "gates": [
+    {
+      "id": "tooling:python-helpers",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_build_pin",
+        "scripts.tests.test_forge_backup_umbrella",
+        "scripts.tests.test_frontend_toolchain",
+        "scripts.tests.test_observability_contract",
+        "scripts.tests.test_oci_offline_fixture",
+        "scripts.tests.test_postgres_delivery",
+        "scripts.tests.test_postgres_rejection",
+        "scripts.tests.test_tls_profile",
+        "scripts.tests.test_umbrella_operations_docs",
+        "scripts.tests.test_verify_docs",
+        "scripts.tests.test_tooling_ownership",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_build_pin.py",
+        "scripts/tests/test_forge_backup_umbrella.py",
+        "scripts/tests/test_frontend_toolchain.py",
+        "scripts/tests/test_observability_contract.py",
+        "scripts/tests/test_oci_offline_fixture.py",
+        "scripts/tests/test_postgres_delivery.py",
+        "scripts/tests/test_postgres_rejection.py",
+        "scripts/tests/test_tls_profile.py",
+        "scripts/tests/test_umbrella_operations_docs.py",
+        "scripts/tests/test_verify_docs.py",
+        "scripts/tests/test_tooling_ownership.py",
+        "scripts/build.py",
+        "scripts/forge_backup.py",
+        "scripts/verify_docs.py",
+        "scripts/postgres-delivery.py",
+        "scripts/native_qa_compose_client.py",
+        "frontend/Dockerfile.umbrella",
+        "deploy/observability/forge-alerts.yaml",
+        "docs/runbooks/OBSERVABILITY.md",
+        "docs/OPERATIONS.md",
+        "docs/CURRENT_STATE.md",
+        "docs/DELIVERY_ARCHITECTURE.md",
+        "docs/API.md",
+        "docker-compose.tls.yml",
+        "scripts/export-tls-ca.sh",
+        "deploy/Caddyfile",
+        "backend/tests/support/oci_delivery.rs",
+        "backend/tests/support/postgres_delivery.rs",
+        "backend/src/task_delivery/oci.rs",
+        "backend/src/task_delivery/postgres.rs",
+        "backend/src/bin/forge-delivery.rs",
+        "scripts/vendor/base_quality_selection.py",
+        ".quality-gate.json",
+        ".github/workflows/ci.yml"
+      ],
+      "cacheable": true,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
     {
       "id": "tooling:build-contracts",
       "component": "tooling",
@@ -499,6 +580,38 @@
       "test_tier": "artifact"
     }
   ],
+  "affected_checks": {
+    "tooling": [
+      {
+        "paths": [
+          "scripts/tests/test_build_pin.py",
+          "scripts/tests/test_forge_backup_umbrella.py",
+          "scripts/tests/test_frontend_toolchain.py",
+          "scripts/tests/test_observability_contract.py",
+          "scripts/tests/test_oci_offline_fixture.py",
+          "scripts/tests/test_postgres_delivery.py",
+          "scripts/tests/test_postgres_rejection.py",
+          "scripts/tests/test_tls_profile.py",
+          "scripts/tests/test_umbrella_operations_docs.py",
+          "scripts/tests/test_verify_docs.py",
+          "scripts/tests/test_tooling_ownership.py"
+        ],
+        "gates": [
+          "tooling:python-helpers"
+        ]
+      },
+      {
+        "paths": [
+          "scripts/tests/test_backend_release_ownership.py",
+          "scripts/tests/test_backend_dockerfile.py",
+          "scripts/tests/test_ci_contract_checks.py"
+        ],
+        "gates": [
+          "tooling:build-contracts"
+        ]
+      }
+    ]
+  },
   "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
   "frontend_generated": [
     "src/api/schema.d.ts"

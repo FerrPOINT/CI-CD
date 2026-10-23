@@ -1,5 +1,26 @@
 # Стратегия тестирования Forge CI/CD — Moved
 
+## Python helper unit
+
+Известные pure helper test paths перечислены в `tooling:python-helpers`:
+build-pin, backup dry-run, frontend toolchain, observability/TLS/docs,
+OCI/PostgreSQL control-flow models и routing. Fast/Unit/Build не выбирают из-за
+них application producers. Существующие build-contract tests сохраняют свой
+`tooling:build-contracts`; unknown scripts сохраняют широкий fallback.
+Root preview: `check-workspace.ps1 -Profile Unit -Repository CI-CD -Component tooling -PlanOnly`.
+Один module из Forge: `python -B -m unittest scripts.tests.test_postgres_delivery -q`.
+Полная helper command определяется argv `tooling:python-helpers`; CI объединяет
+её с build-contract modules без повторов и сохраняет actual docs/SBOM validators.
+
+Два OCI retention/confinement cases требуют POSIX modes, symlink и O_DIRECTORY.
+На Windows они явно SKIPPED; их неизменные bodies выполняются Linux CI и должны
+быть проверены на Linux до заявления полной qualification. Windows source proof
+не заменяет их. `test_native_qa_compose` с explicit SDLC_MAINTENANCE_BASE и
+POSIX stand-backup fixtures этим pure gate не активируются; их qualification
+остаётся отдельной. Реальные Docker/PostgreSQL/SDK live gates не ослаблены.
+Отрицательные README fixtures создаются в TemporaryDirectory и не переписывают
+checkout. Результаты — [source план](plans/python-tooling-test-selection-20261024.md).
+
 Актуальная политика 2026-10-15: unit/static запускаются при обычной сборке;
 integration/slow/full coverage и browser/live — вручную перед релизом.
 Команды быстрых уровней приведены в разделе «Тестовые уровни (2026-10-15)» ниже.

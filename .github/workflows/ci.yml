@@ -79,8 +79,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: documentation regression tests
-        run: python3 -m unittest scripts.tests.test_verify_docs scripts.tests.test_postgres_rejection
+      - name: Python tooling regression tests
+        run: python3 -B -m unittest scripts.tests.test_build_pin scripts.tests.test_forge_backup_umbrella scripts.tests.test_frontend_toolchain scripts.tests.test_observability_contract scripts.tests.test_oci_offline_fixture scripts.tests.test_postgres_delivery scripts.tests.test_postgres_rejection scripts.tests.test_tls_profile scripts.tests.test_umbrella_operations_docs scripts.tests.test_verify_docs scripts.tests.test_tooling_ownership scripts.tests.test_backend_dockerfile scripts.tests.test_ci_contract_checks.CliIntegrationGateTests scripts.tests.test_backend_release_ownership -q
       - name: documentation checks
         run: python3 scripts/verify_docs.py --all
       - name: dependency inventory drift
@@ -89,7 +89,6 @@ jobs:
         run: |
           python3 scripts/check_cache_tooling.py
           python3 -B -m unittest discover -s scripts/tests -p 'test_cache_tooling.py' -q
-          python3 -B -m unittest scripts.tests.test_backend_dockerfile scripts.tests.test_ci_contract_checks.CliIntegrationGateTests scripts.tests.test_backend_release_ownership -q
           python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py
           bash -n scripts/backup.sh scripts/backup-stand.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
   minimum-rust:

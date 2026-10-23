@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / "verify_docs.py"
 SPEC = importlib.util.spec_from_file_location("verify_docs", SCRIPT)
@@ -17,6 +20,22 @@ SPEC.loader.exec_module(verify_docs)
 class CapabilityStatusRegressionTests(unittest.TestCase):
     def setUp(self) -> None:
         verify_docs.problems.clear()
+
+    def test_negative_readme_fixtures_preserve_caller_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            readme = root / 'README.md'
+            original = b'# protected caller README\n'
+            readme.write_bytes(original)
+            os.utime(readme, ns=(1_000_000_000, 1_000_000_000))
+            before = readme.stat().st_mtime_ns
+            with patch.object(verify_docs, 'ROOT', root):
+                for check in (self.test_readme_contract_rejects_missing_safe_proof,
+                              self.test_readme_contract_rejects_mobile_gallery_images):
+                    verify_docs.problems.clear()
+                    check()
+            self.assertEqual(readme.read_bytes(), original)
+            self.assertEqual(readme.stat().st_mtime_ns, before)
 
     def test_canonical_docs_do_not_describe_shipped_post_wave4_features_as_target(self) -> None:
         assertions = {
@@ -40,27 +59,21 @@ class CapabilityStatusRegressionTests(unittest.TestCase):
                 self.assertNotIn(phrase, content, f"stale current-state claim in {relative_path}")
 
     def test_readme_contract_rejects_missing_safe_proof(self) -> None:
-        readme = verify_docs.ROOT / "README.md"
-        original = readme.read_bytes()
-        try:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(verify_docs, 'ROOT', Path(temporary)):
+            readme = Path(temporary) / 'README.md'
             readme.write_text("# Forge\n<a name=\"overview\"></a>\n", encoding="utf-8")
             verify_docs.check_readme_contract()
             self.assertTrue(
                 any(problem.startswith("README lacks required safe visual proof: 06-pipeline-detail.png")
                     for problem in verify_docs.problems)
             )
-        finally:
-            readme.write_bytes(original)
 
     def test_readme_contract_rejects_mobile_gallery_images(self) -> None:
-        readme = verify_docs.ROOT / "README.md"
-        original = readme.read_bytes()
-        try:
-            readme.write_bytes(original + b"\n![Mobile](docs/screenshots/375x812/wide.png)\n")
+        with tempfile.TemporaryDirectory() as temporary, patch.object(verify_docs, 'ROOT', Path(temporary)):
+            readme = Path(temporary) / 'README.md'
+            readme.write_text("# Forge\n![Mobile](docs/screenshots/375x812/wide.png)\n", encoding='utf-8')
             verify_docs.check_readme_contract()
             self.assertTrue(any("must not include mobile screenshots" in item for item in verify_docs.problems))
-        finally:
-            readme.write_bytes(original)
 
 
 if __name__ == "__main__":

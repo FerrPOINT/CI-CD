@@ -246,6 +246,7 @@ class CliFailureDiagnosticTests(unittest.TestCase):
             for secret in ("private", "secret", str(self.root), self.command_hash, str(self.compose_root)):
                 self.assertNotIn(secret, output.getvalue())
 
+    @unittest.skipUnless(os.name == 'posix', 'requires POSIX O_DIRECTORY and owner-only Unix modes; run on Linux')
     def test_private_retention_is_unique_and_survives_fixture_temp_removal(self):
         value = self.guard["project"](self.payload(), 1)
         with tempfile.TemporaryDirectory(dir=self.temp.name) as fixture:
@@ -265,6 +266,7 @@ class CliFailureDiagnosticTests(unittest.TestCase):
                 self.guard["retain"](self.directory, {})
         self.assertEqual(json.loads(files[0].read_bytes()), value)
 
+    @unittest.skipUnless(os.name == 'posix', 'requires POSIX symlink and Unix mode confinement; run on Linux')
     def test_existing_unsafe_directory_and_symlink_are_not_modified(self):
         target = Path(self.temp.name) / "foreign"
         target.mkdir(mode=0o755)
