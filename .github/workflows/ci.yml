@@ -123,8 +123,11 @@ jobs:
       - name: Integration target clippy
         if: github.event_name == 'workflow_dispatch'
         run: cargo clippy --locked --features integration --test integration_db -- -D warnings
-      - name: unit tests
+      - name: Quick domain/SDK unit tests
         if: ${{ !inputs.git_receive_only }}
+        run: cargo test --locked -p cicd-domain --lib
+      - name: unit tests
+        if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
         run: cargo test --locked --workspace
       - name: integration tests (real PostgreSQL)
         if: github.event_name == 'workflow_dispatch'
