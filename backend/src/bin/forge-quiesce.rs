@@ -2,7 +2,10 @@
 use anyhow::{Context, ensure};
 use cicd::quiescence::{Coordinator, Gate, Identity};
 use clap::{Parser, Subcommand};
-use std::{io::{Read, Write}, path::PathBuf};
+use std::{
+    io::{Read, Write},
+    path::PathBuf,
+};
 use uuid::Uuid;
 #[derive(Parser)]
 struct Args {
@@ -62,7 +65,9 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     if let Command::InspectKubernetesCustody { request_sha256 } = &args.command {
         let mut bytes = Vec::new();
-        std::io::stdin().take(64 * 1024 + 1).read_to_end(&mut bytes)?;
+        std::io::stdin()
+            .take(64 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
         let result = cicd::execution::kubernetes::inspection::command(&bytes, request_sha256).await;
         println!("{}", result);
         std::io::stdout().flush()?;
@@ -73,7 +78,9 @@ async fn main() -> anyhow::Result<()> {
     }
     let gate = Gate::open(&args.directory)?;
     match args.command {
-        Command::InspectKubernetesCustody { .. } => unreachable!("read-only branch handled before Gate::open"),
+        Command::InspectKubernetesCustody { .. } => {
+            unreachable!("read-only branch handled before Gate::open")
+        }
         Command::AdoptionStatus => println!("{}", cicd::quiescence::adoption_status(&gate)?),
         Command::AdoptPrepare {
             operation,
