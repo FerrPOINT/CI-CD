@@ -118,6 +118,13 @@ describe('ComparePage', () => {
     const files = screen.getByRole('list')
     expect(within(files).getByText('compare.status_added')).toBeInTheDocument()
     expect(within(files).getByText('compare.status_deleted')).toBeInTheDocument()
+    for (const [status, tone] of [
+      ['added', 'success'],
+      ['modified', 'warning'],
+      ['deleted', 'danger'],
+    ]) {
+      expect(within(files).getByText(`compare.status_${status}`)).toHaveAttribute('data-tone', tone)
+    }
     expect(within(files).getByText('compare.binaryFile')).toBeInTheDocument()
     expect(within(files).getByText('image.png').closest('li')).not.toHaveTextContent('+0')
     expect(screen.getByRole('status')).toHaveTextContent('compare.patchTruncated')

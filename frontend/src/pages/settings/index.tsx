@@ -1,9 +1,14 @@
-import {Input, NamespaceLink as Link, Button} from '@pdlc/ui/ui'
+import {
+  PageHeader,
+  SectionHeader,
+  NamespaceLink as Link,
+  SearchInput,
+  EmptyState,
+} from "@pdlc/ui/ui";
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Search, Settings, X } from "lucide-react";
-
+import { Settings } from "lucide-react";
 
 const configGroups = [
   {
@@ -86,19 +91,29 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2">
-        <Settings className="h-5 w-5 shrink-0 text-accent" aria-hidden />
-        <h1 className="text-xl font-bold sm:text-2xl">Конфигурация сервера</h1>
-        <Link className="block text-accent" to="/delivery-configs">
-          Непривязанные CI-конфигурации
-        </Link>
-      </div>
+      <PageHeader
+        title="Конфигурация сервера"
+        leading={
+          <>
+            <Settings className="h-5 w-5 shrink-0 text-accent" aria-hidden />
+          </>
+        }
+        actions={
+          <>
+            <Link className="block text-accent" to="/delivery-configs">
+              Непривязанные CI-конфигурации
+            </Link>
+          </>
+        }
+      />
       <p className="text-sm text-text-muted">{t("settings.description")}</p>
 
       <section aria-labelledby="defaults-heading">
-        <h2 id="defaults-heading" className="mb-2 text-base font-semibold">
-          {t("settings.defaults")}
-        </h2>
+        <SectionHeader
+          headingId="defaults-heading"
+          className="mb-2"
+          title={<>{t("settings.defaults")}</>}
+        />
         <dl className="grid grid-cols-2 border-y border-border text-sm sm:grid-cols-3">
           <div className="min-w-0 py-3 pr-3">
             <dt className="text-text-muted">{t("settings.apiPort")}</dt>
@@ -119,51 +134,45 @@ export function SettingsPage() {
       </section>
 
       <section aria-labelledby="variables-heading">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 id="variables-heading" className="text-base font-semibold">
-            {t("settings.envVars")}
-          </h2>
-          <div className="relative w-full sm:w-72">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-              aria-hidden
-            />
-            <Input
-              type="search"
-              aria-label={t("settings.search")}
-              placeholder={t("settings.search")}
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="min-h-10 w-full rounded-md border border-border bg-surface py-2 pl-9 pr-10 text-sm text-text-primary outline-none focus-visible:border-accent"
-            />
-            {search && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={t("settings.clearSearch")}
-                onClick={() => setSearch("")}
-                className="absolute right-0 top-0 h-10 w-10"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        </div>
+        <SectionHeader
+          headingId="variables-heading"
+          className="mb-3"
+          title={<>{t("settings.envVars")}</>}
+          actions={
+            <>
+              <div className="w-full sm:w-72">
+                <SearchInput
+                  aria-label={t("settings.search")}
+                  placeholder={t("settings.search")}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  className="w-full"
+                  clear={
+                    search
+                      ? {
+                          label: t("settings.clearSearch"),
+                          onClear: () => setSearch(""),
+                        }
+                      : undefined
+                  }
+                />
+              </div>
+            </>
+          }
+        />
 
         {filteredGroups.length === 0 ? (
-          <p
-            role="status"
-            className="border-y border-border py-5 text-sm text-text-muted"
-          >
-            {t("settings.noMatches")}
-          </p>
+          <div role="status">
+            <EmptyState message={t("settings.noMatches")} />
+          </div>
         ) : (
           filteredGroups.map((group) => (
             <div key={group.titleKey} className="mb-5">
-              <h3 className="mb-1 text-sm font-semibold text-text-secondary">
-                {t(group.titleKey)}
-              </h3>
+              <SectionHeader
+                level={3}
+                className="mb-1"
+                title={<>{t(group.titleKey)}</>}
+              />
               <dl className="divide-y divide-border border-y border-border">
                 {group.vars.map((variable) => (
                   <div

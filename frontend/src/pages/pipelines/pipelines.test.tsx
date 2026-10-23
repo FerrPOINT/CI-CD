@@ -137,6 +137,7 @@ describe('PipelinesPage', () => {
     setup()
     expect(screen.getByRole('alert')).toHaveTextContent('baseUi.readError')
     expect(screen.queryByText('offline')).not.toBeInTheDocument()
+    expect(screen.queryByText('common.empty')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
     expect(mocks.refetch).toHaveBeenCalledOnce()
   })

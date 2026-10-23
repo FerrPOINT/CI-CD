@@ -1,69 +1,91 @@
-import { useState, type FormEvent } from 'react'
-import { useParams } from 'react-router'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Input, Label } from '@pdlc/ui/ui'
-import { api } from '@/api/client'
-import { useNamespaceRef } from '@/widgets/namespace-context'
-import type { components } from '@/api/schema'
-import type { Configuration } from '@/api/workspaces'
+import { useState, type FormEvent } from "react";
+import { useParams } from "react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  PageHeader,
+  Button,
+  Input,
+  Label,
+  LoadingState,
+  Notice,
+} from "@pdlc/ui/ui";
+import { api } from "@/api/client";
+import { useNamespaceRef } from "@/widgets/namespace-context";
+import type { components } from "@/api/schema";
+import type { Configuration } from "@/api/workspaces";
 
 export function ConfigurationSettingsPage() {
-  const { projectId } = useParams()
-  const { ref } = useNamespaceRef()
-  const cache = useQueryClient()
+  const { projectId } = useParams();
+  const { ref } = useNamespaceRef();
+  const cache = useQueryClient();
   const config = useQuery({
-    queryKey: ['delivery-config', ref?.registry_instance_id, ref?.namespace_id, projectId],
+    queryKey: [
+      "delivery-config",
+      ref?.registry_instance_id,
+      ref?.namespace_id,
+      projectId,
+    ],
     queryFn: ({ signal }) =>
       api<Configuration>(`/delivery-configurations/${projectId}`, { signal }),
-  })
+  });
   const repository = useQuery({
     queryKey: [
-      'catalog-repository',
+      "catalog-repository",
       ref?.registry_instance_id,
       ref?.namespace_id,
       config.data?.repository_id,
     ],
     enabled: !!config.data?.repository_id,
     queryFn: ({ signal }) =>
-      api<components['schemas']['CatalogRepository']>(
+      api<components["schemas"]["CatalogRepository"]>(
         `/catalog/repositories/${config.data!.repository_id}`,
         { signal },
       ),
-  })
-  const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState<string>()
+  });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string>();
   const writable =
-    !!config.data && (!config.data.repository_id || repository.data?.state === 'active')
+    !!config.data &&
+    (!config.data.repository_id || repository.data?.state === "active");
   async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const values = new FormData(event.currentTarget)
-    const limit = String(values.get('limit'))
-    const input: components['schemas']['UpdateProject'] = {
-      name: String(values.get('name')).trim(),
-      default_branch: String(values.get('branch')).trim(),
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    const limit = String(values.get("limit"));
+    const input: components["schemas"]["UpdateProject"] = {
+      name: String(values.get("name")).trim(),
+      default_branch: String(values.get("branch")).trim(),
       max_running_jobs: limit ? Number(limit) : null,
-      ...(!config.data?.repository_id ? { repository_url: String(values.get('url')).trim() } : {}),
-    }
-    setBusy(true)
-    setMessage(undefined)
+      ...(!config.data?.repository_id
+        ? { repository_url: String(values.get("url")).trim() }
+        : {}),
+    };
+    setBusy(true);
+    setMessage(undefined);
     try {
-      await api(`/projects/${projectId}`, { method: 'PATCH', body: JSON.stringify(input) })
+      await api(`/projects/${projectId}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      });
       await Promise.all([
-        cache.invalidateQueries({ queryKey: ['delivery-config'] }),
-        cache.invalidateQueries({ queryKey: ['delivery-configurations'] }),
-        cache.invalidateQueries({ queryKey: ['executions'] }),
-      ])
-      setMessage('Настройки сохранены.')
+        cache.invalidateQueries({ queryKey: ["delivery-config"] }),
+        cache.invalidateQueries({ queryKey: ["delivery-configurations"] }),
+        cache.invalidateQueries({ queryKey: ["executions"] }),
+      ]);
+      setMessage("Настройки сохранены.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Не удалось сохранить настройки.')
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Не удалось сохранить настройки.",
+      );
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
   }
-  if (!config.data) return <p role="status">Загружаем настройки…</p>
+  if (!config.data) return <LoadingState message="Загружаем настройки…" />;
   return (
     <form key={config.data.id} onSubmit={save} className="max-w-xl space-y-4">
-      <h1 className="text-xl font-semibold">Настройки CI-конфигурации</h1>
+      <PageHeader title="Настройки CI-конфигурации" />
       <Label htmlFor="configuration-name">Название конфигурации</Label>
       <Input
         id="configuration-name"
@@ -88,7 +110,7 @@ export function ConfigurationSettingsPage() {
         type="number"
         min={1}
         max={4096}
-        defaultValue={config.data.max_running_jobs ?? ''}
+        defaultValue={config.data.max_running_jobs ?? ""}
         placeholder="Без ограничения"
         disabled={!writable || busy}
       />
@@ -106,9 +128,17 @@ export function ConfigurationSettingsPage() {
           Источник checkout определяется связанным репозиторием.
         </p>
       )}
-      {!writable && <p role="alert">Настройки доступны только для чтения.</p>}
-      {message && <p role="status">{message}</p>}
+      {!writable && (
+        <Notice role="alert" tone="warning" appearance="inline">
+          Настройки доступны только для чтения.
+        </Notice>
+      )}
+      {message && (
+        <Notice role="status" tone="neutral" appearance="inline">
+          {message}
+        </Notice>
+      )}
       <Button disabled={!writable || busy}>Сохранить</Button>
     </form>
-  )
+  );
 }

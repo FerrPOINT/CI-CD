@@ -1,4 +1,22 @@
-import {NamespaceLink as Link, ResourceList, ResourceListRow, DiffBlock, Button, InitialsAvatar as UserAvatar} from '@pdlc/ui/ui'
+import {
+  NamespaceLink as Link,
+  ResourceList,
+  ResourceListRow,
+  DiffBlock,
+  Button,
+  InitialsAvatar as UserAvatar,
+} from "@pdlc/ui/ui";
+import {
+  PageHeader,
+  SectionHeader,
+  Badge,
+  Card,
+  CardContent,
+  DescriptionItem,
+  LoadingState,
+  EmptyState,
+  Notice,
+} from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { usePullRequest, useRepositoryComparison } from "@/api/hooks";
@@ -14,7 +32,6 @@ import type { PullRequest, PullRequestStatus } from "@/api/types";
 import { formatDate } from "@/shared/lib/format";
 import { QueryState } from "@/shared/ui/query-state";
 import { PullRequestActions } from "@/pages/pull-requests/actions";
-
 
 function branchRef(branch: string): string {
   return branch.startsWith("refs/heads/") ? branch : `refs/heads/${branch}`;
@@ -32,12 +49,11 @@ export function buildPrDiffHref(
   return `/repositories/${encodeURIComponent(pr.repository_name)}/pulls/${pr.number}?view=diff`;
 }
 
-
-const statusStyles: Record<PullRequestStatus, string> = {
-  open: "bg-accent/15 text-accent",
-  closed: "bg-danger/15 text-danger",
-  merged: "bg-success/15 text-success",
-};
+const statusTones = {
+  open: "info",
+  closed: "danger",
+  merged: "success",
+} as const satisfies Record<PullRequestStatus, string>;
 
 export function PullRequestDetailPage() {
   const { t, i18n } = useTranslation();
@@ -120,17 +136,11 @@ export function PullRequestDetailPage() {
             <ChevronRight className="h-3 w-3" />
             <span>{t("pulls.viewDiff")}</span>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <FileDiff
-              className="hidden h-6 w-6 text-accent sm:block"
-              aria-hidden
+          <div className="mt-2">
+            <PageHeader
+              leading={<FileDiff className="h-6 w-6 text-accent" aria-hidden />}
+              title={`${t("pulls.viewDiff")} #${pr.number}`}
             />
-            <h1 className="min-w-0 break-words text-2xl font-bold">
-              {t("pulls.viewDiff")}{" "}
-              <span className="whitespace-nowrap text-text-muted">
-                #{pr.number}
-              </span>
-            </h1>
           </div>
           <p className="mt-2 break-all font-mono text-sm text-text-secondary">
             {pr.target_branch} → {pr.source_branch}
@@ -139,37 +149,34 @@ export function PullRequestDetailPage() {
         </div>
         <Button
           variant="outline"
-          className="h-10"
           onClick={() => setSearchParams({}, { replace: true })}
         >
           <ArrowLeft className="h-4 w-4" /> {t("common.back")}
         </Button>
         {diffLoading ? (
-          <p className="text-sm text-text-muted">{t("common.loading")}</p>
+          <LoadingState message={t("common.loading")} />
         ) : diffError ? (
-          <div
+          <Notice
+            tone="danger"
+            appearance="inline"
             role="alert"
-            className="flex flex-wrap items-center gap-3 border-y border-border py-4 text-sm text-danger"
+            actions={
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => refetchDiff()}
+              >
+                {t("common.retry")}
+              </Button>
+            }
           >
-            <span>
-              {t("common.error")}:{" "}
-              {diffErrorValue instanceof Error
-                ? diffErrorValue.message
-                : String(diffErrorValue)}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10"
-              onClick={() => refetchDiff()}
-            >
-              {t("common.retry")}
-            </Button>
-          </div>
+            {t("common.error")}:{" "}
+            {diffErrorValue instanceof Error
+              ? diffErrorValue.message
+              : String(diffErrorValue)}
+          </Notice>
         ) : !comparison || comparison.files.length === 0 ? (
-          <p className="border-y border-border py-6 text-center text-sm text-text-muted">
-            {t("compare.noChanges")}
-          </p>
+          <EmptyState message={t("compare.noChanges")} />
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-y border-border py-3 text-sm">
@@ -199,9 +206,7 @@ export function PullRequestDetailPage() {
               ) : null}
             </div>
             <div>
-              <h2 className="text-sm font-semibold uppercase tracking-wide">
-                {t("compare.filesChanged")}
-              </h2>
+              <SectionHeader title={t("compare.filesChanged")} />
               <ResourceList asChild variant="bordered">
                 <ul className="mt-3 overflow-hidden">
                   {comparison.files.map((file) => (
@@ -234,13 +239,15 @@ export function PullRequestDetailPage() {
             </div>
             {comparison.patch.trim() && (
               <>
-                <h2 className="text-sm font-semibold uppercase tracking-wide">
-                  {t("compare.patch")}
-                </h2>
+                <SectionHeader title={t("compare.patch")} />
                 <DiffBlock
                   patch={comparison.patch}
                   aria-label={t("compare.patch")}
-                  notice={comparison.patch_truncated ? t("compare.patchTruncated") : undefined}
+                  notice={
+                    comparison.patch_truncated
+                      ? t("compare.patchTruncated")
+                      : undefined
+                  }
                 />
               </>
             )}
@@ -277,73 +284,80 @@ export function PullRequestDetailPage() {
           <ChevronRight className="h-3 w-3" />
           <span>#{pr.number}</span>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <GitPullRequest className="h-6 w-6 shrink-0 text-accent" />
-          <h1 className="min-w-0 flex-1 break-words text-2xl font-bold">
-            <span className="text-text-muted">#{pr.number}</span> {pr.title}
-          </h1>
-          <span
-            className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${statusStyles[pr.status]}`}
-          >
-            {t(`pulls.status_${pr.status}`)}
-          </span>
+        <div className="mt-2">
+          <PageHeader
+            leading={
+              <GitPullRequest className="h-6 w-6 text-accent" aria-hidden />
+            }
+            title={`#${pr.number} ${pr.title}`}
+            context={
+              <Badge tone={statusTones[pr.status]}>
+                {t(`pulls.status_${pr.status}`)}
+              </Badge>
+            }
+          />
         </div>
       </div>
 
       <div className="page-split items-start">
-        <section className="min-w-0 flex-1 border-y border-border py-4">
-          {pr.description && (
-            <p className="whitespace-pre-wrap text-sm text-text-secondary">
-              {pr.description}
-            </p>
-          )}
-          <dl className="mt-4 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 text-sm">
-            <dt className="text-text-muted">{t("pulls.sourceBranch")}</dt>
-            <dd>
-              <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
-                {pr.source_branch}
-              </code>
-            </dd>
-            <dt className="text-text-muted">{t("pulls.targetBranch")}</dt>
-            <dd>
-              <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
-                {pr.target_branch}
-              </code>
-            </dd>
-            <dt className="text-text-muted">{t("pulls.createdBy")}</dt>
-            <dd className="break-all">
-              <UserAvatar name={pr.created_by} size="sm" withName />
-            </dd>
-            <dt className="text-text-muted">{t("pulls.createdAt")}</dt>
-            <dd>{formatDate(pr.created_at, i18n.language)}</dd>
-            {pr.merged_at && (
-              <>
-                <dt className="text-text-muted">{t("pulls.mergedAt")}</dt>
-                <dd>{formatDate(pr.merged_at, i18n.language)}</dd>
-              </>
-            )}
-            {pr.merge_commit_sha && (
-              <>
-                <dt className="text-text-muted">{t("pulls.mergeCommit")}</dt>
-                <dd>
-                  <code className="rounded bg-surface-raised px-1.5 py-0.5">
-                    {pr.merge_commit_sha.slice(0, 7)}
+        <Card asChild className="min-w-0 flex-1">
+          <section>
+            <CardContent>
+              {pr.description && (
+                <p className="whitespace-pre-wrap text-sm text-text-secondary">
+                  {pr.description}
+                </p>
+              )}
+              <dl className="mt-4">
+                <DescriptionItem
+                  layout="inline"
+                  label={t("pulls.sourceBranch")}
+                >
+                  <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
+                    {pr.source_branch}
                   </code>
-                </dd>
-              </>
-            )}
-          </dl>
-        </section>
+                </DescriptionItem>
+                <DescriptionItem
+                  layout="inline"
+                  label={t("pulls.targetBranch")}
+                >
+                  <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
+                    {pr.target_branch}
+                  </code>
+                </DescriptionItem>
+                <DescriptionItem layout="inline" label={t("pulls.createdBy")}>
+                  <UserAvatar name={pr.created_by} size="sm" withName />
+                </DescriptionItem>
+                <DescriptionItem layout="inline" label={t("pulls.createdAt")}>
+                  {formatDate(pr.created_at, i18n.language)}
+                </DescriptionItem>
+                {pr.merged_at && (
+                  <DescriptionItem layout="inline" label={t("pulls.mergedAt")}>
+                    {formatDate(pr.merged_at, i18n.language)}
+                  </DescriptionItem>
+                )}
+                {pr.merge_commit_sha && (
+                  <DescriptionItem
+                    layout="inline"
+                    label={t("pulls.mergeCommit")}
+                  >
+                    <code className="rounded bg-surface-raised px-1.5 py-0.5">
+                      {pr.merge_commit_sha.slice(0, 7)}
+                    </code>
+                  </DescriptionItem>
+                )}
+              </dl>
+            </CardContent>
+          </section>
+        </Card>
 
         <aside className="min-w-0" aria-labelledby="pull-actions-title">
-          <h2
-            id="pull-actions-title"
-            className="text-sm font-semibold uppercase tracking-wide"
-          >
-            {t("pulls.actions")}
-          </h2>
+          <SectionHeader
+            headingId="pull-actions-title"
+            title={t("pulls.actions")}
+          />
           <div className="mt-3 flex flex-col gap-2">
-            <Button asChild variant="outline" className="h-10 justify-start">
+            <Button asChild variant="outline" className="justify-start">
               <Link to={buildPrDiffHref(pr)}>
                 <FileDiff className="h-4 w-4" /> {t("pulls.viewDiff")}
               </Link>

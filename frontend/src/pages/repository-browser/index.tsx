@@ -1,4 +1,33 @@
-import {PageNavigation, Button, Checkbox, NamespaceLink as Link, ResourceList, ResourceListRow, toast, Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, Input, Label, Textarea, ConfirmDialog, Tabs, TabsContent, TabsList, TabsTrigger} from '@pdlc/ui/ui'
+import {
+  CardContent,
+  CardHeader,
+  Card,
+  Badge,
+  PageHeader,
+  CodeBlock,
+  PageNavigation,
+  Button,
+  Checkbox,
+  NamespaceLink as Link,
+  ResourceList,
+  ResourceListRow,
+  toast,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  Input,
+  Label,
+  Textarea,
+  ConfirmDialog,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  SearchInput,
+  Notice,
+} from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 
 import { useParams, useSearchParams } from "react-router";
@@ -33,15 +62,9 @@ import {
   useDeleteRelease,
 } from "@/api/hooks";
 
-
-
-
-
 import { QueryState } from "@/shared/ui/query-state";
 import { useDebouncedValue } from "@pdlc/ui/lib";
 import type { Release, RepositoryRef } from "@/api/types";
-
-
 
 const browserTabs = [
   "code",
@@ -128,38 +151,48 @@ export function RepositoryBrowserPage({
   return (
     <div className="space-y-6">
       {!embedded && (
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sm text-text-muted">
-              <Link
-                to="/repositories"
-                className="inline-flex min-h-10 items-center hover:text-text-primary"
-              >
-                {t("navigation.repositories")}
-              </Link>
-              <ChevronRight className="h-3 w-3" />
-              <span className="min-w-0 break-all">{repo}</span>
-            </div>
-            <div className="mt-2 flex items-center gap-3">
-              <GitBranch className="h-6 w-6 text-accent" />
-              <h1 className="min-w-0 break-all text-2xl font-bold">{repo}</h1>
-            </div>
+        <>
+          <div className="flex items-center gap-2 text-sm text-text-muted">
+            <Link
+              to="/repositories"
+              className="inline-flex min-h-10 items-center hover:text-text-primary"
+            >
+              {t("navigation.repositories")}
+            </Link>
+            <ChevronRight className="h-3 w-3" />
+            <span className="min-w-0 break-all">{repo}</span>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline" size="sm" className="h-10">
-              <Link to={`/repositories/${encodeURIComponent(repo)}/compare`}>
-                <GitCompareArrows className="h-4 w-4" />{" "}
-                {t("repositoryBrowser.compareChanges")}
-              </Link>
-            </Button>
-            <Button asChild size="sm" className="h-10">
-              <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`}>
-                <GitPullRequest className="h-4 w-4" />{" "}
-                {t("repositoryBrowser.createPullRequest")}
-              </Link>
-            </Button>
-          </div>
-        </div>
+          <PageHeader
+            title={repo}
+            leading={
+              <>
+                <GitBranch className="h-6 w-6 text-accent" />
+              </>
+            }
+            actions={
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <Button asChild variant="outline" size="sm">
+                    <Link
+                      to={`/repositories/${encodeURIComponent(repo)}/compare`}
+                    >
+                      <GitCompareArrows className="h-4 w-4" />{" "}
+                      {t("repositoryBrowser.compareChanges")}
+                    </Link>
+                  </Button>
+                  <Button asChild size="sm">
+                    <Link
+                      to={`/repositories/${encodeURIComponent(repo)}/pulls`}
+                    >
+                      <GitPullRequest className="h-4 w-4" />{" "}
+                      {t("repositoryBrowser.createPullRequest")}
+                    </Link>
+                  </Button>
+                </div>
+              </>
+            }
+          />
+        </>
       )}
 
       <Tabs
@@ -173,28 +206,19 @@ export function RepositoryBrowserPage({
         }
       >
         <TabsList className="grid h-auto w-full grid-cols-3 gap-1 sm:inline-flex sm:w-auto">
-          <TabsTrigger value="code" className="min-h-10 min-w-0 px-2 sm:px-3">
+          <TabsTrigger value="code" className="min-w-0">
             {t("repositoryBrowser.code", "Код")}
           </TabsTrigger>
-          <TabsTrigger
-            value="commits"
-            className="min-h-10 min-w-0 px-2 sm:px-3"
-          >
+          <TabsTrigger value="commits" className="min-w-0">
             {t("repositoryBrowser.commits")}
           </TabsTrigger>
-          <TabsTrigger
-            value="branches"
-            className="min-h-10 min-w-0 px-2 sm:px-3"
-          >
+          <TabsTrigger value="branches" className="min-w-0">
             {t("repositoryBrowser.branches")}
           </TabsTrigger>
-          <TabsTrigger value="tags" className="min-h-10 min-w-0 px-2 sm:px-3">
+          <TabsTrigger value="tags" className="min-w-0">
             {t("repositoryBrowser.tags", "Теги")}
           </TabsTrigger>
-          <TabsTrigger
-            value="releases"
-            className="min-h-10 min-w-0 px-2 sm:px-3"
-          >
+          <TabsTrigger value="releases" className="min-w-0">
             {t("repositoryBrowser.releases", "Релизы")}
           </TabsTrigger>
         </TabsList>
@@ -294,30 +318,35 @@ function CommitsList({
 
   if (query.error && page > 1) {
     return (
-      <div
-        className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 bg-surface p-4 text-sm text-text-secondary"
+      <Notice
         role="alert"
+        tone="warning"
+        appearance="panel"
+        actions={
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+
+              onClick={() => void query.refetch()}
+            >
+              {t("common.retry")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+
+              onClick={() => onPageChange(page - 1)}
+            >
+              {t("repositoryBrowser.previousCommits")}
+            </Button>
+          </>
+        }
       >
         <span>{t("repositoryBrowser.commitsLoadError")}</span>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="min-h-10 sm:min-h-10"
-          onClick={() => void query.refetch()}
-        >
-          {t("common.retry")}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="min-h-10 sm:min-h-10"
-          onClick={() => onPageChange(page - 1)}
-        >
-          {t("repositoryBrowser.previousCommits")}
-        </Button>
-      </div>
+      </Notice>
     );
   }
 
@@ -367,7 +396,7 @@ function CommitsList({
                 type="button"
                 size="sm"
                 variant="outline"
-                className="min-h-10 w-full sm:min-h-10 sm:w-auto"
+                className="w-full sm:w-auto"
                 disabled={page === 1 || query.isFetching}
                 onClick={() => onPageChange(page - 1)}
               >
@@ -383,7 +412,7 @@ function CommitsList({
                 type="button"
                 size="sm"
                 variant="outline"
-                className="min-h-10 w-full sm:min-h-10 sm:w-auto"
+                className="w-full sm:w-auto"
                 disabled={!result.hasMore || query.isFetching}
                 onClick={() => onPageChange(page + 1)}
               >
@@ -420,14 +449,8 @@ function RefListSearch({
         onSearch(draft.trim());
       }}
     >
-      <div className="relative min-w-0 flex-1 sm:max-w-sm">
-        <Search
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-          aria-hidden
-        />
-        <Input
-          type="search"
-          className="h-10 pl-9"
+      <div className="min-w-0 flex-1 sm:max-w-sm">
+        <SearchInput
           aria-label={t("repositoryBrowser.searchRefs")}
           placeholder={t("repositoryBrowser.searchRefs")}
           value={draft}
@@ -437,8 +460,8 @@ function RefListSearch({
       <Button
         type="submit"
         variant="outline"
-        size="sm"
-        className="h-10 w-10 p-0"
+        size="icon"
+
         aria-label={t("repositoryBrowser.applyRefSearch")}
         title={t("repositoryBrowser.applyRefSearch")}
       >
@@ -448,8 +471,8 @@ function RefListSearch({
         <Button
           type="button"
           variant="ghost"
-          size="sm"
-          className="h-10 w-10 p-0"
+          size="icon"
+
           aria-label={t("repositoryBrowser.clearRefSearch")}
           title={t("repositoryBrowser.clearRefSearch")}
           onClick={() => {
@@ -517,7 +540,7 @@ function BranchesList({
                     <Button
                       variant="ghost"
                       type="button"
-                      className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
                       onClick={() => onSelect(ref)}
                     >
                       <GitBranch
@@ -623,7 +646,7 @@ function CodeBrowser({
             id="repository-ref"
             type="search"
             list="repository-ref-options"
-            className="h-10 font-mono"
+            className="font-mono"
             placeholder={t("repositoryBrowser.defaultRef")}
             value={draftRef}
             onChange={(event) => setDraftRef(event.target.value)}
@@ -642,8 +665,8 @@ function CodeBrowser({
         <Button
           type="submit"
           variant="outline"
-          size="sm"
-          className="h-10 w-10 p-0"
+          size="icon"
+
           aria-label={t("repositoryBrowser.applyRef")}
           title={t("repositoryBrowser.applyRef")}
         >
@@ -651,31 +674,35 @@ function CodeBrowser({
         </Button>
       </form>
       {refsQuery.isLoading && (
-        <p role="status" className="text-xs text-text-muted">
+        <Notice role="status" tone="neutral" appearance="inline">
           {t("repositoryBrowser.loadingRefs")}
-        </p>
+        </Notice>
       )}
       {(refsQuery.data?.length ?? 0) > refSuggestionLimit - 1 && (
-        <p role="status" className="text-xs text-text-muted">
+        <Notice role="status" tone="warning" appearance="inline">
           {t("repositoryBrowser.refSuggestionsLimited")}
-        </p>
+        </Notice>
       )}
       {Boolean(refsQuery.error) && (
-        <div
+        <Notice
           role="alert"
-          className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 p-3 text-sm"
+
+          tone="warning"
+          appearance="panel"
+          actions={
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+
+              onClick={() => void refsQuery.refetch()}
+            >
+              {t("common.retry")}
+            </Button>
+          }
         >
           <span>{t("repositoryBrowser.refsUnavailable")}</span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-10"
-            onClick={() => void refsQuery.refetch()}
-          >
-            {t("common.retry")}
-          </Button>
-        </div>
+        </Notice>
       )}
       {filePath ? (
         <FilePreview
@@ -712,13 +739,13 @@ function FilePreview({
   const { t, i18n } = useTranslation();
   const query = useRepositoryBlob(repo, gitRef, filePath);
   return (
-    <div className="overflow-hidden rounded-md border border-border">
-      <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-border p-2 text-sm">
+    <Card>
+      <CardHeader className="min-w-0 flex-row flex-wrap items-center gap-2 text-sm">
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="h-10 min-w-10"
+          className="min-w-10"
           aria-label={t("repositoryBrowser.backToTree")}
           title={t("repositoryBrowser.backToTree")}
           onClick={onBack}
@@ -733,8 +760,8 @@ function FilePreview({
             {query.data.sha.slice(0, 7)}
           </span>
         )}
-      </div>
-      <div className="p-4">
+      </CardHeader>
+      <CardContent>
         <QueryState
           data={query.data}
           isLoading={query.isLoading}
@@ -754,25 +781,31 @@ function FilePreview({
             ) : (
               <div>
                 {blob.truncated && (
-                  <p role="status" className="mb-3 text-sm text-text-muted">
+                  <Notice
+                    role="status"
+                    className="mb-3"
+                    tone="warning"
+                    appearance="inline"
+                  >
                     {t("repositoryBrowser.truncatedFile")}
-                  </p>
+                  </Notice>
                 )}
-                <pre
+                <CodeBlock
                   tabIndex={0}
                   aria-label={t("repositoryBrowser.filePreview", {
                     path: filePath,
                   })}
-                  className="max-h-[70vh] overflow-auto text-xs leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  className="max-h-[70vh]"
+                  wrap={false}
                 >
                   <code>{blob.content}</code>
-                </pre>
+                </CodeBlock>
               </div>
             )
           }
         </QueryState>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -816,65 +849,61 @@ function TreeView({
   }
 
   return (
-    <div className="overflow-hidden rounded-md border border-border">
-      <nav
-        aria-label={t("repositoryBrowser.code")}
-        className="flex min-w-0 flex-wrap items-center gap-1 border-b border-border px-2 py-1 text-sm"
-      >
-        <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-        <Button
-          variant="ghost"
-          type="button"
-          className="min-h-10 min-w-10 px-2 hover:text-accent"
-          onClick={() =>
-            onNavigate({
-              dir: null,
-              file: null,
-              treePage: null,
-              treeSearch: null,
-            })
-          }
+    <Card>
+      <CardHeader>
+        <nav
+          aria-label={t("repositoryBrowser.code")}
+          className="flex min-w-0 flex-wrap items-center gap-1 text-sm"
         >
-          /
-        </Button>
-        {crumbs.map((part, index) => (
-          <span
-            key={`${index}-${part}`}
-            className="flex min-w-0 items-center gap-1"
+          <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+          <Button
+            variant="ghost"
+            type="button"
+            className="min-w-10 px-2 hover:text-accent"
+            onClick={() =>
+              onNavigate({
+                dir: null,
+                file: null,
+                treePage: null,
+                treeSearch: null,
+              })
+            }
           >
-            <span className="text-text-muted">/</span>
-            <Button
-              variant="ghost"
-              type="button"
-              className="min-h-10 min-w-0 break-all px-2 text-left hover:text-accent"
-              onClick={() =>
-                onNavigate({
-                  dir: crumbs.slice(0, index + 1).join("/"),
-                  file: null,
-                  treePage: null,
-                  treeSearch: null,
-                })
-              }
+            /
+          </Button>
+          {crumbs.map((part, index) => (
+            <span
+              key={`${index}-${part}`}
+              className="flex min-w-0 items-center gap-1"
             >
-              {part}
-            </Button>
-          </span>
-        ))}
-      </nav>
-      <div className="space-y-2 p-2">
+              <span className="text-text-muted">/</span>
+              <Button
+                variant="ghost"
+                type="button"
+                className="min-w-0 break-all px-2 text-left hover:text-accent"
+                onClick={() =>
+                  onNavigate({
+                    dir: crumbs.slice(0, index + 1).join("/"),
+                    file: null,
+                    treePage: null,
+                    treeSearch: null,
+                  })
+                }
+              >
+                {part}
+              </Button>
+            </span>
+          ))}
+        </nav>
+      </CardHeader>
+      <CardContent className="space-y-2">
         <form
           className="flex min-w-0 items-center gap-2"
           role="search"
           onSubmit={submitSearch}
         >
-          <div className="relative min-w-0 flex-1 sm:max-w-sm">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-              aria-hidden
-            />
-            <Input
-              type="search"
-              className="h-10 pl-9"
+          <div className="min-w-0 flex-1 sm:max-w-sm">
+            <SearchInput
               aria-label={t("repositoryBrowser.searchTree")}
               placeholder={t("repositoryBrowser.searchTree")}
               value={draftSearch}
@@ -884,8 +913,8 @@ function TreeView({
           <Button
             type="submit"
             variant="outline"
-            size="sm"
-            className="h-10 w-10 p-0"
+            size="icon"
+
             aria-label={t("repositoryBrowser.applyTreeSearch")}
             title={t("repositoryBrowser.applyTreeSearch")}
           >
@@ -895,8 +924,8 @@ function TreeView({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
-              className="h-10 w-10 p-0"
+              size="icon"
+
               aria-label={t("repositoryBrowser.clearTreeSearch")}
               title={t("repositoryBrowser.clearTreeSearch")}
               onClick={clearSearch}
@@ -928,7 +957,7 @@ function TreeView({
                   <Button
                     variant="ghost"
                     type="button"
-                    className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-2 text-left"
+                    className="flex min-w-0 flex-1 items-center gap-3 px-2 text-left"
                     onClick={() =>
                       onNavigate(
                         entry.kind === "tree"
@@ -976,8 +1005,8 @@ function TreeView({
             <Button
               type="button"
               variant="outline"
-              size="sm"
-              className="h-10 w-10 p-0"
+              size="icon"
+
               disabled={page <= 1}
               aria-label={t("repositoryBrowser.previousTreePage")}
               title={t("repositoryBrowser.previousTreePage")}
@@ -993,8 +1022,8 @@ function TreeView({
             <Button
               type="button"
               variant="outline"
-              size="sm"
-              className="h-10 w-10 p-0"
+              size="icon"
+
               disabled={!hasNext}
               aria-label={t("repositoryBrowser.nextTreePage")}
               title={t("repositoryBrowser.nextTreePage")}
@@ -1004,8 +1033,8 @@ function TreeView({
             </Button>
           </nav>
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1060,7 +1089,7 @@ function TagsList({
                     <Button
                       variant="ghost"
                       type="button"
-                      className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
                       onClick={() => onSelect(tag)}
                     >
                       <Tag
@@ -1184,7 +1213,7 @@ function ReleasesList({ repo }: { repo: string }) {
       <div className="flex justify-end">
         <Button
           type="button"
-          className="min-h-10"
+
           disabled={!releasesQuery.data || Boolean(releasesQuery.error)}
           onClick={openCreate}
         >
@@ -1217,9 +1246,9 @@ function ReleasesList({ repo }: { repo: string }) {
                           {rel.name}
                         </span>
                         {rel.prerelease && (
-                          <span className="rounded-sm bg-warning/15 px-1.5 py-0.5 text-xs text-text-primary">
+                          <Badge tone="warning">
                             {t("releases.prerelease")}
-                          </span>
+                          </Badge>
                         )}
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
@@ -1241,7 +1270,7 @@ function ReleasesList({ repo }: { repo: string }) {
                       <Button
                         variant="ghost"
                         type="button"
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+                        size="icon"
                         aria-label={`${t("releases.edit")} ${rel.tag_name}`}
                         title={`${t("releases.edit")} ${rel.tag_name}`}
                         onClick={() => openEdit(rel)}
@@ -1249,9 +1278,10 @@ function ReleasesList({ repo }: { repo: string }) {
                         <Pencil className="h-4 w-4" aria-hidden />
                       </Button>
                       <Button
+                        size="icon"
                         variant="destructive-outline"
                         type="button"
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-md text-danger hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+
                         aria-label={`${t("releases.deleteAction")} ${rel.tag_name}`}
                         title={`${t("releases.deleteAction")} ${rel.tag_name}`}
                         disabled={deleteRelease.isPending}
@@ -1307,40 +1337,46 @@ function ReleasesList({ repo }: { repo: string }) {
                 ))}
               </datalist>
               {tagError && (
-                <p
+                <Notice
                   id="rel-tag-error"
                   role="alert"
-                  className="text-xs text-danger"
+
+                  tone="danger"
+                  appearance="inline"
                 >
                   {tagError}
-                </p>
+                </Notice>
               )}
               {tagsQuery.isLoading && (
-                <p role="status" className="text-xs text-text-muted">
+                <Notice role="status" tone="neutral" appearance="inline">
                   {t("repositoryBrowser.loadingRefs")}
-                </p>
+                </Notice>
               )}
               {(tagsQuery.data?.length ?? 0) > refSuggestionLimit - 1 && (
-                <p role="status" className="text-xs text-text-muted">
+                <Notice role="status" tone="warning" appearance="inline">
                   {t("repositoryBrowser.refSuggestionsLimited")}
-                </p>
+                </Notice>
               )}
               {Boolean(tagsQuery.error) && (
-                <div
+                <Notice
                   role="alert"
-                  className="flex flex-wrap items-center gap-2 text-xs text-text-secondary"
+
+                  tone="warning"
+                  appearance="panel"
+                  actions={
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+
+                      onClick={() => void tagsQuery.refetch()}
+                    >
+                      {t("common.retry")}
+                    </Button>
+                  }
                 >
                   <span>{t("repositoryBrowser.refsUnavailable")}</span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="min-h-10"
-                    onClick={() => void tagsQuery.refetch()}
-                  >
-                    {t("common.retry")}
-                  </Button>
-                </div>
+                </Notice>
               )}
             </div>
             <div className="space-y-1.5">

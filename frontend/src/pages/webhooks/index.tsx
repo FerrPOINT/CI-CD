@@ -1,3 +1,6 @@
+import { CardContent } from "@pdlc/ui/ui";
+import { FormField } from "@pdlc/ui/ui";
+import { Notice, Badge, PageHeader, SectionHeader } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams, useSearchParams } from "react-router";
@@ -12,11 +15,26 @@ import {
   useNotificationEvents,
   useSaveNotifications,
 } from "@/api/hooks";
-import {Select, Card, ResourceList, ResourceListRow, Button, Input, Label, Tabs, TabsContent, TabsList, TabsTrigger, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, toast, ConfirmDialog} from '@pdlc/ui/ui'
-
-
-
-
+import {
+  Select,
+  Card,
+  ResourceList,
+  ResourceListRow,
+  Button,
+  Input,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  toast,
+  ConfirmDialog,
+} from "@pdlc/ui/ui";
 
 import {
   ChevronLeft,
@@ -27,7 +45,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-
 
 import { QueryState } from "@/shared/ui/query-state";
 import type {
@@ -105,27 +122,21 @@ export function WebhooksPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Webhook className="h-5 w-5 text-accent" />
-        <h1 className="text-2xl font-bold">{t("webhooks.pageTitle")}</h1>
-      </div>
+      <PageHeader
+        title={t("webhooks.pageTitle")}
+        leading={<Webhook className="h-5 w-5 text-accent" />}
+      />
       <Tabs value={view} onValueChange={changeView}>
         <TabsList className="grid h-auto w-full max-w-xl grid-cols-3">
-          <TabsTrigger
-            value="webhooks"
-            className="min-h-11 min-w-0 whitespace-normal px-2 text-xs sm:text-sm"
-          >
+          <TabsTrigger value="webhooks" className="min-w-0 whitespace-normal">
             {t("webhooks.title")}
           </TabsTrigger>
-          <TabsTrigger
-            value="deliveries"
-            className="min-h-11 min-w-0 whitespace-normal px-2 text-xs sm:text-sm"
-          >
+          <TabsTrigger value="deliveries" className="min-w-0 whitespace-normal">
             {t("deliveries.title")}
           </TabsTrigger>
           <TabsTrigger
             value="notifications"
-            className="min-h-11 min-w-0 whitespace-normal px-2 text-xs sm:text-sm"
+            className="min-w-0 whitespace-normal"
           >
             {t("notifications.title")}
           </TabsTrigger>
@@ -136,7 +147,7 @@ export function WebhooksPage() {
             <Button
               type="button"
               size="sm"
-              className="min-h-10 sm:min-h-10"
+
               onClick={() => setShowForm((v) => !v)}
             >
               <Plus className="h-4 w-4" />
@@ -144,49 +155,54 @@ export function WebhooksPage() {
             </Button>
           </div>
           {showForm && (
-            <Card className="p-4">
-              <form onSubmit={handleSubmit} className="grid gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="wh-url">{t("webhooks.url")}</Label>
-                  <Input
-                    id="wh-url"
-                    required
-                    className="h-10"
-                    placeholder="https://example.com/hook"
-                    value={form.url}
-                    onChange={(e) => setForm({ ...form, url: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="wh-events">{t("webhooks.events")}</Label>
-                  <Input
-                    id="wh-events"
-                    className="h-10"
-                    placeholder="pipeline.started, pipeline.finished"
-                    value={form.events}
-                    onChange={(e) =>
-                      setForm({ ...form, events: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="submit"
-                    className="min-h-10"
-                    disabled={createWebhook.isPending}
-                  >
-                    {t("webhooks.create")}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="min-h-10"
-                    onClick={() => setShowForm(false)}
-                  >
-                    {t("common.cancel")}
-                  </Button>
-                </div>
-              </form>
+            <Card>
+              <CardContent>
+                <form onSubmit={handleSubmit} className="grid gap-3">
+                  <FormField id="wh-url" label={t("webhooks.url")} required>
+                    {(attrs) => (
+                      <Input
+                        {...attrs}
+
+                        placeholder="https://example.com/hook"
+                        value={form.url}
+                        onChange={(e) =>
+                          setForm({ ...form, url: e.target.value })
+                        }
+                      />
+                    )}
+                  </FormField>
+                  <FormField id="wh-events" label={t("webhooks.events")}>
+                    {(attrs) => (
+                      <Input
+                        {...attrs}
+
+                        placeholder="pipeline.started, pipeline.finished"
+                        value={form.events}
+                        onChange={(e) =>
+                          setForm({ ...form, events: e.target.value })
+                        }
+                      />
+                    )}
+                  </FormField>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="submit"
+
+                      disabled={createWebhook.isPending}
+                    >
+                      {t("webhooks.create")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+
+                      onClick={() => setShowForm(false)}
+                    >
+                      {t("common.cancel")}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
             </Card>
           )}
 
@@ -221,7 +237,7 @@ export function WebhooksPage() {
                             variant="destructive-outline"
                             aria-label={`${t("common.delete")} ${w.url}`}
                             title={t("common.delete")}
-                            className="h-10 w-10 shrink-0 text-danger hover:text-danger"
+                            className="shrink-0"
                             onClick={() => handleDelete(w)}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -262,7 +278,7 @@ export function WebhooksPage() {
                               variant="destructive-outline"
                               aria-label={`${t("common.delete")} ${w.url}`}
                               title={t("common.delete")}
-                              className="h-10 w-10 text-danger hover:text-danger"
+
                               onClick={() => handleDelete(w)}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -316,11 +332,9 @@ export function WebhooksPage() {
 function WebhookStatusBadge({ enabled }: { enabled: boolean }) {
   const { t } = useTranslation();
   return (
-    <span
-      className={`inline-block rounded-full px-2 py-0.5 text-xs ${enabled ? "bg-emerald-500/15 text-text-primary" : "bg-surface-raised text-text-secondary"}`}
-    >
+    <Badge tone={enabled ? "success" : "muted"}>
       {enabled ? t("webhooks.on") : t("webhooks.off")}
-    </span>
+    </Badge>
   );
 }
 
@@ -439,58 +453,62 @@ function DeliveryHistorySection() {
               className="space-y-3"
             >
               <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <Label htmlFor="delivery-status" className="sr-only">
-                    {t("deliveries.statusFilter")}
-                  </Label>
-                  <Select
-                    id="delivery-status"
-                    value={status}
-                    onValueChange={(nextValue) =>
-                      changeFilter("status", nextValue)
-                    }
-                    className="w-full"
-                    options={[
-                      {
-                        value: "all",
-                        label: String(t("deliveries.allStatuses")),
-                      },
-                      ...(deliveryStatuses.map((value) => ({
-                        value: String(value),
-                        label: String(
-                          t(
-                            value === "retry_scheduled"
-                              ? "deliveries.retryScheduled"
-                              : `deliveries.${value}`,
+                <FormField
+                  id="delivery-status"
+                  label={t("deliveries.statusFilter")}
+                >
+                  {(attrs) => (
+                    <Select
+                      {...attrs}
+                      value={status}
+                      onValueChange={(nextValue) =>
+                        changeFilter("status", nextValue)
+                      }
+                      className="w-full"
+                      options={[
+                        {
+                          value: "all",
+                          label: String(t("deliveries.allStatuses")),
+                        },
+                        ...(deliveryStatuses.map((value) => ({
+                          value: String(value),
+                          label: String(
+                            t(
+                              value === "retry_scheduled"
+                                ? "deliveries.retryScheduled"
+                                : `deliveries.${value}`,
+                            ),
                           ),
-                        ),
-                      })) ?? []),
-                    ]}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="delivery-channel" className="sr-only">
-                    {t("deliveries.channelFilter")}
-                  </Label>
-                  <Select
-                    id="delivery-channel"
-                    value={channel}
-                    onValueChange={(nextValue) =>
-                      changeFilter("channel", nextValue)
-                    }
-                    className="w-full"
-                    options={[
-                      {
-                        value: "all",
-                        label: String(t("deliveries.allChannels")),
-                      },
-                      ...(deliveryChannels.map((value) => ({
-                        value: String(value),
-                        label: String(t(`deliveries.channel_${value}`)),
-                      })) ?? []),
-                    ]}
-                  />
-                </div>
+                        })) ?? []),
+                      ]}
+                    />
+                  )}
+                </FormField>
+                <FormField
+                  id="delivery-channel"
+                  label={t("deliveries.channelFilter")}
+                >
+                  {(attrs) => (
+                    <Select
+                      {...attrs}
+                      value={channel}
+                      onValueChange={(nextValue) =>
+                        changeFilter("channel", nextValue)
+                      }
+                      className="w-full"
+                      options={[
+                        {
+                          value: "all",
+                          label: String(t("deliveries.allChannels")),
+                        },
+                        ...(deliveryChannels.map((value) => ({
+                          value: String(value),
+                          label: String(t(`deliveries.channel_${value}`)),
+                        })) ?? []),
+                      ]}
+                    />
+                  )}
+                </FormField>
               </div>
               <p
                 className="flex flex-wrap gap-2 text-xs text-text-muted"
@@ -508,12 +526,9 @@ function DeliveryHistorySection() {
                 )}
               </p>
               {result.total === 0 ? (
-                <p
-                  role="status"
-                  className="border-y border-border py-6 text-sm text-text-muted"
-                >
+                <Notice tone="neutral" appearance="inline" role="status">
                   {t("deliveries.noMatches")}
-                </p>
+                </Notice>
               ) : (
                 <Card className="overflow-hidden">
                   <ResourceList asChild>
@@ -547,7 +562,7 @@ function DeliveryHistorySection() {
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                className="min-h-10 sm:min-h-10"
+
                                 disabled={requeue.isPending}
                                 onClick={() => handleRequeue(delivery)}
                               >
@@ -612,7 +627,7 @@ function DeliveryHistorySection() {
                                   type="button"
                                   size="sm"
                                   variant="ghost"
-                                  className="min-h-10 sm:min-h-10"
+
                                   disabled={requeue.isPending}
                                   onClick={() => handleRequeue(delivery)}
                                 >
@@ -637,7 +652,7 @@ function DeliveryHistorySection() {
                     type="button"
                     size="sm"
                     variant="outline"
-                    className="min-h-10 sm:min-h-10"
+
                     disabled={page === 1 || deliveriesQuery.isFetching}
                     onClick={() => changePage(page - 1)}
                   >
@@ -651,7 +666,7 @@ function DeliveryHistorySection() {
                     type="button"
                     size="sm"
                     variant="outline"
-                    className="min-h-10 sm:min-h-10"
+
                     disabled={page === pageCount || deliveriesQuery.isFetching}
                     onClick={() => changePage(page + 1)}
                   >
@@ -665,112 +680,114 @@ function DeliveryHistorySection() {
         }}
       </QueryState>
       {selectedId && (
-        <Card id="delivery-details" className="p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold">{t("deliveries.details")}</h3>
-            <div className="flex items-center gap-2">
-              {selectedDelivery?.status === "failed" && (
+        <Card id="delivery-details">
+          <CardContent>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <SectionHeader level={3} title={t("deliveries.details")} />
+              <div className="flex items-center gap-2">
+                {selectedDelivery?.status === "failed" && (
+                  <Button
+                    type="button"
+                    size="sm"
+
+                    disabled={requeue.isPending}
+                    onClick={() => handleRequeue(selectedDelivery)}
+                  >
+                    <RotateCcw className="h-4 w-4" /> {t("deliveries.requeue")}
+                  </Button>
+                )}
                 <Button
                   type="button"
-                  size="sm"
-                  className="min-h-10 sm:min-h-10"
-                  disabled={requeue.isPending}
-                  onClick={() => handleRequeue(selectedDelivery)}
+                  size="icon"
+                  variant="ghost"
+
+                  aria-label={t("common.close")}
+                  title={t("common.close")}
+                  onClick={() => setSelectedId(null)}
                 >
-                  <RotateCcw className="h-4 w-4" /> {t("deliveries.requeue")}
+                  <X className="h-4 w-4" />
                 </Button>
-              )}
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="h-10 w-10"
-                aria-label={t("common.close")}
-                title={t("common.close")}
-                onClick={() => setSelectedId(null)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
+              </div>
             </div>
-          </div>
-          <QueryState
-            data={detail.data}
-            isLoading={detail.isLoading}
-            error={detail.error}
-            errorMessage={t("deliveries.detailFailed")}
-            onRetry={() => void detail.refetch()}
-          >
-            {(data) =>
-              data.attempts.length === 0 ? (
-                <p className="text-sm text-text-secondary">
-                  {t("deliveries.noAttempts")}
-                </p>
-              ) : (
-                <>
-                  <ResourceList asChild>
-                    <div className="md:hidden">
-                      {data.attempts.map((attempt) => (
-                        <ResourceListRow asChild key={attempt.id}>
-                          <div className="space-y-1 text-xs">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-medium">
-                                #{attempt.attempt_number}
-                              </span>
-                              <DeliveryStatusBadge status={attempt.outcome} />
-                            </div>
-                            <p className="text-text-secondary">
-                              {t("deliveries.httpStatus")}:{" "}
-                              {attempt.http_status ?? "—"} ·{" "}
-                              {attempt.duration_ms} ms
-                            </p>
-                            {attempt.error_message && (
-                              <p className="break-all text-danger">
-                                {attempt.error_message}
-                              </p>
-                            )}
-                          </div>
-                        </ResourceListRow>
-                      ))}
-                    </div>
-                  </ResourceList>
-                  <div className="hidden overflow-x-auto md:block">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>{t("deliveries.attempt")}</TableHead>
-                          <TableHead>{t("deliveries.outcome")}</TableHead>
-                          <TableHead>{t("deliveries.httpStatus")}</TableHead>
-                          <TableHead>{t("deliveries.duration")}</TableHead>
-                          <TableHead>{t("deliveries.error")}</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
+            <QueryState
+              data={detail.data}
+              isLoading={detail.isLoading}
+              error={detail.error}
+              errorMessage={t("deliveries.detailFailed")}
+              onRetry={() => void detail.refetch()}
+            >
+              {(data) =>
+                data.attempts.length === 0 ? (
+                  <p className="text-sm text-text-secondary">
+                    {t("deliveries.noAttempts")}
+                  </p>
+                ) : (
+                  <>
+                    <ResourceList asChild>
+                      <div className="md:hidden">
                         {data.attempts.map((attempt) => (
-                          <TableRow key={attempt.id}>
-                            <TableCell className="font-mono text-xs">
-                              {attempt.attempt_number}
-                            </TableCell>
-                            <TableCell>
-                              <DeliveryStatusBadge status={attempt.outcome} />
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {attempt.http_status ?? "—"}
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {attempt.duration_ms} ms
-                            </TableCell>
-                            <TableCell className="max-w-lg break-all text-xs text-text-secondary">
-                              {attempt.error_message ?? "—"}
-                            </TableCell>
-                          </TableRow>
+                          <ResourceListRow asChild key={attempt.id}>
+                            <div className="space-y-1 text-xs">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-medium">
+                                  #{attempt.attempt_number}
+                                </span>
+                                <DeliveryStatusBadge status={attempt.outcome} />
+                              </div>
+                              <p className="text-text-secondary">
+                                {t("deliveries.httpStatus")}:{" "}
+                                {attempt.http_status ?? "—"} ·{" "}
+                                {attempt.duration_ms} ms
+                              </p>
+                              {attempt.error_message && (
+                                <p className="break-all text-danger">
+                                  {attempt.error_message}
+                                </p>
+                              )}
+                            </div>
+                          </ResourceListRow>
                         ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </>
-              )
-            }
-          </QueryState>
+                      </div>
+                    </ResourceList>
+                    <div className="hidden overflow-x-auto md:block">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>{t("deliveries.attempt")}</TableHead>
+                            <TableHead>{t("deliveries.outcome")}</TableHead>
+                            <TableHead>{t("deliveries.httpStatus")}</TableHead>
+                            <TableHead>{t("deliveries.duration")}</TableHead>
+                            <TableHead>{t("deliveries.error")}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {data.attempts.map((attempt) => (
+                            <TableRow key={attempt.id}>
+                              <TableCell className="font-mono text-xs">
+                                {attempt.attempt_number}
+                              </TableCell>
+                              <TableCell>
+                                <DeliveryStatusBadge status={attempt.outcome} />
+                              </TableCell>
+                              <TableCell className="font-mono text-xs">
+                                {attempt.http_status ?? "—"}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs">
+                                {attempt.duration_ms} ms
+                              </TableCell>
+                              <TableCell className="max-w-lg break-all text-xs text-text-secondary">
+                                {attempt.error_message ?? "—"}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                )
+              }
+            </QueryState>
+          </CardContent>
         </Card>
       )}
     </div>
@@ -791,7 +808,7 @@ function DeliveryOpenButton({
     <Button
       variant="ghost"
       type="button"
-      className="min-h-10 w-full text-left hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      className="w-full text-left hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       aria-label={t("deliveries.openDetails", {
         event: delivery.event_type,
         id: delivery.aggregate_id.slice(0, 8),
@@ -818,21 +835,17 @@ function DeliveryStatusBadge({ status }: { status: string }) {
   const { t } = useTranslation();
   const tone =
     status === "delivered"
-      ? "bg-emerald-500/15 text-text-primary"
+      ? "success"
       : status === "failed"
-        ? "bg-red-500/15 text-text-primary"
+        ? "danger"
         : status === "retry_scheduled"
-          ? "bg-amber-500/15 text-text-primary"
-          : "bg-surface-raised text-text-muted";
+          ? "warning"
+          : "muted";
   const labelKey =
     status === "retry_scheduled"
       ? "deliveries.retryScheduled"
       : `deliveries.${status}`;
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-xs ${tone}`}>
-      {t(labelKey)}
-    </span>
-  );
+  return <Badge tone={tone}>{t(labelKey)}</Badge>;
 }
 
 function NotificationsSection() {
@@ -876,102 +889,107 @@ function NotificationsSection() {
 
   return (
     <div className="space-y-3">
-      <Card className="p-4">
-        <QueryState
-          data={notificationsQuery.data}
-          isLoading={
-            notificationsQuery.isLoading ||
-            (!notificationsQuery.error &&
-              notificationsQuery.data !== undefined &&
-              loadedData !== notificationsQuery.data)
-          }
-          error={notificationsQuery.error}
-          errorMessage={t("notifications.loadFailed")}
-          onRetry={() => void notificationsQuery.refetch()}
-        >
-          {() => (
-            <form onSubmit={handleSubmit} className="space-y-3">
-              {items.map((item, i) => (
-                <div key={i} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
-                  <Input
-                    required
-                    placeholder={t("notifications.channelPlaceholder")}
-                    value={item.channel}
-                    onChange={(e) =>
-                      setItems(
-                        items.map((it, idx) =>
-                          idx === i ? { ...it, channel: e.target.value } : it,
-                        ),
-                      )
-                    }
-                  />
-                  <Input
-                    required
-                    placeholder={t("notifications.targetPlaceholder")}
-                    value={item.target}
-                    onChange={(e) =>
-                      setItems(
-                        items.map((it, idx) =>
-                          idx === i ? { ...it, target: e.target.value } : it,
-                        ),
-                      )
-                    }
-                  />
-                  <Button
-                    type="button"
-                    variant="destructive-outline"
-                    size="icon"
-                    aria-label={t("common.delete")}
-                    title={t("common.delete")}
-                    className="h-10 w-10 sm:h-10 sm:w-10 text-danger"
-                    onClick={() =>
-                      setItems(items.filter((_, idx) => idx !== i))
-                    }
+      <Card>
+        <CardContent>
+          <QueryState
+            data={notificationsQuery.data}
+            isLoading={
+              notificationsQuery.isLoading ||
+              (!notificationsQuery.error &&
+                notificationsQuery.data !== undefined &&
+                loadedData !== notificationsQuery.data)
+            }
+            error={notificationsQuery.error}
+            errorMessage={t("notifications.loadFailed")}
+            onRetry={() => void notificationsQuery.refetch()}
+          >
+            {() => (
+              <form onSubmit={handleSubmit} className="space-y-3">
+                {items.map((item, i) => (
+                  <div
+                    key={i}
+                    className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Input
+                      required
+                      placeholder={t("notifications.channelPlaceholder")}
+                      value={item.channel}
+                      onChange={(e) =>
+                        setItems(
+                          items.map((it, idx) =>
+                            idx === i ? { ...it, channel: e.target.value } : it,
+                          ),
+                        )
+                      }
+                    />
+                    <Input
+                      required
+                      placeholder={t("notifications.targetPlaceholder")}
+                      value={item.target}
+                      onChange={(e) =>
+                        setItems(
+                          items.map((it, idx) =>
+                            idx === i ? { ...it, target: e.target.value } : it,
+                          ),
+                        )
+                      }
+                    />
+                    <Button
+                      type="button"
+                      variant="destructive-outline"
+                      size="icon"
+                      aria-label={t("common.delete")}
+                      title={t("common.delete")}
+
+                      onClick={() =>
+                        setItems(items.filter((_, idx) => idx !== i))
+                      }
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+
+                  onClick={() =>
+                    setItems([
+                      ...items,
+                      {
+                        channel: "in_app",
+                        target: "dashboard",
+                        enabled: true,
+                        aggregation_window_secs: 0,
+                        quiet_start_min: 0,
+                        quiet_end_min: 0,
+                        quiet_action: "hold",
+                        quiet_bypass_statuses: [],
+                      },
+                    ])
+                  }
+                >
+                  <Plus className="h-4 w-4" /> {t("notifications.add")}
+                </Button>
+                {saveError && (
+                  <Notice role="alert" tone="danger" appearance="inline">
+                    {saveError}
+                  </Notice>
+                )}
+                <div className="flex gap-2">
+                  <Button
+                    type="submit"
+
+                    disabled={save.isPending}
+                  >
+                    {t("common.save")}
                   </Button>
                 </div>
-              ))}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="min-h-10 sm:min-h-10"
-                onClick={() =>
-                  setItems([
-                    ...items,
-                    {
-                      channel: "in_app",
-                      target: "dashboard",
-                      enabled: true,
-                      aggregation_window_secs: 0,
-                      quiet_start_min: 0,
-                      quiet_end_min: 0,
-                      quiet_action: "hold",
-                      quiet_bypass_statuses: [],
-                    },
-                  ])
-                }
-              >
-                <Plus className="h-4 w-4" /> {t("notifications.add")}
-              </Button>
-              {saveError && (
-                <p role="alert" className="text-sm text-text-primary">
-                  {saveError}
-                </p>
-              )}
-              <div className="flex gap-2">
-                <Button
-                  type="submit"
-                  className="min-h-10 sm:min-h-10"
-                  disabled={save.isPending}
-                >
-                  {t("common.save")}
-                </Button>
-              </div>
-            </form>
-          )}
-        </QueryState>
+              </form>
+            )}
+          </QueryState>
+        </CardContent>
       </Card>
       <QueryState
         data={eventsQuery.data}
@@ -1061,14 +1079,16 @@ function NotificationsSection() {
 function NotificationStatusBadge({ event }: { event: NotificationEvent }) {
   const { t } = useTranslation();
   return (
-    <span
-      className={`inline-block rounded-full px-2 py-0.5 text-xs text-text-primary ${event.last_error ? "bg-red-500/15" : event.delivered_at ? "bg-emerald-500/15" : "bg-amber-500/15"}`}
+    <Badge
+      tone={
+        event.last_error ? "danger" : event.delivered_at ? "success" : "warning"
+      }
     >
       {event.last_error
         ? t("notifications.failed")
         : event.delivered_at
           ? t("notifications.delivered")
           : t("notifications.pending")}
-    </span>
+    </Badge>
   );
 }

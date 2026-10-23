@@ -2,7 +2,17 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { Configuration } from "@/api/workspaces";
 import { FormEvent, useEffect, useState } from "react";
-import {NamespaceLink as Link, ResourceList, ResourceListRow, useNamespaceNavigate as useNavigate, toast, Button, Input, Label} from '@pdlc/ui/ui'
+import {
+  PageHeader,
+  NamespaceLink as Link,
+  ResourceList,
+  ResourceListRow,
+  useNamespaceNavigate as useNavigate,
+  toast,
+  Button,
+  Input,
+  Label,
+} from "@pdlc/ui/ui";
 
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
@@ -10,7 +20,6 @@ import { ChevronRight, Clock, Play } from "lucide-react";
 
 import { usePipelines, useTriggerPipeline } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-
 
 const pageSize = 20;
 const statusColors: Record<string, string> = {
@@ -60,36 +69,40 @@ export function PipelinesPage() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <nav
-            aria-label={t("pipelines.title")}
-            className="flex min-w-0 items-center gap-2 text-sm text-text-muted"
-          >
-            <Link
-              to="/delivery-configs"
-              className="min-h-10 content-center hover:text-text-primary"
-            >
-              CI-конфигурации
-            </Link>
-            <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
-            <span className="truncate">{project?.name ?? projectId}</span>
-          </nav>
-          <h1 className="text-2xl font-bold">{t("pipelines.title")}</h1>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          className="min-h-10 sm:min-h-10"
-          aria-expanded={showForm}
-          aria-controls="pipeline-trigger-form"
-          onClick={openForm}
-          disabled={trigger.isPending}
+      <>
+        <nav
+          aria-label={t("pipelines.title")}
+          className="flex min-w-0 items-center gap-2 text-sm text-text-muted"
         >
-          <Play className="h-4 w-4" aria-hidden />
-          {t("pipelines.run")}
-        </Button>
-      </header>
+          <Link
+            to="/delivery-configs"
+            className="min-h-10 content-center hover:text-text-primary"
+          >
+            CI-конфигурации
+          </Link>
+          <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
+          <span className="truncate">{project?.name ?? projectId}</span>
+        </nav>
+        <PageHeader
+          title={t("pipelines.title")}
+          actions={
+            <>
+              <Button
+                type="button"
+                size="sm"
+
+                aria-expanded={showForm}
+                aria-controls="pipeline-trigger-form"
+                onClick={openForm}
+                disabled={trigger.isPending}
+              >
+                <Play className="h-4 w-4" aria-hidden />
+                {t("pipelines.run")}
+              </Button>
+            </>
+          }
+        />
+      </>
 
       {showForm && (
         <form
@@ -102,7 +115,7 @@ export function PipelinesPage() {
             <Label htmlFor="git-ref">{t("pipelines.gitRef")}</Label>
             <Input
               id="git-ref"
-              className="min-h-10"
+
               required
               placeholder="main"
               value={gitRef}
@@ -112,7 +125,7 @@ export function PipelinesPage() {
           </div>
           <Button
             type="submit"
-            className="min-h-10"
+
             disabled={trigger.isPending || !gitRef.trim()}
           >
             {t("pipelines.run")}
@@ -120,7 +133,7 @@ export function PipelinesPage() {
           <Button
             type="button"
             variant="outline"
-            className="min-h-10"
+
             disabled={trigger.isPending}
             onClick={() => setShowForm(false)}
           >
@@ -182,7 +195,7 @@ export function PipelinesPage() {
             type="button"
             size="sm"
             variant="outline"
-            className="min-h-10 sm:min-h-10"
+
             disabled={page === 0 || pipelinesQuery.isFetching}
             onClick={() => setPage(page - 1)}
           >
@@ -195,7 +208,7 @@ export function PipelinesPage() {
             type="button"
             size="sm"
             variant="outline"
-            className="min-h-10 sm:min-h-10"
+
             disabled={!hasNextPage || pipelinesQuery.isFetching}
             onClick={() => setPage(page + 1)}
           >

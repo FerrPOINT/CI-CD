@@ -1,8 +1,20 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
-import { Copy, Download, Package, Search } from "lucide-react";
-import {toast, Select, Loader, Button, Input, ResourceList, ResourceListRow} from '@pdlc/ui/ui'
+import { Copy, Download, Package } from "lucide-react";
+import {
+  PageHeader,
+  CopyButton,
+  toast,
+  Select,
+  Loader,
+  Button,
+  ResourceList,
+  ResourceListRow,
+  SearchInput,
+  EmptyState,
+  Notice,
+} from "@pdlc/ui/ui";
 import { downloadArtifact, saveDownloadedArtifact } from "@/api/client";
 import { useArtifacts } from "@/api/hooks";
 import type { Artifact } from "@/api/types";
@@ -62,25 +74,16 @@ export function ArtifactsPage() {
     }
   }
 
-  async function handleCopy(artifact: Artifact) {
-    if (!artifact.sha256) return;
-    setActionError(null);
-    try {
-      await navigator.clipboard.writeText(artifact.sha256);
-      toast.success(t("artifacts.copied"));
-    } catch {
-      setActionError({ id: artifact.id, message: t("artifacts.copyFailed") });
-    }
-  }
-
   return (
     <div className="min-w-0 space-y-5">
-      <header className="flex items-center gap-2">
-        <Package className="h-5 w-5 text-accent" aria-hidden />
-        <h1 className="text-xl font-bold sm:text-2xl">
-          {t("artifacts.title")}
-        </h1>
-      </header>
+      <PageHeader
+        title={t("artifacts.title")}
+        leading={
+          <>
+            <Package className="h-5 w-5 text-accent" aria-hidden />
+          </>
+        }
+      />
 
       <QueryState
         data={artifacts}
@@ -94,16 +97,10 @@ export function ArtifactsPage() {
         {() => (
           <section aria-label={t("artifacts.title")} className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              <div className="relative min-w-0 flex-1 sm:max-w-xl">
-                <Search
-                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-                  aria-hidden
-                />
-                <Input
-                  type="search"
+              <div className="min-w-0 flex-1 sm:max-w-xl">
+                <SearchInput
                   aria-label={t("artifacts.search")}
                   placeholder={t("artifacts.search")}
-                  className="min-h-10 pl-9"
                   value={search}
                   onChange={(event) => {
                     setSearch(event.target.value);
@@ -137,12 +134,9 @@ export function ArtifactsPage() {
               })}
             </p>
             {filtered.length === 0 ? (
-              <p
-                role="status"
-                className="border-y border-border py-6 text-sm text-text-muted"
-              >
-                {t("artifacts.noMatches")}
-              </p>
+              <div role="status">
+                <EmptyState message={t("artifacts.noMatches")} />
+              </div>
             ) : (
               <ResourceList asChild>
                 <ul>
@@ -171,20 +165,29 @@ export function ArtifactsPage() {
                               )}
                             </div>
                             {artifact.sha256 && (
-                              <Button
+                              <CopyButton
                                 variant="ghost"
-                                type="button"
                                 aria-label={t("artifacts.copyDigestFor", {
                                   name: artifact.name,
                                 })}
                                 title={t("artifacts.copyDigestFor", {
                                   name: artifact.name,
                                 })}
-                                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-                                onClick={() => void handleCopy(artifact)}
+                                value={artifact.sha256}
+                                size="icon"
+                                onClick={() => setActionError(null)}
+                                onCopied={() =>
+                                  toast.success(t("artifacts.copied"))
+                                }
+                                onCopyError={() =>
+                                  setActionError({
+                                    id: artifact.id,
+                                    message: t("artifacts.copyFailed"),
+                                  })
+                                }
                               >
                                 <Copy className="h-4 w-4" aria-hidden />
-                              </Button>
+                              </CopyButton>
                             )}
                             {state === "available" && (
                               <Button
@@ -204,7 +207,7 @@ export function ArtifactsPage() {
                                 })}
                                 aria-busy={downloadingId === artifact.id}
                                 disabled={downloadingId !== null}
-                                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-accent hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+                                size="icon" className="shrink-0"
                                 onClick={() => void handleDownload(artifact)}
                               >
                                 {downloadingId === artifact.id ? (
@@ -251,12 +254,14 @@ export function ArtifactsPage() {
                             </p>
                           )}
                           {actionError?.id === artifact.id && (
-                            <p
+                            <Notice
                               role="alert"
-                              className="ml-6 break-words text-xs text-danger-strong"
+                              className="ml-6 break-words"
+                              tone="danger"
+                              appearance="inline"
                             >
                               {actionError.message}
-                            </p>
+                            </Notice>
                           )}
                         </li>
                       </ResourceListRow>
@@ -274,7 +279,7 @@ export function ArtifactsPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={currentPage === 1}
                   onClick={() => setPage(currentPage - 1)}
                 >
@@ -287,7 +292,7 @@ export function ArtifactsPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="min-h-10 sm:min-h-10"
+
                   disabled={currentPage === totalPages}
                   onClick={() => setPage(currentPage + 1)}
                 >
