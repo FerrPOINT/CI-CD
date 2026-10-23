@@ -2,7 +2,7 @@
 use anyhow::{Context, ensure};
 use cicd::quiescence::{Coordinator, Gate, Identity};
 use clap::{Parser, Subcommand};
-use std::{io::Write, path::PathBuf};
+use std::{io::{Read, Write}, path::PathBuf};
 use uuid::Uuid;
 #[derive(Parser)]
 struct Args {
@@ -13,6 +13,11 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Read-only, challenged management observation. Never opens the quiescence gate.
+    InspectKubernetesCustody {
+        #[arg(long)]
+        request_sha256: String,
+    },
     /// Read-only predecessor hashes; never a native retirement or held acknowledgement.
     AdoptionStatus,
     /// Explicit owner handoff; native source/destination proof is verified by Base.
@@ -55,8 +60,20 @@ enum Command {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    if let Command::InspectKubernetesCustody { request_sha256 } = &args.command {
+        let mut bytes = Vec::new();
+        std::io::stdin().take(64 * 1024 + 1).read_to_end(&mut bytes)?;
+        let result = cicd::execution::kubernetes::inspection::command(&bytes, request_sha256).await;
+        println!("{}", result);
+        std::io::stdout().flush()?;
+        if result["status"] != "VERIFIED" {
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
     let gate = Gate::open(&args.directory)?;
     match args.command {
+        Command::InspectKubernetesCustody { .. } => unreachable!("read-only branch handled before Gate::open"),
         Command::AdoptionStatus => println!("{}", cicd::quiescence::adoption_status(&gate)?),
         Command::AdoptPrepare {
             operation,

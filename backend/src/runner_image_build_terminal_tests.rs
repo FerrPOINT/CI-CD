@@ -448,3 +448,68 @@ async fn kubernetes_terminal_pg_embedded_ack_without_external_wire_receipt() {
     fixture.cleanup().await;
     assertions.unwrap();
 }
+
+
+#[tokio::test]
+#[ignore = "requires disposable CICD_TEST_DATABASE_URL; read-only custody authority, no native effects"]
+async fn kubernetes_inspection_uses_exact_readonly_reservation_source_and_runner_chain() {
+    use crate::execution::kubernetes::{Scope, inspection::db_binding};
+    let f = Fixture::new().await;
+    let case = Case::new(&f.pool, f.project).await;
+    sqlx::query("UPDATE pipelines SET commit_sha=$1 WHERE project_id=$2")
+        .bind("a".repeat(40)).bind(f.project).execute(&f.pool).await.unwrap();
+    let scope = Scope { job_id:case.job, attempt_id:case.lease.attempt_id, lease_id:case.lease.id,
+        generation:case.lease.generation, source_commit:"a".repeat(40) };
+    let before = case.snapshot(&f.pool).await;
+    let mut tx = f.pool.begin().await.unwrap();
+    sqlx::query("SET TRANSACTION READ ONLY").execute(&mut *tx).await.unwrap();
+    let original = db_binding(&mut tx, &scope).await.unwrap();
+    assert_eq!(db_binding(&mut tx, &scope).await.unwrap(), original);
+    assert!(sqlx::query("UPDATE jobs SET status=status WHERE id=$1").bind(case.job).execute(&mut *tx).await.is_err());
+    tx.rollback().await.unwrap();
+    assert_eq!(case.snapshot(&f.pool).await, before);
+    for field in ["job","attempt","lease","generation","source"] {
+        let mut wrong = scope.clone();
+        match field {
+            "job" => wrong.job_id=Uuid::new_v4(),
+            "attempt" => wrong.attempt_id=Uuid::new_v4(),
+            "lease" => wrong.lease_id=Uuid::new_v4(),
+            "generation" => wrong.generation+=1,
+            _ => wrong.source_commit="b".repeat(40),
+        }
+        let mut connection=f.pool.acquire().await.unwrap();
+        assert!(db_binding(&mut connection, &wrong).await.is_err(), "{field}");
+    }
+    sqlx::query("UPDATE job_queue SET lease_id=NULL WHERE attempt_id=$1")
+        .bind(scope.attempt_id).execute(&f.pool).await.unwrap();
+    let mut connection=f.pool.acquire().await.unwrap();
+    assert!(db_binding(&mut connection, &scope).await.is_err());
+    drop(connection);
+    sqlx::query("UPDATE job_queue SET lease_id=$1 WHERE attempt_id=$2")
+        .bind(scope.lease_id).bind(scope.attempt_id).execute(&f.pool).await.unwrap();
+    let runner=Uuid::new_v4();
+    let name=format!("inspection-{runner}");
+    sqlx::query("INSERT INTO runners(id,name) VALUES($1,$2)").bind(runner).bind(&name).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE job_leases SET runner_id=$1,runner_name=$2 WHERE id=$3")
+        .bind(runner).bind(&name).bind(scope.lease_id).execute(&f.pool).await.unwrap();
+    let mut connection=f.pool.acquire().await.unwrap();
+    assert!(db_binding(&mut connection, &scope).await.is_err(), "unacknowledged external runner");
+    drop(connection);
+    sqlx::query("UPDATE job_leases SET acknowledged_at=now() WHERE id=$1").bind(scope.lease_id).execute(&f.pool).await.unwrap();
+    let mut connection=f.pool.acquire().await.unwrap();
+    let external=db_binding(&mut connection, &scope).await.unwrap();
+    assert_ne!(external, original);
+    drop(connection);
+    sqlx::query("UPDATE job_leases SET runner_name='wrong-registered-runner' WHERE id=$1")
+        .bind(scope.lease_id).execute(&f.pool).await.unwrap();
+    let mut connection=f.pool.acquire().await.unwrap();
+    assert!(db_binding(&mut connection, &scope).await.is_err());
+    drop(connection);
+    sqlx::query("UPDATE job_leases SET runner_name=$1 WHERE id=$2").bind(&name).bind(scope.lease_id).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_name,generation,lease_expires_at,lease_status) VALUES($1,$2,$3,'embedded',2,now()-interval '1 minute','expired')")
+        .bind(Uuid::new_v4()).bind(case.job).bind(scope.attempt_id).execute(&f.pool).await.unwrap();
+    let mut connection=f.pool.acquire().await.unwrap();
+    assert!(db_binding(&mut connection, &scope).await.is_err(), "stale latest generation");
+    drop(connection);
+    f.cleanup().await;
+}

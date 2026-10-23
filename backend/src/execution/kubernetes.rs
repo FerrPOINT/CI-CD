@@ -13,6 +13,7 @@ use std::{
 use uuid::Uuid;
 
 pub mod deployment;
+pub mod inspection;
 
 pub const FINALIZER: &str = "forge.pdlc.acm-ai.ru/execution-custody";
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
@@ -533,6 +534,8 @@ impl Execution {
                 "reopened custody cannot create a new effect"
             );
             let admission = authorize()?;
+            // A private digest only: never persist command/env/secrets in custody.
+            self.seal_authored_spec()?;
             write_once(&issued, b"true")?;
             let mut manifest = self.manifest.clone();
             manifest["metadata"]["annotations"]["pdlc.admission-epoch"] = json!(admission.epoch);
