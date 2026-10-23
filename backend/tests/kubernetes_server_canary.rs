@@ -33,9 +33,25 @@ struct Reference {
     path: PathBuf,
     sha256: String,
 }
+#[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum RunnerProfile {
+    #[default]
+    Embedded,
+    External,
+}
+struct RunnerProcess {
+    child: Child,
+    pid: u32,
+    start: Option<String>,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Input {
+    #[serde(default)]
+    runner_profile: RunnerProfile,
+    #[serde(default)]
+    external_runner: Option<Reference>,
     schema_version: u32,
     kind: String,
     operation_id: Uuid,
@@ -134,6 +150,10 @@ struct Fixture {
     pool: PgPool,
     http: Client,
     child: Mutex<Child>,
+    external: Mutex<Option<RunnerProcess>>,
+    unknown_probe: Mutex<Option<Child>>,
+    runner_id: Mutex<Option<Uuid>>,
+    registration_token: String,
     pid: u32,
     start: Option<String>,
     success: String,
@@ -199,20 +219,246 @@ impl Fixture {
         timeout(Duration::from_secs(150),async {
             loop {
                 let row: Option<(Uuid,Uuid,i64)>=sqlx::query_as(
-                    "SELECT l.id,l.attempt_id,l.generation FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id JOIN jobs j ON j.id=l.job_id WHERE l.job_id=$1 AND l.runner_id IS NULL AND l.runner_name='embedded' AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=$1) AND l.completed_at IS NOT NULL AND l.lease_status IN ('completed','canceled') AND l.terminal_status=$2 AND a.status=$2 AND a.finished_at IS NOT NULL AND j.status=$2")
-                    .bind(job).bind(expected).fetch_optional(&self.pool).await?;
+                    "SELECT l.id,l.attempt_id,l.generation FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id JOIN jobs j ON j.id=l.job_id WHERE l.job_id=$1 AND (($3::uuid IS NULL AND l.runner_id IS NULL AND l.runner_name='embedded') OR ($3::uuid IS NOT NULL AND l.runner_id=$3 AND l.completion_received_at IS NOT NULL)) AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=$1) AND l.completed_at IS NOT NULL AND l.lease_status IN ('completed','canceled') AND l.terminal_status=$2 AND a.status=$2 AND a.finished_at IS NOT NULL AND j.status=$2")
+                    .bind(job).bind(expected).bind(*self.runner_id.lock().await).fetch_optional(&self.pool).await?;
                 if let Some((lease,attempt,generation))=row {
                     let root=Path::new("/workspaces");
                     if !kubernetes::inventory(root)?.iter().any(|s|s.job_id==job)
                         && !OwnedWorkspace::inventory(root)?.iter().any(|w|w.attempt_id==attempt) {
                         return Ok(json!({"leaseId":lease,"attemptId":attempt,"generation":generation,
-                            "databaseTerminalAndExecutorCleanupConfirmed":true}));
+                            "databaseTerminalAndExecutorCleanupConfirmed":true,"runnerId":*self.runner_id.lock().await}));
                     }
                 }
                 sleep(Duration::from_millis(250)).await;
             }
         }).await.context("bound lease ACK/workspace cleanup deadline")?
     }
+    async fn start_external(&self) -> Result<()> {
+        if self.input.runner_profile != RunnerProfile::External {
+            return Ok(());
+        }
+        let reference = self
+            .input
+            .external_runner
+            .as_ref()
+            .context("external binary absent")?;
+        ensure!(
+            self.external.lock().await.is_none(),
+            "runner spawn already issued; no repeat"
+        );
+        let stdout = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(self.root.join("runner.stdout.private.log"))?;
+        let stderr = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(self.root.join("runner.stderr.private.log"))?;
+        evidence(
+            &self.root,
+            "runner-planned.json",
+            &json!({"operationId":self.input.operation_id,
+            "binary":reference.path,"binarySha256":reference.sha256,"spawnIssued":true,
+            "participant":"canary-external","workspace":"/workspaces"}),
+        )?;
+        let child = Command::new(&reference.path)
+            .env_clear()
+            .envs([
+                ("PATH", "/usr/local/bin:/usr/bin:/bin".to_owned()),
+                ("HOME", self.root.join("home").display().to_string()),
+                ("TMPDIR", self.root.join("tmp").display().to_string()),
+                ("CICD_API_URL", "http://127.0.0.1:22801".into()),
+                (
+                    "CICD_RUNNER_NAME",
+                    format!("external-canary-{}", self.input.operation_id),
+                ),
+                (
+                    "CICD_RUNNER_REGISTRATION_TOKEN",
+                    self.registration_token.clone(),
+                ),
+                ("CICD_RUNNER_TAGS", "linux,kubernetes".into()),
+                ("CICD_RUNNER_TOTAL_SLOTS", "1".into()),
+                ("CICD_RUNNER_POLL_INTERVAL_SECONDS", "1".into()),
+                ("CICD_RUNNER_WORK_DIR", "/workspaces".into()),
+                ("CICD_RUNNER_MODE", "kubernetes".into()),
+                (
+                    "CICD_KUBERNETES_RUNNER_CONFIG",
+                    self.input.runner_config.path.display().to_string(),
+                ),
+                (
+                    "CICD_KUBERNETES_ADMISSION_FILE",
+                    self.input.admission_file.display().to_string(),
+                ),
+                ("KUBERNETES_SERVICE_HOST", self.input.api_host.clone()),
+                (
+                    "KUBERNETES_SERVICE_PORT_HTTPS",
+                    self.input.api_port.to_string(),
+                ),
+                (
+                    "CICD_QUIESCENCE_DIR",
+                    self.root.join("control").display().to_string(),
+                ),
+                ("CICD_QUIESCENCE_PARTICIPANT", "canary-external".into()),
+            ])
+            .stdin(Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
+            .kill_on_drop(false)
+            .spawn()?;
+        // No fallible operation may lose this child after spawn.
+        let pid = child.id().unwrap_or(0);
+        let start = process_start(pid).ok();
+        *self.external.lock().await = Some(RunnerProcess { child, pid, start });
+        let start = self
+            .external
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|p| p.start.clone())
+            .context("runner process identity unavailable")?;
+        evidence(
+            &self.root,
+            "runner-child.json",
+            &json!({"operationId":self.input.operation_id,
+            "pid":pid,"processStart":start,"binarySha256":reference.sha256}),
+        )?;
+        timeout(Duration::from_secs(60),async {
+            loop {
+                ensure!(self.external.lock().await.as_mut().context("runner holder absent")?
+                    .child.try_wait()?.is_none(),"actual runner exited before qualification");
+                let rows:Vec<(Uuid,String,Value)>=sqlx::query_as(
+                    "SELECT id,credential_hash,heartbeat_payload FROM runners WHERE name=$1 AND status='online' AND capacity_busy_slots=0 AND last_seen_at>now()-interval '10 seconds'")
+                    .bind(format!("external-canary-{}",self.input.operation_id)).fetch_all(&self.pool).await?;
+                if rows.len()==1 {
+                    let (id,digest,payload)=&rows[0];
+                    let log=fs::read(self.root.join("runner.stderr.private.log"))?;
+                    ensure!(log.len()<=1024*1024,"registration log bound");
+                    let text=std::str::from_utf8(&log)?;
+                    let credentials:Vec<_>=text.lines().filter_map(|l|l.strip_prefix("runner credential: ")).collect();
+                    if credentials.len()==1 && hash(credentials[0].as_bytes())==*digest
+                        && payload["capacity"]["busySlots"]==0 && payload["activeLeaseIds"]==json!([])
+                        && payload["capabilities"]["executorKinds"]==json!(["kubernetes"]) {
+                        let count:i64=sqlx::query_scalar("SELECT count(*) FROM runners").fetch_one(&self.pool).await?;
+                        ensure!(count==1,"unexpected fixture runner registration");
+                        *self.runner_id.lock().await=Some(*id);
+                        evidence(&self.root,"runner-registration.json",&json!({"operationId":self.input.operation_id,
+                            "runnerId":id,"credentialSha256":digest,"actualCliRegistration":true,
+                            "heartbeatObserved":true,"kubernetesCapability":true,"pid":pid,"processStart":start}))?;
+                        return Ok::<_,anyhow::Error>(());
+                    }
+                } else {
+                    ensure!(rows.is_empty(),"ambiguous runner registration");
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+        }).await.context("actual runner registration/heartbeat unknown; no repeat")?
+    }
+
+    async fn unknown_workspace_neighbor(&self) -> Result<()> {
+        if self.input.runner_profile != RunnerProfile::External {
+            return Ok(());
+        }
+        let path = self.root.join("unknown-workspace");
+        fs::create_dir(&path)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+        let local = OwnedWorkspace::create(&path, Uuid::new_v4(), Uuid::new_v4(), 1)?;
+        local.record_completion("success")?;
+        let before = serde_json::to_value(OwnedWorkspace::inventory(&path)?)?;
+        let before_bytes = unknown_workspace_bytes(&path)?;
+        let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM job_leases")
+            .fetch_one(&self.pool)
+            .await?;
+        let runners: i64 = sqlx::query_scalar("SELECT count(*) FROM runners")
+            .fetch_one(&self.pool)
+            .await?;
+        ensure!(
+            kubernetes::inventory(Path::new("/workspaces"))?.is_empty(),
+            "job custody remains before negative"
+        );
+        let log = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(self.root.join("unknown-runner.stderr.private.log"))?;
+        let child = Command::new(
+            &self
+                .input
+                .external_runner
+                .as_ref()
+                .context("binary absent")?
+                .path,
+        )
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .env("CICD_RUNNER_MODE", "kubernetes")
+        .args([
+            "--api-url",
+            "http://127.0.0.1:22801",
+            "--credential",
+            "fixture-not-used",
+            "--once",
+            "--work-dir",
+        ])
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(log)
+        .kill_on_drop(false)
+        .spawn()?;
+        let pid = child.id().unwrap_or(0);
+        let start = process_start(pid).ok();
+        *self.unknown_probe.lock().await = Some(child);
+        let status = timeout(Duration::from_secs(15), async {
+            self.unknown_probe
+                .lock()
+                .await
+                .as_mut()
+                .context("negative child custody absent")?
+                .wait()
+                .await
+                .context("negative runner wait")
+        })
+        .await
+        .context("negative runner outcome unknown; child retained")??;
+        ensure!(
+            status.code().is_some_and(|code| code != 0),
+            "unknown local completion did not reject by normal startup exit"
+        );
+        ensure!(
+            before == serde_json::to_value(OwnedWorkspace::inventory(&path)?)?
+                && before_bytes == unknown_workspace_bytes(&path)?,
+            "unresolved workspace changed; no synthetic cleanup permitted"
+        );
+        ensure!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM job_leases")
+                .fetch_one(&self.pool)
+                .await?
+                == leases
+                && sqlx::query_scalar::<_, i64>("SELECT count(*) FROM runners")
+                    .fetch_one(&self.pool)
+                    .await?
+                    == runners
+                && kubernetes::inventory(Path::new("/workspaces"))?.is_empty(),
+            "unknown neighbor issued new work"
+        );
+        let message = fs::read_to_string(self.root.join("unknown-runner.stderr.private.log"))?;
+        ensure!(
+            message.contains("unresolved workspaces require owner readback"),
+            "negative failed outside owning startup boundary"
+        );
+        evidence(
+            &self.root,
+            "unknown-workspace.json",
+            &json!({"operationId":self.input.operation_id,
+            "case":"startup-unknown-custody-no-repeat","pid":pid,"processStart":start,
+            "exitCode":status.code(),"workspaceRetained":true,"noNewLease":true,"noNewRegistration":true,
+            "noExecutorCustody":true,"networkReplyLossQualified":false}),
+        )?;
+        Ok(())
+    }
+
     async fn shutdown(&self) -> Result<()> {
         let gate = Gate::open(&self.root.join("control"))?;
         let identity: Identity = serde_json::from_slice(&private(
@@ -235,7 +481,34 @@ impl Fixture {
             self.child.lock().await.try_wait()?.is_none(),
             "main exited before normal-stop proof"
         );
-        let expected = [identity];
+        let mut expected = vec![identity];
+        if self.input.runner_profile == RunnerProfile::External {
+            let participant: Identity = serde_json::from_slice(&private(
+                &self.root.join("control/participants/canary-external.json"),
+            )?)?;
+            let mut holder = self.external.lock().await;
+            let native = holder
+                .as_mut()
+                .context("actual runner spawn/identity unknown")?;
+            ensure!(
+                native.child.try_wait()?.is_none()
+                    && participant.process_id == native.pid
+                    && Some(&participant.process_start) == native.start.as_ref()
+                    && participant.process_start == process_start(native.pid)?
+                    && participant.participant == "canary-external"
+                    && participant.kind == "external-runner"
+                    && participant.custody_roots
+                        == vec![CustodyRoot::workspace(PathBuf::from("/workspaces"))],
+                "external runner participant differs from exact retained process"
+            );
+            if let Some(probe) = self.unknown_probe.lock().await.as_mut() {
+                ensure!(
+                    probe.try_wait()?.is_some(),
+                    "negative runner child still unresolved"
+                );
+            }
+            expected.push(participant);
+        }
         let owner = Coordinator::request(gate, self.input.operation_id)?;
         let fence = timeout(Duration::from_secs(180), async {
             loop {
@@ -274,6 +547,23 @@ impl Fixture {
             .await
             .context("normal main exit unknown")??;
         drop(child);
+        if self.input.runner_profile == RunnerProfile::External {
+            let mut holder = self.external.lock().await;
+            let native = holder.as_mut().context("runner holder missing")?;
+            let status = timeout(Duration::from_secs(15), native.child.wait())
+                .await
+                .context("normal runner exit unknown")??;
+            ensure!(
+                status.success(),
+                "actual external runner did not exit normally"
+            );
+            evidence(
+                &self.root,
+                "runner-exited.json",
+                &json!({"operationId":self.input.operation_id,
+                "pid":native.pid,"processStart":native.start,"normalExit":true}),
+            )?;
+        }
         ensure!(
             status.success() && owner.gate().all_exited(&expected)?,
             "normal main exit not qualified"
@@ -285,6 +575,37 @@ impl Fixture {
         )?;
         Ok(())
     }
+}
+fn unknown_workspace_bytes(root: &Path) -> Result<Vec<(PathBuf, u64, u32, String)>> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut result = Vec::new();
+    while let Some(path) = pending.pop() {
+        let meta = fs::symlink_metadata(&path)?;
+        ensure!(
+            path.canonicalize()? == path && result.len() < 4096,
+            "unknown fixture tree redirected/unbounded"
+        );
+        let digest = if meta.is_dir() {
+            for entry in fs::read_dir(&path)? {
+                pending.push(entry?.path());
+            }
+            String::new()
+        } else {
+            ensure!(
+                meta.is_file() && meta.nlink() == 1 && meta.len() <= 65536,
+                "unknown fixture leaf redirected/unbounded"
+            );
+            hash(&fs::read(&path)?)
+        };
+        result.push((
+            path.strip_prefix(root)?.to_path_buf(),
+            meta.ino(),
+            meta.mode(),
+            digest,
+        ));
+    }
+    result.sort();
+    Ok(result)
 }
 fn git(root: &Path, args: &[&str]) -> Result<String> {
     let out = std::process::Command::new("git")
@@ -376,6 +697,7 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
     })
     .await
     .context("main readiness deadline")??;
+    f.start_external().await?;
     let user = Uuid::new_v4();
     let password = Uuid::new_v4().to_string();
     let username = format!("canary-{user}");
@@ -460,6 +782,11 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
                                     ensure!(fs::read(p)?==f.input.operation_id.to_string().as_bytes(),"foreign cancel marker");
                                     let v=f.json(Method::GET,&format!("/api/v1/pipelines/{pipeline}"),token,Value::Null).await?;
                                     ensure!(v["pipeline"]["status"]=="running" && v["stages"][0]["jobs"][0]["status"]=="running","cancel execution already stopped");
+                                    if let Some(runner)=*f.runner_id.lock().await {
+                                        let count:i64=sqlx::query_scalar("SELECT count(*) FROM runners r JOIN job_leases l ON l.runner_id=r.id WHERE r.id=$1 AND l.id=$2 AND l.acknowledged_at IS NOT NULL AND r.capacity_busy_slots=1 AND r.heartbeat_payload->'activeLeaseIds' @> $3::jsonb")
+                                            .bind(runner).bind(id).bind(json!([id])).fetch_one(&f.pool).await?;
+                                        ensure!(count==1,"actual busy heartbeat/lease ACK not observed");
+                                    }
                                     evidence(&f.root,"cancel-marker.json",&json!({"attemptId":attempt,"leaseId":id,"generation":generation,"workspaceId":w.workspace_id,"actualJobMarker":true}))?;
                                     return Ok::<_,anyhow::Error>(());
                                 }
@@ -544,9 +871,10 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
             .push(json!({"branch":branch,"pipeline":done,"sourceCommit":pin,"custody":custody}));
     }
     evidence(&f.root, "http-cases.json", &json!(receipts))?;
+    f.unknown_workspace_neighbor().await?;
     Ok(
         json!({"status":"PASS","localAuthenticationQualified":true,"centralSsoQualified":false,
-        "actualMain":true,"ordinaryPipelineCases":["success","cancel"],"externalRunnerProtocolQualified":false}),
+        "actualMain":true,"ordinaryPipelineCases":["success","cancel"],"externalRunnerProtocolQualified":f.input.runner_profile==RunnerProfile::External}),
     )
 }
 
@@ -565,6 +893,18 @@ fn validate_scope(i: &Input, built: Option<&str>) -> Result<()> {
                 .all(|b| b.is_ascii_hexdigit())
             && i.expected_executor_sha256 == hash(include_bytes!("../src/execution/kubernetes.rs")),
         "compiled source differs from owner pin"
+    );
+    ensure!(
+        match (&i.runner_profile, &i.external_runner) {
+            (RunnerProfile::Embedded, None) => true,
+            (RunnerProfile::External, Some(r)) =>
+                r.path.is_absolute()
+                    && r.path.to_str() == Some(env!("CARGO_BIN_EXE_forge-runner"))
+                    && r.sha256.len() == 64
+                    && r.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            _ => false,
+        },
+        "explicit runner profile/binary scope differs"
     );
     i.expected_config.validate()?;
     ensure!(
@@ -629,6 +969,30 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
         format!("{:x}", h.finalize()) == input.main_binary_sha256,
         "actual compiled main binary changed"
     );
+    if let Some(reference) = &input.external_runner {
+        let meta = fs::symlink_metadata(&reference.path)?;
+        ensure!(
+            reference.path.canonicalize()? == reference.path
+                && meta.is_file()
+                && meta.nlink() == 1
+                && meta.len() <= 256 * 1024 * 1024,
+            "external binary alias/bound"
+        );
+        let mut h = Sha256::new();
+        let mut file = fs::File::open(&reference.path)?;
+        let mut chunk = [0u8; 65536];
+        loop {
+            let n = std::io::Read::read(&mut file, &mut chunk)?;
+            if n == 0 {
+                break;
+            }
+            h.update(&chunk[..n]);
+        }
+        ensure!(
+            format!("{:x}", h.finalize()) == reference.sha256,
+            "actual external runner binary changed"
+        );
+    }
     let dsn = String::from_utf8(pinned(&input.database)?)?;
     let url = reqwest::Url::parse(dsn.trim())?;
     ensure!(
@@ -685,6 +1049,7 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
     let reserve = std::net::TcpListener::bind("127.0.0.1:22801")?;
     drop(reserve);
     let secret = Uuid::new_v4().to_string();
+    let registration_token = Uuid::new_v4().to_string();
     let stdout = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -728,7 +1093,22 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
                 root.join("artifacts").display().to_string(),
             ),
             ("CICD_RUNNER_MODE", "kubernetes".into()),
-            ("CICD_EMBEDDED_RUNNER_ENABLED", "true".into()),
+            (
+                "CICD_EMBEDDED_RUNNER_ENABLED",
+                if input.runner_profile == RunnerProfile::External {
+                    "false".into()
+                } else {
+                    "true".into()
+                },
+            ),
+            (
+                "CICD_RUNNER_REGISTRATION_TOKEN",
+                if input.runner_profile == RunnerProfile::External {
+                    registration_token.clone()
+                } else {
+                    String::new()
+                },
+            ),
             ("CICD_RUNNER_KEEP_WORKSPACE", "false".into()),
             ("CICD_RUNNER_QUEUE_TIMEOUT_SECONDS", "120".into()),
             (
@@ -761,6 +1141,10 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
         pool,
         http,
         child: Mutex::new(child),
+        external: Mutex::new(None),
+        unknown_probe: Mutex::new(None),
+        runner_id: Mutex::new(None),
+        registration_token,
         pid,
         start,
         success,
@@ -829,4 +1213,46 @@ fn canary_scope_requires_ordinary_feature_and_exact_build() {
     v["expectedConfig"]["builderEnabled"] = json!(false);
     v["image"] = json!("postgres:17.6");
     assert!(validate_scope(&serde_json::from_value(v).unwrap(), Some(&head)).is_err());
+}
+
+#[test]
+fn external_profile_requires_exact_cli_binary_and_explicit_selection() {
+    let v = json!({"schemaVersion":1,"kind":"forge/native-main-canary/v1","operationId":Uuid::new_v4(),
+        "runnerProfile":"external","externalRunner":{"path":env!("CARGO_BIN_EXE_forge-runner"),"sha256":"b".repeat(64)},
+        "expectedSourceHead":"a".repeat(40),"expectedExecutorSha256":hash(include_bytes!("../src/execution/kubernetes.rs")),
+        "mainBinarySha256":"b".repeat(64),"image":format!("docker.io/library/postgres@sha256:{}","c".repeat(64)),
+        "apiHost":"10.0.0.1","apiPort":6443,"admissionFile":"/qualification/admission.json",
+        "migrationsDirectory":"/qualification/migrations","migrationsSha256":"d".repeat(64),
+        "database":{"path":"/qualification/db.private","sha256":"e".repeat(64)},
+        "runnerConfig":{"path":"/qualification/runner.json","sha256":"f".repeat(64)},
+        "expectedConfig":{"schemaVersion":1,"installationSha256":"1".repeat(64),"installation":"qa",
+            "clusterCaSha256":"2".repeat(64),"namespace":"forge-native-qa","namespaceUid":Uuid::new_v4(),
+            "workspaceClaim":"workspace","workspaceClaimUid":Uuid::new_v4(),"jobServiceAccount":"job",
+            "builderEnabled":false,"resources":{"cpuMillis":100,"memoryBytes":134217728,"ephemeralStorageBytes":134217728},
+            "security":{"runAsUser":10001,"runAsGroup":10001,"fsGroup":10001}}});
+    validate_scope(
+        &serde_json::from_value(v.clone()).unwrap(),
+        Some(&"a".repeat(40)),
+    )
+    .unwrap();
+    for field in ["runnerProfile", "externalRunner"] {
+        let mut changed = v.clone();
+        changed.as_object_mut().unwrap().remove(field);
+        assert!(
+            validate_scope(
+                &serde_json::from_value(changed).unwrap(),
+                Some(&"a".repeat(40))
+            )
+            .is_err()
+        );
+    }
+    let mut wrong = v;
+    wrong["externalRunner"]["path"] = json!("/usr/local/bin/forge-runner");
+    assert!(
+        validate_scope(
+            &serde_json::from_value(wrong).unwrap(),
+            Some(&"a".repeat(40))
+        )
+        .is_err()
+    );
 }
