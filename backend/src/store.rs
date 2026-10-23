@@ -4,3 +4,4 @@
 //! (HTTP handlers, embedded runner, integration tests) shares one wakeup path.
 
 pub use cicd_infra::*;
+pub mod identity_deletion;

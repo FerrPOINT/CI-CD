@@ -15,6 +15,7 @@ pub fn registered_machine(subject: &str) -> bool {
     [
         "CICD_NAMESPACE__OWNER_SUBJECTS",
         "CICD_NAMESPACE__READER_SUBJECTS",
+        "CICD_IDENTITY_DELETION_COORDINATOR_SUBJECTS",
     ]
     .iter()
     .any(|key| {

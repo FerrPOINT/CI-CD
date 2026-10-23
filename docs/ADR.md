@@ -140,3 +140,4 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 - `docs/CODE_STYLE.md` — конвенции кода.
 
 - [ADR-0031](adr/0031-external-repository-synchronization.md) — Git HTTPS синхронизация, durable refs и общая mutation guard.
+- [ADR-0039](adr/0039-identity-deletion-owner.md) — identity owner fences, immutable aliases и truthful legacy unknown.

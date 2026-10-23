@@ -1,5 +1,15 @@
 # Дата-модель Forge CI/CD
 
+Source migration0105 добавляет identity_legacy_issuer, identity_legacy_aliases,
+identity_deletion_operations, identity_fence_epoch и reference revision sequence.
+У audit/release/approval появляются nullable typed identity_refs; старые DTO
+сохраняются. NULL означает legacy provenance, [] — явно отсутствие identity
+references у supported writer. Durable aliases сохраняют attribution после
+rename/delete/remap; неизвестное сопоставление не выдаётся за zero. Statement/
+row triggers 26 источников, общий guard и epoch обеспечивают drain/fence/RR
+отказ. Старые migrations, credentials и бизнес-история не переписываются.
+[Полная семантика и открытые gates](plans/2026-10-22-identity-deletion-owner.md).
+
 Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
 сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
 transaction и original proof до native publication. GET связанных задач PR

@@ -877,7 +877,12 @@ async fn record_deployment_approval(
         return Err(ApiError::bad_request("approval comment is too long"));
     }
 
-    let target = record_approval_decision(db, deployment_id, &decision, &actor, comment).await?;
+    let identity_refs = claims
+        .as_ref()
+        .map(|c| serde_json::json!([{"kind":"local_principal_id","alias":c.0.sub}]));
+    let target =
+        record_approval_decision(db, deployment_id, &decision, &actor, comment, identity_refs)
+            .await?;
     if target.should_start_pipeline {
         start_deployment_pipeline(
             db,
@@ -1109,6 +1114,7 @@ async fn record_approval_decision(
     decision: &str,
     actor: &str,
     comment: Option<String>,
+    identity_refs: Option<serde_json::Value>,
 ) -> Result<RecordedApprovalTarget, ApiError> {
     let mut tx = db.begin().await.map_err(ApiError::internal)?;
     let target: ApprovalTarget = sqlx::query_as(
@@ -1157,12 +1163,13 @@ async fn record_approval_decision(
     if rejected_count > 0 || approved_count >= i64::from(target.required_approvals) {
         return Err(ApiError::conflict("deployment approval is already decided"));
     }
-    sqlx::query("INSERT INTO deployment_approvals (id, deployment_id, decision, actor, comment) VALUES ($1, $2, $3, $4, $5)")
+    sqlx::query("INSERT INTO deployment_approvals (id, deployment_id, decision, actor, comment,identity_refs) VALUES ($1, $2, $3, $4, $5,$6)")
         .bind(Uuid::new_v4())
         .bind(deployment_id)
         .bind(decision)
         .bind(actor)
         .bind(comment)
+        .bind(identity_refs)
         .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
@@ -2609,13 +2616,64 @@ pub(crate) async fn audit(
     resource_id: Uuid,
     actor: Option<&str>,
 ) -> Result<(), ApiError> {
+    let refs = actor.is_none().then(|| serde_json::json!([]));
+    audit_with_refs(db, action, resource_type, resource_id, actor, refs).await
+}
+
+pub(crate) async fn audit_user(
+    db: &PgPool,
+    action: &str,
+    resource_type: &str,
+    resource_id: Uuid,
+    actor: Option<&str>,
+    user_id: Uuid,
+) -> Result<(), ApiError> {
+    audit_with_refs(
+        db,
+        action,
+        resource_type,
+        resource_id,
+        actor,
+        Some(serde_json::json!([{"kind":"local_user_id","alias":user_id}])),
+    )
+    .await
+}
+
+pub(crate) async fn audit_principal(
+    db: &PgPool,
+    action: &str,
+    resource_type: &str,
+    resource_id: Uuid,
+    actor: Option<&str>,
+    principal_id: Uuid,
+) -> Result<(), ApiError> {
+    audit_with_refs(
+        db,
+        action,
+        resource_type,
+        resource_id,
+        actor,
+        Some(serde_json::json!([{"kind":"local_principal_id","alias":principal_id}])),
+    )
+    .await
+}
+
+async fn audit_with_refs(
+    db: &PgPool,
+    action: &str,
+    resource_type: &str,
+    resource_id: Uuid,
+    actor: Option<&str>,
+    refs: Option<serde_json::Value>,
+) -> Result<(), ApiError> {
     sqlx::query(
-        "INSERT INTO audit_log (action, resource_type, resource_id, actor) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO audit_log (action, resource_type, resource_id, actor,identity_refs) VALUES ($1, $2, $3, $4,$5)",
     )
     .bind(action)
     .bind(resource_type)
     .bind(resource_id)
     .bind(actor)
+    .bind(refs)
     .execute(db)
     .await
     .map_err(ApiError::internal)?;

@@ -4,7 +4,7 @@
 pub(crate) use super::{
     AUTH_CSRF_COOKIE, AUTH_CSRF_HEADER, AUTH_REFRESH_COOKIE, ApiError, AppState, auth_secret, pool,
 };
-use crate::platform::audit;
+use crate::platform::audit_user;
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, header};
@@ -46,12 +46,13 @@ pub(crate) async fn auth_login(
             )
             .map_err(|_| ApiError::unauthorized())?;
             out.refresh_token = refresh.clone();
-            let _ = audit(
+            let _ = audit_user(
                 pool,
                 "auth.login_success",
                 "user",
                 claims.sub,
                 Some(input.username.trim()),
+                claims.sub,
             )
             .await;
             return Ok((auth_cookie_headers(&state, &refresh, &csrf), Json(out)));
@@ -68,22 +69,24 @@ pub(crate) async fn auth_login(
     .ok_or_else(ApiError::unauthorized)?;
     let (user_id, role, enabled, token_version, password_hash) = row;
     if !enabled || !verify_password(&password_hash, &input.password) {
-        let _ = audit(
+        let _ = audit_user(
             pool,
             "auth.login_failed",
             "user",
             user_id,
             Some(input.username.trim()),
+            user_id,
         )
         .await;
         return Err(ApiError::unauthorized());
     }
-    let _ = audit(
+    let _ = audit_user(
         pool,
         "auth.login_success",
         "user",
         user_id,
         Some(input.username.trim()),
+        user_id,
     )
     .await;
     let refresh = new_refresh_token();
@@ -161,7 +164,7 @@ pub(crate) async fn auth_logout(
         .await
         .map_err(ApiError::from)?;
     if let Some(user_id) = user_id {
-        let _ = audit(pool, "auth.logout", "session", user_id, None).await;
+        let _ = audit_user(pool, "auth.logout", "session", user_id, None, user_id).await;
     }
     Ok((
         clear_auth_cookie_headers(&state),
