@@ -4,6 +4,32 @@
 
 ## Статусы
 
+### Отдельные helper checks обслуживания
+
+`maintenance:wrapper-unit` — быстрый Linux unit `backup-stand.sh` с временным
+Python recorder вместо Base executor. Изменение только
+`scripts/tests/test_base_stand_backup.py` выбирает этот gate в Fast/Unit/Build;
+application producers не нужны. Ubuntu CI включает модуль один раз в свой
+tooling шаг. На Windows gate требует Linux; skipped body не является Linux proof.
+Явный переносимый `tooling` сохраняет прежний состав.
+
+`maintenance-sdk:integration` — ручной gate для
+`scripts/tests/test_native_qa_compose.py`: настоящий закреплённый maintenance SDK,
+model Docker и локальные controlled subprocess/RPC fixtures. Он не выполняет
+application compilation и настоящий backup. Профили Integration/Release требуют
+явный `SDLC_MAINTENANCE_BASE`; `native_qa_compose.load_sdk` проверяет exact SHA256
+SDK helper и import origin. Общий application SDK pin не заменяет этот контракт.
+Окружение/SDK не подготавливаются автоматически. Test-only edit не выбирает
+app gates в Fast/Unit/Build, но и не выдаёт PASS за невыполненную integration.
+
+В Linux, после явного выбора совместимого SDK, команда из корня Forge:
+`python3 -B scripts/tests/test_native_qa_compose.py`.
+Используется direct script: `python -m unittest scripts.tests...` занял бы
+namespace `scripts` кодом Forge до загрузки SDK и вызвал бы корректный отказ
+foreign import guard. Receipt reuse выключен; actual manual execution остаётся
+отдельной проверкой с общим execution slot. Неизвестные scripts и production neighbors сохраняют
+консервативный выбор backend/frontend. Канонические argv и inputs — `.quality-gate.json`.
+
 ### Scoped Runner Recovery Source Gate
 
 `cargo test --locked -p cicd-server --lib runner_workspace`, binary unit tests

@@ -35,6 +35,46 @@ class PythonToolingOwnershipTests(unittest.TestCase):
                     self.assertFalse(gate.get('kind') == 'artifact')
                     self.assertIn('scripts.tests.' + name, gate['argv'])
 
+    def test_posix_backup_wrapper_selects_one_linux_unit(self):
+        for profile in ('fast', 'unit', 'build'):
+            with self.subTest(profile=profile):
+                candidate = selection.plan(ROOT, profile=profile,
+                    changed=['scripts/tests/test_base_stand_backup.py'])
+                self.assertEqual(candidate['components'], ['maintenance'])
+                self.assertEqual([g['id'] for g in candidate['gates']], ['maintenance:wrapper-unit'])
+                gate = candidate['gates'][0]
+                self.assertEqual(gate['platforms'], ['linux'])
+                self.assertEqual(gate['test_tier'], 'unit')
+                self.assertEqual(gate['execution_slot'], 'none')
+                self.assertIn('scripts.tests.test_base_stand_backup', gate['argv'])
+
+    def test_explicit_sdk_test_is_manual_integration_without_app_producers(self):
+        for profile in ('fast', 'unit', 'build', 'integration', 'release'):
+            with self.subTest(profile=profile):
+                candidate = selection.plan(ROOT, profile=profile,
+                    changed=['scripts/tests/test_native_qa_compose.py'])
+                self.assertEqual(candidate['components'], ['maintenance-sdk'])
+                gates = candidate['gates']
+                if profile in ('fast', 'unit', 'build'):
+                    self.assertEqual(gates, [])
+                    continue
+                self.assertEqual([g['id'] for g in gates], ['maintenance-sdk:integration'])
+                gate = gates[0]
+                # A direct script leaves the SDK-owned `scripts` namespace free;
+                # `-m unittest scripts.tests...` would occupy it with this repo.
+                self.assertEqual(gate['argv'], ['{python}', '-B', 'scripts/tests/test_native_qa_compose.py'])
+                self.assertEqual(gate['requires_env'], ['SDLC_MAINTENANCE_BASE'])
+                self.assertFalse(gate['cacheable'])
+                self.assertTrue(gate['external_state'])
+                self.assertEqual(gate['execution_slot'], 'command')
+                self.assertEqual(gate['test_tier'], 'integration')
+
+    def test_platform_and_sdk_tests_do_not_schedule_ci_app_jobs(self):
+        for name in ('test_base_stand_backup.py', 'test_native_qa_compose.py'):
+            with self.subTest(path=name), patch.object(selection, 'git', return_value='scripts/tests/' + name + '\n'):
+                values = selection.ci_outputs('push', 'a' * 40, 'b' * 40, repo=ROOT)
+                self.assertEqual(set(values.values()), {'false'})
+
     def test_unknown_scripts_and_application_sources_keep_consumers(self):
         manifest = selection.load(ROOT)
         for path in ('scripts/new_generator.py', 'scripts/build.py'):
@@ -57,6 +97,8 @@ class PythonToolingOwnershipTests(unittest.TestCase):
         for name in TEST_GATES:
             with self.subTest(module=name):
                 self.assertEqual(sum(c.count('scripts.tests.' + name) for c in commands), 1)
+        self.assertEqual(sum(c.count('scripts.tests.test_base_stand_backup') for c in commands), 1)
+        self.assertNotIn('test_native_qa_compose', ci)
 
 
 if __name__ == '__main__':

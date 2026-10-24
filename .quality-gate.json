@@ -2,6 +2,12 @@
   "schema": "base-quality-product/v1",
   "product": "CI-CD",
   "components": {
+    "maintenance": [
+      "scripts/tests/test_base_stand_backup.py"
+    ],
+    "maintenance-sdk": [
+      "scripts/tests/test_native_qa_compose.py"
+    ],
     "tooling": [
       ".github/workflows/ci.yml",
       "scripts/tests/test_build_pin.py",
@@ -57,6 +63,42 @@
     ]
   },
   "gates": [
+    {
+      "id": "maintenance:wrapper-unit",
+      "component": "maintenance",
+      "profiles": ["fast", "unit", "build", "integrated", "release"],
+      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_base_stand_backup", "-q"],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_base_stand_backup.py",
+        "scripts/backup-stand.sh",
+        ".quality-gate.json",
+        ".github/workflows/ci.yml"
+      ],
+      "platforms": ["linux"],
+      "cacheable": false,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
+    {
+      "id": "maintenance-sdk:integration",
+      "component": "maintenance-sdk",
+      "profiles": ["integration", "release"],
+      "argv": ["{python}", "-B", "scripts/tests/test_native_qa_compose.py"],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_native_qa_compose.py",
+        "scripts/native_qa_compose.py",
+        "scripts/native_qa_compose_client.py",
+        ".quality-gate.json"
+      ],
+      "platforms": ["linux"],
+      "requires_env": ["SDLC_MAINTENANCE_BASE"],
+      "cacheable": false,
+      "external_state": true,
+      "execution_slot": "command",
+      "test_tier": "integration"
+    },
     {
       "id": "tooling:python-helpers",
       "component": "tooling",
