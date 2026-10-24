@@ -937,7 +937,7 @@ function TreeView({
                   <Button
                     variant="ghost"
                     type="button"
-                    className="flex min-w-0 flex-1 items-center gap-3 px-2 text-left"
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
                     onClick={() =>
                       onNavigate(
                         entry.kind === "tree"

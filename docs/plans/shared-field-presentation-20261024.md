@@ -1,6 +1,20 @@
 # Общие подписи полей Base
 
-## Текущая волна: фирменные подсказки — 25 октября 2026
+## Текущий кандидат: компоновка Button — 25 октября 2026
+
+UI pin `5338d65de4fb300df4b759f5865b2ee2fc92d1ce`, reference
+`d7158acef7806c90d9d2a2967d22f795dde8b01826874b8073b0ca96df9967f6`.
+
+Действие дерева файлов использует padding Base; ширина строки, отступ иконки и навигация остаются у Forge.
+
+Base устранил перекрытие responsive hidden/display и выравнивания общим CSS.
+Цвета, padding, радиусы и минимум 40/44 px принадлежат Base. Шесть изменённых
+product AST сохраняют все данные/handlers вне className. Guard: 39 cases и
+шесть source contracts; IAB: 168 пар общего Button. Это не приёмка backend.
+Итоговый frontend/reference gate и built browser test пока открыты. SDK/skills,
+runtime, данные и credentials не менялись. Прежняя квалификация имеет свой scope.
+
+## Предыдущая волна: фирменные подсказки — 25 октября 2026
 
 UI pin `56cf8a2f63b2b853103c164bbf1f7758a90e8db0`, версия 0.3.2; reference
 `3d88aadb70081f614a1ef51481c32724c53bcd7c6135045d96bc7be2a1dfd1d4`.
