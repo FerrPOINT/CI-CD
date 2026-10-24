@@ -27,7 +27,8 @@ app gates в Fast/Unit/Build, но и не выдаёт PASS за невыпол
 Используется direct script: `python -m unittest scripts.tests...` занял бы
 namespace `scripts` кодом Forge до загрузки SDK и вызвал бы корректный отказ
 foreign import guard. Receipt reuse выключен; actual manual execution остаётся
-отдельной проверкой с общим execution slot. Неизвестные scripts и production neighbors сохраняют
+отдельной проверкой со slot родительского runner. Режим `execution_slot=command`
+здесь запрещён: direct test process не владеет admission. Неизвестные scripts и production neighbors сохраняют
 консервативный выбор backend/frontend. Канонические argv и inputs — `.quality-gate.json`.
 
 ### Scoped Runner Recovery Source Gate

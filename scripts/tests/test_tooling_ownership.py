@@ -66,7 +66,9 @@ class PythonToolingOwnershipTests(unittest.TestCase):
                 self.assertEqual(gate['requires_env'], ['SDLC_MAINTENANCE_BASE'])
                 self.assertFalse(gate['cacheable'])
                 self.assertTrue(gate['external_state'])
-                self.assertEqual(gate['execution_slot'], 'command')
+                # This direct test process does not own Base admission. Omission
+                # keeps the normal parent-owned slot; "command" would bypass it.
+                self.assertNotIn('execution_slot', gate)
                 self.assertEqual(gate['test_tier'], 'integration')
 
     def test_platform_and_sdk_tests_do_not_schedule_ci_app_jobs(self):

@@ -96,7 +96,6 @@
       "requires_env": ["SDLC_MAINTENANCE_BASE"],
       "cacheable": false,
       "external_state": true,
-      "execution_slot": "command",
       "test_tier": "integration"
     },
     {
