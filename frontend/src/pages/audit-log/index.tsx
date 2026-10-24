@@ -6,6 +6,7 @@ import { History, Search } from "lucide-react";
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
 import {
+  DescriptionItem,
   PageNavigation,
   PageHeader,
   Select,
@@ -287,11 +288,11 @@ export function AuditLogPage() {
                                 )}
                               </time>
                             </div>
-                            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                              <dt className="text-text-muted">
-                                {t("auditLog.resource")}
-                              </dt>
-                              <dd className="min-w-0 break-all">
+                            <dl className="min-w-0 space-y-1">
+                              <DescriptionItem
+                                label={<>{t("auditLog.resource")}</>}
+                                layout="inline"
+                              >
                                 {t(
                                   `auditLog.resources.${event.resource_type}`,
                                   { defaultValue: event.resource_type },
@@ -301,13 +302,13 @@ export function AuditLogPage() {
                                     {event.resource_id.slice(0, 8)}
                                   </span>
                                 )}
-                              </dd>
-                              <dt className="text-text-muted">
-                                {t("auditLog.actor")}
-                              </dt>
-                              <dd className="min-w-0 break-words">
+                              </DescriptionItem>
+                              <DescriptionItem
+                                label={<>{t("auditLog.actor")}</>}
+                                layout="inline"
+                              >
                                 {event.actor || "—"}
-                              </dd>
+                              </DescriptionItem>
                             </dl>
                           </li>
                         </ResourceListRow>

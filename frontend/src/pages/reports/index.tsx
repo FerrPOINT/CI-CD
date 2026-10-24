@@ -1,4 +1,10 @@
-import { Button, PageHeader, Metric, NamespaceLink as Link } from "@pdlc/ui/ui";
+import {
+  Badge,
+  Button,
+  PageHeader,
+  Metric,
+  NamespaceLink as Link,
+} from "@pdlc/ui/ui";
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useProjectReport } from "@/api/hooks";
@@ -92,19 +98,19 @@ function ReportSummary({
     {
       label: t("reports.totalPipelines"),
       value: report.total_pipelines,
-      color: null,
+      badgeTone: null,
     },
     {
       label: t("reports.successful"),
       value: report.successful_pipelines,
-      color: "bg-success",
+      badgeTone: "success" as const,
     },
     {
       label: t("reports.failed"),
       value: report.failed_pipelines,
-      color: "bg-danger",
+      badgeTone: "danger" as const,
     },
-    { label: t("reports.other"), value: other, color: "bg-text-muted" },
+    { label: t("reports.other"), value: other, badgeTone: "muted" as const },
   ];
 
   return (
@@ -156,27 +162,28 @@ function ReportSummary({
         </div>
       </div>
 
-      <dl className="grid grid-cols-2 border-y border-border sm:grid-cols-4">
+      <div className="grid grid-cols-2 border-y border-border sm:grid-cols-4">
         {counts.map((count, index) => (
           <div
             key={count.label}
             className={`min-w-0 px-3 py-3 first:pl-0 sm:px-4 ${index % 2 === 1 ? "border-l border-border" : ""} ${index >= 2 ? "border-t border-border sm:border-t-0" : ""} ${index === 2 ? "sm:border-l" : ""}`}
           >
-            <dt className="flex items-center gap-1.5 text-xs text-text-secondary">
-              {count.color && (
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${count.color}`}
-                  aria-hidden
-                />
-              )}
-              {count.label}
-            </dt>
-            <dd className="mt-1 text-xl font-semibold tabular-nums">
-              {number.format(count.value)}
-            </dd>
+            <Metric
+              appearance="inline"
+              label={
+                count.badgeTone ? (
+                  <Badge appearance="dot" tone={count.badgeTone}>
+                    {count.label}
+                  </Badge>
+                ) : (
+                  count.label
+                )
+              }
+              value={number.format(count.value)}
+            />
           </div>
         ))}
-      </dl>
+      </div>
     </div>
   );
 }

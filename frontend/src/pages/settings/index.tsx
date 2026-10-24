@@ -1,4 +1,5 @@
 import {
+  DescriptionItem,
   PageHeader,
   SectionHeader,
   NamespaceLink as Link,
@@ -118,18 +119,27 @@ export function SettingsPage() {
           title={<>{t("settings.defaults")}</>}
         />
         <dl className="grid grid-cols-2 border-y border-border text-sm sm:grid-cols-3">
-          <div className="min-w-0 py-3 pr-3">
-            <dt className="text-text-muted">{t("settings.apiPort")}</dt>
-            <dd className="mt-1 font-mono">:22801</dd>
-          </div>
-          <div className="min-w-0 border-l border-border px-3 py-3">
-            <dt className="text-text-muted">{t("settings.dashboardPort")}</dt>
-            <dd className="mt-1 font-mono">:22802</dd>
-          </div>
-          <div className="min-w-0 border-t border-border py-3 pr-3 sm:border-l sm:border-t-0 sm:px-3">
-            <dt className="text-text-muted">{t("settings.database")}</dt>
-            <dd className="mt-1 font-mono">PostgreSQL 17</dd>
-          </div>
+          <DescriptionItem
+            className="py-3 pr-3"
+            label={<>{t("settings.apiPort")}</>}
+            technical
+          >
+            :22801
+          </DescriptionItem>
+          <DescriptionItem
+            className="border-l border-border px-3 py-3"
+            label={<>{t("settings.dashboardPort")}</>}
+            technical
+          >
+            :22802
+          </DescriptionItem>
+          <DescriptionItem
+            className="border-t border-border py-3 pr-3 sm:border-l sm:border-t-0 sm:px-3"
+            label={<>{t("settings.database")}</>}
+            technical
+          >
+            PostgreSQL 17
+          </DescriptionItem>
         </dl>
         <p className="mt-2 text-xs text-text-muted">
           {t("settings.defaultsNote")}
@@ -178,17 +188,13 @@ export function SettingsPage() {
               />
               <dl className="divide-y divide-border border-y border-border">
                 {group.vars.map((variable) => (
-                  <div
+                  <DescriptionItem
                     key={variable.key}
-                    className="grid gap-1 py-2 text-sm lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)] lg:gap-4"
+                    label={<code className="font-mono">{variable.key}</code>}
+                    layout="inline"
                   >
-                    <dt className="min-w-0 break-all font-mono text-xs text-text-primary">
-                      {variable.key}
-                    </dt>
-                    <dd className="min-w-0 text-text-muted">
-                      {t(variable.descKey)}
-                    </dd>
-                  </div>
+                    {t(variable.descKey)}
+                  </DescriptionItem>
                 ))}
               </dl>
             </div>

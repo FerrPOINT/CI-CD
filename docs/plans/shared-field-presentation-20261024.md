@@ -160,3 +160,14 @@ UI producer `56f27ee55bb0481ecc4733a0bb58144ae3cfed60`, reference `ba456575dd41f
 Production React source этой волной не менялся. Обновлён точный UI pin общего оформления focus-visible PageHeader; AI Hub дополнительно обновляет только URI immutable UI snapshot в package/lockfile. Прикладные unit/type результаты неизменных inputs переиспользуются, новый продуктовый browser PASS не заявляется.
 
 UI producer `88e4ed54546181c6ffa46a38651b6553cd4e3aff`, reference `9d8689e5c5e52fd6bc3dd3d2b4b030bc992af26cfa22d626c15268765bb06316`. Семь UI pins согласованы, шесть frozen offline refresh без downloads и сторонних upgrades сохранили React singleton. SDK/skills pins неизменны. Настоящий UI-архив и offline CLI проверены вне workspace. Общий интеграционный gate, hosted CI, публикация веток и установленная приёмка остаются открытыми.
+
+
+## Общие пары описания и показатели — 25 октября 2026
+
+Свойства мобильного аудита, типовые порты/БД и описание переменных окружения используют DescriptionItem. Счётчики отчёта используют Metric/Badge; status distribution и исходные расчёты сохранены. Проверка «прочие = 2» обращается к именованной группе и definition вместо nextElementSibling. Переменные показаны как справочник, фактические env/secrets не читаются.
+
+Проверены 11 scoped cases, TypeScript и scoped ESLint; общий UI guard сохранён. IAB использовал настоящие owner-компоненты с синтетическими read-only данными: общий срез четырёх владельцев — 240 сочетаний десяти композиций, трёх тем, standard/large и 320/375/1920/2560. Это не приёмка всех продуктовых маршрутов или backend.
+
+UI остаётся 88e4ed54546181c6ffa46a38651b6553cd4e3aff / reference 9d8689e5c5e52fd6bc3dd3d2b4b030bc992af26cfa22d626c15268765bb06316. API Base, семь UI pins, SDK/skills pins и зависимости не менялись; install/build/export не повторялись. Собственный QA завершён без обращений к продуктовым API. Доказательства: private evidence/definition-pairs-20261025/. Общий integrated gate, публикация и installed acceptance остаются открытыми.
+
+После исправления лишней вложенности трёх групп Forge их 24 UI-сценария квалифицированы отдельно; 216 сценариев остальных композиций переиспользованы по неизменным соответствующим inputs. Дополнительно проверена валидная структура dt/dd во всех десяти композициях. Новый семантический RED-тест прошёл после исправления; он не заменяет проверку значений. Финальный QA 55828 завершён, inputs неизменны и API requests отсутствуют.
