@@ -11,6 +11,7 @@ import {
   NamespaceLink as Link,
   LoadingState,
   ErrorState,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
@@ -34,9 +35,11 @@ export function RepositoriesPage() {
         actions={
           <>
             {canAdmin && (
-              <Link to="/projects?project_scope=all" className="text-accent">
-                Добавить репозиторий в проект
-              </Link>
+              <TextLink asChild>
+                <Link to="/projects?project_scope=all">
+                  Добавить репозиторий в проект
+                </Link>
+              </TextLink>
             )}
           </>
         }

@@ -12,6 +12,7 @@ import {
   Button,
   Input,
   Label,
+  TextLink,
 } from "@pdlc/ui/ui";
 
 import { useParams } from "react-router";
@@ -74,12 +75,11 @@ export function PipelinesPage() {
           aria-label={t("pipelines.title")}
           className="flex min-w-0 items-center gap-2 text-sm text-text-muted"
         >
-          <Link
-            to="/delivery-configs"
-            className="min-h-10 content-center hover:text-text-primary"
-          >
-            CI-конфигурации
-          </Link>
+          <TextLink asChild>
+            <Link to="/delivery-configs" className="min-h-10 content-center">
+              CI-конфигурации
+            </Link>
+          </TextLink>
           <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
           <span className="truncate">{project?.name ?? projectId}</span>
         </nav>

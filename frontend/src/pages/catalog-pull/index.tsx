@@ -9,6 +9,7 @@ import {
   usePlatformServices,
   ErrorState,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useState } from "react";
 
@@ -133,12 +134,11 @@ export function CatalogPullPage() {
   )?.ui_url;
   return (
     <div className="space-y-4">
-      <Link
-        to={withNamespaceLocation(`/catalog/repositories/${id}`, ref)}
-        className="text-accent"
-      >
-        Репозиторий
-      </Link>
+      <TextLink asChild>
+        <Link to={withNamespaceLocation(`/catalog/repositories/${id}`, ref)}>
+          Репозиторий
+        </Link>
+      </TextLink>
       <PageHeader title={`#${pr.number} ${pr.title}`} />
       <p>
         {pr.source_branch} → {pr.target_branch} · {pr.status}
@@ -149,15 +149,17 @@ export function CatalogPullPage() {
           {error}
         </Notice>
       )}
-      <Link
-        className="block text-accent"
-        to={withNamespaceLocation(
-          `/repositories/${encodeURIComponent(pr.repository_name)}/pulls/${pr.number}`,
-          ref,
-        )}
-      >
-        Diff и проверки
-      </Link>
+      <TextLink asChild>
+        <Link
+          className="block"
+          to={withNamespaceLocation(
+            `/repositories/${encodeURIComponent(pr.repository_name)}/pulls/${pr.number}`,
+            ref,
+          )}
+        >
+          Diff и проверки
+        </Link>
+      </TextLink>
       <section className="space-y-2">
         <SectionHeader title={<>Связанные задачи</>} />
         {links.isPending ? (
@@ -173,8 +175,7 @@ export function CatalogPullPage() {
             <Card key={`${link.task.tracker_instance_id}:${link.task.task_id}`}>
               <CardContent>
                 {trackerUrl ? (
-                  <a
-                    className="text-accent"
+                  <TextLink
                     href={withNamespaceLocation(
                       `${trackerUrl}/issues/${link.task.task_id}`,
                       link.namespace,
@@ -182,7 +183,7 @@ export function CatalogPullPage() {
                     )}
                   >
                     {link.task_key}
-                  </a>
+                  </TextLink>
                 ) : (
                   <span>{link.task_key}</span>
                 )}

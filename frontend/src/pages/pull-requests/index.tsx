@@ -1,4 +1,4 @@
-import { FormField } from "@pdlc/ui/ui";
+import { FormField, TextLink } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 import {
   Select,
@@ -282,13 +282,15 @@ function PullRequestRow({
           />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              <Link
-                to={detailHref}
-                className="min-w-0 break-words text-sm font-medium hover:text-accent focus-visible:outline-2 focus-visible:outline-accent"
-              >
-                <span className="text-text-muted">#{pullRequest.number}</span>{" "}
-                {pullRequest.title}
-              </Link>
+              <TextLink asChild>
+                <Link
+                  to={detailHref}
+                  className="min-w-0 break-words text-sm font-medium"
+                >
+                  <span className="text-text-muted">#{pullRequest.number}</span>{" "}
+                  {pullRequest.title}
+                </Link>
+              </TextLink>
               <Badge tone={statusTones[pullRequest.status]}>
                 {t(`pulls.status_${pullRequest.status}`)}
               </Badge>
@@ -414,16 +416,18 @@ export function PullRequestsPage() {
     <div className="space-y-5">
       <div>
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
-          <Link to="/repositories" className="hover:text-text-primary">
-            {t("navigation.repositories")}
-          </Link>
+          <TextLink asChild>
+            <Link to="/repositories">{t("navigation.repositories")}</Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" aria-hidden />
-          <Link
-            to={`/repositories/${encodeURIComponent(repo)}`}
-            className="break-all hover:text-text-primary"
-          >
-            {repo}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to={`/repositories/${encodeURIComponent(repo)}`}
+              className="break-all"
+            >
+              {repo}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" aria-hidden />
           <span>{t("repositoryBrowser.pullRequests")}</span>
         </div>

@@ -18,6 +18,7 @@ import {
   ProjectAvatar,
   ErrorState,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useState, type FormEvent } from "react";
 
@@ -139,17 +140,18 @@ export function CatalogRepositoryPage() {
   const clone = repo.clone_url ?? repo.external_url;
   return (
     <div className="space-y-5">
-      <Link
-        to={withNamespaceLocation(
-          repo.namespace
-            ? workspacePath(repo.namespace, "repositories")
-            : "/repositories",
-          repo.namespace ?? null,
-        )}
-        className="text-accent"
-      >
-        Репозитории проекта
-      </Link>
+      <TextLink asChild>
+        <Link
+          to={withNamespaceLocation(
+            repo.namespace
+              ? workspacePath(repo.namespace, "repositories")
+              : "/repositories",
+            repo.namespace ?? null,
+          )}
+        >
+          Репозитории проекта
+        </Link>
+      </TextLink>
       {project.data && (
         <p className="flex items-center gap-2 text-sm">
           <ProjectAvatar projectKey={project.data.project_key} size="xs" />
@@ -161,15 +163,16 @@ export function CatalogRepositoryPage() {
         actions={
           <>
             {canAdmin && repo.kind === "hosted" && (
-              <Link
-                className="text-accent"
-                to={withNamespaceLocation(
-                  `/catalog/repositories/${id}/sync`,
-                  repo.namespace ?? null,
-                )}
-              >
-                Синхронизация с внешним репозиторием
-              </Link>
+              <TextLink asChild>
+                <Link
+                  to={withNamespaceLocation(
+                    `/catalog/repositories/${id}/sync`,
+                    repo.namespace ?? null,
+                  )}
+                >
+                  Синхронизация с внешним репозиторием
+                </Link>
+              </TextLink>
             )}
           </>
         }
@@ -305,19 +308,21 @@ export function CatalogRepositoryPage() {
               <p className="text-text-muted">PR пока нет.</p>
             ) : (
               pulls.data?.map((pr) => (
-                <Link
-                  key={pr.id}
-                  className="block text-accent"
-                  to={withNamespaceLocation(
-                    `/catalog/repositories/${id}/pulls/${pr.number}${intent}`,
-                    ref,
-                  )}
-                >
-                  #{pr.number} {pr.title} ·{" "}
-                  {{ open: "Открыт", closed: "Закрыт", merged: "Слит" }[
-                    pr.status
-                  ] ?? pr.status}
-                </Link>
+                <TextLink asChild>
+                  <Link
+                    key={pr.id}
+                    className="block"
+                    to={withNamespaceLocation(
+                      `/catalog/repositories/${id}/pulls/${pr.number}${intent}`,
+                      ref,
+                    )}
+                  >
+                    #{pr.number} {pr.title} ·{" "}
+                    {{ open: "Открыт", closed: "Закрыт", merged: "Слит" }[
+                      pr.status
+                    ] ?? pr.status}
+                  </Link>
+                </TextLink>
               ))
             )}
           </section>

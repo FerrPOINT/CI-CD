@@ -18,6 +18,7 @@ import {
   ResourceListRow,
   LoadingState,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useSessionCommand } from "@pdlc/ui/lib";
 import { api, ApiError } from "@/api/client";
@@ -219,13 +220,11 @@ function AdministrativeRepositoryConfigurations({
                       ["webhooks", "Вебхуки"],
                       ["reports", "Отчёты"],
                     ].map(([path, label]) => (
-                      <Link
-                        key={path}
-                        className="text-accent"
-                        to={`/delivery-configs/${config.id}/${path}`}
-                      >
-                        {label}
-                      </Link>
+                      <TextLink key={path} asChild>
+                        <Link to={`/delivery-configs/${config.id}/${path}`}>
+                          {label}
+                        </Link>
+                      </TextLink>
                     ))}
                   </div>
                 </li>

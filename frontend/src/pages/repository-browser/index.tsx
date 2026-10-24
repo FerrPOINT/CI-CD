@@ -27,6 +27,7 @@ import {
   TabsTrigger,
   SearchInput,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 
@@ -153,12 +154,14 @@ export function RepositoryBrowserPage({
       {!embedded && (
         <>
           <div className="flex items-center gap-2 text-sm text-text-muted">
-            <Link
-              to="/repositories"
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              {t("navigation.repositories")}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to="/repositories"
+                className="inline-flex min-h-10 items-center"
+              >
+                {t("navigation.repositories")}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
             <span className="min-w-0 break-all">{repo}</span>
           </div>

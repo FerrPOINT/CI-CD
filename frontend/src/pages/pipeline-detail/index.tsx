@@ -8,6 +8,7 @@ import {
   SearchInput,
   LoadingState,
   EmptyState,
+  TextLink,
 } from "@pdlc/ui/ui";
 import {
   DescriptionItem,
@@ -162,12 +163,14 @@ export function PipelineDetailPage() {
       <div className="min-w-0 space-y-6">
         <div>
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
-            <Link
-              to={`/delivery-configs/${pipeline.project_id}/pipelines`}
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              {t("navigation.pipelines")}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to={`/delivery-configs/${pipeline.project_id}/pipelines`}
+                className="inline-flex min-h-10 items-center"
+              >
+                {t("navigation.pipelines")}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
             <span>#{pipeline.id.slice(0, 8)}</span>
           </div>

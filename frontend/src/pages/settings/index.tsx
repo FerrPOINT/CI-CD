@@ -4,6 +4,7 @@ import {
   NamespaceLink as Link,
   SearchInput,
   EmptyState,
+  TextLink,
 } from "@pdlc/ui/ui";
 
 import { useState } from "react";
@@ -100,9 +101,11 @@ export function SettingsPage() {
         }
         actions={
           <>
-            <Link className="block text-accent" to="/delivery-configs">
-              Непривязанные CI-конфигурации
-            </Link>
+            <TextLink asChild>
+              <Link className="block" to="/delivery-configs">
+                Непривязанные CI-конфигурации
+              </Link>
+            </TextLink>
           </>
         }
       />

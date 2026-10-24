@@ -8,6 +8,7 @@ import {
   ResourceListRow,
   LoadingState,
   ErrorState,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useConfigurations } from "@/api/workspaces";
 export function DeliveryConfigurationsPage() {
@@ -41,12 +42,11 @@ export function DeliveryConfigurationsPage() {
             {configs.data.items.map((config) => (
               <ResourceListRow asChild key={config.id}>
                 <li>
-                  <Link
-                    className="text-accent"
-                    to={`/delivery-configs/${config.id}/pipelines`}
-                  >
-                    {config.name}
-                  </Link>
+                  <TextLink asChild>
+                    <Link to={`/delivery-configs/${config.id}/pipelines`}>
+                      {config.name}
+                    </Link>
+                  </TextLink>
                   <p className="break-all text-sm text-text-muted">
                     {config.repository_url}
                   </p>

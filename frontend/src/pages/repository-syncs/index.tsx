@@ -35,6 +35,7 @@ import {
   Notice,
   LoadingState,
   ResourceStateView,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api, ApiError } from "@/api/client";
@@ -372,16 +373,18 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
               {list.data.items.map((connection) => (
                 <TableRow key={connection.repository_id}>
                   <TableCell>
-                    <Link
-                      className="font-medium text-accent"
-                      to={location(
-                        connection.repository_id,
-                        false,
-                        connection.namespace,
-                      )}
-                    >
-                      {connection.repository_name}
-                    </Link>
+                    <TextLink asChild>
+                      <Link
+                        className="font-medium"
+                        to={location(
+                          connection.repository_id,
+                          false,
+                          connection.namespace,
+                        )}
+                      >
+                        {connection.repository_name}
+                      </Link>
+                    </TextLink>
                   </TableCell>
                   <TableCell>
                     <span className="block">
@@ -427,16 +430,17 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Link
-                      className="text-accent"
-                      to={location(
-                        connection.repository_id,
-                        true,
-                        connection.namespace,
-                      )}
-                    >
-                      История
-                    </Link>
+                    <TextLink asChild>
+                      <Link
+                        to={location(
+                          connection.repository_id,
+                          true,
+                          connection.namespace,
+                        )}
+                      >
+                        История
+                      </Link>
+                    </TextLink>
                   </TableCell>
                 </TableRow>
               ))}
@@ -640,20 +644,21 @@ export function RepositorySyncEditor({
         title="Внешний репозиторий"
         leading={
           <>
-            <Link
-              to={
-                backLocation ??
-                withNamespaceLocation(
-                  `/repository-syncs?${back}`,
-                  connection.namespace ?? null,
-                )
-              }
-              aria-label="Все синхронизации"
-              title="Все синхронизации"
-              className="p-2 text-accent"
-            >
-              <ArrowLeft aria-hidden size={20} />
-            </Link>
+            <Button asChild variant="ghost" size="icon">
+              <Link
+                to={
+                  backLocation ??
+                  withNamespaceLocation(
+                    `/repository-syncs?${back}`,
+                    connection.namespace ?? null,
+                  )
+                }
+                aria-label="Все синхронизации"
+                title="Все синхронизации"
+              >
+                <ArrowLeft aria-hidden size={20} />
+              </Link>
+            </Button>
           </>
         }
         context={<>{connection.repository_name}</>}

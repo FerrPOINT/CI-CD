@@ -61,3 +61,24 @@ React singleton и SDK/skills pins сохранены. Installed CLI check пр�
 AI Hub обновляет только URI immutable snapshot в package/lockfile; остальные
 lockfiles не меняются. Прежние product tests не обозначаются новым прогоном.
 Новый общий архив и standalone CLI проверены отдельно; полный frontend gate открыт.
+
+## Текстовые ссылки и возврат
+
+38 текстовых композиций в 18 файлах используют TextLink Base вместо повторов
+цвета, hover и focus на NamespaceLink/anchor. Самостоятельный возврат в каталог
+синхронизаций использует Button asChild variant=ghost size=icon с общей областью
+нажатия. Namespace/query, href, target/rel, названия и обработчики сохраняются.
+Ключи mapped-ссылок принадлежат внешнему TextLink; дополнительный anchor не создаётся.
+
+123 уникальных scoped cases 11 файлов, TypeScript, ESLint и primitive/choice
+guard прошли. AST всех 25 изменённых файлов Wiki/Forge не обнаружил изменений
+непредставительных контрактов. Layout/содержимое/права и domain queries не
+переносятся в Base. Прямой paint транспортных ссылок теперь обнаруживает
+существующий source checker Base; его новый regression case сначала падал.
+
+IAB настоящего WorkspaceLinks и ревизии Wiki с read-only адаптерами проверил
+24 сочетания тем/палитр/ширин: общие цвета, focus, отсутствие вложенных anchors
+и overflow, сохранение context при переходе. Это proof двух исходных композиций,
+не полный route gate и не приёмка runtime. Собственные сервер и вкладка закрыты.
+Непоставляемый source guard не объявляется принятым старым pin. UI producer,
+reference, зависимости и SDK/skills не меняются; полный frontend gate открыт.

@@ -14,6 +14,7 @@ import {
   DialogTitle,
   ErrorState,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
@@ -126,9 +127,9 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
       <div className="space-y-3">
         <PageHeader title="Репозитории проекта" />
         <p>Выберите проект в верхней панели.</p>
-        <Link className="text-accent" to="/repositories">
-          Каталог Forge
-        </Link>
+        <TextLink asChild>
+          <Link to="/repositories">Каталог Forge</Link>
+        </TextLink>
       </div>
     );
   if (query.isPending)
@@ -185,15 +186,16 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
                 <CardContent className="space-y-3">
                   <CardTitle asChild>
                     <h2>
-                      <Link
-                        className="text-accent"
-                        to={withNamespaceLocation(
-                          `/catalog/repositories/${repo.id}`,
-                          ref,
-                        )}
-                      >
-                        {repo.public_name}
-                      </Link>
+                      <TextLink asChild>
+                        <Link
+                          to={withNamespaceLocation(
+                            `/catalog/repositories/${repo.id}`,
+                            ref,
+                          )}
+                        >
+                          {repo.public_name}
+                        </Link>
+                      </TextLink>
                     </h2>
                   </CardTitle>
                   <p className="mt-2 text-sm text-text-muted">
@@ -210,16 +212,18 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
                       ["deployments", "Деплои"],
                       ["configurations", "CI-конфигурации"],
                     ].map(([tab, label]) => (
-                      <Link
-                        key={tab}
-                        className="text-accent underline"
-                        to={withNamespaceLocation(
-                          `/catalog/repositories/${repo.id}?tab=${tab}`,
-                          ref,
-                        )}
-                      >
-                        {label}
-                      </Link>
+                      <TextLink asChild>
+                        <Link
+                          key={tab}
+
+                          to={withNamespaceLocation(
+                            `/catalog/repositories/${repo.id}?tab=${tab}`,
+                            ref,
+                          )}
+                        >
+                          {label}
+                        </Link>
+                      </TextLink>
                     ))}
                   </div>
                 </CardContent>

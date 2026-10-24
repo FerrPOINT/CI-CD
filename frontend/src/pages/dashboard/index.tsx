@@ -8,6 +8,7 @@ import {
   PageHeader,
   NamespaceLink as Link,
   ErrorState,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
@@ -35,12 +36,12 @@ export function DashboardPage() {
           <>
             <p>Показатели относятся к подключённым проектам.</p>
             <p className="flex flex-wrap gap-3">
-              <Link to="/repositories" className="text-accent underline">
-                Все репозитории
-              </Link>
-              <Link to="/delivery-configs" className="text-accent underline">
-                Все CI-конфигурации
-              </Link>
+              <TextLink asChild>
+                <Link to="/repositories">Все репозитории</Link>
+              </TextLink>
+              <TextLink asChild>
+                <Link to="/delivery-configs">Все CI-конфигурации</Link>
+              </TextLink>
             </p>
           </>
         }
@@ -66,9 +67,11 @@ export function DashboardPage() {
       <Card asChild>
         <section>
           <CardContent>
-            <Link to="/runners" className="font-semibold text-accent">
-              Исполнители CI
-            </Link>
+            <TextLink asChild>
+              <Link to="/runners" className="font-semibold">
+                Исполнители CI
+              </Link>
+            </TextLink>
             {runners.isError ? (
               <Notice tone="danger" appearance="inline">
                 Состояние исполнителей недоступно.

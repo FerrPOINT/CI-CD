@@ -5,6 +5,7 @@ import {
   DiffBlock,
   Button,
   InitialsAvatar as UserAvatar,
+  TextLink,
 } from "@pdlc/ui/ui";
 import {
   PageHeader,
@@ -113,26 +114,32 @@ export function PullRequestDetailPage() {
       <div className="space-y-6">
         <div>
           <div className="flex flex-wrap items-center gap-2 text-sm text-text-muted">
-            <Link
-              to="/repositories"
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              {t("navigation.repositories")}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to="/repositories"
+                className="inline-flex min-h-10 items-center"
+              >
+                {t("navigation.repositories")}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
-            <Link
-              to={`/repositories/${encodeURIComponent(repo)}/pulls`}
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              {t("repositoryBrowser.pullRequests")}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to={`/repositories/${encodeURIComponent(repo)}/pulls`}
+                className="inline-flex min-h-10 items-center"
+              >
+                {t("repositoryBrowser.pullRequests")}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
-            <Link
-              to={`/repositories/${encodeURIComponent(repo)}/pulls/${pr.number}`}
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              #{pr.number}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to={`/repositories/${encodeURIComponent(repo)}/pulls/${pr.number}`}
+                className="inline-flex min-h-10 items-center"
+              >
+                #{pr.number}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
             <span>{t("pulls.viewDiff")}</span>
           </div>
@@ -261,26 +268,32 @@ export function PullRequestDetailPage() {
     <div className="space-y-6">
       <div>
         <div className="flex flex-wrap items-center gap-2 text-sm text-text-muted">
-          <Link
-            to="/repositories"
-            className="inline-flex min-h-10 items-center hover:text-text-primary"
-          >
-            {t("navigation.repositories")}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to="/repositories"
+              className="inline-flex min-h-10 items-center"
+            >
+              {t("navigation.repositories")}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" />
-          <Link
-            to={`/repositories/${encodeURIComponent(repo)}`}
-            className="inline-flex min-h-10 items-center break-all hover:text-text-primary"
-          >
-            {repo}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to={`/repositories/${encodeURIComponent(repo)}`}
+              className="inline-flex min-h-10 items-center break-all"
+            >
+              {repo}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" />
-          <Link
-            to={`/repositories/${encodeURIComponent(repo)}/pulls`}
-            className="inline-flex min-h-10 items-center hover:text-text-primary"
-          >
-            {t("repositoryBrowser.pullRequests")}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to={`/repositories/${encodeURIComponent(repo)}/pulls`}
+              className="inline-flex min-h-10 items-center"
+            >
+              {t("repositoryBrowser.pullRequests")}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" />
           <span>#{pr.number}</span>
         </div>

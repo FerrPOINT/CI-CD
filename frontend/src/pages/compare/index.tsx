@@ -12,6 +12,7 @@ import {
   Label,
   EmptyState,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
@@ -163,19 +164,23 @@ export function ComparePage() {
     <div className="space-y-5">
       <div>
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
-          <Link
-            to="/repositories"
-            className="inline-flex min-h-10 items-center hover:text-text-primary"
-          >
-            {t("navigation.repositories")}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to="/repositories"
+              className="inline-flex min-h-10 items-center"
+            >
+              {t("navigation.repositories")}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" aria-hidden />
-          <Link
-            to={`/repositories/${encodeURIComponent(repo)}`}
-            className="inline-flex min-h-10 items-center break-all hover:text-text-primary"
-          >
-            {repo}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to={`/repositories/${encodeURIComponent(repo)}`}
+              className="inline-flex min-h-10 items-center break-all"
+            >
+              {repo}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" aria-hidden />
           <span>{t("repositoryBrowser.compare")}</span>
         </div>
