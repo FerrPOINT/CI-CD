@@ -2,6 +2,7 @@ import { RequireAdministrator } from "@pdlc/ui/auth";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  FormField,
   CardContent,
   Card,
   SectionHeader,
@@ -350,30 +351,35 @@ function AdministrativeRepositoryConfigurations({
                       ) : !push.data || !choices.data ? (
                         <LoadingState message="Загружаем настройки…" />
                       ) : (
-                        <label className="block text-sm">
-                          Конфигурация
-                          <SearchableSelect
-                            label="Конфигурация автозапуска"
-                            value={selectedPush}
-                            selectedLabel={selected.data?.name}
-                            placeholder="Отключён"
-                            options={choices.data.items.map((config) => ({
-                              value: config.id,
-                              label: config.name,
-                            }))}
-                            search={search}
-                            onSearch={(value) => {
-                              setSearch(value);
-                              setChoiceOffset(0);
-                            }}
-                            offset={choiceOffset}
-                            pageSize={50}
-                            total={choices.data.total}
-                            onPage={setChoiceOffset}
-                            onChange={setPushDraft}
-                            disabled={busy}
-                          />
-                        </label>
+                        <FormField
+                          id={"push-configuration-" + repositoryId}
+                          label={"Конфигурация"}
+                        >
+                          {(attrs) => (
+                            <SearchableSelect
+                              {...attrs}
+                              label="Конфигурация автозапуска"
+                              value={selectedPush}
+                              selectedLabel={selected.data?.name}
+                              placeholder="Отключён"
+                              options={choices.data.items.map((config) => ({
+                                value: config.id,
+                                label: config.name,
+                              }))}
+                              search={search}
+                              onSearch={(value) => {
+                                setSearch(value);
+                                setChoiceOffset(0);
+                              }}
+                              offset={choiceOffset}
+                              pageSize={50}
+                              total={choices.data.total}
+                              onPage={setChoiceOffset}
+                              onChange={setPushDraft}
+                              disabled={busy}
+                            />
+                          )}
+                        </FormField>
                       )}
                       <Button
                         disabled={
@@ -414,34 +420,39 @@ function AdministrativeRepositoryConfigurations({
                           Конфигурации недоступны.
                         </Notice>
                       ) : (
-                        <label className="block text-sm">
-                          Конфигурация
-                          <SearchableSelect
-                            label="Конфигурация подключения"
-                            placeholder="Выберите конфигурацию"
-                            allowEmpty={false}
-                            value={attachConfiguration}
-                            selectedLabel={selectedAttach.data?.name}
-                            onChange={setAttachConfiguration}
-                            options={(unbound.data?.items ?? []).map(
-                              (config) => ({
-                                value: config.id,
-                                label: config.name,
-                              }),
-                            )}
-                            loading={unbound.isPending}
-                            search={unboundSearch}
-                            onSearch={(value) => {
-                              setUnboundSearch(value);
-                              setUnboundOffset(0);
-                            }}
-                            offset={unboundOffset}
-                            pageSize={50}
-                            total={unbound.data?.total ?? 0}
-                            onPage={setUnboundOffset}
-                            disabled={busy}
-                          />
-                        </label>
+                        <FormField
+                          id={"attach-configuration-" + repositoryId}
+                          label={"Конфигурация"}
+                        >
+                          {(attrs) => (
+                            <SearchableSelect
+                              {...attrs}
+                              label="Конфигурация подключения"
+                              placeholder="Выберите конфигурацию"
+                              allowEmpty={false}
+                              value={attachConfiguration}
+                              selectedLabel={selectedAttach.data?.name}
+                              onChange={setAttachConfiguration}
+                              options={(unbound.data?.items ?? []).map(
+                                (config) => ({
+                                  value: config.id,
+                                  label: config.name,
+                                }),
+                              )}
+                              loading={unbound.isPending}
+                              search={unboundSearch}
+                              onSearch={(value) => {
+                                setUnboundSearch(value);
+                                setUnboundOffset(0);
+                              }}
+                              offset={unboundOffset}
+                              pageSize={50}
+                              total={unbound.data?.total ?? 0}
+                              onPage={setUnboundOffset}
+                              disabled={busy}
+                            />
+                          )}
+                        </FormField>
                       )}
                       <div className="flex gap-2">
                         <Button disabled={busy || !attachConfiguration}>
