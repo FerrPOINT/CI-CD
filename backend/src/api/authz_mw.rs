@@ -2,7 +2,6 @@
 
 use super::dto::Project;
 use super::{ApiError, AppState, REQUEST_ID, pool};
-use crate::platform::audit;
 use axum::extract::ConnectInfo;
 use axum::extract::State;
 use axum::http::Extensions;
@@ -330,12 +329,13 @@ pub(crate) async fn require_auth(
         && scope_allowed;
     if !allowed {
         if let Some(pool) = state.pool.as_ref() {
-            let _ = audit(
+            let _ = crate::platform::audit_principal(
                 pool,
                 "auth.denied",
                 "route",
                 claims.sub,
                 Some(&format!("{method} {path}")),
+                claims.sub,
             )
             .await;
         }

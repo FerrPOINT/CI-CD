@@ -3,7 +3,6 @@
 use super::dto::{CreateProject, Project, ProjectMembership, ProjectMembershipInput};
 use super::pipelines_routes::valid_project_role;
 use super::{ApiError, ApiResult, AppState, PageParams, list_projects_for_claims, pool};
-use crate::platform::audit;
 use axum::Json;
 use axum::extract::{Path, State};
 use cicd_domain::repository_url::validate_repository_url;
@@ -112,12 +111,13 @@ pub(crate) async fn upsert_project_membership(
     ensure_project_exists(db, project_id).await?;
     ensure_user_exists(db, input.user_id).await?;
     let membership = upsert_project_membership_record(db, project_id, input.user_id, role).await?;
-    audit(
+    crate::platform::audit_user(
         db,
         "project_membership.upserted",
         "project",
         project_id,
         Some(&format!("{}:{}", membership.user_id, membership.role)),
+        membership.user_id,
     )
     .await?;
     Ok(Json(membership))
@@ -164,12 +164,13 @@ pub(crate) async fn delete_project_membership(
         .execute(db)
         .await
         .map_err(ApiError::internal)?;
-    audit(
+    crate::platform::audit_user(
         db,
         "project_membership.deleted",
         "project",
         project_id,
         Some(&user_id.to_string()),
+        user_id,
     )
     .await?;
     Ok(Json(

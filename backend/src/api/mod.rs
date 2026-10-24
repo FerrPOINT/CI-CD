@@ -12,6 +12,7 @@ tokio::task_local! {
 pub(crate) mod auth_routes;
 pub(crate) mod authz_mw;
 pub(crate) mod dto;
+pub(crate) mod identity_deletion;
 pub(crate) mod jobs_routes;
 pub(crate) mod pipelines_routes;
 pub(crate) mod projects_routes;

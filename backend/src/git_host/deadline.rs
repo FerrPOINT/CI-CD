@@ -72,13 +72,29 @@ impl GitDeadline {
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<(), ApiError> {
         self.require()?;
+        // Observe DB time before measuring original remaining monotonic life.
+        // This fixed cap cannot be extended by DB/client clock skew or SQL waits.
+        let observed_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut **transaction)
+            .await
+            .map_err(ApiError::internal)?;
+        let remaining = self
+            .instant
+            .checked_duration_since(Instant::now())
+            .ok_or_else(ApiError::unauthorized)?;
+        let cap = observed_at
+            .checked_add_signed(
+                chrono::Duration::from_std(remaining).map_err(|_| ApiError::unauthorized())?,
+            )
+            .ok_or_else(ApiError::unauthorized)?
+            .min(self.valid_until()?);
         let id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO forge_request_commit_fences(fence_id,valid_until)
-            VALUES($1,to_timestamp(($2::bigint)::double precision))",
+            VALUES($1,$2)",
         )
         .bind(id)
-        .bind(self.until)
+        .bind(cap)
         .execute(&mut **transaction)
         .await
         .map_err(ApiError::internal)?;
@@ -89,10 +105,16 @@ impl GitDeadline {
             .map_err(ApiError::internal)?;
         self.require()
     }
-    pub(super) fn identity(source: &pdlc_auth_core::service_bridge::VerifiedCentralToken) -> Self {
+    pub(crate) fn identity(source: &pdlc_auth_core::service_bridge::VerifiedCentralToken) -> Self {
         Self {
             instant: source.lifetime.monotonic_deadline(),
             until: source.lifetime.local_valid_until(),
+        }
+    }
+    pub(crate) fn cap_until(self, until: i64) -> Self {
+        Self {
+            until: self.until.min(until),
+            ..self
         }
     }
     pub(super) fn product_personal(
@@ -109,7 +131,7 @@ impl GitDeadline {
             until: source.valid_until(),
         }
     }
-    pub(super) fn current(self) -> bool {
+    pub(crate) fn current(self) -> bool {
         Instant::now() < self.instant && Utc::now().timestamp() < self.until
     }
     pub(crate) fn commit_error(error: sqlx::Error) -> ApiError {

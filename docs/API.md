@@ -1,5 +1,15 @@
 # API v1 Specification — Forge CI/CD
 
+Source-кандидат identity owner v1: отдельный POST transport
+`/api/internal/v1/user-deletions/{operation_id}/{check|freeze|release}` со строгим
+Base DeletionRequest и no-store на всех ответах. Только fresh registered Auth
+service account с ci-cd:identity-lifecycle; human/PAT role этого не заменяет.
+200 — typed owner receipt; 401 — invalid/expired proof, 403 — kind/scope/
+registration/issuer mismatch, 409 — conflicting/cancelled operation, 422 —
+invalid request, 503 — source/storage/unbound/unresolved legacy references.
+JSON/path/body-limit отказы сохраняют штатные HTTP статусы. Секреты и значения
+legacy actor не возвращаются. [Inventory, deployment и gates](plans/2026-10-22-identity-deletion-owner.md).
+
 Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
 сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
 transaction и original proof до native publication. GET связанных задач PR
@@ -607,8 +617,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 104,
-    "latest_required_version": 104,
+    "latest_applied_version": 105,
+    "latest_required_version": 105,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],

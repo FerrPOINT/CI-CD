@@ -1943,13 +1943,17 @@ pub(crate) async fn create_release(
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<CreateRelease>,
 ) -> ApiResult<Release> {
+    let refs = claims
+        .as_ref()
+        .map(|c| serde_json::json!([{"kind":"local_principal_id","alias":c.0.sub}]))
+        .unwrap_or_else(|| serde_json::json!([]));
     let created_by = claims.map(|c| c.0.sub.to_string());
     if input.tag_name.trim().is_empty() || input.name.trim().is_empty() {
         return Err(ApiError::bad_request("tag_name and name are required"));
     }
     let row = sqlx::query_as::<_, Release>(
-        "INSERT INTO releases (id, repository_name, tag_name, name, description, prerelease, created_by) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7) \
+        "INSERT INTO releases (id, repository_name, tag_name, name, description, prerelease, created_by,identity_refs) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7,$8) \
          ON CONFLICT (repository_name, tag_name) DO UPDATE SET \
            name = EXCLUDED.name, description = EXCLUDED.description, prerelease = EXCLUDED.prerelease \
          RETURNING id, repository_name, tag_name, name, description, prerelease, created_by, created_at",
@@ -1961,6 +1965,7 @@ pub(crate) async fn create_release(
     .bind(input.description)
     .bind(input.prerelease)
     .bind(created_by)
+    .bind(refs)
     .fetch_one(pool(&state)?)
     .await
     .map_err(ApiError::internal)?;
