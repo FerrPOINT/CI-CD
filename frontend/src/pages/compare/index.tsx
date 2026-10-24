@@ -1,5 +1,6 @@
 import { useEffect, useState, type ComponentProps } from "react";
 import {
+  AutocompleteInput,
   Badge,
   PageHeader,
   SectionHeader,
@@ -8,7 +9,6 @@ import {
   ResourceListRow,
   DiffBlock,
   Button,
-  Input,
   Label,
   EmptyState,
   Notice,
@@ -203,19 +203,18 @@ export function ComparePage() {
       >
         <div className="min-w-0 space-y-1.5">
           <Label htmlFor="compare-from">{t("compare.baseRef")}</Label>
-          <Input
+          <AutocompleteInput
             id="compare-from"
             required
-            list="compare-refs-from"
+            options={
+              fromRefs.data?.slice(0, 50).map((ref) => ({ value: ref.name, label: ref.name })) ??
+              []
+            }
             className="font-mono"
             value={from}
-            onChange={(event) => setFrom(event.target.value)}
+            onValueChange={(nextValue) => setFrom(nextValue)}
           />
-          <datalist id="compare-refs-from">
-            {fromRefs.data?.slice(0, 50).map((ref) => (
-              <option key={`${ref.kind}-${ref.name}`} value={ref.name} />
-            ))}
-          </datalist>
+
         </div>
         <GitCompareArrows
           className="mb-3 hidden h-4 w-4 text-text-muted sm:block"
@@ -223,19 +222,17 @@ export function ComparePage() {
         />
         <div className="min-w-0 space-y-1.5">
           <Label htmlFor="compare-to">{t("compare.headRef")}</Label>
-          <Input
+          <AutocompleteInput
             id="compare-to"
             required
-            list="compare-refs-to"
+            options={
+              toRefs.data?.slice(0, 50).map((ref) => ({ value: ref.name, label: ref.name })) ?? []
+            }
             className="font-mono"
             value={to}
-            onChange={(event) => setTo(event.target.value)}
+            onValueChange={(nextValue) => setTo(nextValue)}
           />
-          <datalist id="compare-refs-to">
-            {toRefs.data?.slice(0, 50).map((ref) => (
-              <option key={`${ref.kind}-${ref.name}`} value={ref.name} />
-            ))}
-          </datalist>
+
         </div>
         <Button type="submit" disabled={sameRef}>
           {t("compare.compareAction")}

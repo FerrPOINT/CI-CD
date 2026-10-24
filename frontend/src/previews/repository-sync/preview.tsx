@@ -129,10 +129,10 @@ function remoteUrl(connection: Connection): string {
 
 function PreviewNotice() {
   return (
-    <div className="border-b border-border bg-surface px-4 py-3 text-sm sm:px-8">
-      <strong>Предпросмотр</strong> · Все данные вымышлены. Действия выполняются
-      в памяти. Используйте только вымышленные токены.
-    </div>
+    <Notice title="Предпросмотр">
+      Все данные вымышлены. Действия выполняются в памяти. Используйте только
+      вымышленные токены.
+    </Notice>
   );
 }
 

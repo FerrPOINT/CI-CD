@@ -1,4 +1,4 @@
-import { PageNavigation, FormField, TextLink } from "@pdlc/ui/ui";
+import { AutocompleteInput, PageNavigation, FormField, TextLink } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 import {
   Select,
@@ -126,48 +126,34 @@ function CreatePullRequestForm({
       </div>
       <FormField id="pr-source" label={t("pulls.sourceBranch")} required>
         {(attrs) => (
-          <>
-            <Input
-              {...attrs}
-              list="pr-source-refs"
-              className="font-mono"
-              value={form.source_branch}
-              onChange={(event) =>
-                setForm({ ...form, source_branch: event.target.value })
-              }
-            />
-            <datalist id="pr-source-refs">
-              {sourceRefs.data
+          <AutocompleteInput
+            {...attrs}
+            options={
+              sourceRefs.data
                 ?.filter((ref) => ref.kind === "branch")
                 .slice(0, 50)
-                .map((ref) => (
-                  <option key={ref.name} value={ref.name} />
-                ))}
-            </datalist>
-          </>
+                .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
+            }
+            className="font-mono"
+            value={form.source_branch}
+            onValueChange={(nextValue) => setForm({ ...form, source_branch: nextValue })}
+          />
         )}
       </FormField>
       <FormField id="pr-target" label={t("pulls.targetBranch")} required>
         {(attrs) => (
-          <>
-            <Input
-              {...attrs}
-              list="pr-target-refs"
-              className="font-mono"
-              value={form.target_branch}
-              onChange={(event) =>
-                setForm({ ...form, target_branch: event.target.value })
-              }
-            />
-            <datalist id="pr-target-refs">
-              {targetRefs.data
+          <AutocompleteInput
+            {...attrs}
+            options={
+              targetRefs.data
                 ?.filter((ref) => ref.kind === "branch")
                 .slice(0, 50)
-                .map((ref) => (
-                  <option key={ref.name} value={ref.name} />
-                ))}
-            </datalist>
-          </>
+                .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
+            }
+            className="font-mono"
+            value={form.target_branch}
+            onValueChange={(nextValue) => setForm({ ...form, target_branch: nextValue })}
+          />
         )}
       </FormField>
       {sameBranch && (

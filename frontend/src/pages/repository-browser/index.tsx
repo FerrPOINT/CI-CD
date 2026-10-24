@@ -1,4 +1,7 @@
-import { ResourceListTitle, ResourceListDescription,
+import {
+  AutocompleteInput,
+  ResourceListTitle,
+  ResourceListDescription,
   CardContent,
   CardHeader,
   Card,
@@ -624,25 +627,20 @@ function CodeBrowser({
           <Label htmlFor="repository-ref">
             {t("repositoryBrowser.gitRef")}
           </Label>
-          <Input
+          <AutocompleteInput
             id="repository-ref"
             type="search"
-            list="repository-ref-options"
+            options={[
+              { value: "HEAD", label: t("repositoryBrowser.defaultRef") },
+              ...(refOptions.map((option) => ({ value: option.value, label: option.label })) ??
+                []),
+            ]}
             className="font-mono"
             placeholder={t("repositoryBrowser.defaultRef")}
             value={draftRef}
-            onChange={(event) => setDraftRef(event.target.value)}
+            onValueChange={(nextValue) => setDraftRef(nextValue)}
           />
-          <datalist id="repository-ref-options">
-            <option value="HEAD">{t("repositoryBrowser.defaultRef")}</option>
-            {refOptions.map((option) => (
-              <option
-                key={option.value}
-                value={option.value}
-                label={option.label}
-              />
-            ))}
-          </datalist>
+
         </div>
         <Button
           type="submit"
@@ -1278,25 +1276,25 @@ function ReleasesList({ repo }: { repo: string }) {
           >
             <div className="space-y-1.5">
               <Label htmlFor="rel-tag">{t("releases.tag")}</Label>
-              <Input
+              <AutocompleteInput
                 id="rel-tag"
                 value={form.tag_name}
-                onChange={(e) => {
-                  setForm({ ...form, tag_name: e.target.value });
+                onValueChange={(nextValue) => {
+                  setForm({ ...form, tag_name: nextValue });
                   setTagError(null);
                 }}
-                list={editingTag ? undefined : "release-tags"}
+                options={
+                  tagsQuery.data
+                    ?.slice(0, refSuggestionLimit - 1)
+                    .map((tag) => ({ value: tag.name, label: tag.name })) ?? []
+                }
                 readOnly={!!editingTag}
                 aria-invalid={!!tagError}
                 aria-describedby={tagError ? "rel-tag-error" : undefined}
                 placeholder="v1.0.0"
                 required
               />
-              <datalist id="release-tags">
-                {tagsQuery.data?.slice(0, refSuggestionLimit - 1).map((tag) => (
-                  <option key={tag.name} value={tag.name} />
-                ))}
-              </datalist>
+
               {tagError && (
                 <Notice
                   id="rel-tag-error"
