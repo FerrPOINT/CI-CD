@@ -1,4 +1,4 @@
-import {
+import { ResourceListTitle, ResourceListDescription,
   Notice,
   Badge,
   PageHeader,
@@ -348,19 +348,19 @@ function JobCard({
     <ResourceListRow>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="break-words text-sm font-medium">{job.name}</span>
+          <ResourceListTitle asChild className="break-words"><span >{job.name}</span></ResourceListTitle>
         </div>
         <Badge appearance="dot" tone={statusTones[job.status]}>
           {t(`pipelines.${job.status}`)}
         </Badge>
       </div>
-      <p className="mt-2 min-w-0 break-words text-xs text-text-muted">
+      <ResourceListDescription asChild className="mt-2 min-w-0 break-words"><p >
         <code className="rounded bg-surface-raised px-1 py-0.5">
           {job.image}
         </code>
         <span className="mx-1">·</span>
         <code className="break-all">{job.command}</code>
-      </p>
+      </p></ResourceListDescription>
       {job.required_tags.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
           <span>{t("jobs.runnerTags")}:</span>
@@ -993,12 +993,12 @@ function JobTestReportPanel({ jobId }: { jobId: string }) {
             {reports.map((r: TestReport) => (
               <ResourceListRow asChild key={r.id}>
                 <div className="text-sm">
-                  <p className="font-medium">{r.suite_name}</p>
-                  <p className="mt-1 text-xs text-text-muted">
+                  <ResourceListTitle asChild><p >{r.suite_name}</p></ResourceListTitle>
+                  <ResourceListDescription asChild className="mt-1"><p >
                     ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} /{" "}
                     {r.tests_total}
                     {r.duration_ms != null && ` · ${r.duration_ms}ms`}
-                  </p>
+                  </p></ResourceListDescription>
                 </div>
               </ResourceListRow>
             ))}

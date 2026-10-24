@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Server, Trash2 } from "lucide-react";
-import {
+import { ResourceListTitle, ResourceListDescription,
   PageNavigation,
   Badge,
   PageHeader,
@@ -244,19 +244,19 @@ export function RunnersPage() {
                             aria-hidden
                           />
                           <div className="min-w-0 flex-1">
-                            <p
-                              className="truncate text-sm font-medium"
+                            <ResourceListTitle asChild className="truncate"><p
+
                               title={runner.name}
                             >
                               {runner.name}
-                            </p>
-                            <p
-                              className="truncate text-xs text-text-muted"
+                            </p></ResourceListTitle>
+                            <ResourceListDescription asChild className="truncate"><p
+
                               title={tags || undefined}
                             >
                               {tags || t("runners.noTags")}
-                            </p>
-                            <p className="truncate text-xs text-text-muted">
+                            </p></ResourceListDescription>
+                            <ResourceListDescription asChild className="truncate"><p >
                               {t("runners.lastSeen")}:{" "}
                               {runner.last_seen_at
                                 ? new Date(runner.last_seen_at).toLocaleString(
@@ -264,7 +264,7 @@ export function RunnersPage() {
                                     { dateStyle: "short", timeStyle: "short" },
                                   )
                                 : t("runners.neverSeen")}
-                            </p>
+                            </p></ResourceListDescription>
                           </div>
                           <Badge
                             appearance="dot"

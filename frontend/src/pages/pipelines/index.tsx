@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { Configuration } from "@/api/workspaces";
-import { FormEvent, useEffect, useState } from "react";
-import {
+import { FormEvent, useEffect, useState, type ComponentProps } from "react";
+import { Badge, ResourceListDescription,
   PageNavigation,
   PageHeader,
   NamespaceLink as Link,
@@ -24,12 +24,12 @@ import { usePipelines, useTriggerPipeline } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
-const statusColors: Record<string, string> = {
-  queued: "text-text-muted",
-  running: "text-warning",
-  success: "text-success",
-  failed: "text-danger",
-  canceled: "text-text-muted",
+const statusTones: Record<string, ComponentProps<typeof Badge>["tone"]> = {
+  queued: "muted",
+  running: "warning",
+  success: "success",
+  failed: "danger",
+  canceled: "muted",
 };
 
 export function PipelinesPage() {
@@ -167,19 +167,17 @@ export function PipelinesPage() {
                       <code className="min-w-0 break-all text-xs text-text-secondary">
                         {pipeline.git_ref}
                       </code>
-                      <span
-                        className={`text-sm font-medium ${statusColors[pipeline.status]}`}
-                      >
+                      <Badge appearance="inline" tone={statusTones[pipeline.status] ?? "neutral"}>
                         {t(`pipelines.${pipeline.status}`)}
-                      </span>
+                      </Badge>
                     </span>
-                    <span className="flex items-center gap-2 text-xs text-text-muted">
+                    <ResourceListDescription asChild className="flex items-center gap-2"><span >
                       <Clock className="h-4 w-4" aria-hidden />
                       <time dateTime={pipeline.created_at}>
                         {new Date(pipeline.created_at).toLocaleString()}
                       </time>
                       <ChevronRight className="h-4 w-4" aria-hidden />
-                    </span>
+                    </span></ResourceListDescription>
                   </Link>
                 </ResourceListRow>
               ))}

@@ -1,4 +1,4 @@
-import {
+import { ResourceListTitle, ResourceListDescription,
   CardContent,
   CardHeader,
   Card,
@@ -373,12 +373,12 @@ function CommitsList({
                     <code className="shrink-0 text-xs text-accent">
                       {commit.short_sha}
                     </code>
-                    <span className="min-w-0 flex-1 break-words font-medium">
+                    <ResourceListTitle asChild className="min-w-0 flex-1 break-words"><span >
                       {commit.message}
-                    </span>
-                    <span className="min-w-0 break-words text-xs text-text-secondary">
+                    </span></ResourceListTitle>
+                    <ResourceListDescription asChild className="min-w-0 break-words"><span >
                       {commit.author}
-                    </span>
+                    </span></ResourceListDescription>
                     <time
                       className="shrink-0 text-xs text-text-muted"
                       dateTime={commit.date}
@@ -535,9 +535,9 @@ function BranchesList({
                       {ref.sha.slice(0, 7)}
                     </code>
                     {ref.target && (
-                      <span className="w-full break-words text-xs text-text-muted sm:w-auto sm:max-w-[40%] sm:truncate">
+                      <ResourceListDescription asChild className="w-full break-words sm:w-auto sm:max-w-[40%] sm:truncate"><span >
                         {ref.target}
-                      </span>
+                      </span></ResourceListDescription>
                     )}
                   </li>
                 </ResourceListRow>
@@ -1063,9 +1063,9 @@ function TagsList({
                       {tag.sha.slice(0, 7)}
                     </code>
                     {tag.message && (
-                      <span className="w-full min-w-0 break-words text-xs text-text-muted sm:w-auto sm:max-w-[40%] sm:truncate">
+                      <ResourceListDescription asChild className="w-full min-w-0 break-words sm:w-auto sm:max-w-[40%] sm:truncate"><span >
                         {tag.message}
-                      </span>
+                      </span></ResourceListDescription>
                     )}
                   </li>
                 </ResourceListRow>
@@ -1203,9 +1203,9 @@ function ReleasesList({ repo }: { repo: string }) {
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="min-w-0 break-words font-medium">
+                        <ResourceListTitle asChild className="min-w-0 break-words"><span >
                           {rel.name}
-                        </span>
+                        </span></ResourceListTitle>
                         {rel.prerelease && (
                           <Badge tone="warning">
                             {t("releases.prerelease")}

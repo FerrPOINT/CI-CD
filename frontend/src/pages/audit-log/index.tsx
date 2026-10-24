@@ -5,7 +5,7 @@ import { History, Search } from "lucide-react";
 
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-import {
+import { ResourceListTitle,
   DescriptionItem,
   PageNavigation,
   PageHeader,
@@ -273,11 +273,11 @@ export function AuditLogPage() {
                         <ResourceListRow asChild key={event.id}>
                           <li className="min-w-0 space-y-2 text-sm">
                             <div className="flex min-w-0 items-start justify-between gap-3">
-                              <span className="min-w-0 break-words text-xs font-medium">
+                              <ResourceListTitle asChild className="min-w-0 break-words"><span >
                                 {t(`auditLog.actions.${event.action}`, {
                                   defaultValue: event.action,
                                 })}
-                              </span>
+                              </span></ResourceListTitle>
                               <time
                                 className="shrink-0 text-xs text-text-muted"
                                 dateTime={event.created_at}

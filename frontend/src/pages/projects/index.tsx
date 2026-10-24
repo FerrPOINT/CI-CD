@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import {
+import { ResourceListTitle,
   PageNavigation,
   PageHeader,
   Input,
@@ -80,7 +80,7 @@ export function ProjectsPage() {
                         size="md"
                       />
                       <div className="min-w-0 flex-1">
-                        <span className="font-semibold">{project.name}</span>
+                        <ResourceListTitle asChild><span >{project.name}</span></ResourceListTitle>
                         <p className="text-sm text-text-muted">
                           {project.project_key} ·{" "}
                           {project.state === "archived"

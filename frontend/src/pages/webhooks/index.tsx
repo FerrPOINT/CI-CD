@@ -1,4 +1,4 @@
-import { PageNavigation, CardContent } from "@pdlc/ui/ui";
+import { ResourceListDescription, ResourceListTitle, PageNavigation, CardContent } from "@pdlc/ui/ui";
 import { FormField } from "@pdlc/ui/ui";
 import { Notice, Badge, PageHeader, SectionHeader } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
@@ -218,9 +218,9 @@ export function WebhooksPage() {
                             <p className="break-all font-mono text-xs">
                               {w.url}
                             </p>
-                            <p className="text-xs text-text-secondary">
+                            <ResourceListDescription asChild><p >
                               {w.events.length ? w.events.join(", ") : "—"}
-                            </p>
+                            </p></ResourceListDescription>
                             <WebhookStatusBadge enabled={w.enabled} />
                           </div>
                           <Button
@@ -700,9 +700,9 @@ function DeliveryHistorySection() {
                           <ResourceListRow asChild key={attempt.id}>
                             <div className="space-y-1 text-xs">
                               <div className="flex items-center justify-between gap-2">
-                                <span className="font-medium">
+                                <ResourceListTitle asChild><span >
                                   #{attempt.attempt_number}
-                                </span>
+                                </span></ResourceListTitle>
                                 <DeliveryStatusBadge status={attempt.outcome} />
                               </div>
                               <p className="text-text-secondary">
@@ -985,9 +985,9 @@ function NotificationsSection() {
                   {events.map((event) => (
                     <ResourceListRow asChild key={event.id}>
                       <div className="space-y-2">
-                        <p className="break-words text-sm font-medium">
+                        <ResourceListTitle asChild className="break-words"><p >
                           {event.message}
-                        </p>
+                        </p></ResourceListTitle>
                         <p className="break-all font-mono text-xs text-text-secondary">
                           {event.event_type} · {event.pipeline_id.slice(0, 8)}
                         </p>

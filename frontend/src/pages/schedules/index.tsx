@@ -1,4 +1,4 @@
-import {
+import { ResourceListDescription,
   Badge,
   PageNavigation,
   PageHeader,
@@ -277,9 +277,9 @@ export function SchedulesPage() {
                             <p className="break-all font-mono text-sm font-medium">
                               {schedule.cron}
                             </p>
-                            <p className="break-all text-xs text-text-secondary">
+                            <ResourceListDescription asChild className="break-all"><p >
                               {schedule.git_ref}
-                            </p>
+                            </p></ResourceListDescription>
                           </div>
                           <Badge
                             appearance="inline"

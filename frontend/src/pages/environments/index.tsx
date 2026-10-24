@@ -1,4 +1,4 @@
-import { TextLink, FormField } from "@pdlc/ui/ui";
+import { ResourceListTitle, ResourceListDescription, TextLink, FormField } from "@pdlc/ui/ui";
 import {
   Notice,
   PageNavigation,
@@ -314,9 +314,9 @@ export function EnvironmentsPage() {
                               aria-hidden
                             />
                             <div className="min-w-0 flex-1">
-                              <p className="break-all text-sm font-medium">
+                              <ResourceListTitle asChild className="break-all"><p >
                                 {env.name}
-                              </p>
+                              </p></ResourceListTitle>
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
                                 <span className="inline-flex items-center gap-1">
                                   <span
@@ -347,12 +347,12 @@ export function EnvironmentsPage() {
                                     {env.url}
                                   </TextLink>
                                 ) : (
-                                  <span
-                                    className="block max-w-full truncate text-xs text-text-muted"
+                                  <ResourceListDescription asChild className="block max-w-full truncate"><span
+
                                     title={env.url}
                                   >
                                     {env.url}
-                                  </span>
+                                  </span></ResourceListDescription>
                                 ))}
                             </div>
                             <Button
@@ -633,10 +633,10 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                         className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1  text-xs ${deployment.id === selectedId ? "rounded-md bg-surface-raised  outline-2 outline-accent" : ""}`}
                       >
                         <div className="min-w-0 flex-1 basis-40">
-                          <p className="font-semibold">
+                          <ResourceListTitle asChild><p >
                             Деплой #{deployment.id.slice(0, 8)}
                             {deployment.id === selectedId ? " · Выбран" : ""}
-                          </p>
+                          </p></ResourceListTitle>
                           <p className="break-all font-mono text-sm font-medium text-text-primary">
                             {deployment.git_ref}
                           </p>

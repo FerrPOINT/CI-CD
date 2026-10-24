@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
+import { ResourceListDescription,
   PageNavigation,
   TextLink,
   EmptyState,
@@ -383,7 +383,7 @@ export function ExecutionList({
                               {seconds !== undefined ? ` · ${seconds} с` : ""}
                             </p>
                             {row.commit_sha && (
-                              <p className="mt-1 text-xs text-text-muted">
+                              <ResourceListDescription asChild className="mt-1"><p >
                                 Коммит{" "}
                                 <TextLink asChild>
                                   <Link
@@ -396,7 +396,7 @@ export function ExecutionList({
                                     {row.commit_sha.slice(0, 8)}
                                   </Link>
                                 </TextLink>
-                              </p>
+                              </p></ResourceListDescription>
                             )}
                           </div>
                           <div className="flex flex-wrap items-center gap-2">

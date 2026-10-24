@@ -1,7 +1,7 @@
 import { RequireAdministrator } from "@pdlc/ui/auth";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
+import { ResourceListTitle,
   PageNavigation,
   FormField,
   CardContent,
@@ -206,7 +206,7 @@ function AdministrativeRepositoryConfigurations({
               <ResourceListRow asChild key={config.id}>
                 <li className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="font-semibold">{config.name}</p>
+                    <ResourceListTitle asChild><p >{config.name}</p></ResourceListTitle>
                     <p className="text-sm text-text-muted">
                       Ветка: {config.default_branch}
                     </p>
