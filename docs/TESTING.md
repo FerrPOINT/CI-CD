@@ -113,7 +113,7 @@ Source guard принадлежит единственному `tooling:build-co
 `./check-workspace.ps1 -Profile Unit -Repository CI-CD -Component tooling`
 из корня соответствующего workspace. Обе recipe входят в component и inputs.
 Source checks не заменяют native qualification нового recipe и измерения
-приложения. Общий контракт — Base `docs/BUILD_PERFORMANCE.md`, выбранный по
+приложения. Общий контракт — [Base BUILD_PERFORMANCE](https://github.com/FerrPOINT/services-base/blob/4eadd6bd469e584e26da066f36026d3e0c354378/docs/BUILD_PERFORMANCE.md), выбранный по
 `qualityTooling.path` корневого inventory. Product docs не требуют копировать
 новый source Base или менять независимый SDK pin.
 
