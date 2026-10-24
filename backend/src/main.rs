@@ -25,6 +25,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // idempotently (IF NOT EXISTS).
     let migrator = cicd::migrations_from_path(&config.database.migrations_dir).await?;
     migrator.run(&pool).await?;
+    // Legacy issuer is an explicit immutable operator assertion, never a name/email lookup.
+    match std::env::var("CICD_IDENTITY_LEGACY_ISSUER") {
+        Ok(issuer) => {
+            if std::env::var("CICD_AUTH__CENTRAL_ISSUER").ok().as_deref() != Some(issuer.as_str()) {
+                return Err("identity legacy issuer must match configured Auth issuer".into());
+            }
+            cicd::store::identity_deletion::IdentityDeletionStore::new(pool.clone())
+                .bind_legacy_issuer(&issuer)
+                .await?;
+        }
+        Err(std::env::VarError::NotPresent) => (),
+        Err(error) => return Err(error.into()),
+    }
 
     // Stage 5 scale-out: split roles across deployments. A pod started with
     // CICD_ROLES=api serves only the API; CICD_ROLES=worker runs the outbox/

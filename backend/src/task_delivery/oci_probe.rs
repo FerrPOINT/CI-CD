@@ -171,8 +171,8 @@ mod tests {
     // No sockets or real curl: the shell function models curl's decoded body,
     // write-out channel and exit status, including old curl's unbounded stdout.
     fn script_fixture(body: &str, exit: u8, http: &str, limit: u64) -> Vec<u8> {
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("../.local/oci-probe-test-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("forge-oci-probe-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let shell = if cfg!(windows) {
             std::path::PathBuf::from(std::env::var_os("ProgramFiles").unwrap())

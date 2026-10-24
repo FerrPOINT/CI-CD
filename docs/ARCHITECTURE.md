@@ -1,5 +1,11 @@
 # Архитектура Forge CI/CD
 
+Source-кандидат [identity owner fences](adr/0039-identity-deletion-owner.md)
+сохраняет границу Auth identity и локальных Forge profiles. Typed alias ledger
+и общий DB writer guard охватывают также JIT, legacy ports и workers;
+неоднозначная история остаётся unknown. Owner RPC отделён от human auth/JIT.
+Это не внедрение runtime и не qualification полного deletion cohort.
+
 Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
 сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
 transaction и original proof до native publication. GET связанных задач PR
