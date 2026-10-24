@@ -20,6 +20,7 @@ import {
   TabsList,
   TabsTrigger,
   Notice,
+  FormField,
 } from "@pdlc/ui/ui";
 
 import {
@@ -341,44 +342,47 @@ export function RepositorySyncPreview() {
               </form>
             )}
             <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-              <div className="space-y-2">
-                <Label htmlFor="sync-search">Поиск</Label>
-                <Input
-                  id="sync-search"
-                  type="search"
-                  placeholder="Репозиторий или внешний адрес"
-                  value={search}
-                  onChange={(event) => filter("search", event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="provider-filter">Провайдер</Label>
-                <Select
-                  id="provider-filter"
-                  className="min-w-0"
-                  value={provider}
-                  onValueChange={(nextValue) => filter("provider", nextValue)}
-                  options={[
-                    { value: "all", label: "Все провайдеры" },
-                    { value: "gitlab", label: "Свой GitLab" },
-                    { value: "github", label: "GitHub.com" },
-                  ]}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="state-filter">Состояние</Label>
-                <Select
-                  id="state-filter"
-                  className="min-w-0"
-                  value={state}
-                  onValueChange={(nextValue) => filter("state", nextValue)}
-                  options={[
-                    { value: "all", label: "Все подключения" },
-                    { value: "active", label: "Включённые" },
-                    { value: "disabled", label: "Отключённые" },
-                  ]}
-                />
-              </div>
+              <FormField id="sync-search" label={"Поиск"}>
+                {(baseFieldAttrs) => (
+                  <Input
+                    {...baseFieldAttrs}
+                    type="search"
+                    placeholder="Репозиторий или внешний адрес"
+                    value={search}
+                    onChange={(event) => filter("search", event.target.value)}
+                  />
+                )}
+              </FormField>
+              <FormField id="provider-filter" label={"Провайдер"}>
+                {(baseFieldAttrs) => (
+                  <Select
+                    {...baseFieldAttrs}
+                    className="min-w-0"
+                    value={provider}
+                    onValueChange={(nextValue) => filter("provider", nextValue)}
+                    options={[
+                      { value: "all", label: "Все провайдеры" },
+                      { value: "gitlab", label: "Свой GitLab" },
+                      { value: "github", label: "GitHub.com" },
+                    ]}
+                  />
+                )}
+              </FormField>
+              <FormField id="state-filter" label={"Состояние"}>
+                {(baseFieldAttrs) => (
+                  <Select
+                    {...baseFieldAttrs}
+                    className="min-w-0"
+                    value={state}
+                    onValueChange={(nextValue) => filter("state", nextValue)}
+                    options={[
+                      { value: "all", label: "Все подключения" },
+                      { value: "active", label: "Включённые" },
+                      { value: "disabled", label: "Отключённые" },
+                    ]}
+                  />
+                )}
+              </FormField>
             </div>
             <p className="text-sm text-text-muted">
               Показано {visible.length} из {configured.length}
@@ -779,47 +783,50 @@ function RepositorySyncEditor({
             >
               <Fieldset disabled={readOnly || busy} className="space-y-3">
                 <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="provider">Провайдер</Label>
-                    <Select
-                      id="provider"
-                      className="min-w-0"
-                      value={draft.provider}
-                      onValueChange={(nextValue) => {
-                        update("provider", nextValue as Provider);
-                        setCredential(false);
-                        setToken("");
-                      }}
-                      options={[
-                        { value: "gitlab", label: "Свой GitLab" },
-                        { value: "github", label: "GitHub.com" },
-                      ]}
-                    />
-                  </div>
-                  {draft.provider === "gitlab" ? (
-                    <div className="space-y-2">
-                      <Label htmlFor="instance">Адрес инстанса GitLab</Label>
-                      <Input
-                        id="instance"
-                        type="url"
-                        required
-                        value={draft.instance}
-                        onChange={(event) => {
-                          update("instance", event.target.value);
+                  <FormField id="provider" label={"Провайдер"}>
+                    {(baseFieldAttrs) => (
+                      <Select
+                        {...baseFieldAttrs}
+                        className="min-w-0"
+                        value={draft.provider}
+                        onValueChange={(nextValue) => {
+                          update("provider", nextValue as Provider);
                           setCredential(false);
+                          setToken("");
                         }}
-                        placeholder="https://gitlab.example.org"
+                        options={[
+                          { value: "gitlab", label: "Свой GitLab" },
+                          { value: "github", label: "GitHub.com" },
+                        ]}
                       />
-                    </div>
+                    )}
+                  </FormField>
+                  {draft.provider === "gitlab" ? (
+                    <FormField id="instance" label={"Адрес инстанса GitLab"}>
+                      {(baseFieldAttrs) => (
+                        <Input
+                          {...baseFieldAttrs}
+                          type="url"
+                          required
+                          value={draft.instance}
+                          onChange={(event) => {
+                            update("instance", event.target.value);
+                            setCredential(false);
+                          }}
+                          placeholder="https://gitlab.example.org"
+                        />
+                      )}
+                    </FormField>
                   ) : (
-                    <div className="space-y-2">
-                      <Label htmlFor="github-host">Адрес GitHub</Label>
-                      <Input
-                        id="github-host"
-                        value="https://github.com"
-                        readOnly
-                      />
-                    </div>
+                    <FormField id="github-host" label={"Адрес GitHub"}>
+                      {(baseFieldAttrs) => (
+                        <Input
+                          {...baseFieldAttrs}
+                          value="https://github.com"
+                          readOnly
+                        />
+                      )}
+                    </FormField>
                   )}
                   <div className="space-y-2">
                     <Label htmlFor="repository">
@@ -1008,25 +1015,26 @@ function RepositorySyncEditor({
         )}
         <Disclosure className="mt-4" summary={<>Сценарии предпросмотра</>}>
           <div className="mt-4 flex flex-wrap items-end gap-5">
-            <div className="space-y-2">
-              <Label htmlFor="scenario">Результат следующего запуска</Label>
-              <Select
-                id="scenario"
-                className="min-w-0"
-                disabled={busy}
-                value={scenario}
-                onValueChange={(nextValue) =>
-                  setScenario(nextValue as Scenario)
-                }
-                options={[
-                  { value: "success", label: "Успех" },
-                  { value: "auth", label: "Ошибка доступа" },
-                  { value: "unavailable", label: "Провайдер недоступен" },
-                  { value: "conflict", label: "Расхождение истории" },
-                  { value: "partial", label: "Частичный результат" },
-                ]}
-              />
-            </div>
+            <FormField id="scenario" label={"Результат следующего запуска"}>
+              {(baseFieldAttrs) => (
+                <Select
+                  {...baseFieldAttrs}
+                  className="min-w-0"
+                  disabled={busy}
+                  value={scenario}
+                  onValueChange={(nextValue) =>
+                    setScenario(nextValue as Scenario)
+                  }
+                  options={[
+                    { value: "success", label: "Успех" },
+                    { value: "auth", label: "Ошибка доступа" },
+                    { value: "unavailable", label: "Провайдер недоступен" },
+                    { value: "conflict", label: "Расхождение истории" },
+                    { value: "partial", label: "Частичный результат" },
+                  ]}
+                />
+              )}
+            </FormField>
             <Checkbox
               disabled={busy}
               checked={readOnly}

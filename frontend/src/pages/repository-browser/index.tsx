@@ -28,6 +28,7 @@ import {
   SearchInput,
   Notice,
   TextLink,
+  FormField,
 } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 
@@ -1382,25 +1383,27 @@ function ReleasesList({ repo }: { repo: string }) {
                 </Notice>
               )}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="rel-name">{t("releases.name")}</Label>
-              <Input
-                id="rel-name"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="rel-desc">{t("releases.description")}</Label>
-              <Textarea
-                id="rel-desc"
-                rows={4}
-                value={form.description}
-                onChange={(e) =>
-                  setForm({ ...form, description: e.target.value })
-                }
-              />
-            </div>
+            <FormField id="rel-name" label={t("releases.name")}>
+              {(baseFieldAttrs) => (
+                <Input
+                  {...baseFieldAttrs}
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              )}
+            </FormField>
+            <FormField id="rel-desc" label={t("releases.description")}>
+              {(baseFieldAttrs) => (
+                <Textarea
+                  {...baseFieldAttrs}
+                  rows={4}
+                  value={form.description}
+                  onChange={(e) =>
+                    setForm({ ...form, description: e.target.value })
+                  }
+                />
+              )}
+            </FormField>
             <div className="flex items-center gap-2">
               <Checkbox
                 id="rel-pre"

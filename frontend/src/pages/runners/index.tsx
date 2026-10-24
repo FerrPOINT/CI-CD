@@ -14,6 +14,7 @@ import {
   ConfirmDialog,
   SearchInput,
   EmptyState,
+  FormField,
 } from "@pdlc/ui/ui";
 import { useDeleteRunner, useRegisterRunner, useRunners } from "@/api/hooks";
 import type { Runner, RunnerStatus } from "@/api/types";
@@ -114,31 +115,31 @@ export function RunnersPage() {
           aria-label={t("runners.register")}
           className="grid gap-3 border-y border-border py-4 sm:grid-cols-2"
         >
-          <div className="space-y-1.5">
-            <Label htmlFor="runner-name">{t("runners.name")}</Label>
-            <Input
-              id="runner-name"
-
-              required
-              autoFocus
-              value={form.name}
-              onChange={(event) =>
-                setForm({ ...form, name: event.target.value })
-              }
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="runner-tags">{t("runners.tags")}</Label>
-            <Input
-              id="runner-tags"
-
-              placeholder="linux, docker"
-              value={form.tags}
-              onChange={(event) =>
-                setForm({ ...form, tags: event.target.value })
-              }
-            />
-          </div>
+          <FormField id="runner-name" label={t("runners.name")}>
+            {(baseFieldAttrs) => (
+              <Input
+                {...baseFieldAttrs}
+                required
+                autoFocus
+                value={form.name}
+                onChange={(event) =>
+                  setForm({ ...form, name: event.target.value })
+                }
+              />
+            )}
+          </FormField>
+          <FormField id="runner-tags" label={t("runners.tags")}>
+            {(baseFieldAttrs) => (
+              <Input
+                {...baseFieldAttrs}
+                placeholder="linux, docker"
+                value={form.tags}
+                onChange={(event) =>
+                  setForm({ ...form, tags: event.target.value })
+                }
+              />
+            )}
+          </FormField>
           <p className="text-xs text-text-secondary sm:col-span-2">
             {t("runners.manualNotice")}
           </p>

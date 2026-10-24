@@ -36,6 +36,7 @@ import {
   LoadingState,
   ResourceStateView,
   TextLink,
+  FormField,
 } from "@pdlc/ui/ui";
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api, ApiError } from "@/api/client";
@@ -733,43 +734,48 @@ export function RepositorySyncEditor({
               disabled={!writable || !!connection.active_run}
               className="grid gap-4 sm:grid-cols-2"
             >
-              <div className="space-y-1">
-                <Label htmlFor="provider">Провайдер</Label>
-                <Select
-                  id="provider"
-                  className="w-full"
-                  value={draft.provider}
-                  onValueChange={(nextValue) =>
-                    patch({
-                      provider: nextValue as SyncSettings["provider"],
-                      instance_url:
-                        nextValue === "github" ? "https://github.com" : "",
-                    })
-                  }
-                  options={[
-                    { value: "github", label: "GitHub.com" },
-                    { value: "gitlab", label: "Свой GitLab" },
-                  ]}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="instance">
-                  {draft.provider === "gitlab"
+              <FormField id="provider" label={"Провайдер"}>
+                {(baseFieldAttrs) => (
+                  <Select
+                    {...baseFieldAttrs}
+                    className="w-full"
+                    value={draft.provider}
+                    onValueChange={(nextValue) =>
+                      patch({
+                        provider: nextValue as SyncSettings["provider"],
+                        instance_url:
+                          nextValue === "github" ? "https://github.com" : "",
+                      })
+                    }
+                    options={[
+                      { value: "github", label: "GitHub.com" },
+                      { value: "gitlab", label: "Свой GitLab" },
+                    ]}
+                  />
+                )}
+              </FormField>
+              <FormField
+                id="instance"
+                label={
+                  draft.provider === "gitlab"
                     ? "Адрес инстанса GitLab"
-                    : "Адрес GitHub"}
-                </Label>
-                <Input
-                  id="instance"
-                  type="url"
-                  required
-                  value={draft.instance_url}
-                  readOnly={draft.provider === "github"}
-                  onChange={(event) =>
-                    patch({ instance_url: event.target.value })
-                  }
-                  placeholder="https://gitlab.example.org"
-                />
-              </div>
+                    : "Адрес GitHub"
+                }
+              >
+                {(baseFieldAttrs) => (
+                  <Input
+                    {...baseFieldAttrs}
+                    type="url"
+                    required
+                    value={draft.instance_url}
+                    readOnly={draft.provider === "github"}
+                    onChange={(event) =>
+                      patch({ instance_url: event.target.value })
+                    }
+                    placeholder="https://gitlab.example.org"
+                  />
+                )}
+              </FormField>
               <div className="space-y-1">
                 <Label htmlFor="repository-path">
                   {draft.provider === "github"

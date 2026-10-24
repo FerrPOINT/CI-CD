@@ -7,7 +7,6 @@ import {
   NamespaceLink as Link,
   Button,
   Input,
-  Label,
   Select,
   Dialog,
   DialogContent,
@@ -15,6 +14,7 @@ import {
   ErrorState,
   Notice,
   TextLink,
+  FormField,
 } from "@pdlc/ui/ui";
 import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
@@ -292,23 +292,26 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
                 ? "Проверить создание репозитория"
                 : "Добавить репозиторий"}
             </DialogTitle>
-            <div className="space-y-2">
-              <Label htmlFor="repository-action">Действие</Label>
-              <Select
-                id="repository-action"
-                value={effectiveKind}
-                disabled={busy || !!journal.command}
-                onValueChange={(nextValue) => setKind(nextValue as typeof kind)}
-                options={[
-                  { value: "hosted", label: "Создать Git в Forge" },
-                  { value: "external", label: "Подключить внешний Git" },
-                  {
-                    value: "existing",
-                    label: "Подключить существующий репозиторий Forge",
-                  },
-                ]}
-              />
-            </div>
+            <FormField id="repository-action" label={"Действие"}>
+              {(baseFieldAttrs) => (
+                <Select
+                  {...baseFieldAttrs}
+                  value={effectiveKind}
+                  disabled={busy || !!journal.command}
+                  onValueChange={(nextValue) =>
+                    setKind(nextValue as typeof kind)
+                  }
+                  options={[
+                    { value: "hosted", label: "Создать Git в Forge" },
+                    { value: "external", label: "Подключить внешний Git" },
+                    {
+                      value: "existing",
+                      label: "Подключить существующий репозиторий Forge",
+                    },
+                  ]}
+                />
+              )}
+            </FormField>
             {effectiveKind === "existing" ? (
               <AttachRepository
                 groupId={resource.binding.resource.resource_id}
@@ -319,41 +322,46 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
               <Card asChild className="max-w-xl">
                 <form onSubmit={create}>
                   <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="repo-slug">Имя репозитория</Label>
-                      <Input
-                        id="repo-slug"
-                        name="slug"
-                        required
-                        defaultValue={journal.command?.slug}
-                        disabled={busy || !!journal.command}
-                      />
-                    </div>
-                    {effectiveKind === "external" && (
-                      <div className="space-y-2">
-                        <Label htmlFor="external-url">Git URL</Label>
+                    <FormField id="repo-slug" label={"Имя репозитория"}>
+                      {(baseFieldAttrs) => (
                         <Input
-                          id="external-url"
-                          name="external_url"
+                          {...baseFieldAttrs}
+                          name="slug"
                           required
-                          defaultValue={journal.command?.external_url ?? ""}
+                          defaultValue={journal.command?.slug}
                           disabled={busy || !!journal.command}
                         />
-                      </div>
+                      )}
+                    </FormField>
+                    {effectiveKind === "external" && (
+                      <FormField id="external-url" label={"Git URL"}>
+                        {(baseFieldAttrs) => (
+                          <Input
+                            {...baseFieldAttrs}
+                            name="external_url"
+                            required
+                            defaultValue={journal.command?.external_url ?? ""}
+                            disabled={busy || !!journal.command}
+                          />
+                        )}
+                      </FormField>
                     )}
-                    <div className="space-y-2">
-                      <Label htmlFor="visibility">Видимость Git</Label>
-                      <Select
-                        id="visibility"
-                        name="visibility"
-                        defaultValue={journal.command?.visibility ?? "private"}
-                        disabled={busy || !!journal.command}
-                        options={[
-                          { value: "private", label: "По авторизации" },
-                          { value: "public", label: "Публичное чтение" },
-                        ]}
-                      />
-                    </div>
+                    <FormField id="visibility" label={"Видимость Git"}>
+                      {(baseFieldAttrs) => (
+                        <Select
+                          {...baseFieldAttrs}
+                          name="visibility"
+                          defaultValue={
+                            journal.command?.visibility ?? "private"
+                          }
+                          disabled={busy || !!journal.command}
+                          options={[
+                            { value: "private", label: "По авторизации" },
+                            { value: "public", label: "Публичное чтение" },
+                          ]}
+                        />
+                      )}
+                    </FormField>
                     {error && (
                       <Notice role="alert" tone="danger" appearance="inline">
                         {error}. Проверьте результат создания, прежде чем
