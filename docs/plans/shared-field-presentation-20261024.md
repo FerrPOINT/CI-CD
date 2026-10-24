@@ -210,3 +210,25 @@ IAB: 168 уникальных сочетаний Base и шести реальн
 В этой волне изменён только UI pin; runtime sources и backend не менялись. UI producer `97399e00e275c953c28a77d1b178a22a79ca2a93`, reference `48721f30d2841d0c76e086876340f5b5367953df4519118c9d92956b08c9f4cb`. Семь pins согласованы; frozen offline refresh сохранил locks и React singleton. SDK/skills pins неизменны. SSR/Auth assets проверены без byte-diff и повторного экспорта.
 
 Base: 17 scoped cases; IAB Base/Admin — 120 уникальных сочетаний, пять просмотренных снимков, keyboard/URL transitions без записи. Архив и offline CLI проверены вне workspace. Это source proof с синтетическими GET-only данными; интеграционный gate, публикация, hosted CI и установленная приёмка остаются открытыми. Доказательства: private evidence/offset-navigation-20261025/.
+
+## Интегрированная frontend-проверка — 25 октября 2026
+
+Квалифицирован source head `8ff3718fc576ba75e04fc297ccf9e79f4a0e12c7`:
+324 frontend cases, owner static/lint и production frontend build прошли.
+UI producer `97399e00e275c953c28a77d1b178a22a79ca2a93`; dependency inputs,
+SDK/skills pins и SSR/Auth exports этой проверкой не менялись.
+
+ESLint исключает только приватный generated cache `.local/**`. Исходный FAIL
+сохранён; production rules и проверка AppShell не ослаблены. Реальный ESLint
+API подтвердил неизменный набор правил production-файлов.
+
+Общий gate Base/справочника/шести frontend завершён: 29 стадий, 4270 test cases.
+Это единый прогон; прежние scoped cases в него повторно не суммируются.
+153 поисковых vectors совпали в JS, Rust HTTP API, offline и HTTP CLI.
+Свежие built assets справочника проверены по bytes и через IAB.
+
+Доказательства: private `evidence/ui-integrated-20261025/`; общий статус и
+оставшиеся переносы — [план Base](https://github.com/FerrPOINT/services-base/blob/refactor/shared-ui-residuals-20261024/docs/plans/shared-ui-consolidation-20261021.md).
+Docs-only фиксация результата не пересобирает прежние inputs. Hosted CI,
+source publication и установленная приёмка здесь не заявляются. Реальный zoom
+200% не применился доступной IAB-командой; CSS/DPR-подмена не использована.
