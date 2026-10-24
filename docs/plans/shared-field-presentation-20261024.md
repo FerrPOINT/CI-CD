@@ -107,3 +107,16 @@ IAB пяти реальных композиций с синтетическим
 браузерного среза подтверждена hash. Общий build/route gate, публикация source
 и установленная платформа остаются открытыми. Независимое исправление SSR
 брендинга Base квалифицируется отдельно от этого среза React-форм.
+
+## Сведённый producer и локальные состояния
+
+В этом срезе меняется только UI pin; прежние проверки owner source сохраняют
+свой scope. Повторная backend/frontend-сборка без изменения их implementation
+inputs не выполнялась. Полный согласованный gate остаётся открыт.
+
+UI producer — d6c0914ae7bab37fc91b5f10602ad05543551ec0, reference
+`5f4ff5f4ada180236c2d6e014b52e78ad60586824980c7b45316eb20b44a69a8`.
+Frozen offline refresh прошёл без downloads и изменения lockfile; React singleton
+и независимые SDK/skills pins сохранены. Настоящий архив Base проверен отдельно.
+IAB использовал собственные исходники и read-only adapters; новый полный build,
+hosted CI, zoom 200%, публикация и installed acceptance этим срезом не заявляются.
