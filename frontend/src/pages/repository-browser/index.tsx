@@ -639,9 +639,9 @@ function CodeBrowser({
         onSubmit={applyRef}
       >
         <div className="min-w-0 flex-1 space-y-1.5 sm:max-w-md">
-          <label htmlFor="repository-ref" className="text-sm font-medium">
+          <Label htmlFor="repository-ref">
             {t("repositoryBrowser.gitRef")}
-          </label>
+          </Label>
           <Input
             id="repository-ref"
             type="search"
