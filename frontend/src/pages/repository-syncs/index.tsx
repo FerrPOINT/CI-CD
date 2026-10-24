@@ -1123,7 +1123,7 @@ function SyncHistory({
           {refs.data && (
             <>
               <Table
-                className="min-w-[45rem] focus-visible:outline-2 focus-visible:outline-accent"
+                className="min-w-[45rem]"
                 tabIndex={0}
                 aria-label="Результаты веток и тегов"
               >

@@ -522,7 +522,7 @@ function BranchesList({
                     <Button
                       variant="ghost"
                       type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
+                      className="min-w-0 flex-1 text-left"
                       onClick={() => onSelect(ref)}
                     >
                       <GitBranch
@@ -841,7 +841,7 @@ function TreeView({
           <Button
             variant="ghost"
             type="button"
-            className="min-w-10 px-2 hover:text-accent"
+            size="icon"
             onClick={() =>
               onNavigate({
                 dir: null,
@@ -862,7 +862,7 @@ function TreeView({
               <Button
                 variant="ghost"
                 type="button"
-                className="min-w-0 break-all px-2 text-left hover:text-accent"
+                className="min-w-0 break-all text-left"
                 onClick={() =>
                   onNavigate({
                     dir: crumbs.slice(0, index + 1).join("/"),
@@ -1050,7 +1050,7 @@ function TagsList({
                     <Button
                       variant="ghost"
                       type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
+                      className="min-w-0 flex-1 text-left"
                       onClick={() => onSelect(tag)}
                     >
                       <Tag
