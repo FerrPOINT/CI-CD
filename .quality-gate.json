@@ -9,6 +9,7 @@
       "scripts/tests/test_native_qa_compose.py"
     ],
     "tooling": [
+      "scripts/verify_docs.py",
       ".github/workflows/ci.yml",
       "scripts/tests/test_build_pin.py",
       "scripts/tests/test_forge_backup_umbrella.py",
@@ -33,6 +34,7 @@
       "frontend/Dockerfile.umbrella"
     ],
     "docs": [
+      "scripts/verify_docs.py",
       "docs/**",
       "*.md",
       "LICENSE"
@@ -625,6 +627,7 @@
     "tooling": [
       {
         "paths": [
+          "scripts/verify_docs.py",
           "scripts/tests/test_build_pin.py",
           "scripts/tests/test_forge_backup_umbrella.py",
           "scripts/tests/test_frontend_toolchain.py",

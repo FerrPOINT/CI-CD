@@ -116,3 +116,11 @@ Source checks не заменяют native qualification нового recipe и 
 приложения. Общий контракт — Base `docs/BUILD_PERFORMANCE.md`, выбранный по
 `qualityTooling.path` корневого inventory. Product docs не требуют копировать
 новый source Base или менять независимый SDK pin.
+
+## Точный маршрут documentation validator
+
+`scripts/verify_docs.py` и `scripts/tests/test_verify_docs.py` выбирают `tooling:python-helpers`.
+Fast для source validator также сохраняет `docs:contracts`; Unit/Build не выбирают application producers.
+Source command: `python -B -m unittest scripts.tests.test_verify_docs`.
+Mixed backend и неизвестные source paths сохраняют своих consumers; actual CI
+и ручные release gates остаются прежними.
