@@ -303,9 +303,9 @@ function AdministrativeRepositoryConfigurations({
                     disabled={!writable || busy || !!journal.command}
                   />
                   {journal.command && (
-                    <p className="text-sm text-warning">
+                    <Notice tone="warning" appearance="inline">
                       Сначала проверим результат предыдущей операции.
-                    </p>
+                    </Notice>
                   )}
                   <Button disabled={busy || (!writable && !journal.command)}>
                     {journal.command ? "Проверить и продолжить" : "Создать"}

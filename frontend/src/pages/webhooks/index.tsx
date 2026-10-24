@@ -711,9 +711,13 @@ function DeliveryHistorySection() {
                                 {attempt.duration_ms} ms
                               </p>
                               {attempt.error_message && (
-                                <p className="break-all text-danger">
+                                <Notice
+                                  tone="danger"
+                                  appearance="inline"
+                                  className="break-all"
+                                >
                                   {attempt.error_message}
-                                </p>
+                                </Notice>
                               )}
                             </div>
                           </ResourceListRow>
@@ -779,7 +783,7 @@ function DeliveryOpenButton({
     <Button
       variant="ghost"
       type="button"
-      className="w-full text-left hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      className="w-full flex-col items-start whitespace-normal text-left"
       aria-label={t("deliveries.openDetails", {
         event: delivery.event_type,
         id: delivery.aggregate_id.slice(0, 8),

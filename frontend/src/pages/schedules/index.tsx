@@ -1,4 +1,5 @@
 import {
+  Badge,
   PageNavigation,
   PageHeader,
   Disclosure,
@@ -280,19 +281,17 @@ export function SchedulesPage() {
                               {schedule.git_ref}
                             </p>
                           </div>
-                          <span
-                            className={
-                              schedule.enabled
-                                ? "shrink-0 text-xs text-success"
-                                : "shrink-0 text-xs text-text-muted"
-                            }
+                          <Badge
+                            appearance="inline"
+                            tone={schedule.enabled ? "success" : "muted"}
+                            className="shrink-0"
                           >
                             {t(
                               schedule.enabled
                                 ? "schedules.enabledOn"
                                 : "schedules.enabledOff",
                             )}
-                          </span>
+                          </Badge>
                           <Button
                             variant="ghost"
                             type="button"

@@ -144,3 +144,12 @@ React singleton и независимые SDK/skills pins сохранены. Н
 UI producer `ff303ac5a273dc6b265292465b8b9db9a9476f9f`, fingerprint `206bf4889e50889e8c7bfab9aec36ef52df2e1e76dfcaa94a3ac756a7b80e2bf`.
 Проверки относятся к исходникам собственных checkout; установка, hosted CI и общий
 интеграционный gate сохраняют отдельный статус. SDK/skills pins не изменены.
+
+
+## Сообщения, статусы и семантическая пустота — 24 октября 2026
+
+Статус schedule использует Badge; ошибка попытки webhook и пояснение readback — Notice. DeliveryOpenButton сохраняет Base ghost и владельческую компоновку, без локального focus/hover. Проверены 19 scoped cases, TypeScript и scoped ESLint. Числа diff и краткая ошибка внутри summary-кнопки остаются владельческим содержимым, без вложенного div.
+
+UI producer `56f27ee55bb0481ecc4733a0bb58144ae3cfed60`, reference `ba456575dd41f6237911ee97d0cec9de7c5f39941965714d3e4d86d09b0d8a2d`. Семь UI pins согласованы; шесть frozen offline refresh без downloads сохранили React singleton. SDK/skills pins не менялись.
+
+Доказательства сохранены в private evidence/shared-message-audit-20261024/. Общий интеграционный gate, hosted CI, source publication и установленная приёмка остаются отдельными открытыми этапами.
