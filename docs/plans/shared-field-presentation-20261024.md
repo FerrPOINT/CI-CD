@@ -49,3 +49,15 @@ min/max, focus и ввод; токен не выпускался. IAB AI Hub п�
 
 Новые frontend-сборки, полный интеграционный gate и hosted CI остаются открытыми.
 Наличие development guard не объявляется доказательством визуальной полноты.
+
+## Совместимое обновление локальных состояний Base
+
+UI pin — 2e29b403b3987905494ed40fe812608cf998cc3a; reference
+`e5cad6ebab4369dbd56831f566ab94141ca4de050b253f9b93191ddbcb75c23a`.
+LoadingState/ErrorState и их общие композиции сохраняют page-scope по умолчанию;
+local-scope доступен явно для отдельного блока. В этом владельце вызовы не менялись.
+Cached frozen offline refresh обновил UI без downloads; остальные версии графа,
+React singleton и SDK/skills pins сохранены. Installed CLI check прошёл.
+AI Hub обновляет только URI immutable snapshot в package/lockfile; остальные
+lockfiles не меняются. Прежние product tests не обозначаются новым прогоном.
+Новый общий архив и standalone CLI проверены отдельно; полный frontend gate открыт.
