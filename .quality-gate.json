@@ -3,6 +3,7 @@
   "product": "CI-CD",
   "components": {
     "docs": [
+      "scripts/verify_docs.py",
       "docs/**",
       "plans/**",
       "*.md",
@@ -24,6 +25,8 @@
       "openapi/**"
     ],
     "tooling": [
+      "scripts/verify_docs.py",
+      "scripts/tests/test_verify_docs.py",
       "scripts/tests/test_quality_routes.py",
       "scripts/tests/test_ci_contract_checks.py",
       "scripts/vendor/**",
@@ -60,9 +63,12 @@
         "scripts.tests.test_quality_routes",
         "scripts.tests.test_ci_contract_checks",
         "scripts.tests.test_backend_dependency_layers",
+        "scripts.tests.test_verify_docs",
         "-q"
       ],
       "inputs": [
+        "scripts/verify_docs.py",
+        "scripts/tests/test_verify_docs.py",
         "scripts/tests/test_quality_routes.py",
         "scripts/tests/test_ci_contract_checks.py",
         "scripts/vendor/**",
