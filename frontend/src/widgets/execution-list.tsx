@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  PageNavigation,
   TextLink,
   EmptyState,
   Badge,
@@ -462,46 +463,33 @@ export function ExecutionList({
                     : "0 результатов"}
                 </p>
                 {display.total > pageSize && (
-                  <nav
-                    aria-label="Страницы запусков"
-                    className="flex items-center gap-2"
-                  >
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!offset}
-                      onClick={() =>
-                        setParams((current) => {
-                          const next = new URLSearchParams(current);
-                          next.set(
-                            "offset",
-                            String(Math.max(0, offset - pageSize)),
-                          );
-                          return next;
-                        })
-                      }
-                    >
-                      Назад
-                    </Button>
-                    <span className="text-sm">
-                      {Math.floor(offset / pageSize) + 1} /{" "}
-                      {Math.ceil(display.total / pageSize)}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={offset + pageSize >= display.total}
-                      onClick={() =>
-                        setParams((current) => {
-                          const next = new URLSearchParams(current);
-                          next.set("offset", String(offset + pageSize));
-                          return next;
-                        })
-                      }
-                    >
-                      Далее
-                    </Button>
-                  </nav>
+                  <PageNavigation
+                    page={Math.ceil(offset / pageSize) + 1}
+                    hasNext={offset + pageSize < display.total}
+                    onPageChange={(nextPage) =>
+                      setParams((current) => {
+                        const next = new URLSearchParams(current);
+                        next.set(
+                          "offset",
+                          String(
+                            nextPage < Math.ceil(offset / pageSize) + 1
+                              ? Math.max(0, offset - pageSize)
+                              : offset + pageSize,
+                          ),
+                        );
+                        return next;
+                      })
+                    }
+                    label="Страницы запусков"
+                    previousLabel="Назад"
+                    nextLabel="Далее"
+                    summary={
+                      <>
+                        {Math.floor(offset / pageSize) + 1} /{" "}
+                        {Math.ceil(display.total / pageSize)}
+                      </>
+                    }
+                  />
                 )}
               </div>
             )}

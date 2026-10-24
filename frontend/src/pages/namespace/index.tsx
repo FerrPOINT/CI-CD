@@ -1,4 +1,5 @@
 import {
+  PageNavigation,
   PageHeader,
   CardTitle,
   Card,
@@ -262,22 +263,20 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
         </p>
       )}
       {(repositories.data?.total ?? 0) > 50 && (
-        <nav aria-label="Страницы репозиториев" className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={offset === 0}
-            onClick={() => setOffset(Math.max(0, offset - 50))}
-          >
-            Назад
-          </Button>
-          <Button
-            variant="outline"
-            disabled={offset + 50 >= (repositories.data?.total ?? 0)}
-            onClick={() => setOffset(offset + 50)}
-          >
-            Далее
-          </Button>
-        </nav>
+        <PageNavigation
+          page={Math.ceil(offset / 50) + 1}
+          hasNext={offset + 50 < (repositories.data?.total ?? 0)}
+          onPageChange={(nextPage) =>
+            setOffset(
+              nextPage < Math.ceil(offset / 50) + 1
+                ? Math.max(0, offset - 50)
+                : offset + 50,
+            )
+          }
+          label="Страницы репозиториев"
+          previousLabel="Назад"
+          nextLabel="Далее"
+        />
       )}
       {resource.binding.state === "active" && (
         <Dialog

@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
-import { ChevronLeft, ChevronRight, History, Search } from "lucide-react";
+import { History, Search } from "lucide-react";
 
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
 import {
+  PageNavigation,
   PageHeader,
   Select,
   InitialsAvatar as UserAvatar,
@@ -375,36 +376,15 @@ export function AuditLogPage() {
               )}
 
               {result.total > pageSize && (
-                <nav
-                  aria-label={t("auditLog.pages")}
-                  className="flex items-center justify-end gap-2"
-                >
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-
-                    disabled={page === 1 || auditQuery.isFetching}
-                    onClick={() => changePage(page - 1)}
-                  >
-                    <ChevronLeft className="h-4 w-4" aria-hidden />
-                    {t("auditLog.previous")}
-                  </Button>
-                  <span className="min-w-16 text-center text-sm tabular-nums text-text-muted">
-                    {page} / {pageCount}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-
-                    disabled={page === pageCount || auditQuery.isFetching}
-                    onClick={() => changePage(page + 1)}
-                  >
-                    {t("auditLog.next")}
-                    <ChevronRight className="h-4 w-4" aria-hidden />
-                  </Button>
-                </nav>
+                <PageNavigation
+                  page={page}
+                  pageCount={pageCount}
+                  onPageChange={changePage}
+                  label={t("auditLog.pages")}
+                  previousLabel={t("auditLog.previous")}
+                  nextLabel={t("auditLog.next")}
+                  pending={auditQuery.isFetching}
+                />
               )}
             </section>
           );

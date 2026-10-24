@@ -135,3 +135,12 @@ Cached frozen refresh обновил UI без downloads и сторонних d
 React singleton и независимые SDK/skills pins сохранены. Настоящий UI-архив
 проверен отдельно. Общий integrated gate, source publication и hosted evidence
 остаются открытыми; установленный runtime этим изменением не обновляется.
+
+
+## Списки и пагинация — 24 октября 2026
+
+Шестнадцать ручных пагинаторов используют PageNavigation. Сохранены неизвестный итог репозиториев, cursor/offset, фильтры и владельческие счётчики. Дерево репозитория использует compact; общий fix Base обеспечивает 44×44 px mobile. Проверены 83 scoped cases, TypeScript и lint; IAB текущих страниц Forge этим этапом не объявляется.
+
+UI producer `ff303ac5a273dc6b265292465b8b9db9a9476f9f`, fingerprint `206bf4889e50889e8c7bfab9aec36ef52df2e1e76dfcaa94a3ac756a7b80e2bf`.
+Проверки относятся к исходникам собственных checkout; установка, hosted CI и общий
+интеграционный gate сохраняют отдельный статус. SDK/skills pins не изменены.

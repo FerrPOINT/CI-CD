@@ -37,7 +37,6 @@ import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   Check,
-  ChevronLeft,
   ChevronRight,
   FileText,
   Folder,
@@ -392,37 +391,16 @@ function CommitsList({
             </ul>
           </ResourceList>
           {(page > 1 || result.hasMore) && (
-            <nav
-              aria-label={t("repositoryBrowser.commitPages")}
-              className="grid grid-cols-2 items-center gap-2 sm:flex sm:justify-end"
-            >
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="w-full sm:w-auto"
-                disabled={page === 1 || query.isFetching}
-                onClick={() => onPageChange(page - 1)}
-              >
-                {t("repositoryBrowser.previousCommits")}
-              </Button>
-              <span
-                className="col-span-2 row-start-1 text-center text-sm text-text-muted sm:col-auto sm:row-auto"
-                aria-live="polite"
-              >
-                {t("repositoryBrowser.commitPage", { page })}
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="w-full sm:w-auto"
-                disabled={!result.hasMore || query.isFetching}
-                onClick={() => onPageChange(page + 1)}
-              >
-                {t("repositoryBrowser.nextCommits")}
-              </Button>
-            </nav>
+            <PageNavigation
+              page={page}
+              hasNext={result.hasMore && !query.isFetching}
+              onPageChange={onPageChange}
+              label={t("repositoryBrowser.commitPages")}
+              previousLabel={t("repositoryBrowser.previousCommits")}
+              nextLabel={t("repositoryBrowser.nextCommits")}
+              pending={query.isFetching}
+              summary={t("repositoryBrowser.commitPage", { page })}
+            />
           )}
         </section>
       )}
@@ -1002,40 +980,19 @@ function TreeView({
           )}
         </QueryState>
         {(page > 1 || hasNext) && (
-          <nav
-            aria-label={t("repositoryBrowser.treePagination")}
-            className="flex items-center justify-center gap-3 border-t border-border pt-2"
-          >
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-
-              disabled={page <= 1}
-              aria-label={t("repositoryBrowser.previousTreePage")}
-              title={t("repositoryBrowser.previousTreePage")}
-              onClick={() =>
-                onNavigate({ treePage: page > 2 ? String(page - 1) : null })
-              }
-            >
-              <ChevronLeft className="h-4 w-4" aria-hidden />
-            </Button>
-            <span className="text-sm text-text-secondary">
-              {t("repositoryBrowser.treePage", { page })}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-
-              disabled={!hasNext}
-              aria-label={t("repositoryBrowser.nextTreePage")}
-              title={t("repositoryBrowser.nextTreePage")}
-              onClick={() => onNavigate({ treePage: String(page + 1) })}
-            >
-              <ChevronRight className="h-4 w-4" aria-hidden />
-            </Button>
-          </nav>
+          <PageNavigation
+            page={page}
+            hasNext={hasNext}
+            onPageChange={(nextPage) =>
+              onNavigate({ treePage: nextPage === 1 ? null : String(nextPage) })
+            }
+            label={t("repositoryBrowser.treePagination")}
+            previousLabel={t("repositoryBrowser.previousTreePage")}
+            nextLabel={t("repositoryBrowser.nextTreePage")}
+            compact
+            summary={t("repositoryBrowser.treePage", { page })}
+            className="border-t border-border pt-2"
+          />
         )}
       </CardContent>
     </Card>

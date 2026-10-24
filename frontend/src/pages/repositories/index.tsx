@@ -2,11 +2,11 @@ import { useApplicationAccess } from "@pdlc/ui/auth";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  PageNavigation,
   PageHeader,
   CardTitle,
   Card,
   CardContent,
-  Button,
   Input,
   NamespaceLink as Link,
   LoadingState,
@@ -93,22 +93,20 @@ export function RepositoriesPage() {
           )}
         </div>
       )}
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          disabled={!offset}
-          onClick={() => setOffset(Math.max(0, offset - 50))}
-        >
-          Назад
-        </Button>
-        <Button
-          variant="outline"
-          disabled={!catalog.data || catalog.data.items.length < 50}
-          onClick={() => setOffset(offset + 50)}
-        >
-          Далее
-        </Button>
-      </div>
+      <PageNavigation
+        page={Math.ceil(offset / 50) + 1}
+        hasNext={!!catalog.data && catalog.data.items.length >= 50}
+        onPageChange={(nextPage) =>
+          setOffset(
+            nextPage < Math.ceil(offset / 50) + 1
+              ? Math.max(0, offset - 50)
+              : offset + 50,
+          )
+        }
+        label="Страницы репозиториев"
+        previousLabel="Назад"
+        nextLabel="Далее"
+      />
     </div>
   );
 }

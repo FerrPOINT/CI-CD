@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
+  PageNavigation,
   PageHeader,
-  Button,
   Input,
   ProjectAvatar,
   NamespaceLink as Link,
@@ -23,7 +23,10 @@ export function ProjectsPage() {
   const [offset, setOffset] = useState(0);
   const catalog = useQuery({
     queryKey: ["workspace-projects", search, offset],
-    select: (page: components["schemas"]["WorkspacePage"]) => ({ ...page, items: page.items.filter(isUnarchivedWorkspace) }),
+    select: (page: components["schemas"]["WorkspacePage"]) => ({
+      ...page,
+      items: page.items.filter(isUnarchivedWorkspace),
+    }),
     queryFn: ({ signal }) =>
       api<components["schemas"]["WorkspacePage"]>(
         `/workspace-projects?limit=50&offset=${offset}&search=${encodeURIComponent(search)}`,
@@ -110,25 +113,25 @@ export function ProjectsPage() {
               существующий через Admin.
             </p>
           )}
-          <p className="text-sm text-text-muted">Показано: {catalog.data.items.length}</p>
+          <p className="text-sm text-text-muted">
+            Показано: {catalog.data.items.length}
+          </p>
         </>
       )}
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          disabled={!offset}
-          onClick={() => setOffset(Math.max(0, offset - 50))}
-        >
-          Назад
-        </Button>
-        <Button
-          variant="outline"
-          disabled={!catalog.data || offset + 50 >= catalog.data.total}
-          onClick={() => setOffset(offset + 50)}
-        >
-          Далее
-        </Button>
-      </div>
+      <PageNavigation
+        page={Math.ceil(offset / 50) + 1}
+        hasNext={!!catalog.data && offset + 50 < catalog.data.total}
+        onPageChange={(nextPage) =>
+          setOffset(
+            nextPage < Math.ceil(offset / 50) + 1
+              ? Math.max(0, offset - 50)
+              : offset + 50,
+          )
+        }
+        label="Страницы проектов"
+        previousLabel="Назад"
+        nextLabel="Далее"
+      />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Server, Trash2 } from "lucide-react";
 import {
+  PageNavigation,
   Badge,
   PageHeader,
   toast,
@@ -296,34 +297,14 @@ export function RunnersPage() {
               </ResourceList>
             )}
             {filteredRunners.length > pageSize && (
-              <nav
-                aria-label={t("runners.pages")}
-                className="flex items-center justify-end gap-2"
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(currentPage - 1)}
-                >
-                  {t("runners.previous")}
-                </Button>
-                <span className="text-sm text-text-muted">
-                  {currentPage} / {totalPages}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage(currentPage + 1)}
-                >
-                  {t("runners.next")}
-                </Button>
-              </nav>
+              <PageNavigation
+                page={currentPage}
+                pageCount={totalPages}
+                onPageChange={setPage}
+                label={t("runners.pages")}
+                previousLabel={t("runners.previous")}
+                nextLabel={t("runners.next")}
+              />
             )}
           </section>
         )}

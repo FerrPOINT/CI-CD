@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
+  PageNavigation,
   PageHeader,
-  Button,
   Input,
   NamespaceLink as Link,
   ResourceList,
@@ -63,22 +63,20 @@ export function DeliveryConfigurationsPage() {
           </ul>
         </ResourceList>
       )}
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          disabled={!offset}
-          onClick={() => setOffset(Math.max(0, offset - 50))}
-        >
-          Назад
-        </Button>
-        <Button
-          variant="outline"
-          disabled={!configs.data || offset + 50 >= configs.data.total}
-          onClick={() => setOffset(offset + 50)}
-        >
-          Далее
-        </Button>
-      </div>
+      <PageNavigation
+        page={Math.ceil(offset / 50) + 1}
+        hasNext={!!configs.data && offset + 50 < configs.data.total}
+        onPageChange={(nextPage) =>
+          setOffset(
+            nextPage < Math.ceil(offset / 50) + 1
+              ? Math.max(0, offset - 50)
+              : offset + 50,
+          )
+        }
+        label="Страницы конфигураций поставки"
+        previousLabel="Назад"
+        nextLabel="Далее"
+      />
     </div>
   );
 }

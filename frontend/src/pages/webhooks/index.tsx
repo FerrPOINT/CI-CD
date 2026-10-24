@@ -1,4 +1,4 @@
-import { CardContent } from "@pdlc/ui/ui";
+import { PageNavigation, CardContent } from "@pdlc/ui/ui";
 import { FormField } from "@pdlc/ui/ui";
 import { Notice, Badge, PageHeader, SectionHeader } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
@@ -36,15 +36,7 @@ import {
   ConfirmDialog,
 } from "@pdlc/ui/ui";
 
-import {
-  ChevronLeft,
-  ChevronRight,
-  RotateCcw,
-  Webhook,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
+import { RotateCcw, Webhook, Plus, Trash2, X } from "lucide-react";
 
 import { QueryState } from "@/shared/ui/query-state";
 import type {
@@ -644,36 +636,15 @@ function DeliveryHistorySection() {
                 </Card>
               )}
               {result.total > deliveryPageSize && (
-                <nav
-                  aria-label={t("deliveries.pages")}
-                  className="flex items-center justify-end gap-2"
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-
-                    disabled={page === 1 || deliveriesQuery.isFetching}
-                    onClick={() => changePage(page - 1)}
-                  >
-                    <ChevronLeft className="h-4 w-4" aria-hidden />
-                    {t("deliveries.previous")}
-                  </Button>
-                  <span className="min-w-16 text-center text-sm text-text-muted">
-                    {page} / {pageCount}
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-
-                    disabled={page === pageCount || deliveriesQuery.isFetching}
-                    onClick={() => changePage(page + 1)}
-                  >
-                    {t("deliveries.next")}
-                    <ChevronRight className="h-4 w-4" aria-hidden />
-                  </Button>
-                </nav>
+                <PageNavigation
+                  page={page}
+                  pageCount={pageCount}
+                  onPageChange={changePage}
+                  label={t("deliveries.pages")}
+                  previousLabel={t("deliveries.previous")}
+                  nextLabel={t("deliveries.next")}
+                  pending={deliveriesQuery.isFetching}
+                />
               )}
             </section>
           );

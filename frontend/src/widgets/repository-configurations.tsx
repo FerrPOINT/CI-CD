@@ -2,6 +2,7 @@ import { RequireAdministrator } from "@pdlc/ui/auth";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  PageNavigation,
   FormField,
   CardContent,
   Card,
@@ -246,22 +247,20 @@ function AdministrativeRepositoryConfigurations({
         </p>
       )}
       {(configs.data?.total ?? 0) > 50 && (
-        <nav aria-label="Страницы CI-конфигураций" className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={!offset}
-            onClick={() => setOffset(Math.max(0, offset - 50))}
-          >
-            Назад
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!configs.data || offset + 50 >= configs.data.total}
-            onClick={() => setOffset(offset + 50)}
-          >
-            Далее
-          </Button>
-        </nav>
+        <PageNavigation
+          page={Math.ceil(offset / 50) + 1}
+          hasNext={!!configs.data && offset + 50 < configs.data.total}
+          onPageChange={(nextPage) =>
+            setOffset(
+              nextPage < Math.ceil(offset / 50) + 1
+                ? Math.max(0, offset - 50)
+                : offset + 50,
+            )
+          }
+          label="Страницы CI-конфигураций"
+          previousLabel="Назад"
+          nextLabel="Далее"
+        />
       )}
       {error && management === null && (
         <Notice role="alert" tone="danger" appearance="inline">

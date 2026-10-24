@@ -1,4 +1,4 @@
-import { FormField, TextLink } from "@pdlc/ui/ui";
+import { PageNavigation, FormField, TextLink } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 import {
   Select,
@@ -535,34 +535,15 @@ export function PullRequestsPage() {
                 </ResourceList>
               )}
               {result.total > pageSize && (
-                <nav
-                  aria-label={t("pulls.pages")}
-                  className="flex items-center justify-end gap-2"
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-
-                    disabled={page === 1 || isFetching}
-                    onClick={() => changePage(page - 1)}
-                  >
-                    {t("pulls.previous")}
-                  </Button>
-                  <span className="text-sm text-text-muted">
-                    {page} / {pageCount}
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-
-                    disabled={page === pageCount || isFetching}
-                    onClick={() => changePage(page + 1)}
-                  >
-                    {t("pulls.next")}
-                  </Button>
-                </nav>
+                <PageNavigation
+                  page={page}
+                  pageCount={pageCount}
+                  onPageChange={changePage}
+                  label={t("pulls.pages")}
+                  previousLabel={t("pulls.previous")}
+                  nextLabel={t("pulls.next")}
+                  pending={isFetching}
+                />
               )}
             </section>
           );

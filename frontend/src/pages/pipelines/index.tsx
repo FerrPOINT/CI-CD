@@ -3,6 +3,7 @@ import { api } from "@/api/client";
 import type { Configuration } from "@/api/workspaces";
 import { FormEvent, useEffect, useState } from "react";
 import {
+  PageNavigation,
   PageHeader,
   NamespaceLink as Link,
   ResourceList,
@@ -187,34 +188,16 @@ export function PipelinesPage() {
         )}
       </QueryState>
       {(page > 0 || hasNextPage) && !pipelinesQuery.isError && (
-        <nav
-          aria-label={t("pipelines.title")}
-          className="flex items-center justify-end gap-2"
-        >
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-
-            disabled={page === 0 || pipelinesQuery.isFetching}
-            onClick={() => setPage(page - 1)}
-          >
-            {t("projects.previous")}
-          </Button>
-          <span className="text-sm text-text-muted">
-            {t("pipelines.page", { page: page + 1 })}
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-
-            disabled={!hasNextPage || pipelinesQuery.isFetching}
-            onClick={() => setPage(page + 1)}
-          >
-            {t("projects.next")}
-          </Button>
-        </nav>
+        <PageNavigation
+          page={page + 1}
+          hasNext={hasNextPage && !pipelinesQuery.isFetching}
+          onPageChange={(nextPage) => setPage(nextPage - 1)}
+          label={t("pipelines.title")}
+          previousLabel={t("projects.previous")}
+          nextLabel={t("projects.next")}
+          pending={pipelinesQuery.isFetching}
+          summary={t("pipelines.page", { page: page + 1 })}
+        />
       )}
     </div>
   );

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { Copy, Download, Package } from "lucide-react";
 import {
+  PageNavigation,
   PageHeader,
   CopyButton,
   toast,
@@ -207,7 +208,8 @@ export function ArtifactsPage() {
                                 })}
                                 aria-busy={downloadingId === artifact.id}
                                 disabled={downloadingId !== null}
-                                size="icon" className="shrink-0"
+                                size="icon"
+                                className="shrink-0"
                                 onClick={() => void handleDownload(artifact)}
                               >
                                 {downloadingId === artifact.id ? (
@@ -271,34 +273,14 @@ export function ArtifactsPage() {
               </ResourceList>
             )}
             {filtered.length > pageSize && (
-              <nav
-                aria-label={t("artifacts.pages")}
-                className="flex items-center justify-end gap-2"
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(currentPage - 1)}
-                >
-                  {t("artifacts.previous")}
-                </Button>
-                <span className="text-sm text-text-muted">
-                  {currentPage} / {totalPages}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage(currentPage + 1)}
-                >
-                  {t("artifacts.next")}
-                </Button>
-              </nav>
+              <PageNavigation
+                page={currentPage}
+                pageCount={totalPages}
+                onPageChange={setPage}
+                label={t("artifacts.pages")}
+                previousLabel={t("artifacts.previous")}
+                nextLabel={t("artifacts.next")}
+              />
             )}
           </section>
         )}
