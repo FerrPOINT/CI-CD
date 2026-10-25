@@ -1,6 +1,27 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: смысловые подписи и общие действия — 25 октября 2026
+## Текущий кандидат: кодовые поля Base — 25 октября 2026
+
+UI producer `7432f931cddcba29f0c6bc91ca2cf6663baa771f`, reference `9154aea77e9265a2abca532e909b5c3836678814123aeee51d3fc36703b7b4f5`, версия 0.3.2.
+В этом продукте 3 подтверждённых кодовых Input/Textarea получают общий шрифт без изменения TSX, данных и обработчиков.
+Base исправляет приоритет font-mono у Input/InputWithAction/Textarea одним CSS-
+правилом. Обычный шрифт и минимум 40/44 px сохранены; Textarea сохраняет собственную
+высоту, autoSize учитывает переносы нового шрифта в пределах min/max-height.
+
+Свежие проверки волны: 17 field, 61 CSS/primitive, 86 reference и 41 Workflow
+SSR cases; types/examples, настоящий архив/offline CLI и fingerprints PASS.
+IAB: 105 положительных React/SSR/standalone/density контекстов плюс ввод, focus,
+action/reset и рост/сжатие autoSize; 18 исходных контекстов подтвердили дефект.
+Прежние продуктовые types/unit/lint переиспользованы по неизменным JS/TS inputs,
+они не названы новым прогоном или доказательством CSS. Шесть cached frozen refresh
+проверили fingerprint и React singleton. AI file-URI обновлён явно; installs не
+изменили подготовленные locks. SDK/skills pins сохранены.
+Source QA не заменяет live-приёмку продукта. Installed-header Playwright regression
+подключён к существующему manual CI gate; локально этот runner не запускался.
+Полный milestone gate, hosted CI и установка остаются отдельно. Общий аудит
+продолжается; детали — план Base shared-ui-consolidation-20261021.
+
+## Предыдущий кандидат: смысловые подписи и общие действия — 25 октября 2026
 
 UI producer `bbfec663f0cd9e3c92c75bb0e1f367b17f682f76`, reference `dea80c36822dcfc94dd3ca81970bac0c0c4868d94718708fac180b2cc510b4c0`, версия 0.3.2.
 SDK/skills pins сохранены; шесть frozen offline refresh сохранили locks и React singleton.
