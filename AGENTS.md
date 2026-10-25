@@ -250,3 +250,11 @@ URL, курсоры, проверка допустимости страницы 
 и данные остаются у владельца. Для Disclosure используйте appearance, tone=muted/danger
 и size=sm вместо локальных border/padding, цветов и типографики. Внешние margin,
 ширина и предметное содержимое остаются у продукта; наличие props сверять по UI pin.
+## Меню аккаунта Base
+
+При принятом UI pin с AccountMenu использовать общую композицию аккаунта,
+темы и выхода. AppShell применяет её сам; renderHeader требует явного
+AccountMenu в actions общего PlatformHeader. Identity, permissions,
+logout/pending и предметные пункты beforeTheme/children остаются у продукта;
+не копировать trigger, popup или theme/logout layout. Контракт и пример
+сначала читать через pdlc-ui; custom API/SSO и установленный runtime не меняются.

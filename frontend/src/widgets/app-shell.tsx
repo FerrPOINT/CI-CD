@@ -1,19 +1,14 @@
 import { useApplicationAccess } from "@pdlc/ui/auth";
 import {
+  AccountMenu,
   AppShell as BaseAppShell,
   SidebarNavigationGroup,
   useSidebarDisclosure,
   NamespaceNavLink as NavLink,
   SidebarItem,
   Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
   PlatformHeader,
   PlatformMark,
-  ThemeMenuItems,
 } from "@pdlc/ui/ui";
 
 import { NamespaceShellContext } from "./namespace-context";
@@ -23,14 +18,12 @@ import {
 } from "./workspace-navigation";
 import { Outlet, useLocation } from "react-router";
 import {
-  CircleUserRound,
   Cpu,
   FolderGit2,
   GitFork,
   RefreshCw,
   History,
   LayoutDashboard,
-  LogOut,
   Settings,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -183,34 +176,7 @@ export function AppShell() {
           actions={
             <>
               {session && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t("navigation.account")}
-                      title={t("navigation.account")}
-                    >
-                      <CircleUserRound className="h-5 w-5" aria-hidden />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="w-64 max-w-[calc(100vw-2rem)]"
-                  >
-                    <DropdownMenuLabel>
-                      {username}
-                    </DropdownMenuLabel>
-                    <ThemeMenuItems />
-                    <DropdownMenuItem
-                      onSelect={() => void logout()}
-                    >
-                      <LogOut className="h-4 w-4" aria-hidden />
-                      {t("navigation.logout")}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <AccountMenu account={{ label: username, onLogout: () => void logout() }} />
               )}
             </>
           }
