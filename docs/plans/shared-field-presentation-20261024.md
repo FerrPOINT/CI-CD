@@ -1,5 +1,24 @@
 # Общие подписи полей Base
 
+## Общие размеры действий PR — 25 октября 2026
+
+Три кнопки PullRequestActions больше не получают min-h-10/min-w-10 и их
+responsive-копии через buttonClass. Компактный режим уже задаёт Base size=icon,
+обычный сохраняет justify-start как компоновку продукта. Полная сверка модуля
+подтвердила неизменность всего за пределами initializer; negative reopen mutation
+отклоняется. Merge/close/reopen, номер PR, branches, pending и callbacks прежние.
+
+15 адресных runtime cases, types и lint PASS. Прежний test на локальные min-h
+заменён проверкой публичного data-size; actual geometry отдельно проверена IAB:
+102 уникальных контекста, 36 одинаковых before/after пар, три темы/density,
+две шкалы, compact/обычный, 320/375/1920/2560, disabled и closed. Escape вернул
+focus без действия; синтетические merge/close/reopen вызваны по одному разу.
+QA закрыт, source hashes стабильны, HTTP-записей нет. Это actual source с
+тестовым hook, не реальное слияние PR или установленная приёмка Forge.
+Новый guard Base source 46b3f09a прошёл 59 cases и seven-root scan. Его adoption
+остаётся частью следующего итогового Base-кандидата: runtime UI pin a27339a
+и production payload не менялись; повторные install/build не выполнялись.
+
 ## Текущий кандидат: текстовые ссылки Base — 25 октября 2026
 
 UI producer `a27339a2efe253124770ff103a209e7212e2c11b`, reference `464b512a10dd44ec66aeeb09e791123e5a07e245346922898225f19db442fd35`, версия 0.3.2.
