@@ -1,8 +1,4 @@
-import '@testing-library/jest-dom/vitest'
-
-import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
-afterEach(() => cleanup())
 
 class MemoryStorage implements Storage {
   private readonly items = new Map<string, string>()
@@ -45,5 +41,12 @@ function installStorage(name: 'localStorage' | 'sessionStorage') {
   }
 }
 
-installStorage('localStorage')
-installStorage('sessionStorage')
+if (typeof document !== 'undefined') {
+  const [{ cleanup }] = await Promise.all([
+    import('@testing-library/react'),
+    import('@testing-library/jest-dom/vitest'),
+  ])
+  afterEach(() => cleanup())
+  installStorage('localStorage')
+  installStorage('sessionStorage')
+}

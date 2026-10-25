@@ -23,6 +23,7 @@ describe('QueryState', () => {
   })
 
   it('[REQ-UI-002] renders an explicit empty state instead of children', () => {
+    expect(screen.queryByRole('status')).toBeNull()
     render(
       <QueryState
         data={[]}

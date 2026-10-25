@@ -59,7 +59,10 @@ Playwright, packed-consumer и effective-theme проверки — ручной
 `pages/dashboard/dashboard.test.ts` внутри `frontend/src/`.
 Это логика дат, сводок и mocked HTTP responses; assertions сохранены.
 `api/auth.test.ts` проверяет cookies/storage и остаётся в jsdom, как остальные
-UI tests. Общий setup и зависимость jsdom сохранены для их consumers.
+UI tests. В общем setup matcher/React cleanup и storage fallback запускаются
+только при наличии DOM; Node-ветка не импортирует testing-library через setup.
+Browser imports ожидаются до тестов, cleanup сохраняет изоляцию render между
+cases. Зависимость jsdom сохранена для её consumers.
 Per-file environment поддерживает принятый Vitest4.1.11; не переносить Node
 на остальные файлы только по расширению. [Контракт Vitest](https://vitest.dev/guide/environment.html#environments-for-specific-files).
 
