@@ -1,6 +1,35 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: фокус каталога и прямой LoadingState — 25 октября 2026
+## Текущий кандидат: общие страницы отказа и отсутствующего ресурса — 25 октября 2026
+
+UI producer `c2be7939e8b7622a29e1a30ff1c8b6d5ae731a59`, reference `d74c7cccb8a70fb2ca78348071037ed3af045fb5e0cbe0109327de3e4f52ffb3`, версия0.3.2.
+SDK/skills pins независимы и не менялись.
+
+ForbiddenPage использует ResourceStateView вместо своей геометрии, цвета и типографики. В продукте остаются локализованные title/message, glyph и NamespaceLink возврата. Сохраняются h1 и реальная ссылка с Namespace. QueryState по-прежнему выбирает этот предметный 403-адаптер; политика доступа и другие read states не менялись.
+
+Base владеет необязательными title/headingLevel/icon/back для терминальных
+ResourceStateView. Defaults остаются h2 с прежними подписями; самостоятельная
+страница может использовать h1 и типографику PageHeader. Иконка декоративна,
+геометрия/цвет/отступы принадлежат общим tokens. Новый standalone пример и story
+Terminal добавлены без изменения прежних IDs, schema2 и API v1.
+
+Кандидат прошёл27 scoped stages и адресный повтор затронутых Fleet checks после
+уточнения h1. Итоговые наборы:113 React cases,83 reference и41 Workflow SSR
+(237 unique, без сложения повторов), types/lint/format, шесть consumer guards,
+examples, настоящий архив/offline CLI и SSR/Auth freshness. Frozen offline refresh
+сохранил consumer locks и React singleton; у AI Hub заменён только URI UI-снимка.
+
+IAB:72 контекста Base/реальной Forge page,9 проверок плотности и48 контекстов
+публичных состояний с точными Fleet route props; standard/large и три темы,
+320/375/1920/2560 без overflow. Проверены отступы,40/44px, Namespace keyboard
+return, Back/reload и однократное действие standalone примера. Fleet admission
+проверена отдельно на реальных route elements с тестовым источником permissions.
+Это source QA без credentials и установленного backend. Обе QA-сессии закрыты,
+hashes стабильны, сетевых записей нет. Built Storybook, real zoom200, HTTP runtime
+parity, hosted CI/публикация и installed/authenticated acceptance не подменяются.
+Доказательства: private evidence/terminal-states-20261025/.
+
+## Предыдущий кандидат: фокус каталога и прямой LoadingState — 25 октября 2026
 
 UI pin `5f1271e387a1ae2dc933d7e14d5397df446092b4`, reference
 `c33652802684ecea5e4dfd1fef4e14cf59daa8aa43710ebae4f02297469ac9f4`, версия0.3.2.
