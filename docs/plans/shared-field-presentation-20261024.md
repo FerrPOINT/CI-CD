@@ -1,6 +1,29 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: общие страницы отказа и отсутствующего ресурса — 25 октября 2026
+## Текущий кандидат: описание и отступы карточек — 25 октября 2026
+
+UI producer `4f9140a66d99f32ca656e5008022d25a960d0e31`, reference `1c1f0d864adfd8a23dcf4f656be59cc746c9a915308396c29387ad0f267134d2`, версия0.3.2.
+SDK/skills pins независимы и сохранены.
+
+Обновлён только UI pin; продуктовый код и контракты не менялись. TypeScript и UI guard прошли; новые браузерные проверки страниц Forge этой волной не заявляются.
+
+Общий контракт — CardDescription/default/muted и card_description SSR.
+Отступы CardHeader/CardContent принадлежат density tokens; локальные padding
+обнаруживает существующий guard. Полная AST-сверка восьми файлов с негативным
+контролем допускает только заявленные presentation-замены, без изменения логики.
+Шесть frozen offline refresh сохранили lockfiles и React singleton.
+
+Общие доказательства:10 source +24 consumer scoped stages;279 unique cases
+(8 Base React,34 primitive/SSR,84 reference,112 consumer,41 Workflow SSR).
+Настоящий архив:802 файла,1120797 bytes; offline CLI, SSR/Auth freshness PASS.
+IAB72 computed-style контекста и24 standalone контекста:три темы,три плотности,
+standard/large и320/375/1920/2560. Прежнее оформление и отступы сохраняются;
+keyboard link/focus/Back/reload проверены. Это source QA, не live-приёмка продукта.
+QA закрыт, hashes стабильны, сетевых записей нет. Hosted CI, built Storybook,
+real zoom200 и installed/authenticated acceptance остаются отдельными gates.
+Private evidence:card-presentation-20261025/; общий план Base продолжается.
+
+## Предыдущий кандидат: общие страницы отказа и отсутствующего ресурса — 25 октября 2026
 
 UI producer `c2be7939e8b7622a29e1a30ff1c8b6d5ae731a59`, reference `d74c7cccb8a70fb2ca78348071037ed3af045fb5e0cbe0109327de3e4f52ffb3`, версия0.3.2.
 SDK/skills pins независимы и не менялись.
