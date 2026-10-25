@@ -9,6 +9,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FrontendToolchainTests(unittest.TestCase):
+    def test_tracked_openapi_output_keeps_the_generators_canonical_lf(self):
+        attributes = (ROOT / '.gitattributes').read_text(encoding='utf-8').splitlines()
+        self.assertIn('frontend/src/api/schema.d.ts text eol=lf', attributes)
+        schema = (ROOT / 'frontend/src/api/schema.d.ts').read_bytes()
+        self.assertNotIn(b'\r\n', schema)
+
     def test_agent_presence_scope_excludes_lint_and_other_components(self):
         manifest = json.loads((ROOT / '.quality-gate.json').read_text(encoding='utf-8'))
         actual = {gate['id']: gate.get('environment_input_contract')

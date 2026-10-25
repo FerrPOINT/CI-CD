@@ -31,3 +31,6 @@ frontend/Dockerfile.prebuilt.dockerignore text eol=lf
 
 # Canonical bytes for the exact Base Rust cache helper.
 scripts/vendor/base_rust_target_cache.py text eol=lf
+
+# Generated OpenAPI bytes must match the LF-only generator output.
+frontend/src/api/schema.d.ts text eol=lf

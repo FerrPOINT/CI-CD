@@ -63,6 +63,14 @@ Production artifact имеет `git-source-v1`; root `.gitignore` входит �
 неизвестные environment inputs и не заменяет проверку actual dist/receipts.
 Это не разрешение повторно готовить dependencies при неизменном install key.
 
+Tracked `frontend/src/api/schema.d.ts` имеет канонический LF checkout по
+`.gitattributes`, как output OpenAPI generator. Иначе Windows source copy
+перезаписывает готовый LF-файл CRLF-версией и вызывает лишний postinstall даже
+при test-only изменении. При принятии правила в существующем checkout сначала
+сверить LF-normalized bytes с Git blob и generator output, затем нормализовать
+только этот файл. Не применять массовую renormalization: SQL migration bytes
+и остальные правила имеют независимые контракты. Generated-output hashes сохраняются.
+
 ### Ручная релизная проверка
 
 Полный прежний набор сохранён в `.github/workflows/release.yml`: только
