@@ -61,6 +61,7 @@ RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sha
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} pnpm exec vite build
 
 FROM nginx:1.31.4-alpine
+ARG PDLC_RUN_SLOT_SHARING=locked
 COPY CI-CD/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
