@@ -4,6 +4,19 @@
 
 ## Статусы
 
+### Production CSS inputs
+
+Tailwind явно читает `src`, `index.html` и существующий Base UI source;
+test/spec, `src/test-setup.ts`, e2e и tooling исключены из production graph.
+`pnpm test:unit` и ручной `pnpm test:all` сначала выполняют два коротких
+scanner/compiler controls, затем свой прежний Vitest-набор.
+Из frontend с готовой frozen средой отдельно:
+`node --test scripts/tailwind-source-inputs.test.mjs`. Изменение только fixture
+выбирает frontend checks без application artifact; изменение CSS сохраняет
+frontend Build. Node/pnpm/UI pins, setup и manual release lanes не меняются.
+Общие правила и границы source/native qualification —
+[в Base](../../services-base/docs/plans/frontend-source-boundaries-20261024.md#fleet-и-forge-физический-css-graph-25-октября).
+
 ### Отдельные helper checks обслуживания
 
 `maintenance:wrapper-unit` — быстрый Linux unit `backup-stand.sh` с временным

@@ -10,6 +10,38 @@ TEST_GATES = {'test_build_pin': 'tooling:python-helpers', 'test_forge_backup_umb
 
 
 class PythonToolingOwnershipTests(unittest.TestCase):
+    def test_css_scanner_fixture_is_a_unit_input_and_uses_the_ordinary_entrypoint(self):
+        import json
+        manifest = selection.load(ROOT)
+        path = 'frontend/scripts/tailwind-source-inputs.test.mjs'
+        build = next(g for g in manifest['gates'] if g['id'] == 'frontend:build')
+        self.assertTrue(selection.matches(path, manifest['frontend_unit_inputs']))
+        self.assertTrue(selection.matches(path, build['exclude_inputs']))
+        package = json.loads((ROOT / 'frontend/package.json').read_text(encoding='utf-8'))
+        self.assertTrue(package['scripts']['test:unit'].startswith(
+            'node --test scripts/tailwind-source-inputs.test.mjs && vitest run '))
+        self.assertEqual(package['scripts']['test:all'],
+            'node --test scripts/tailwind-source-inputs.test.mjs && vitest run')
+
+    def test_css_scanner_fixture_does_not_rebuild_the_application(self):
+        path = 'frontend/scripts/tailwind-source-inputs.test.mjs'
+        for profile in ('fast', 'unit', 'build'):
+            with self.subTest(profile=profile):
+                candidate = selection.plan(ROOT, profile=profile, changed=[path])
+                self.assertIn('frontend:tests', [g['id'] for g in candidate['gates']])
+                self.assertFalse(any(g.get('kind') == 'artifact' for g in candidate['gates']))
+        mixed = selection.plan(ROOT, profile='build', changed=[path, 'frontend/src/index.css'])
+        self.assertIn('frontend:build', [g['id'] for g in mixed['gates']])
+        self.assertNotIn('backend', mixed['components'])
+
+    def test_ci_css_fixture_source_preserves_actual_application_build_inputs(self):
+        path = 'frontend/scripts/tailwind-source-inputs.test.mjs'
+        for changed, build in ((path+'\n', 'false'), (path+'\nfrontend/src/index.css\n', 'true')):
+            with self.subTest(build=build), patch.object(selection, 'git', return_value=changed):
+                outputs = selection.ci_outputs('push', 'a'*40, 'b'*40, repo=ROOT)
+            self.assertEqual(outputs, {'backend':'false', 'frontend':'true',
+                                       'backend_build':'false', 'frontend_build':build})
+
     @classmethod
     def setUpClass(cls):
         head = selection.git(ROOT, 'rev-parse', 'HEAD')
