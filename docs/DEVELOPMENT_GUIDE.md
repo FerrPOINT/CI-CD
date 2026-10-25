@@ -1,5 +1,26 @@
 # Руководство по разработке Forge CI/CD
 
+## Docker: раздельные входы проверок и компиляции
+
+`frontend/Dockerfile` и `Dockerfile.umbrella` разделяют dependency install,
+unit/typecheck и Vite compilation. Изменение scripts в package.json не меняет
+dependency manifest; frozen install использует общий pnpm download store по
+версии Node/архитектуре. Lifecycle scripts установки не запускаются неявно.
+OpenAPI создаётся один раз в `generated` и передаётся unit/production
+после исходников, чтобы tracked файл не затёр свежую генерацию.
+Unit stage читает тесты и config; production COPY исключает test/spec/setup,
+Vitest config и e2e. Успешный unit-маркер обязателен до Vite. Итоговый nginx
+получает тот же dist; прежние Node/UI paths, VITE defaults и runtime сохранены.
+Recipe-specific `.dockerignore` ограничивает context этим frontend/OpenAPI
+и нужным UI export, сохраняя поздние исключения private state и dependencies.
+Context должен содержать UI source принятого pin в указанном recipe layout;
+source checkout другого UI pin не заменяет такой export.
+
+Это source-этап. Холодный install, реальный cache hit, failed-unit publication,
+Vite/dist handoff и затраты CPU/RAM проверяются на общей native-вехе. До неё
+ускорение в секундах и production readiness не заявляются. Общий контракт —
+[Base BUILD_PERFORMANCE](../../services-base/docs/BUILD_PERFORMANCE.md).
+
 ## Production CSS source graph
 
 Node 22.20.0, UI `@sdlc/ui` и его source layout сохранены.
