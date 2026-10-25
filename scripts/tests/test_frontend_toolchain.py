@@ -9,14 +9,22 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FrontendToolchainTests(unittest.TestCase):
-    def test_agent_presence_is_explicit_and_limited_to_types_and_unit(self):
+    def test_agent_presence_scope_excludes_lint_and_other_components(self):
         manifest = json.loads((ROOT / '.quality-gate.json').read_text(encoding='utf-8'))
         actual = {gate['id']: gate.get('environment_input_contract')
                   for gate in manifest['gates'] if gate.get('environment_input_contract') is not None}
         self.assertEqual(actual, {
             'frontend:types': 'frontend-agent-presence-v1',
             'frontend:tests': 'frontend-agent-presence-v1',
+            'frontend:build': 'frontend-agent-presence-v1',
         })
+
+    def test_production_presence_requires_closed_source_and_root_ignore_input(self):
+        manifest = json.loads((ROOT / '.quality-gate.json').read_text(encoding='utf-8'))
+        gate = next(value for value in manifest['gates'] if value['id'] == 'frontend:build')
+        self.assertEqual(gate['kind'], 'artifact')
+        self.assertEqual(gate.get('artifact_input_contract'), 'git-source-v1')
+        self.assertIn('.gitignore', gate['inputs'])
 
     def check_frozen_install(self, dockerfile):
         pin = dockerfile.index('corepack prepare pnpm@10.28.1 --activate')

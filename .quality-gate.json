@@ -358,6 +358,7 @@
       ],
       "cwd": "frontend",
       "inputs": [
+        ".gitignore",
         "frontend/**",
         "openapi/**",
         ".base-ui-revision",
@@ -399,6 +400,8 @@
         "TMP"
       ],
       "kind": "artifact",
+      "artifact_input_contract": "git-source-v1",
+      "environment_input_contract": "frontend-agent-presence-v1",
       "exclude_inputs": [
         "frontend/src/**/*.test.ts",
         "frontend/src/**/*.test.tsx",
