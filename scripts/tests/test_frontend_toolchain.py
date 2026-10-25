@@ -3,6 +3,7 @@ import re
 import shlex
 import json
 from pathlib import Path
+from scripts.vendor import base_quality_selection as selection
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,7 +17,7 @@ class FrontendToolchainTests(unittest.TestCase):
         self.assertNotIn(b'\r\n', schema)
 
     def test_agent_presence_scope_excludes_lint_and_other_components(self):
-        manifest = json.loads((ROOT / '.quality-gate.json').read_text(encoding='utf-8'))
+        manifest = selection.load(ROOT)
         actual = {gate['id']: gate.get('environment_input_contract')
                   for gate in manifest['gates'] if gate.get('environment_input_contract') is not None}
         self.assertEqual(actual, {
