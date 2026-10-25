@@ -1,6 +1,27 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: общие части меню — 25 октября 2026
+## Текущий кандидат: выбор ресурсов Base — 25 октября 2026
+
+UI pin `c3a7c578a1c1b21dd5759c0bd5c0f917e9b584b9`, reference
+`a5638c1ff93a91b89a1b3f9849c1edced20a54a7fa38dc5874794f9414da3772`.
+
+Принят общий UI-кандидат: честная постраничная выдача SearchableSelect и исправление
+отступа выбранного пункта. Продуктовые запросы, права и callbacks не переносились.
+
+Семь consumers используют один UI SHA; шесть frozen offline refresh сохраняют
+lockfiles и React singleton. SDK/skills pins не менялись. Scoped gate830e41ea
+прошёл24 стадии:156 product и36 Base cases, шесть TypeScript/source guards.
+Для итогового CSS inputs повторены reference/archive/freshness и SSR/Auth;
+JS test inputs подтверждённо неизменны. Повторные прогоны не суммируются.
+IAB source QA:24 сочетания light/dark/gray × standard/large ×320/375/1920/2560;
+40/44px, зазор8px, Escape/focus, URL/Back/Forward/reload, ошибки и выбранный ресурс
+вне страницы. Синтетические GET-only данные; runtime/credentials не используются.
+Это не authenticated приёмка продукта. Built Storybook regression, полный gate
+новой волны, HTTP parity167 и реальный zoom200 остаются открытыми.
+Доказательства: private evidence/search-filters-20261025/. Общий остаток — в Base
+`docs/plans/shared-ui-consolidation-20261021.md`; публикация и установка отдельно.
+
+## Предыдущий кандидат: общие части меню — 25 октября 2026
 
 UI pin `1500913e136476d84aee90fbe38017b518f39d95`, reference
 `cac88571998322babd4e11e42e7ce0614c673c6925fb23421b92ec3322926544`.
