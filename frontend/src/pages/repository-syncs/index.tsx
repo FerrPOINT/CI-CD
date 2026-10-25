@@ -1068,8 +1068,9 @@ function SyncHistory({
                 <TableRow key={run.id}>
                   <TableCell>
                     <Button
-                      variant="ghost"
-                      className="text-left text-accent"
+                      variant="link"
+                      type="button"
+                      className="text-left"
                       onClick={() => update("run_id", run.id)}
                     >
                       {time(run.created_at)}

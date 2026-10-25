@@ -422,7 +422,7 @@ export function RepositorySyncPreview() {
                           <Button
                             variant="link"
                             type="button"
-                            className="text-left font-medium text-accent underline-offset-4 hover:underline"
+                            className="text-left"
                             onClick={() => open(entry.id)}
                           >
                             {entry.repository}

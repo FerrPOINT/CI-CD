@@ -1,6 +1,21 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: описание и отступы карточек — 25 октября 2026
+## Текущий кандидат: смысловые подписи и общие действия — 25 октября 2026
+
+UI producer `bbfec663f0cd9e3c92c75bb0e1f367b17f682f76`, reference `dea80c36822dcfc94dd3ca81970bac0c0c4868d94718708fac180b2cc510b4c0`, версия 0.3.2.
+SDK/skills pins сохранены; шесть frozen offline refresh сохранили locks и React singleton.
+
+Два действия repository sync/preview используют variant=link без локального paint. Настоящее действие запуска явно имеет type=button; callbacks и URL-state сохранены. 64 теста двух областей, lint, types и guard прошли.
+
+Base проверен отдельно: 17 React, 35 primitive/SSR и 85 reference cases.
+Вся scoped-волна: 13 source + 27 consumer stages, 343 unique cases, архив/offline CLI,
+SSR/Auth freshness. IAB: 288 публичных UI-контекстов, native events/reset, namespace
+href и keyboard/focus; source QA закрыт без сетевых записей. Это не live-приёмка
+продуктовых страниц. Полный milestone gate, hosted CI и installation остаются отдельно.
+Подробности — план Base shared-ui-consolidation-20261021; private evidence:
+control-presentation-20261025/. Общий аудит продолжается.
+
+## Предыдущий кандидат: описание и отступы карточек — 25 октября 2026
 
 UI producer `4f9140a66d99f32ca656e5008022d25a960d0e31`, reference `1c1f0d864adfd8a23dcf4f656be59cc746c9a915308396c29387ad0f267134d2`, версия0.3.2.
 SDK/skills pins независимы и сохранены.
