@@ -1,6 +1,31 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: группы полей и подробности — 25 октября 2026
+## Текущий кандидат: фокус каталога и прямой LoadingState — 25 октября 2026
+
+UI pin `5f1271e387a1ae2dc933d7e14d5397df446092b4`, reference
+`c33652802684ecea5e4dfd1fef4e14cf59daa8aa43710ebae4f02297469ac9f4`, версия0.3.2.
+
+Пустой PageLoader удалён: Suspense напрямую использует LoadingState. Routes/admission сохранены; repository-configurations picker проверен с общим UI.
+
+SearchableSelect Base сохраняет точку взаимодействия при чтении страницы и retry.
+Pending скрывает старые данные и удерживает focus в Dialog; после ответа выбирается
+доступное направление или recovery. Поиск пользователя и закрытие имеют приоритет.
+Выбор значения и callback чтения не запускаются самим восстановлением focus.
+PageNavigation сохраняет native disabled; локальные focus-копии не добавляются.
+AST трёх роутеров подтверждает удаление только пустых обёрток с сохранением routes;
+негативный контроль проверяет полный обход AST. Семь UI pins совпадают; шесть frozen
+offline refresh сохранили locks/React singleton, SDK/skills pins не менялись.
+
+Scoped gate25 stages прошёл:78 product cases (Tracker10, Wiki27, Forge29, Admin11,
+Fleet1), Base28, guard32, reference83 и Workflow41 —262 unique cases без повторов.
+Шесть TypeScript/source guards, examples, coverage, архив и SSR/Auth freshness PASS.
+IAB24 адаптивных contexts и6 recovery contexts подтверждают три темы, standard/large,
+320/375/1920/2560,40/44px и отсутствие overflow. Отдельно проверены приоритет поиска
+и закрытие pending. Это source QA. Built Storybook, HTTP parity179, полный gate,
+реальный zoom200, hosted CI и authenticated/installed приёмка остаются открытыми.
+Публикация/runtime не выполнялись. Доказательства: private evidence/paging-focus-20261025/.
+
+## Предыдущий кандидат: группы полей и подробности — 25 октября 2026
 
 UI pin `c04047590f9931fcef39ad328512a22f07149934`, reference
 `11c4fc27a5087eaecbcaaad822832729e6a5c434797e835cbe832acdf44df745`, версия0.3.2.
