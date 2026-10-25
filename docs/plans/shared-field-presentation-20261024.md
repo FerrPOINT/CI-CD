@@ -1,6 +1,30 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: общий разделитель пагинации — 25 октября 2026
+## Текущий кандидат: разделы и выбранные строки — 25 октября 2026
+
+UI pin `10896c8afcdd1227043f7290183f8044a0c21365`, reference
+`7ba477baa2eda2f0e93bf58d14687717f64a9b72b7a955e4d9b1f390b9c9f14d`, версия0.3.2.
+
+Обновлена только поставка UI; предметные компоненты Forge этой волной не меняются.
+
+Общий Base оформляет разделители, технические блоки и выбранную строку.
+Нативная семантика, выбранный ID, действия и внешняя компоновка остаются у продукта.
+AST пяти изменённых файлов подтверждает63 неизменных обработчика. Расчёт брендинга
+учитывает текст и статусы на поверхности выделения: исходный документ не меняется.
+Семь UI pins согласованы; шесть frozen offline refresh сохранили locks и React singleton.
+SDK/skills pins не менялись этой UI-волной; прежние upstream revisions сохраняются.
+
+На итоговом кандидате прошли69 product cases (Admin8, Wiki15, Fleet46),22 branding
+React,11 Node runtime/bootstrap и41 Workflow template cases; checked JS, examples,
+reference/coverage, настоящий архив и SSR/Auth freshness. Шесть TypeScript и source
+guards прошли на02ff0f78; публичные TS-контракты после него не менялись. IAB36
+сочетаний трёх тем, трёх акцентов и320/375/1920/2560 подтвердили текстовый контраст
+от4,51:1, marker, native row и отсутствие overflow; keyboard/pointer сохраняют focus.
+Это source QA общей реализации. Built Storybook, HTTP parity173, полный gate,
+реальный zoom200 и authenticated/installed приёмка остаются открытыми. Публикация
+и runtime не выполнялись. Доказательства: private evidence/section-table-presentation-20261025/.
+
+## Предыдущий кандидат: общий разделитель пагинации — 25 октября 2026
 
 UI pin `7cef16712c453885952d16319439f0190f145747`, reference
 `c6b48bda376ae0cc42303cf8d804036b6fd506dbfcff6eec51ab3f36bbb18a47`.
