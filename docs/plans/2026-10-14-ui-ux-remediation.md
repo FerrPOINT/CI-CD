@@ -58,3 +58,19 @@ InitialsAvatar, ConfirmDialog, PageNavigation, useDebouncedValue и общий Q
 ## Общие блоки текста и описаний
 
 DiffBlock заменяет два одинаковых PatchView. Forge передаёт patch, accessible name и сообщение об усечении; цвета/прокрутка/строки принадлежат Base.
+
+## Общие состояния каталогов — 26 октября 2026
+
+11 участков в восьми модулях используют EmptyState и ResourceStateView Base:
+сравнение, namespace, pipeline, pull request, каталог запросов, browser репозитория,
+синхронизации и webhooks. EmptyState содержит прежнее действие сброса поиска:
+удаляются только repository_search/repository_offset, namespace и tab сохраняются.
+Отсутствующий репозиторий в embedded browser получает h2, обычная страница — h1.
+SQL/API, проверки 404, фильтры, callbacks и populated rendering не менялись.
+
+119 distinct scoped cases в семи файлах, TypeScript, scoped ESLint и UI contract
+PASS. Тест pull-request-detail проверяет navigation helpers; терминальные ветки
+дополнительно покрыты сверкой полных модулей и IAB исходных UI-фрагментов.
+Синтетические data/callback adapters не означают authenticated product acceptance.
+Использован существующий UI pin 430ef57512bca547e44f1a6d4c5878d52ee978ce;
+новых API, сборки backend, экспорта SSR или изменения SDK/skills нет.

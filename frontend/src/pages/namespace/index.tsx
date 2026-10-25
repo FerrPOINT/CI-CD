@@ -1,4 +1,5 @@
 import {
+  EmptyState,
   PageNavigation,
   PageHeader,
   CardTitle,
@@ -232,26 +233,26 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
             </Card>
           ))}
           {repositories.data?.items.length === 0 && (
-            <div className="space-y-2 text-text-muted">
-              <p>
-                {search ? "Репозитории не найдены." : "Репозиториев пока нет."}
-              </p>
-              {search && (
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    setParams((current) => {
-                      const next = new URLSearchParams(current);
-                      next.delete("repository_search");
-                      next.delete("repository_offset");
-                      return next;
-                    })
-                  }
-                >
-                  Сбросить поиск
-                </Button>
-              )}
-            </div>
+            <EmptyState
+              message={search ? "Репозитории не найдены." : "Репозиториев пока нет."}
+              action={
+                search && (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      setParams((current) => {
+                        const next = new URLSearchParams(current);
+                        next.delete("repository_search");
+                        next.delete("repository_offset");
+                        return next;
+                      })
+                    }
+                  >
+                    Сбросить поиск
+                  </Button>
+                )
+              }
+            />
           )}
         </div>
       )}

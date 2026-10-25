@@ -1,4 +1,10 @@
-import { AutocompleteInput, PageNavigation, FormField, TextLink } from "@pdlc/ui/ui";
+import {
+  ResourceStateView,
+  AutocompleteInput,
+  PageNavigation,
+  FormField,
+  TextLink,
+} from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 import {
   Select,
@@ -395,7 +401,14 @@ export function PullRequestsPage() {
 
   if (!repo)
     return (
-      <p className="text-sm text-text-muted">{t("repositories.notFound")}</p>
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("repositories.notFound"),
+          headingLevel: 1,
+        }}
+      />
     );
 
   return (

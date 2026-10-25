@@ -1,4 +1,5 @@
 import {
+  ResourceStateView,
   AutocompleteInput,
   Breadcrumbs,
   BreadcrumbItem,
@@ -139,7 +140,14 @@ export function RepositoryBrowserPage({
 
   if (!repo)
     return (
-      <p className="text-sm text-text-muted">{t("repositories.notFound")}</p>
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("repositories.notFound"),
+          headingLevel: embedded ? 2 : 1,
+        }}
+      />
     );
 
   function updateParams(

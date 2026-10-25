@@ -1,4 +1,5 @@
 import {
+  ResourceStateView,
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
@@ -87,13 +88,25 @@ export function PullRequestDetailPage() {
 
   if (!repo)
     return (
-      <p className="text-sm text-text-muted">{t("repositories.notFound")}</p>
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("repositories.notFound"),
+          headingLevel: 1,
+        }}
+      />
     );
   if (
     !pullRequestNumber ||
     (error instanceof ApiError && error.status === 404)
   ) {
-    return <p className="text-sm text-text-muted">{t("pulls.notFound")}</p>;
+    return (
+        <ResourceStateView
+          scope="local"
+          state={{ kind: "not-found", title: t("pulls.notFound"), headingLevel: 1 }}
+        />
+      );
   }
   if (isLoading || error)
     return (
@@ -107,7 +120,12 @@ export function PullRequestDetailPage() {
       </QueryState>
     );
   if (!pr)
-    return <p className="text-sm text-text-muted">{t("pulls.notFound")}</p>;
+    return (
+        <ResourceStateView
+          scope="local"
+          state={{ kind: "not-found", title: t("pulls.notFound"), headingLevel: 1 }}
+        />
+      );
 
   if (showDiff) {
     return (

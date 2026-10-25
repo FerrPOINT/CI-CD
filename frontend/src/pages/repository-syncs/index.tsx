@@ -11,6 +11,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
+  EmptyState,
   Fieldset,
   PageHeader,
   SectionHeader,
@@ -448,10 +449,11 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
             </TableBody>
           </Table>
           {!list.data.total && (
-            <p>
-              Синхронизации не найдены. Измените фильтры или добавьте
-              подключение.
-            </p>
+            <EmptyState
+              message={
+                "Синхронизации не найдены. Измените фильтры или добавьте подключение."
+              }
+            />
           )}
           <OffsetPageNavigation
             label="Синхронизации репозиториев"

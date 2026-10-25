@@ -1,5 +1,6 @@
 import { useEffect, useState, type ComponentProps } from "react";
 import {
+  ResourceStateView,
   AutocompleteInput,
   Badge,
   PageHeader,
@@ -147,7 +148,14 @@ export function ComparePage() {
 
   if (!repo)
     return (
-      <p className="text-sm text-text-muted">{t("repositories.notFound")}</p>
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("repositories.notFound"),
+          headingLevel: 1,
+        }}
+      />
     );
 
   function applyComparison(event: React.FormEvent<HTMLFormElement>) {

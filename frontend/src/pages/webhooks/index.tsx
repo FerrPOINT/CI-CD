@@ -1,4 +1,10 @@
-import { ResourceListDescription, ResourceListTitle, PageNavigation, CardContent } from "@pdlc/ui/ui";
+import {
+  EmptyState,
+  ResourceListDescription,
+  ResourceListTitle,
+  PageNavigation,
+  CardContent,
+} from "@pdlc/ui/ui";
 import { FormField } from "@pdlc/ui/ui";
 import { Notice, Badge, PageHeader, SectionHeader } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
@@ -689,9 +695,7 @@ function DeliveryHistorySection() {
             >
               {(data) =>
                 data.attempts.length === 0 ? (
-                  <p className="text-sm text-text-secondary">
-                    {t("deliveries.noAttempts")}
-                  </p>
+                  <EmptyState message={t("deliveries.noAttempts")} />
                 ) : (
                   <>
                     <ResourceList asChild>
@@ -975,9 +979,7 @@ function NotificationsSection() {
       >
         {(events) =>
           events.length === 0 ? (
-            <p className="text-sm text-text-secondary">
-              {t("notifications.noEvents")}
-            </p>
+            <EmptyState message={t("notifications.noEvents")} />
           ) : (
             <Card className="overflow-hidden">
               <ResourceList asChild>

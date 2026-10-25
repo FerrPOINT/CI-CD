@@ -1,4 +1,6 @@
-import { ResourceListTitle, ResourceListDescription,
+import {
+  ResourceListTitle,
+  ResourceListDescription,
   Notice,
   Badge,
   PageHeader,
@@ -886,7 +888,7 @@ function JobLogPanel({
       {!selectedAttempt &&
         !attemptsQuery.isLoading &&
         !attemptsQuery.isError && (
-          <p className="text-sm text-text-muted">{t("jobs.noLogs")}</p>
+          <EmptyState message={t("jobs.noLogs")} />
         )}
       {canAppend && (
         <Disclosure
