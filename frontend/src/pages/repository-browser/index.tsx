@@ -1,5 +1,8 @@
 import {
   AutocompleteInput,
+  Breadcrumbs,
+  BreadcrumbItem,
+  ResourceListButton,
   ResourceListTitle,
   ResourceListDescription,
   CardContent,
@@ -832,15 +835,9 @@ function TreeView({
   return (
     <Card>
       <CardHeader>
-        <nav
-          aria-label={t("repositoryBrowser.code")}
-          className="flex min-w-0 flex-wrap items-center gap-1 text-sm"
-        >
-          <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-          <Button
-            variant="ghost"
-            type="button"
-            size="icon"
+        <Breadcrumbs aria-label={t("repositoryBrowser.code")}>
+          <BreadcrumbItem
+            current={crumbs.length === 0}
             onClick={() =>
               onNavigate({
                 dir: null,
@@ -850,32 +847,26 @@ function TreeView({
               })
             }
           >
-            /
-          </Button>
+            <Folder aria-hidden />
+            {t("repositoryBrowser.rootDirectory")}
+          </BreadcrumbItem>
           {crumbs.map((part, index) => (
-            <span
+            <BreadcrumbItem
               key={`${index}-${part}`}
-              className="flex min-w-0 items-center gap-1"
+              current={index === crumbs.length - 1}
+              onClick={() =>
+                onNavigate({
+                  dir: crumbs.slice(0, index + 1).join("/"),
+                  file: null,
+                  treePage: null,
+                  treeSearch: null,
+                })
+              }
             >
-              <span className="text-text-muted">/</span>
-              <Button
-                variant="ghost"
-                type="button"
-                className="min-w-0 break-all text-left"
-                onClick={() =>
-                  onNavigate({
-                    dir: crumbs.slice(0, index + 1).join("/"),
-                    file: null,
-                    treePage: null,
-                    treeSearch: null,
-                  })
-                }
-              >
-                {part}
-              </Button>
-            </span>
+              {part}
+            </BreadcrumbItem>
           ))}
-        </nav>
+        </Breadcrumbs>
       </CardHeader>
       <CardContent className="space-y-2">
         <form
@@ -929,53 +920,55 @@ function TreeView({
           }}
         >
           {(items) => (
-            <ul className="divide-y divide-border">
-              {items.map((entry) => (
-                <li
-                  key={entry.path}
-                  className="flex min-w-0 items-center gap-2 text-sm hover:bg-surface-raised"
-                >
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                    onClick={() =>
-                      onNavigate(
-                        entry.kind === "tree"
-                          ? {
-                              dir: entry.path,
-                              file: null,
-                              treePage: null,
-                              treeSearch: null,
-                            }
-                          : { file: entry.path },
-                      )
-                    }
+            <ResourceList asChild>
+              <ul>
+                {items.map((entry) => (
+                  <li
+                    key={entry.path}
+                    className="flex min-w-0 items-center gap-2"
                   >
-                    {entry.kind === "tree" ? (
-                      <Folder
-                        className="h-4 w-4 shrink-0 text-accent"
-                        aria-hidden
-                      />
-                    ) : (
-                      <FileText
-                        className="h-4 w-4 shrink-0 text-text-muted"
-                        aria-hidden
-                      />
+                    <ResourceListButton
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      onClick={() =>
+                        onNavigate(
+                          entry.kind === "tree"
+                            ? {
+                                dir: entry.path,
+                                file: null,
+                                treePage: null,
+                                treeSearch: null,
+                              }
+                            : { file: entry.path },
+                        )
+                      }
+                    >
+                      {entry.kind === "tree" ? (
+                        <Folder
+                          className="h-4 w-4 shrink-0 text-accent"
+                          aria-hidden
+                        />
+                      ) : (
+                        <FileText
+                          className="h-4 w-4 shrink-0 text-text-muted"
+                          aria-hidden
+                        />
+                      )}
+                      <ResourceListTitle asChild>
+                        <span className="min-w-0 break-all">{entry.name}</span>
+                      </ResourceListTitle>
+                    </ResourceListButton>
+                    <code className="hidden shrink-0 pr-2 text-xs text-text-muted sm:inline">
+                      {entry.sha.slice(0, 7)}
+                    </code>
+                    {entry.size != null && (
+                      <span className="hidden w-20 shrink-0 pr-2 text-right text-xs text-text-muted md:inline">
+                        {entry.size} B
+                      </span>
                     )}
-                    <span className="min-w-0 break-all">{entry.name}</span>
-                  </Button>
-                  <code className="hidden shrink-0 pr-2 text-xs text-text-muted sm:inline">
-                    {entry.sha.slice(0, 7)}
-                  </code>
-                  {entry.size != null && (
-                    <span className="hidden w-20 shrink-0 pr-2 text-right text-xs text-text-muted md:inline">
-                      {entry.size} B
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
+                  </li>
+                ))}
+              </ul>
+            </ResourceList>
           )}
         </QueryState>
         {(page > 1 || hasNext) && (
