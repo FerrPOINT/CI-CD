@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { ResourceListTitle,
+import {
+  EmptyState,
+  ResourceListTitle,
   PageNavigation,
   PageHeader,
   Input,
@@ -108,10 +110,7 @@ export function ProjectsPage() {
             </ul>
           </ResourceList>
           {!catalog.data.total && (
-            <p className="text-text-muted">
-              Подключённых проектов пока нет. Создайте проект или подключите
-              существующий через Admin.
-            </p>
+            <EmptyState message="Подключённых проектов пока нет. Создайте проект или подключите существующий через Admin." />
           )}
           <p className="text-sm text-text-muted">
             Показано: {catalog.data.items.length}

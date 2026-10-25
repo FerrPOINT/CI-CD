@@ -1,4 +1,5 @@
 import {
+  EmptyState,
   CardContent,
   Card,
   PageHeader,
@@ -169,7 +170,7 @@ export function CatalogPullPage() {
             Связи недоступны.
           </Notice>
         ) : links.data?.length === 0 ? (
-          <p className="text-text-muted">Задач пока нет.</p>
+          <EmptyState message="Задач пока нет." />
         ) : (
           links.data?.map((link) => (
             <Card key={`${link.task.tracker_instance_id}:${link.task.task_id}`}>

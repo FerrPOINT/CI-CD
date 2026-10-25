@@ -1,4 +1,5 @@
 import {
+  EmptyState,
   Badge,
   Button,
   PageHeader,
@@ -50,18 +51,17 @@ export function ReportsPage() {
       >
         {(report) =>
           report.total_pipelines === 0 ? (
-            <div className="border-y border-border py-6">
-              <p className="text-sm font-medium">{t("reports.noData")}</p>
-              <p className="mt-1 text-sm text-text-secondary">
-                {t("reports.emptyHint")}
-              </p>
-              <Button asChild variant="link" className="mt-3">
-                <Link to={pipelinesPath}>
-                  {t("reports.openPipelines")}{" "}
-                  <ArrowRight className="h-4 w-4" aria-hidden />
-                </Link>
-              </Button>
-            </div>
+            <EmptyState
+              message={t("reports.noData")}
+              description={t("reports.emptyHint")}
+              action={
+                <Button asChild variant="link">
+                  <Link to={pipelinesPath}>
+                    {t("reports.openPipelines")} <ArrowRight className="h-4 w-4" aria-hidden />
+                  </Link>
+                </Button>
+              }
+            />
           ) : (
             <ReportSummary report={report} locale={i18n.language} />
           )

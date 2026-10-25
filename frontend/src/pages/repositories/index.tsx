@@ -2,6 +2,7 @@ import { useApplicationAccess } from "@pdlc/ui/auth";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  EmptyState,
   PageNavigation,
   PageHeader,
   CardTitle,
@@ -89,7 +90,7 @@ export function RepositoriesPage() {
             </Card>
           ))}
           {!catalog.data.items.length && (
-            <p className="text-text-muted">Репозиториев пока нет.</p>
+            <EmptyState message="Репозиториев пока нет." />
           )}
         </div>
       )}

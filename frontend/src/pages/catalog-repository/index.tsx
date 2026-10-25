@@ -1,5 +1,6 @@
 import { useApplicationAccess } from "@pdlc/ui/auth";
 import {
+  EmptyState,
   CardContent,
   Card,
   PageHeader,
@@ -305,7 +306,7 @@ export function CatalogRepositoryPage() {
                 PR недоступны.
               </Notice>
             ) : pulls.data?.length === 0 ? (
-              <p className="text-text-muted">PR пока нет.</p>
+              <EmptyState message="PR пока нет." />
             ) : (
               pulls.data?.map((pr) => (
                 <TextLink asChild>
