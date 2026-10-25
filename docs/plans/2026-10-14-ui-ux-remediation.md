@@ -74,3 +74,11 @@ PASS. Тест pull-request-detail проверяет navigation helpers; тер
 Синтетические data/callback adapters не означают authenticated product acceptance.
 Использован существующий UI pin 430ef57512bca547e44f1a6d4c5878d52ee978ce;
 новых API, сборки backend, экспорта SSR или изменения SDK/skills нет.
+
+## Общие сообщения активного preview — 26 октября 2026
+
+Статическое readonly-пояснение repository-sync preview использует общий Notice
+inline neutral вместо отдельного border/text оформления. Live-region не добавлен;
+readOnly guard, disabled actions, URL и сценарии сохранены. Восемь существующих
+preview tests, types и scoped lint PASS; IAB проверил исходную композицию в трёх
+темах. Синтетический preview не означает backend/runtime acceptance; pin6dca218 прежний.

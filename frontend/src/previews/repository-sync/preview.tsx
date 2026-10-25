@@ -736,10 +736,10 @@ function RepositorySyncEditor({
           </span>
         </section>
         {readOnly && (
-          <p className="border-l-2 border-border-strong pl-3 text-sm">
+          <Notice tone="neutral" appearance="inline">
             Доступ только для чтения. Изменение подключения и запуск
             синхронизации недоступны.
-          </p>
+          </Notice>
         )}
         {error && (
           <Notice role="alert" tone="danger" appearance="inline">
