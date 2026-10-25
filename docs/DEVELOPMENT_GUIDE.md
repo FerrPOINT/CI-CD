@@ -1,5 +1,17 @@
 # Руководство по разработке Forge CI/CD
 
+## Production CSS source graph
+
+Node 22.20.0, UI `@sdlc/ui` и его source layout сохранены.
+Tailwind читает application src, index.html и прежний UI source; test/spec/setup/tooling исключены.
+`pnpm test:unit` сначала выполняет два scanner/compiler controls, затем прежние units.
+Ручной `pnpm test:all` включает те же Node controls перед прежним полным Vitest.
+Отдельно из frontend с готовыми dependencies: `node --test scripts/tailwind-source-inputs.test.mjs`.
+Fixture-only изменение не выбирает application artifact в quality/CI; реальный CSS сохраняет Build.
+Это source checks, полный Vite/dist и native/container acceptance выполняются отдельно на общей вехе.
+Общий стандарт — [Base BUILD_PERFORMANCE](../../services-base/docs/BUILD_PERFORMANCE.md).
+
+
 Этот документ описывает воспроизводимый локальный цикл разработки и проверки. Он не заменяет нормативные контракты: порядок источников и статус утверждений определены в [DOCUMENTATION GOVERNANCE](DOCUMENTATION_GOVERNANCE.md). Фактически работающие возможности перечислены в [CURRENT STATE](CURRENT_STATE.md); код, committed migrations и OpenAPI после их появления имеют приоритет над этим guide.
 
 ## Статусы

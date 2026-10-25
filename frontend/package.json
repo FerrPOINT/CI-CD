@@ -19,8 +19,8 @@
     "openapi:compat": "node scripts/base-openapi-compat.mjs",
     "postinstall": "pnpm run openapi:generate",
     "theme:check": "node ../../services-base/frontend/scripts/sdlc-effective-theme-check.mjs",
-    "test:unit": "vitest run --exclude \"**/*.integration.test.*\" --exclude \"**/*.slow.test.*\" --exclude \"**/*.e2e.test.*\" --exclude \"**/*.integration.spec.*\" --exclude \"**/*.slow.spec.*\" --exclude \"**/*.e2e.spec.*\"",
-    "test:all": "vitest run"
+    "test:unit": "node --test scripts/tailwind-source-inputs.test.mjs && vitest run --exclude \"**/*.integration.test.*\" --exclude \"**/*.slow.test.*\" --exclude \"**/*.e2e.test.*\" --exclude \"**/*.integration.spec.*\" --exclude \"**/*.slow.spec.*\" --exclude \"**/*.e2e.spec.*\"",
+    "test:all": "node --test scripts/tailwind-source-inputs.test.mjs && vitest run"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.13",

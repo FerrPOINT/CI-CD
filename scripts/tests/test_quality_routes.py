@@ -147,6 +147,50 @@ class QualityRouteTests(unittest.TestCase):
         self.assertIn('pnpm theme:check http://127.0.0.1:4173', release)
 
 
+class CssInputOwnershipTests(unittest.TestCase):
+    def setUp(self):
+        import importlib.util
+        from pathlib import Path
+        from unittest.mock import patch
+        self.root = Path(__file__).resolve().parents[2]
+        spec = importlib.util.spec_from_file_location('css_input_selection', self.root / 'scripts/vendor/base_quality_selection.py')
+        self.selection = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.selection)
+        current = patch.object(self.selection, 'git', return_value='a' * 40)
+        current.start()
+        self.addCleanup(current.stop)
+
+    def test_css_fixture_is_unit_only_and_called_by_public_commands(self):
+        import json
+        manifest = self.selection.load(self.root)
+        path = 'frontend/scripts/tailwind-source-inputs.test.mjs'
+        build = next(g for g in manifest['gates'] if g['id'] == 'frontend:build')
+        self.assertTrue(self.selection.matches(path, manifest['frontend_unit_inputs']))
+        self.assertTrue(self.selection.matches(path, build['exclude_inputs']))
+        package = json.loads((self.root / 'frontend/package.json').read_text(encoding='utf-8'))
+        self.assertTrue(package['scripts']['test:unit'].startswith('node --test scripts/tailwind-source-inputs.test.mjs && vitest run '))
+        self.assertEqual(package['scripts']['test:all'], 'node --test scripts/tailwind-source-inputs.test.mjs && vitest run')
+
+    def test_css_fixture_skips_application_build_but_real_css_keeps_it(self):
+        path = 'frontend/scripts/tailwind-source-inputs.test.mjs'
+        for profile in ('fast', 'unit', 'build'):
+            with self.subTest(profile=profile):
+                plan = self.selection.plan(self.root, profile=profile, changed=[path])
+                self.assertIn('frontend:tests', [g['id'] for g in plan['gates']])
+                self.assertFalse(any(g.get('kind') == 'artifact' for g in plan['gates']))
+        mixed = self.selection.plan(self.root, profile='build', changed=[path, 'frontend/src/index.css'])
+        self.assertIn('frontend:build', [g['id'] for g in mixed['gates']])
+        self.assertNotIn('backend', mixed['components'])
+
+    def test_ci_css_fixture_preserves_production_and_backend_selection(self):
+        from unittest.mock import patch
+        path = 'frontend/scripts/tailwind-source-inputs.test.mjs'
+        for changed, build in ((path+'\n', 'false'), (path+'\nfrontend/src/index.css\n', 'true')):
+            with self.subTest(build=build), patch.object(self.selection, 'git', return_value=changed):
+                values = self.selection.ci_outputs('push', 'a'*40, 'b'*40, repo=self.root)
+            self.assertEqual(values, {'backend':'false','frontend':'true','backend_build':'false','frontend_build':build})
+
+
 if __name__ == '__main__':
     unittest.main()
 
