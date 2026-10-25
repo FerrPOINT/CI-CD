@@ -389,7 +389,7 @@ describe("pull request workflow", () => {
     async (label) => {
       setup([pullRequest(1)], "/repositories/platform/pulls/1");
       const trigger = screen.getByRole("button", { name: label });
-      expect(trigger).toHaveClass("min-h-10", "sm:min-h-10");
+      expect(trigger).toHaveAttribute("data-size", "default");
       trigger.focus();
       fireEvent.click(trigger);
       expect(screen.getByRole("alertdialog")).toBeInTheDocument();

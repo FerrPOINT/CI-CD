@@ -38,9 +38,7 @@ export function PullRequestActions({
     );
   }
 
-  const buttonClass = compact
-    ? "min-h-10 min-w-10 sm:min-h-10 sm:min-w-10"
-    : "min-h-10 sm:min-h-10 justify-start";
+  const buttonClass = compact ? undefined : "justify-start";
 
   return (
     <>
