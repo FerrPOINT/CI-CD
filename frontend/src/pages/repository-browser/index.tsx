@@ -560,7 +560,8 @@ function BranchesList({
         label={t("repositoryBrowser.refPagination")}
         previousLabel={t("repositoryBrowser.previousRefPage")}
         nextLabel={t("repositoryBrowser.nextRefPage")}
-        className="justify-center border-t border-border pt-2"
+        separated
+        className="justify-center"
       />
     </div>
   );
@@ -989,7 +990,7 @@ function TreeView({
             nextLabel={t("repositoryBrowser.nextTreePage")}
             compact
             summary={t("repositoryBrowser.treePage", { page })}
-            className="border-t border-border pt-2"
+            separated
           />
         )}
       </CardContent>
@@ -1083,7 +1084,8 @@ function TagsList({
         label={t("repositoryBrowser.refPagination")}
         previousLabel={t("repositoryBrowser.previousRefPage")}
         nextLabel={t("repositoryBrowser.nextRefPage")}
-        className="justify-center border-t border-border pt-2"
+        separated
+        className="justify-center"
       />
     </div>
   );

@@ -1,6 +1,29 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: выбор ресурсов Base — 25 октября 2026
+## Текущий кандидат: общий разделитель пагинации — 25 октября 2026
+
+UI pin `7cef16712c453885952d16319439f0190f145747`, reference
+`c6b48bda376ae0cc42303cf8d804036b6fd506dbfcff6eec51ab3f36bbb18a47`.
+
+Три панели refs/tree/tags используют PageNavigation separated. Компактный режим,
+выравнивание и callbacks обновления URL сохранены.
+
+Base владеет разделителем и отступом из density tokens:4/8/12px. Обычный режим
+остаётся без разделителя. Сверка AST пяти product files сохраняет128 handlers
+и весь код вне className/separated. Новый общий guard обнаруживает aliases и
+динамические className; внешняя компоновка остаётся разрешённой. Семь UI pins
+согласованы; шесть frozen offline refresh сохранили lockfiles/React singleton.
+SDK/skills pins неизменны. Scoped21 stages:90 product cases, шесть TypeScript,
+source guards, reference81, настоящий архив, SSR/Auth/freshness прошли; Base28
+и guard30 проверены отдельно (всего229 unique cases, без повторного сложения).
+IAB48 contexts подтверждают темы, плотность, размеры320/375/1920/2560, крупный
+текст, обычный соседний режим, pending и callback один раз при явном переходе.
+Это source QA общей реализации; authenticated страницы продукта, built assets,
+HTTP parity169, полный интегрированный gate и реальный zoom200 пока открыты.
+Доказательства: private evidence/pagination-separator-20261025/. Новый standalone
+пример: pdlc-ui example PageNavigation --case separated. Runtime не менялся.
+
+## Предыдущий кандидат: выбор ресурсов Base — 25 октября 2026
 
 UI pin `c3a7c578a1c1b21dd5759c0bd5c0f917e9b584b9`, reference
 `a5638c1ff93a91b89a1b3f9849c1edced20a54a7fa38dc5874794f9414da3772`.
