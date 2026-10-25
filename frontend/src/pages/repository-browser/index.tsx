@@ -728,8 +728,7 @@ function FilePreview({
         <Button
           type="button"
           variant="ghost"
-          size="sm"
-          className="min-w-10"
+          size="icon"
           aria-label={t("repositoryBrowser.backToTree")}
           title={t("repositoryBrowser.backToTree")}
           onClick={onBack}
@@ -737,12 +736,16 @@ function FilePreview({
           <ArrowLeft className="h-4 w-4" aria-hidden />
         </Button>
         <FileText className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-        <span className="min-w-0 flex-1 break-all font-medium">{filePath}</span>
+        <ResourceListTitle asChild className="min-w-0 flex-1 break-all">
+          <span>{filePath}</span>
+        </ResourceListTitle>
         {query.data && (
-          <span className="text-xs text-text-muted">
-            {formatBytes(query.data.size, i18n.language)} ·{" "}
-            {query.data.sha.slice(0, 7)}
-          </span>
+          <ResourceListDescription asChild>
+            <span>
+              {formatBytes(query.data.size, i18n.language)} ·{" "}
+              {query.data.sha.slice(0, 7)}
+            </span>
+          </ResourceListDescription>
         )}
       </CardHeader>
       <CardContent>

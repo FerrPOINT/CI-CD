@@ -1,5 +1,22 @@
 # Общие подписи полей Base
 
+## Предпросмотр Git-файла — 25 октября 2026
+
+FilePreview использует Button size=icon, ResourceListTitle и
+ResourceListDescription вместо трёх локальных правил оформления. Native span,
+доступное имя и onBack, путь, formatBytes/SHA и binary/empty/truncated остаются
+продуктовыми. AST-сверка всего модуля и его типов исключает другие изменения;
+четыре негативных контроля обнаруживают подмену identity/query/callback/state.
+
+21 case repository-browser, scoped TypeScript/lint/shell:check PASS. IAB:
+24 сочетания трёх тем, четырёх ширин и двух type-scale; пять read-состояний,
+Enter/Space по одному callback, 40/44 px, отсутствие overflow. Проверен точный
+source FilePreview и QueryState с синтетическим транспортом; source hashes
+неизменны, нет продуктовых запросов и ошибок консоли, процесс/вкладка закрыты.
+Это не полная backend-приёмка. UI producer 403e5002 и все pins неизменны;
+ранее проверенные UI-архив, reference, exports и остальные consumers не
+пересобирались. Private evidence/file-preview-presentation-20261025/.
+
 ## Текущий UI кандидат: Breadcrumbs — 25 октября 2026
 
 UI producer `403e5002b37621a1c7c67767dece8fa712eb16c0`, версия 0.3.2, reference
