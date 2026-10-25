@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import { statusLabel } from './status'
 import { summarizePipelines } from './model'

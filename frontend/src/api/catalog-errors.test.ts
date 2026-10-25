@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, it } from 'vitest'
 import { ApiError } from './client'
 import { catalogErrorMessage } from './catalog-errors'

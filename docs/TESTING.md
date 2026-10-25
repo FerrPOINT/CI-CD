@@ -53,6 +53,22 @@ Frontend из frontend/: `pnpm test:unit`, `pnpm build` включает unit.
 `pnpm test` — unit alias, `pnpm test:all` — прежний полный набор.
 Playwright, packed-consumer и effective-theme проверки — ручной release.
 
+Четыре unit-файла используют Node без DOM-эмулятора через штатный
+`@vitest-environment node`: `api/execution-filters.test.ts`,
+`api/client.test.ts`, `api/catalog-errors.test.ts` и
+`pages/dashboard/dashboard.test.ts` внутри `frontend/src/`.
+Это логика дат, сводок и mocked HTTP responses; assertions сохранены.
+`api/auth.test.ts` проверяет cookies/storage и остаётся в jsdom, как остальные
+UI tests. Общий setup и зависимость jsdom сохранены для их consumers.
+Per-file environment поддерживает принятый Vitest4.1.11; не переносить Node
+на остальные файлы только по расширению. [Контракт Vitest](https://vitest.dev/guide/environment.html#environments-for-specific-files).
+
+Из frontend/ быстрый scoped контроль: `pnpm exec vitest run src/api/execution-filters.test.ts src/api/client.test.ts src/api/catalog-errors.test.ts src/pages/dashboard/dashboard.test.ts src/api/auth.test.ts --maxWorkers=1`.
+Он выполняет24 checks, включая5 browser-auth соседей. Native полный unit-набор
+и сравнение workers2/4 — отдельная performance-веха; default maxWorkers4 пока
+сохранён. Test-only изменения не требуют нового production dist при прежних
+build inputs. [Измерения и границы](../../services-base/docs/plans/forge-pure-node-unit-20261026.md).
+
 `frontend:types`, `frontend:tests` и closed-source `frontend:build` принимают Base contract
 `frontend-agent-presence-v1`: непустые correlation ID агента имеют presence
 семантику в фактической среде команды. Остальные inputs, пустые/отсутствующие ID,
