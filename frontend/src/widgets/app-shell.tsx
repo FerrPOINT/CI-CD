@@ -9,6 +9,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
   PlatformHeader,
   PlatformMark,
@@ -198,13 +199,12 @@ export function AppShell() {
                     align="end"
                     className="w-64 max-w-[calc(100vw-2rem)]"
                   >
-                    <div className="break-words px-2 py-2 text-sm font-medium text-text-primary">
+                    <DropdownMenuLabel>
                       {username}
-                    </div>
+                    </DropdownMenuLabel>
                     <ThemeMenuItems />
                     <DropdownMenuItem
                       onSelect={() => void logout()}
-                      className="min-h-11 gap-2 md:min-h-10"
                     >
                       <LogOut className="h-4 w-4" aria-hidden />
                       {t("navigation.logout")}

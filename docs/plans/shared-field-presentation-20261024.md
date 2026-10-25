@@ -1,6 +1,28 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: компоновка Button — 25 октября 2026
+## Текущий кандидат: общие части меню — 25 октября 2026
+
+UI pin `1500913e136476d84aee90fbe38017b518f39d95`, reference
+`cac88571998322babd4e11e42e7ce0614c673c6925fb23421b92ec3322926544`.
+
+Account heading заменён DropdownMenuLabel; logout и видимость/права остаются у Forge.
+
+Base владеет подписями, разделителем, метриками пунктов и Button size=icon.
+Product callbacks, URLs, ACL и запросы остаются у владельца. Шесть frozen offline
+refresh сохранили React singleton/версии и locks; SDK/skills pins независимы.
+Scoped qualification: 128 product + 15 Base + 29 guard + 81 reference cases,
+шесть TypeScript, examples/types, настоящий архив и SSR/Auth freshness прошли.
+IAB общего меню: 24 сочетания темы/плотности/ширины; callback один, focus/40–44 px
+и границы проверены. Это source QA, не authenticated или установленная приёмка.
+Новый built Storybook, production assets, HTTP parity164, hosted CI и публикация
+остаются открытыми. Доказательства: private evidence/menu-parts-20261025/;
+общий оставшийся scope — в плане Base.
+
+Предыдущая Button/Autocomplete волна отдельно завершила полный gate31/4290 и
+HTTP parity160 на прежних exact heads; она не является новым полным прогоном
+текущих menu inputs. Runtime/данные/credentials этим source-этапом не менялись.
+
+## Предыдущий кандидат: компоновка Button — 25 октября 2026
 
 UI pin `5338d65de4fb300df4b759f5865b2ee2fc92d1ce`, reference
 `d7158acef7806c90d9d2a2967d22f795dde8b01826874b8073b0ca96df9967f6`.
