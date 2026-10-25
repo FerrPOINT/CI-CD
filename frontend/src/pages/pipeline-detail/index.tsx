@@ -422,7 +422,8 @@ function JobCard({
       </div>
       {(job.status === "queued" || job.status === "running") && (
         <Disclosure
-          className="group mt-2 text-sm text-text-muted"
+          className="group mt-2"
+          tone="muted"
           summary={<>{t("jobs.manualStatus")}</>}
         >
           <div className="flex flex-wrap gap-2 pb-1">
@@ -889,7 +890,8 @@ function JobLogPanel({
         )}
       {canAppend && (
         <Disclosure
-          className="group text-sm text-text-muted"
+          className="group"
+          tone="muted"
           summary={<>{t("jobs.manualLog")}</>}
         >
           <form

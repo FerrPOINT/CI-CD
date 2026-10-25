@@ -1,6 +1,31 @@
 # Общие подписи полей Base
 
-## Текущий кандидат: разделы и выбранные строки — 25 октября 2026
+## Текущий кандидат: группы полей и подробности — 25 октября 2026
+
+UI pin `c04047590f9931fcef39ad328512a22f07149934`, reference
+`11c4fc27a5087eaecbcaaad822832729e6a5c434797e835cbe832acdf44df745`, версия0.3.2.
+
+Две технические секции pipeline используют tone=muted; ошибка schedules — tone=danger size=sm. Записи и обработчики заданий не меняются.
+
+Base владеет разделителем/плотностью Fieldset и вариантами appearance/tone/size
+Disclosure. Внешняя компоновка, смысл, native children, open и действия остаются
+у продукта. Удалены восемь presentation-копий; AST семи файлов подтверждает111
+неизменных обработчиков и код вне перевода классов в props. Guard дополнительно
+обнаружил compact-секцию Wiki; исправлена причина, правило не ослаблено.
+
+Семь UI pins согласованы; шесть frozen offline refresh сохранили locks и React
+singleton. SDK/skills pins не менялись этой волной. Scoped gate23 stages прошёл:
+202 product cases (Tracker92, Wiki15, Fleet78, Forge17), шесть TypeScript/source
+guards, reference82, настоящий архив и Workflow41. Отдельно Base8, SSR4 и guard32
+прошли (всего369 unique cases этого среза, без сложения повторных прогонов).
+IAB48 сочетаний React/SSR подтвердили три темы, плотность, standard/large и
+320/375/1920/2560,40/44px, контраст и отсутствие overflow; отдельно проверены
+FormData, disabled, сохранение ввода, Enter/Space и действие только по нажатию.
+Это source QA. Built Storybook regression, HTTP parity177, полный gate, реальный
+zoom200 и authenticated/installed приёмка остаются открытыми. Публикация и runtime
+не выполнялись. Доказательства: private evidence/field-disclosure-20261025/.
+
+## Предыдущий кандидат: разделы и выбранные строки — 25 октября 2026
 
 UI pin `10896c8afcdd1227043f7290183f8044a0c21365`, reference
 `7ba477baa2eda2f0e93bf58d14687717f64a9b72b7a955e4d9b1f390b9c9f14d`, версия0.3.2.

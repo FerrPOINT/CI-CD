@@ -340,7 +340,9 @@ export function SchedulesPage() {
                         </div>
                         {schedule.last_fire_error && (
                           <Disclosure
-                            className="ml-6 min-w-0 text-xs text-danger-strong"
+                            className="ml-6 min-w-0"
+                            tone="danger"
+                            size="sm"
                             summary={<>{t("schedules.errorPaused")}</>}
                           >
                             <p className="break-all pb-1">
