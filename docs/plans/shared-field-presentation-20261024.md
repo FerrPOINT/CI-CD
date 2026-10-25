@@ -1,5 +1,25 @@
 # Общие подписи полей Base
 
+## Текущий кандидат: подтверждение действия Base — 25 октября 2026
+
+UI producer `900b8dc531c33bfafe939623b6aa18c225f9a29d`, reference
+`b5ce47fe31e4a6ee67838e825c1acc0c743b2de0ad6e3956b01f2f3916c3a468`, версия 0.3.2.
+Изменён только UI pin: готовый совместимый Base без новых предметных обёрток.
+
+Адресные продуктовые unit: 6 PASS; types PASS; предметные исходники этой волной не менялись. Совместный scoped gate: 124 product cases, 49 Base confirmation,
+60 guard и 87 reference cases PASS. Настоящий UI-архив содержит новый компонент
+и offline CLI; шесть cached frozen refresh сохранили locks и React singleton.
+Семь UI pins согласованы; SDK/skills pins сохранены. Source guard из этого
+кандидата также включает прежнее исправление conditional const className.
+
+IAB общего компонента: 36 контекстов и восемь сценариев; отдельные точные
+Tracker fragments — 13 контекстов, label click, клавиатура и disabled. Оба QA
+закрыты, source hashes стабильны, HTTP-записей нет. Это source-проверка, не
+приёмка authenticated/установленного продукта. Исходные ошибки test setup и
+private verification helper сохранены отдельно, не считаются PASS; успешные
+install не повторялись. Полный milestone и общий семантический аудит продолжаются.
+Push, hosted CI, merge, runtime и production не выполнялись.
+
 ## Общие размеры действий PR — 25 октября 2026
 
 Три кнопки PullRequestActions больше не получают min-h-10/min-w-10 и их
@@ -19,7 +39,7 @@ QA закрыт, source hashes стабильны, HTTP-записей нет. �
 остаётся частью следующего итогового Base-кандидата: runtime UI pin a27339a
 и production payload не менялись; повторные install/build не выполнялись.
 
-## Текущий кандидат: текстовые ссылки Base — 25 октября 2026
+## Предыдущий кандидат: текстовые ссылки Base — 25 октября 2026
 
 UI producer `a27339a2efe253124770ff103a209e7212e2c11b`, reference `464b512a10dd44ec66aeeb09e791123e5a07e245346922898225f19db442fd35`, версия 0.3.2.
 Предметный код Forge в этой волне не менялся; принят совместимый пакет с расширенным source guard.
