@@ -9,6 +9,10 @@ describe('execution period bookmarks', () => {
   it('does not expand an ISO end bookmark to a calendar-day boundary', () => {
     expect(executionBoundary('2026-10-09T12:34:56+07:00', true)).toBe('2026-10-09T05:34:56.000Z')
   })
+  it('preserves cleared date filters for either boundary', () => {
+    expect(executionBoundary('', false)).toBe('')
+    expect(executionBoundary('', true)).toBe('')
+  })
   it('includes both boundaries of the local calendar day', () => {
     expect(new Date(executionBoundary('2026-10-09', false)).getHours()).toBe(0)
     const end = new Date(executionBoundary('2026-10-09', true))
