@@ -53,6 +53,13 @@ Frontend из frontend/: `pnpm test:unit`, `pnpm build` включает unit.
 `pnpm test` — unit alias, `pnpm test:all` — прежний полный набор.
 Playwright, packed-consumer и effective-theme проверки — ручной release.
 
+`frontend:types` и `frontend:tests` явно принимают Base contract
+`frontend-agent-presence-v1`: непустые correlation ID агента имеют presence
+семантику в фактической среде команды. Остальные inputs, пустые/отсутствующие ID,
+Node/pnpm и VITE settings сохраняются. Область фиксирует
+`FrontendToolchainTests`; lint/production artifact этим opt-in не охвачены.
+Это не разрешение повторно готовить dependencies при неизменном install key.
+
 ### Ручная релизная проверка
 
 Полный прежний набор сохранён в `.github/workflows/release.yml`: только

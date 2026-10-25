@@ -1,6 +1,7 @@
 import unittest
 import re
 import shlex
+import json
 from pathlib import Path
 
 
@@ -8,6 +9,15 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FrontendToolchainTests(unittest.TestCase):
+    def test_agent_presence_is_explicit_and_limited_to_types_and_unit(self):
+        manifest = json.loads((ROOT / '.quality-gate.json').read_text(encoding='utf-8'))
+        actual = {gate['id']: gate.get('environment_input_contract')
+                  for gate in manifest['gates'] if gate.get('environment_input_contract') is not None}
+        self.assertEqual(actual, {
+            'frontend:types': 'frontend-agent-presence-v1',
+            'frontend:tests': 'frontend-agent-presence-v1',
+        })
+
     def check_frozen_install(self, dockerfile):
         pin = dockerfile.index('corepack prepare pnpm@10.28.1 --activate')
         installs = list(re.finditer(r'\bpnpm\s+install\b[^\n]*', dockerfile))
