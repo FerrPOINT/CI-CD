@@ -19,14 +19,14 @@ COPY --from=install-manifest /app/package.json ./
 COPY CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
 COPY services-base/frontend /services-base/frontend
 ENV CI=true
-ENV SPEC=/workspace/openapi/openapi.yaml
+ENV SPEC=/openapi/openapi.yaml
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,id=${PNPM_CACHE_ID}-${TARGETARCH},target=/pnpm/store,sharing=locked pnpm install --store-dir=/pnpm/store --frozen-lockfile --ignore-scripts
 
 FROM dependencies AS generated
 ARG PDLC_RUN_SLOT_SHARING=locked
 COPY CI-CD/frontend/package.json ./
-COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
-COPY CI-CD/frontend/scripts/generate-openapi.mjs scripts/generate-openapi.mjs
+COPY CI-CD/openapi/openapi.yaml /openapi/openapi.yaml
+COPY CI-CD/frontend/scripts/base-generate-openapi.mjs ./scripts/base-generate-openapi.mjs
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} pnpm run postinstall && test -s src/api/schema.d.ts
 
 FROM dependencies AS unit

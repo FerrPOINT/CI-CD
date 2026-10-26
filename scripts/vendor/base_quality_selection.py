@@ -191,14 +191,15 @@ def validate_compose_execution(gate):
     validate_resource_limits(value['limits'])
 
 
-def artifact_environment(gate, values):
-    """An opt-in projection constrains the actual child, not only its cache key."""
+def artifact_environment_policy(gate):
+    """Validate a declaration without depending on child execution semantics.
+
+    Manifest-only consumers copy this canonical closure. Returning the declared
+    channels/patterns also keeps the executor from maintaining a second policy.
+    """
     if 'environment_input_contract' not in gate:
-        return dict(values)
+        return None, ()
     if gate['environment_input_contract'] == 'frontend-agent-presence-v1':
-        # Qualified frontend consumers use these correlation channels only as
-        # presence flags (notably std-env agent detection). Keep absent/empty
-        # distinct, and leave every other supplied variable conservatively live.
         channels = ('CODEX_THREAD_ID', 'CODEX_SESSION_ID')
         artifact = gate.get('kind') == 'artifact'
         if (gate.get('component') != 'frontend' or gate.get('cwd') != 'frontend'
@@ -211,14 +212,7 @@ def artifact_environment(gate, values):
                                       or gate.get('test_tier') not in ('unit', 'static')))
                 or any(name in channels for name in gate.get('requires_env', []))):
             raise ValueError('Agent presence contract requires qualified ordinary frontend gates')
-        result = dict(values)
-        for name in channels:
-            if name in result:
-                if not isinstance(result[name], str):
-                    raise ValueError('Agent presence channels must contain string values')
-                if result[name]:
-                    result[name] = '1'
-        return result
+        return gate['environment_input_contract'], channels
     if (gate['environment_input_contract'] != 'declared-artifact-v1'
             or gate.get('kind') != 'artifact' or gate.get('execution_slot') == 'command'
             or gate.get('covers_units')):
@@ -234,8 +228,32 @@ def artifact_environment(gate, values):
     if any(name == 'BASE_QUALITY_ARTIFACTS' or not matches(name, patterns)
            for name in gate.get('requires_env', [])):
         raise ValueError('Required fixture environment is outside the artifact input contract')
+    return gate['environment_input_contract'], patterns
+
+
+def frontend_agent_environment(values):
+    """Shared actual presence projection for explicitly qualified consumers."""
+    result = dict(values)
+    for name in ('CODEX_THREAD_ID', 'CODEX_SESSION_ID'):
+        if name in result:
+            if not isinstance(result[name], str):
+                raise ValueError('Agent presence channels must contain string values')
+            if result[name]:
+                result[name] = '1'
+    return result
+
+
+def artifact_environment(gate, values):
+    """Project the actual child environment before computing its cache key."""
+    contract, inputs = artifact_environment_policy(gate)
+    if contract is None:
+        return dict(values)
+    if contract == 'frontend-agent-presence-v1':
+        # Only qualified consumers with presence semantics may use this policy.
+        # Preserve absent/empty and all other product inputs conservatively.
+        return frontend_agent_environment(values)
     return {name: value for name, value in values.items()
-            if name != 'BASE_QUALITY_ARTIFACTS' and matches(name, patterns)}
+            if name != 'BASE_QUALITY_ARTIFACTS' and matches(name, inputs)}
 # END GENERATED QUALITY SUPPORT
 
 
@@ -695,7 +713,7 @@ def load(root):
     identifiers = set()
     for gate in manifest["gates"]:
         validate_gate_slot(gate)
-        artifact_environment(gate, {})
+        artifact_environment_policy(gate)
         identifier = gate["id"]
         if (
             not re.fullmatch(r"[a-zA-Z0-9:_-]+", identifier)

@@ -10,6 +10,21 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FrontendToolchainTests(unittest.TestCase):
+    def test_closed_postinstall_uses_the_same_schema_layout_in_prepared_and_docker_paths(self):
+        manifest = selection.load(ROOT)
+        profile = manifest['frontend_generation']
+        self.assertIn('openapi/**', profile['inputs'])
+        self.assertIn('frontend/scripts/base-generate-openapi.mjs', profile['inputs'])
+        for gate in manifest['gates']:
+            if gate.get('prepare_frontend'):
+                self.assertEqual(gate['descriptor_input_contract'], 'prepared-frontend-generation-context-v1')
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            source = (ROOT / 'frontend' / name).read_text(encoding='utf8')
+            stage = source.split('AS generated\n', 1)[1].split('\nFROM ', 1)[0]
+            self.assertLess(stage.index('COPY CI-CD/frontend/scripts/base-generate-openapi.mjs'), stage.index('pnpm run postinstall'))
+            self.assertIn('COPY CI-CD/openapi/openapi.yaml /openapi/openapi.yaml', stage)
+            self.assertIn('ENV SPEC=/openapi/openapi.yaml', source)
+
     def test_tracked_openapi_output_keeps_the_generators_canonical_lf(self):
         attributes = (ROOT / '.gitattributes').read_text(encoding='utf-8').splitlines()
         self.assertIn('frontend/src/api/schema.d.ts text eol=lf', attributes)

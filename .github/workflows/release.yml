@@ -36,7 +36,12 @@ jobs:
           root=Path('CI-CD')
           pin=(root/'.quality-tooling-revision').read_text().strip()
           receipt=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
-          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v1' or receipt['revision']!=pin:
+          assert receipt['schema']=='base-quality-tooling/v2'
+          generator=receipt['frontend_generator']
+          assert generator['source']=='scripts/generate_openapi.mjs' and generator['contract']=='base-openapi-generation/v1'
+          assert generator['file']=='frontend/scripts/base-generate-openapi.mjs'
+          assert hashlib.sha256((root/generator['file']).read_bytes()).hexdigest()==generator['sha256']
+          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v2' or receipt['revision']!=pin:
               raise SystemExit('Packaged Base revision mismatch')
           if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
               raise SystemExit('Packaged Base selector checksum mismatch')

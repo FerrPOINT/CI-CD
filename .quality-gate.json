@@ -68,8 +68,21 @@
     {
       "id": "maintenance:wrapper-unit",
       "component": "maintenance",
-      "profiles": ["fast", "unit", "build", "integrated", "release"],
-      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_base_stand_backup", "-q"],
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_base_stand_backup",
+        "-q"
+      ],
       "cwd": ".",
       "inputs": [
         "scripts/tests/test_base_stand_backup.py",
@@ -77,7 +90,9 @@
         ".quality-gate.json",
         ".github/workflows/ci.yml"
       ],
-      "platforms": ["linux"],
+      "platforms": [
+        "linux"
+      ],
       "cacheable": false,
       "execution_slot": "none",
       "test_tier": "unit"
@@ -85,8 +100,15 @@
     {
       "id": "maintenance-sdk:integration",
       "component": "maintenance-sdk",
-      "profiles": ["integration", "release"],
-      "argv": ["{python}", "-B", "scripts/tests/test_native_qa_compose.py"],
+      "profiles": [
+        "integration",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/tests/test_native_qa_compose.py"
+      ],
       "cwd": ".",
       "inputs": [
         "scripts/tests/test_native_qa_compose.py",
@@ -94,8 +116,12 @@
         "scripts/native_qa_compose_client.py",
         ".quality-gate.json"
       ],
-      "platforms": ["linux"],
-      "requires_env": ["SDLC_MAINTENANCE_BASE"],
+      "platforms": [
+        "linux"
+      ],
+      "requires_env": [
+        "SDLC_MAINTENANCE_BASE"
+      ],
       "cacheable": false,
       "external_state": true,
       "test_tier": "integration"
@@ -173,30 +199,105 @@
       "id": "tooling:build-contracts",
       "component": "tooling",
       "execution_slot": "none",
-      "profiles": ["fast", "unit", "build", "integrated", "release"],
-      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_backend_dockerfile", "scripts.tests.test_ci_contract_checks.CliIntegrationGateTests", "scripts.tests.test_backend_release_ownership", "-q"],
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_backend_dockerfile",
+        "scripts.tests.test_ci_contract_checks.CliIntegrationGateTests",
+        "scripts.tests.test_backend_release_ownership",
+        "-q"
+      ],
       "cwd": ".",
-      "inputs": ["scripts/tests/test_backend_release_ownership.py", "backend/Cargo.toml", "backend/tests/cache-protocol/Cargo.toml", "scripts/tests/test_backend_dockerfile.py", "scripts/tests/test_ci_contract_checks.py", "frontend/vite.config.ts", "frontend/vitest.config.ts", "frontend/tsconfig.json", "frontend/Dockerfile", "frontend/Dockerfile.umbrella", ".quality-gate.json", "backend/Dockerfile", "backend/Dockerfile.umbrella", ".github/workflows/ci.yml", ".github/workflows/release.yml", "scripts/vendor/base_quality_selection.py", "scripts/vendor/base-quality-tooling.json", ".quality-tooling-revision"],
+      "inputs": [
+        "scripts/tests/test_backend_release_ownership.py",
+        "backend/Cargo.toml",
+        "backend/tests/cache-protocol/Cargo.toml",
+        "scripts/tests/test_backend_dockerfile.py",
+        "scripts/tests/test_ci_contract_checks.py",
+        "frontend/vite.config.ts",
+        "frontend/vitest.config.ts",
+        "frontend/tsconfig.json",
+        "frontend/Dockerfile",
+        "frontend/Dockerfile.umbrella",
+        ".quality-gate.json",
+        "backend/Dockerfile",
+        "backend/Dockerfile.umbrella",
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+        "scripts/vendor/base_quality_selection.py",
+        "scripts/vendor/base-quality-tooling.json",
+        ".quality-tooling-revision"
+      ],
       "cacheable": true,
       "test_tier": "static"
     },
     {
       "id": "backend:cache-tooling-unit",
       "component": "backend",
-      "profiles": ["fast", "unit", "build", "release"],
-      "argv": ["{python}", "-B", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_cache_tooling.py", "-q"],
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/tests",
+        "-p",
+        "test_cache_tooling.py",
+        "-q"
+      ],
       "cwd": ".",
-      "inputs": ["scripts/check_cache_tooling.py", "scripts/tests/test_cache_tooling.py", ".quality-gate.json", "backend/src/runner_cache.rs", "backend/src/task_delivery/postgres.rs"],
+      "inputs": [
+        "scripts/check_cache_tooling.py",
+        "scripts/tests/test_cache_tooling.py",
+        ".quality-gate.json",
+        "backend/src/runner_cache.rs",
+        "backend/src/task_delivery/postgres.rs"
+      ],
       "cacheable": true,
       "test_tier": "unit"
     },
     {
       "id": "backend:cache-tooling",
       "component": "backend",
-      "profiles": ["fast", "unit", "build", "release"],
-      "argv": ["{python}", "-B", "scripts/check_cache_tooling.py"],
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/check_cache_tooling.py"
+      ],
       "cwd": ".",
-      "inputs": ["scripts/check_cache_tooling.py", "scripts/vendor/base_forge_job_cache.py", "scripts/vendor/base-build-cache-policy.json", "scripts/vendor/base-forge-cache-tooling.json", "backend/src/runner_cache.rs", "backend/Cargo.lock", "backend/Cargo.toml", "backend/tests/cache-protocol/Cargo.toml", ".quality-gate.json"],
+      "inputs": [
+        "scripts/check_cache_tooling.py",
+        "scripts/vendor/base_forge_job_cache.py",
+        "scripts/vendor/base-build-cache-policy.json",
+        "scripts/vendor/base-forge-cache-tooling.json",
+        "backend/src/runner_cache.rs",
+        "backend/Cargo.lock",
+        "backend/Cargo.toml",
+        "backend/tests/cache-protocol/Cargo.toml",
+        ".quality-gate.json"
+      ],
       "cacheable": true,
       "test_tier": "static"
     },
@@ -262,7 +363,8 @@
       ],
       "prepare_frontend": "22.20.0",
       "test_tier": "static",
-      "environment_input_contract": "frontend-agent-presence-v1"
+      "environment_input_contract": "frontend-agent-presence-v1",
+      "descriptor_input_contract": "prepared-frontend-generation-context-v1"
     },
     {
       "id": "frontend:tests",
@@ -304,7 +406,8 @@
       ],
       "prepare_frontend": "22.20.0",
       "test_tier": "unit",
-      "environment_input_contract": "frontend-agent-presence-v1"
+      "environment_input_contract": "frontend-agent-presence-v1",
+      "descriptor_input_contract": "prepared-frontend-generation-context-v1"
     },
     {
       "id": "frontend:lint",
@@ -342,7 +445,8 @@
         }
       ],
       "prepare_frontend": "22.20.0",
-      "test_tier": "static"
+      "test_tier": "static",
+      "descriptor_input_contract": "prepared-frontend-generation-context-v1"
     },
     {
       "id": "frontend:build",
@@ -420,7 +524,8 @@
         "frontend/vitest.config.ts",
         "frontend/scripts/tailwind-source-inputs.test.mjs"
       ],
-      "test_tier": "artifact"
+      "test_tier": "artifact",
+      "descriptor_input_contract": "prepared-frontend-generation-context-v1"
     },
     {
       "id": "backend:unit",
@@ -699,5 +804,21 @@
   "backend_unit_inputs": [
     "backend/tests/**",
     "backend/**/tests/**"
-  ]
+  ],
+  "frontend_generation": {
+    "schema": "base-frontend-generation/v1",
+    "inputs": [
+      "frontend/scripts/base-generate-openapi.mjs",
+      "openapi/**",
+      "frontend/redocly.yaml",
+      "frontend/redocly.yml",
+      "frontend/.redocly.yaml",
+      "frontend/.redocly.yml"
+    ],
+    "scripts": [
+      "postinstall"
+    ],
+    "commands_sha256": "433bc9eab482331989253c430535c2ca929494ad6d2a3dadaea5817739e32f2d",
+    "environment_input_contract": "frontend-agent-presence-v1"
+  }
 }
