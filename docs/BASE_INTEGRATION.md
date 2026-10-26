@@ -142,3 +142,13 @@ frontend types, guards и штатный SSR fingerprint. Изменённые R
 имеют scoped regression checks; общий UI проверен в IAB на трёх темах и
 ширинах320/375/1920/2560. Это source adoption; установленный runtime, SSO
 и продуктовые данные не изменялись. Полный release/hosted/runtime gate отдельно.
+
+## Строки действий — 2026-10-26
+
+Количество строк действий, переведённых на ActionGroup Base: 10.
+Внешнее размещение, видимость и предметные grid остаются у продукта; gap и
+перенос — у Base. Callbacks, ref, права, native типы, URLs и сохранение
+не меняются. UI producer остаётся c2ca61094a904706fceeda8eb8f3b3cfd2e7cdfc;
+UI API, SDK/skills pins, зависимости и установленный runtime не обновляются.
+Scoped проверки и компонентный IAB не заменяют полный integrated gate
+и authenticated-приёмку страниц.

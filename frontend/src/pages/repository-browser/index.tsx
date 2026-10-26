@@ -1,4 +1,5 @@
 import {
+  ActionGroup,
   Prose,
   ResourceStateView,
   AutocompleteInput,
@@ -189,7 +190,7 @@ export function RepositoryBrowserPage({
             }
             actions={
               <>
-                <div className="flex flex-wrap gap-2">
+                <ActionGroup align="start">
                   <Button asChild variant="outline" size="sm">
                     <Link
                       to={`/repositories/${encodeURIComponent(repo)}/compare`}
@@ -206,7 +207,7 @@ export function RepositoryBrowserPage({
                       {t("repositoryBrowser.createPullRequest")}
                     </Link>
                   </Button>
-                </div>
+                </ActionGroup>
               </>
             }
           />
@@ -1246,7 +1247,7 @@ function ReleasesList({ repo }: { repo: string }) {
                         </Prose>
                       )}
                     </div>
-                    <div className="flex w-full shrink-0 items-center justify-end gap-1 sm:w-auto">
+                    <ActionGroup align="end" className="w-full shrink-0 sm:w-auto">
                       <Button
                         variant="ghost"
                         type="button"
@@ -1269,7 +1270,7 @@ function ReleasesList({ repo }: { repo: string }) {
                       >
                         <Trash2 className="h-4 w-4" aria-hidden />
                       </Button>
-                    </div>
+                    </ActionGroup>
                   </li>
                 </ResourceListRow>
               ))}

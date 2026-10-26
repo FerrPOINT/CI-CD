@@ -1,4 +1,5 @@
 import {
+  ActionGroup,
   ResourceListTitle,
   ResourceListDescription,
   TextLink,
@@ -228,7 +229,7 @@ export function EnvironmentsPage() {
               {formError}
             </Notice>
           )}
-          <div className="flex flex-wrap gap-2 sm:col-span-2">
+          <ActionGroup align="start" className="sm:col-span-2">
             <Button type="submit" disabled={createEnv.isPending}>
               {t("environments.create")}
             </Button>
@@ -242,7 +243,7 @@ export function EnvironmentsPage() {
             >
               {t("common.cancel")}
             </Button>
-          </div>
+          </ActionGroup>
         </form>
       )}
 
@@ -685,7 +686,7 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                           </p>
                           </ResourceListDescription>
                         </div>
-                        <div className="flex flex-wrap gap-1">
+                        <ActionGroup align="start">
                           {deployment.approval_required &&
                             deployment.approval_state === "pending" && (
                               <>
@@ -739,7 +740,7 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                               {t("deployments.rollback")}
                             </Button>
                           )}
-                        </div>
+                        </ActionGroup>
                       </li>
                     </ResourceListRow>
                   ))}

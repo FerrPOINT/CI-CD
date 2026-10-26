@@ -1,4 +1,5 @@
 import {
+  ActionGroup,
   ResourceStateView,
   AutocompleteInput,
   PageNavigation,
@@ -231,7 +232,7 @@ function CreatePullRequestForm({
           )}
         </FormField>
       </div>
-      <div className="flex flex-wrap gap-2 sm:col-span-2">
+      <ActionGroup align="start" className="sm:col-span-2">
         <Button
           type="submit"
 
@@ -247,7 +248,7 @@ function CreatePullRequestForm({
         >
           {t("common.cancel")}
         </Button>
-      </div>
+      </ActionGroup>
     </form>
   );
 }

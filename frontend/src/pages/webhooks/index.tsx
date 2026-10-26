@@ -1,4 +1,5 @@
 import {
+  ActionGroup,
   EmptyState,
   ResourceListDescription,
   ResourceListTitle,
@@ -182,7 +183,7 @@ export function WebhooksPage() {
                       />
                     )}
                   </FormField>
-                  <div className="flex flex-wrap gap-2">
+                  <ActionGroup align="start">
                     <Button
                       type="submit"
 
@@ -198,7 +199,7 @@ export function WebhooksPage() {
                     >
                       {t("common.cancel")}
                     </Button>
-                  </div>
+                  </ActionGroup>
                 </form>
               </CardContent>
             </Card>
@@ -667,7 +668,7 @@ function DeliveryHistorySection() {
           <CardContent>
             <div className="mb-3 flex items-center justify-between gap-3">
               <SectionHeader level={3} title={t("deliveries.details")} />
-              <div className="flex items-center gap-2">
+              <ActionGroup align="start">
                 {selectedDelivery?.status === "failed" && (
                   <Button
                     type="button"
@@ -690,7 +691,7 @@ function DeliveryHistorySection() {
                 >
                   <X className="h-4 w-4" />
                 </Button>
-              </div>
+              </ActionGroup>
             </div>
             <QueryState
               data={detail.data}

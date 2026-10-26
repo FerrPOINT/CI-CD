@@ -1,4 +1,5 @@
 import {
+  ActionGroup,
   ResourceListDescription,
   EmptyState,
   CardContent,
@@ -217,7 +218,7 @@ export function CatalogPullPage() {
       {pr.status === "open" &&
         repository.data.state === "active" &&
         !repository.data.availability && (
-          <div className="flex gap-3">
+          <ActionGroup align="start">
             <Button disabled={busy} onClick={() => act("merge")}>
               Merge
             </Button>
@@ -228,7 +229,7 @@ export function CatalogPullPage() {
             >
               Закрыть
             </Button>
-          </div>
+          </ActionGroup>
         )}
     </div>
   );

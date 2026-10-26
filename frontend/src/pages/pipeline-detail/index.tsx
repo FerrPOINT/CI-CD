@@ -1,4 +1,5 @@
 import {
+  ActionGroup,
   ResourceListTitle,
   ResourceListDescription,
   Notice,
@@ -407,7 +408,7 @@ function JobCard({
           {latestDiagnostic}
         </Notice>
       )}
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+      <ActionGroup align="start" className="mt-3">
         <Button
           size="sm"
           variant="outline"
@@ -421,14 +422,14 @@ function JobCard({
             <Package className="h-3 w-3" /> {t("artifacts.title")}
           </Link>
         </Button>
-      </div>
+      </ActionGroup>
       {(job.status === "queued" || job.status === "running") && (
         <Disclosure
           className="group mt-2"
           tone="muted"
           summary={<>{t("jobs.manualStatus")}</>}
         >
-          <div className="flex flex-wrap gap-2 pb-1">
+          <div className="pb-1"><ActionGroup align="start">
             {job.status === "queued" && (
               <Button
                 size="sm"
@@ -471,7 +472,7 @@ function JobCard({
                 </Button>
               </>
             )}
-          </div>
+          </ActionGroup></div>
         </Disclosure>
       )}
     </ResourceListRow>

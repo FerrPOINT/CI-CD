@@ -150,7 +150,7 @@ UI/SDK/skills pins независимы; установка и production — о
 продукта и IAB затронутого поведения. Источники, hosted CI и runtime — разные gates.
 
 Button, Input, Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
-Dialog и Toaster/toast использовать из публичного @pdlc/ui. Общий дефект
+Dialog, ActionGroup и Toaster/toast использовать из публичного @pdlc/ui. Общий дефект
 исправлять в Base; продукт сохраняет данные, права и сохранение. Прямой Sonner,
 копии примитивов и продуктовые определения общих tokens не добавлять.
 Брендинг применяется общим runtime; draft preview изолируется BrandingScope.
@@ -160,6 +160,9 @@ Base; локальные h-10/min-h-10 и мобильные копии не д�
 Это относится и к классам в локальных const: компактное действие задаётся
 Button size=icon, обычное — публичным size; justify-start и внешняя раскладка
 остаются у продукта. Не скрывать копии метрик в условных className-константах.
+Строки явных действий используют ActionGroup (SSR — action_group): перенос и gap
+принадлежат Base, внешние margin/width/grid — экрану. Выбор значения использует
+RadioGroup/Select; контекст ресурса не превращается в фиктивную строку действий.
 Канонический контракт — Base docs/platform/DESIGN_SYSTEM.md и docs/BRANDING.md.
 UI/SDK/skills pins независимы; source-изменения не означают установку.
 
