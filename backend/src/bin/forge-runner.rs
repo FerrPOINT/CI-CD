@@ -1353,12 +1353,20 @@ async fn upload_terminal_artifacts(
         .await
         .with_context(|| format!("canonicalize workspace {}", workspace.display()))?;
     for (artifact_path, artifact_name) in offer.attempt.artifacts.iter().zip(names) {
-        let Some(file) = terminal_artifact_path(&workspace, artifact_path, failed_kubernetes_exit).await? else {
-            let message=format!("declared artifact {artifact_path} absent after failed execution");
+        let Some(file) =
+            terminal_artifact_path(&workspace, artifact_path, failed_kubernetes_exit).await?
+        else {
+            let message =
+                format!("declared artifact {artifact_path} absent after failed execution");
             eprintln!("{message}");
-            let _=append_log_lines(context,vec![RunnerLogLine {
-                stream:"system",message:protocol_log_message(&message),
-            }]).await;
+            let _ = append_log_lines(
+                context,
+                vec![RunnerLogLine {
+                    stream: "system",
+                    message: protocol_log_message(&message),
+                }],
+            )
+            .await;
             continue;
         };
         let metadata = tokio::fs::metadata(&file)
@@ -1409,32 +1417,37 @@ async fn terminal_artifact_path(
     artifact_path: &str,
     failed_kubernetes_exit: bool,
 ) -> anyhow::Result<Option<PathBuf>> {
-    let error=match resolve_workspace_artifact(workspace,artifact_path).await {
-        Ok(path)=>return Ok(Some(path)),
-        Err(error)=>error,
+    let error = match resolve_workspace_artifact(workspace, artifact_path).await {
+        Ok(path) => return Ok(Some(path)),
+        Err(error) => error,
     };
-    if !failed_kubernetes_exit || !error.downcast_ref::<std::io::Error>()
-        .is_some_and(|e|e.kind()==std::io::ErrorKind::NotFound) {
+    if !failed_kubernetes_exit
+        || !error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    {
         return Err(error);
     }
     // canonicalize(NotFound) can also mean an escaping/dangling symlink.
     // Check every existing prefix before classifying a genuinely absent tail.
-    let mut current=workspace.to_path_buf();
+    let mut current = workspace.to_path_buf();
     for part in Path::new(artifact_path).components() {
         match part {
-            Component::Normal(name)=>current.push(name),
-            Component::CurDir=>continue,
-            _=>bail!("artifact path {artifact_path} must stay within workspace"),
+            Component::Normal(name) => current.push(name),
+            Component::CurDir => continue,
+            _ => bail!("artifact path {artifact_path} must stay within workspace"),
         }
         match tokio::fs::symlink_metadata(&current).await {
-            Ok(metadata) if metadata.file_type().is_symlink()=>{
-                current=tokio::fs::canonicalize(&current).await?;
-                ensure!(current.starts_with(workspace),
-                    "artifact path {artifact_path} must stay within workspace");
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                current = tokio::fs::canonicalize(&current).await?;
+                ensure!(
+                    current.starts_with(workspace),
+                    "artifact path {artifact_path} must stay within workspace"
+                );
             }
-            Ok(_)=>{}
-            Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(None),
-            Err(e)=>return Err(e.into()),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
         }
     }
     // A file appeared during the failed read; do not infer absent state.
@@ -2061,56 +2074,92 @@ mod tests {
 
     #[tokio::test]
     async fn failed_kubernetes_outputs_skip_only_missing_and_upload_existing() {
-        use std::sync::{Arc,Mutex};
-        let uploads=Arc::new(Mutex::new(Vec::new()));let observed=uploads.clone();
-        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base=format!("http://{}",listener.local_addr().unwrap());
-        let app=axum::Router::new().fallback(move |request:axum::extract::Request| {
-            let observed=observed.clone();
+        use std::sync::{Arc, Mutex};
+        let uploads = Arc::new(Mutex::new(Vec::new()));
+        let observed = uploads.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().fallback(move |request: axum::extract::Request| {
+            let observed = observed.clone();
             async move {
                 if request.uri().path().ends_with("/artifacts") {
-                    let name=request.headers()["X-Artifact-Path"].to_str().unwrap().to_owned();
-                    let bytes=axum::body::to_bytes(request.into_body(),1024).await.unwrap();
-                    observed.lock().unwrap().push((name,bytes.to_vec()));
+                    let name = request.headers()["X-Artifact-Path"]
+                        .to_str()
+                        .unwrap()
+                        .to_owned();
+                    let bytes = axum::body::to_bytes(request.into_body(), 1024)
+                        .await
+                        .unwrap();
+                    observed.lock().unwrap().push((name, bytes.to_vec()));
                 }
                 axum::http::StatusCode::OK
             }
         });
-        let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
-        let root=std::env::temp_dir().join(format!("forge-failed-output-{}",Uuid::new_v4()));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let root = std::env::temp_dir().join(format!("forge-failed-output-{}", Uuid::new_v4()));
         std::fs::create_dir_all(root.join("output")).unwrap();
-        std::fs::write(root.join("output/present.txt"),b"actual output").unwrap();
-        let mut offer=test_offer("git missing",10);
-        offer.attempt.artifacts=vec!["output/missing.txt".into(),"output/present.txt".into()];
-        let context=LogContext {client:reqwest::Client::new(),base,
-            credential:"fixture".into(),lease_id:offer.lease_id,lease_token:offer.lease_token.clone(),
-            fencing_token:offer.fencing_token,attempt_id:offer.attempt.id,masks:vec![]};
-        upload_terminal_artifacts(&context,&offer,&root,true).await.unwrap();
-        assert_eq!(*uploads.lock().unwrap(),
-            vec![("output/present.txt".into(),b"actual output".to_vec())]);
+        std::fs::write(root.join("output/present.txt"), b"actual output").unwrap();
+        let mut offer = test_offer("git missing", 10);
+        offer.attempt.artifacts = vec!["output/missing.txt".into(), "output/present.txt".into()];
+        let context = LogContext {
+            client: reqwest::Client::new(),
+            base,
+            credential: "fixture".into(),
+            lease_id: offer.lease_id,
+            lease_token: offer.lease_token.clone(),
+            fencing_token: offer.fencing_token,
+            attempt_id: offer.attempt.id,
+            masks: vec![],
+        };
+        upload_terminal_artifacts(&context, &offer, &root, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            *uploads.lock().unwrap(),
+            vec![("output/present.txt".into(), b"actual output".to_vec())]
+        );
         uploads.lock().unwrap().clear();
         // Existing success/shell contract still rejects the missing required output.
-        assert!(upload_declared_artifacts(&context,&offer,&root).await.is_err());
+        assert!(upload_declared_artifacts(&context, &offer, &root)
+            .await
+            .is_err());
         assert!(uploads.lock().unwrap().is_empty());
-        server.abort();let _=server.await;std::fs::remove_dir_all(root).unwrap();
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn failed_artifact_missing_policy_keeps_symlink_and_path_safety() {
         use std::os::unix::fs::symlink;
-        let root=std::env::temp_dir().join(format!("forge-failed-path-{}",Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("forge-failed-path-{}", Uuid::new_v4()));
         std::fs::create_dir_all(root.join("workspace")).unwrap();
         std::fs::create_dir_all(root.join("outside")).unwrap();
-        let workspace=std::fs::canonicalize(root.join("workspace")).unwrap();
-        symlink(root.join("outside"),workspace.join("escape")).unwrap();
-        symlink(workspace.join("not-created"),workspace.join("dangling")).unwrap();
-        assert!(terminal_artifact_path(&workspace,"output/missing",true).await.unwrap().is_none());
-        assert!(terminal_artifact_path(&workspace,"escape/missing",true).await.is_err());
-        assert!(terminal_artifact_path(&workspace,"dangling/missing",true).await.is_err());
-        assert!(terminal_artifact_path(&workspace,"../outside/missing",true).await.is_err());
-        assert!(terminal_artifact_path(&workspace,"/outside/missing",true).await.is_err());
-        assert!(terminal_artifact_path(&workspace,"output/missing",false).await.is_err());
+        let workspace = std::fs::canonicalize(root.join("workspace")).unwrap();
+        symlink(root.join("outside"), workspace.join("escape")).unwrap();
+        symlink(workspace.join("not-created"), workspace.join("dangling")).unwrap();
+        assert!(terminal_artifact_path(&workspace, "output/missing", true)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(terminal_artifact_path(&workspace, "escape/missing", true)
+            .await
+            .is_err());
+        assert!(terminal_artifact_path(&workspace, "dangling/missing", true)
+            .await
+            .is_err());
+        assert!(
+            terminal_artifact_path(&workspace, "../outside/missing", true)
+                .await
+                .is_err()
+        );
+        assert!(terminal_artifact_path(&workspace, "/outside/missing", true)
+            .await
+            .is_err());
+        assert!(terminal_artifact_path(&workspace, "output/missing", false)
+            .await
+            .is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -2317,9 +2366,14 @@ async fn execute_kubernetes(
                 })
                 .await
                 .map_err(|_| UnconfirmedExecution)?;
-            upload_terminal_artifacts(context, offer, workspace.checkout(), terminal.exit_code != 0)
-                .await
-                .map_err(|_| UnconfirmedExecution)?;
+            upload_terminal_artifacts(
+                context,
+                offer,
+                workspace.checkout(),
+                terminal.exit_code != 0,
+            )
+            .await
+            .map_err(|_| UnconfirmedExecution)?;
         }
     }
     let result = ExecutionResult {
@@ -2625,8 +2679,12 @@ async fn recover_kubernetes(
             .await?;
         if outcome != "canceled" {
             upload_terminal_artifacts(
-                &context, &offer, workspace.checkout(), outcome == "failed" && terminal.exit_code != 0,
-            ).await?;
+                &context,
+                &offer,
+                workspace.checkout(),
+                outcome == "failed" && terminal.exit_code != 0,
+            )
+            .await?;
         }
     }
     context.masks.clear();
