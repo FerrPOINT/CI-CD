@@ -115,3 +115,19 @@ package-каталог не может заменить закреплённый
 Четыре списка синхронизаций используют общий OffsetPageNavigation. Forge сохраняет offset/limit, фильтры, URL и запросы; некратный offset не округляется.
 Проверки source-кандидата и установленного PDLC2 учитываются отдельно;
 обновление pin не означает установку.
+
+## Общие строки действий — 2026-10-26
+
+UI producer: `c0d2245e40303efffc04c7d8c24eb3746afd1439`. В Base добавлен ActionGroup и SSR action_group;
+PageHeader, SectionHeader, PageNavigation и ChatComposerActions используют общий
+каркас. Данные, права, курсоры, submit/pending, неизвестный результат записи и
+readback сохраняются у продукта. Для пояснений используется ResourceListDescription.
+Внешние margin/width/grid placement и sticky-контейнер принадлежат экрану;
+общие gap, разделитель и мобильная компоновка — Base. Нативные формы,
+тип кнопок, hidden, IDs и callbacks сохраняются. SDK и skills pins не изменены.
+
+Проверены шесть offline frozen installs, singleton React, CLI/reference,
+frontend types, guards и штатный SSR fingerprint. Изменённые React-сценарии
+имеют scoped regression checks; общий UI проверен в IAB на трёх темах и
+ширинах320/375/1920/2560. Это source adoption; установленный runtime, SSO
+и продуктовые данные не изменялись. Полный release/hosted/runtime gate отдельно.

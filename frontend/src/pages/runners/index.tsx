@@ -1,7 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Server, Trash2 } from "lucide-react";
-import { ResourceListTitle, ResourceListDescription,
+import {
+  ActionGroup,
+  ResourceListTitle,
+  ResourceListDescription,
   PageNavigation,
   Badge,
   PageHeader,
@@ -144,7 +147,7 @@ export function RunnersPage() {
           <p className="text-xs text-text-secondary sm:col-span-2">
             {t("runners.manualNotice")}
           </p>
-          <div className="flex justify-end gap-2 sm:col-span-2">
+          <ActionGroup align="end" className="sm:col-span-2">
             <Button
               type="button"
               variant="outline"
@@ -164,7 +167,7 @@ export function RunnersPage() {
             >
               {t("runners.register")}
             </Button>
-          </div>
+          </ActionGroup>
         </form>
       )}
 
@@ -244,27 +247,33 @@ export function RunnersPage() {
                             aria-hidden
                           />
                           <div className="min-w-0 flex-1">
-                            <ResourceListTitle asChild className="truncate"><p
-
-                              title={runner.name}
+                            <ResourceListTitle asChild className="truncate">
+                              <p title={runner.name}>{runner.name}</p>
+                            </ResourceListTitle>
+                            <ResourceListDescription
+                              asChild
+                              className="truncate"
                             >
-                              {runner.name}
-                            </p></ResourceListTitle>
-                            <ResourceListDescription asChild className="truncate"><p
-
-                              title={tags || undefined}
+                              <p title={tags || undefined}>
+                                {tags || t("runners.noTags")}
+                              </p>
+                            </ResourceListDescription>
+                            <ResourceListDescription
+                              asChild
+                              className="truncate"
                             >
-                              {tags || t("runners.noTags")}
-                            </p></ResourceListDescription>
-                            <ResourceListDescription asChild className="truncate"><p >
-                              {t("runners.lastSeen")}:{" "}
-                              {runner.last_seen_at
-                                ? new Date(runner.last_seen_at).toLocaleString(
-                                    undefined,
-                                    { dateStyle: "short", timeStyle: "short" },
-                                  )
-                                : t("runners.neverSeen")}
-                            </p></ResourceListDescription>
+                              <p>
+                                {t("runners.lastSeen")}:{" "}
+                                {runner.last_seen_at
+                                  ? new Date(
+                                      runner.last_seen_at,
+                                    ).toLocaleString(undefined, {
+                                      dateStyle: "short",
+                                      timeStyle: "short",
+                                    })
+                                  : t("runners.neverSeen")}
+                              </p>
+                            </ResourceListDescription>
                           </div>
                           <Badge
                             appearance="dot"

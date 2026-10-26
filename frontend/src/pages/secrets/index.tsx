@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  ActionGroup,
   PageNavigation,
   PageHeader,
   toast,
@@ -228,7 +229,7 @@ export function SecretsPage() {
               {saveError}
             </Notice>
           )}
-          <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
+          <ActionGroup align="end" className="sm:col-span-2">
             <Button
               type="button"
               variant="outline"
@@ -245,7 +246,7 @@ export function SecretsPage() {
             >
               {t(isReplacing ? "secrets.replace" : "secrets.save")}
             </Button>
-          </div>
+          </ActionGroup>
         </form>
       )}
 

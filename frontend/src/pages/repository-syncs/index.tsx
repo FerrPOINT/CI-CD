@@ -11,6 +11,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
+  ActionGroup,
   EmptyState,
   Fieldset,
   PageHeader,
@@ -885,7 +886,7 @@ export function RepositorySyncEditor({
               Расходящаяся история и отличающиеся теги требуют ручного
               разрешения.
             </p>
-            <div className="flex flex-wrap gap-3">
+            <ActionGroup align="start">
               <Button type="submit" disabled={!writable || !dirty}>
                 Сохранить подключение
               </Button>
@@ -914,7 +915,7 @@ export function RepositorySyncEditor({
                     Отключить синхронизацию
                   </Button>
                 )}
-            </div>
+            </ActionGroup>
           </form>
         </TabsContent>
         <TabsContent value="history">

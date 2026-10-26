@@ -1,4 +1,6 @@
 import {
+  ActionGroup,
+  ResourceListDescription,
   Fieldset,
   PageHeader,
   EmptyState,
@@ -940,42 +942,44 @@ function RepositorySyncEditor({
                   не удаляет ветки автоматически.
                 </p>
               </Fieldset>
-              <div className="bottom-0 flex flex-wrap items-center gap-3 border-t border-border bg-background py-3 sm:sticky">
-                <Button
-                  type="submit"
-                  disabled={readOnly || busy || (!dirty && !!saved)}
-                >
-                  Сохранить подключение
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={readOnly || busy}
-                  onClick={check}
-                >
-                  Проверить доступ
-                </Button>
-                {dirty && (
-                  <>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => {
-                        setDraft(cleanDraft);
-                        setCredential(!!saved);
-                        setToken("");
-                        setError("");
-                        setMessage("");
-                      }}
-                    >
-                      Отменить изменения
-                    </Button>
-                    <span className="text-xs text-text-muted">
-                      Есть несохранённые изменения
-                    </span>
-                  </>
-                )}
+              <div className="bottom-0 bg-background pb-3 sm:sticky">
+                <ActionGroup align="start" separated>
+                  <Button
+                    type="submit"
+                    disabled={readOnly || busy || (!dirty && !!saved)}
+                  >
+                    Сохранить подключение
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={readOnly || busy}
+                    onClick={check}
+                  >
+                    Проверить доступ
+                  </Button>
+                  {dirty && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => {
+                          setDraft(cleanDraft);
+                          setCredential(!!saved);
+                          setToken("");
+                          setError("");
+                          setMessage("");
+                        }}
+                      >
+                        Отменить изменения
+                      </Button>
+                      <ResourceListDescription asChild>
+                        <span>Есть несохранённые изменения</span>
+                      </ResourceListDescription>
+                    </>
+                  )}
+                </ActionGroup>
               </div>
             </form>
           </TabsContent>

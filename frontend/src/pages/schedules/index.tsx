@@ -1,4 +1,6 @@
-import { ResourceListDescription,
+import {
+  ActionGroup,
+  ResourceListDescription,
   Badge,
   PageNavigation,
   PageHeader,
@@ -209,7 +211,7 @@ export function SchedulesPage() {
               {saveError}
             </Notice>
           )}
-          <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
+          <ActionGroup align="end" className="sm:col-span-2">
             <Button
               type="button"
               variant="outline"
@@ -226,7 +228,7 @@ export function SchedulesPage() {
             >
               {t(editing ? "schedules.save" : "schedules.create")}
             </Button>
-          </div>
+          </ActionGroup>
         </form>
       )}
 
@@ -277,9 +279,12 @@ export function SchedulesPage() {
                             <p className="break-all font-mono text-sm font-medium">
                               {schedule.cron}
                             </p>
-                            <ResourceListDescription asChild className="break-all"><p >
-                              {schedule.git_ref}
-                            </p></ResourceListDescription>
+                            <ResourceListDescription
+                              asChild
+                              className="break-all"
+                            >
+                              <p>{schedule.git_ref}</p>
+                            </ResourceListDescription>
                           </div>
                           <Badge
                             appearance="inline"
