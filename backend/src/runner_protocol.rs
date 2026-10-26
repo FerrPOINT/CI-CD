@@ -987,8 +987,12 @@ pub(crate) async fn append_runner_lease_logs(
            AND l.attempt_id = $5 \
            AND l.lease_expires_at > now() \
            AND l.acknowledged_at IS NOT NULL \
-           AND j.status = 'running' \
-           AND a.status = 'running'",
+           AND ( \
+             (j.status = 'running' AND a.status = 'running') \
+             OR (l.cancel_requested_at IS NOT NULL \
+                 AND l.completion_received_at IS NULL \
+                 AND j.status = 'canceled' AND a.status = 'canceled') \
+           )",
     )
     .bind(lease_id)
     .bind(runner.id)

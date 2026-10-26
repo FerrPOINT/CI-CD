@@ -197,3 +197,13 @@ Sanitized diagnostics содержат только attempt/job IDs, bounded sta
 expired-ACK ownership/generation/race tests и Compose regression. Установка,
 два namespace real jobs, rootless build/push, configured deployment, namespace
 isolation и recovery через настоящий API — отдельный operator gate.
+
+### Логи запрошенной отмены
+
+До удаления Pod executor сохраняет доступный вывод через прежний masked log sink.
+Снимок ограничен тремя секундами; недоступность логов не блокирует native cancel.
+Внешний runner может дописать вывод своей текущей попытки после запроса отмены,
+пока тот же acknowledged lease активен и не истёк. Требуются прежние runner/token,
+attempt и generation; cancel_requested_at должен быть задан, completion_received_at
+отсутствовать. После completion или expiry запись закрыта. Новых прав исполнения,
+переоткрытия попытки, повторного START и снятия fencing нет.
