@@ -23,6 +23,7 @@ import {
   TabsTrigger,
   Notice,
   FormField,
+  UnsavedChangesGuard,
 } from "@pdlc/ui/ui";
 
 import {
@@ -78,6 +79,16 @@ const initial: Connection = {
   mode: "disabled",
   automatic: true,
 };
+
+function hasConnectionChanges(
+  id: string,
+  saved: Connection | null,
+  draft: Connection,
+  token: string,
+) {
+  const clean = saved ?? { ...initial, path: `platform/${id}` };
+  return JSON.stringify(draft) !== JSON.stringify(clean) || token.length > 0;
+}
 const modes = [
   {
     value: "disabled",
@@ -268,6 +279,25 @@ export function RepositorySyncPreview() {
 
   return (
     <>
+      <UnsavedChangesGuard
+        when={entries.some((entry) => {
+          const retained = drafts[entry.id];
+          return retained
+            ? hasConnectionChanges(
+                entry.id,
+                entry.connection,
+                retained.draft,
+                retained.token,
+              )
+            : false;
+        })}
+        shouldBlockNavigation={({ currentLocation, nextLocation }) =>
+          // List, editor and history share retained drafts; changing preview mode unmounts them.
+          currentLocation.pathname !== nextLocation.pathname ||
+          (new URLSearchParams(currentLocation.search).get("production") === "1") !==
+            (new URLSearchParams(nextLocation.search).get("production") === "1")
+        }
+      />
       {!selected && (
         <div className="min-h-screen bg-background text-text-primary">
           <PreviewNotice />
@@ -579,8 +609,7 @@ function RepositorySyncEditor({
   const [readOnly, setReadOnly] = useState(false);
   const busy = !!entry.running;
   const cleanDraft = saved ?? { ...initial, path: `platform/${entry.id}` };
-  const dirty =
-    JSON.stringify(draft) !== JSON.stringify(cleanDraft) || token.length > 0;
+  const dirty = hasConnectionChanges(entry.id, saved, draft, token);
   const remote = saved ? remoteUrl(saved) : null;
   const runs = entry.runs;
   const lastRun = runs.find((run) => run.remote === remote);
@@ -588,14 +617,6 @@ function RepositorySyncEditor({
   useEffect(() => {
     onRetain(entry.id, { draft, token, credential });
   }, [entry.id, draft, token, credential, onRetain]);
-
-  useEffect(() => {
-    function warn(event: BeforeUnloadEvent) {
-      if (dirty) event.preventDefault();
-    }
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
 
   function update<K extends keyof Connection>(key: K, value: Connection[K]) {
     setDraft((current) => ({ ...current, [key]: value }));

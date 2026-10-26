@@ -168,6 +168,12 @@ RadioGroup/Select; контекст ресурса не превращается
 Канонический контракт — Base docs/platform/DESIGN_SYSTEM.md и docs/BRANDING.md.
 UI/SDK/skills pins независимы; source-изменения не означают установку.
 
+Защиту несохранённых правок подключать через UnsavedChangesGuard Base с Data
+Router и owner i18n. Guard живёт на уровне владельца черновиков, в том числе
+сохраняемых при закрытии редактора. shouldBlockNavigation задаётся сроком жизни
+этого состояния: переходы списка/вкладок с сохранённым вводом не требуют
+подтверждения, уход из владельца — требует. Не копировать beforeunload/confirm.
+
 ## Единое пространство PDLC
 
 [Согласованный план](docs/plans/unified-spaces-20261019.md) вводит M:N и общий read admission. До полного
