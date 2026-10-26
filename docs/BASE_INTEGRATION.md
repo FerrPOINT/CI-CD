@@ -2,7 +2,7 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA: `efa4babe176b42530a3e17fc25f10e8678f82d33` ([pin](../.base-ui-revision)).
+Точный UI SHA: `8bdd8ecd54eb6a6f553bfbadcfaf07c99f4a801d` ([pin](../.base-ui-revision)).
 Компоненты и reference берутся из этой версии Base; открытый справочник другой
 версии не подтверждает доступность контракта в продукте. SDK/skills pins
 независимы. Это исходники собственного checkout; установка и authenticated
@@ -250,3 +250,12 @@ pins неизменны; это source-кандидат, без установк
 
 Итоговый producer проверен 22 scoped tests боковой навигации;
 TypeScript, lint изменённых модулей и shell contract gate прошли отдельно.
+
+
+## Нативные атрибуты SSR Button — 2026-10-27
+
+Текущий UI 0.3.5: `8bdd8ecd54eb6a6f553bfbadcfaf07c99f4a801d`. Сохраняются React API и независимые SDK/skills pins.
+React/JS/CSS и типы API не менялись; frontend/backend не пересобирались.
+Новые SSR параметры доступны в этом точном Base, не являются новым React API.
+Архив UI и offline frozen adoption проверены; общий интеграционный gate,
+hosted CI, публикация и установка здесь не выполнялись.
