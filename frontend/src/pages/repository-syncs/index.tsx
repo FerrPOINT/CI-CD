@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useParams, useSearchParams } from "react-router";
+import { useParams, useSearchParams, type BlockerFunction } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownToLine,
@@ -39,8 +39,9 @@ import {
   ResourceStateView,
   TextLink,
   FormField,
+  UnsavedChangesGuard,
 } from "@pdlc/ui/ui";
-import { withNamespaceLocation } from "@pdlc/ui/lib";
+import { projectNavigationScope, withNamespaceLocation } from "@pdlc/ui/lib";
 import { api, ApiError } from "@/api/client";
 import {
   repositorySync,
@@ -517,17 +518,24 @@ export function RepositorySyncEditor({
   connection,
   reload,
   backLocation,
+  shouldBlockNavigation,
 }: {
   connection: SyncConnection;
   reload: () => Promise<unknown>;
   backLocation?: string;
+  /** Additional parent-owned boundaries that unmount this editor without changing its route. */
+  shouldBlockNavigation?: BlockerFunction;
 }) {
   const [params, setParams] = useSearchParams();
   const cache = useQueryClient();
   const [draft, setDraft] = useState(connection.settings);
   const [version, setVersion] = useState(connection.version);
   const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<"save" | "check" | "start" | null>(
+    null,
+  );
+  const busy = operation !== null;
+  const heading = useRef<HTMLHeadingElement>(null);
   const [feedback, setFeedback] = useState("");
   const [conflict, setConflict] = useState(false);
   const [uncertain, setUncertain] = useState(false);
@@ -547,6 +555,8 @@ export function RepositorySyncEditor({
     version === 0 ||
     token !== "" ||
     JSON.stringify(draft) !== JSON.stringify(connection.settings);
+  const unconfirmedWrite =
+    uncertain || runUncertain || operation === "save" || operation === "start";
   function patch(next: Partial<SyncSettings>) {
     setDraft({ ...draft, ...next });
     pending.current = null;
@@ -554,7 +564,7 @@ export function RepositorySyncEditor({
   }
   async function save(event?: FormEvent) {
     event?.preventDefault();
-    setBusy(true);
+    setOperation("save");
     setFeedback("");
     setConflict(false);
     pending.current ??= {
@@ -589,11 +599,11 @@ export function RepositorySyncEditor({
       if (!unknown) pending.current = null;
       setConflict(error instanceof ApiError && error.status === 409);
     } finally {
-      setBusy(false);
+      setOperation(null);
     }
   }
   async function check() {
-    setBusy(true);
+    setOperation("check");
     setFeedback("");
     try {
       const result = await repositorySync.check(connection.repository_id, {
@@ -604,11 +614,11 @@ export function RepositorySyncEditor({
     } catch (error) {
       setFeedback(message(error));
     } finally {
-      setBusy(false);
+      setOperation(null);
     }
   }
   async function start() {
-    setBusy(true);
+    setOperation("start");
     setFeedback("");
     runKey.current ??= crypto.randomUUID();
     try {
@@ -628,7 +638,7 @@ export function RepositorySyncEditor({
         setRunUncertain(false);
       } else setRunUncertain(true);
     } finally {
-      setBusy(false);
+      setOperation(null);
     }
   }
   function tab(value: string) {
@@ -644,8 +654,37 @@ export function RepositorySyncEditor({
     back.delete(key);
   return (
     <div className="space-y-4">
+      <UnsavedChangesGuard
+        when={dirty || unconfirmedWrite}
+        fallbackFocusRef={heading}
+        description={
+          unconfirmedWrite
+            ? "Результат сохранения или запуска ещё не подтверждён. Переход закроет локальную сверку; операция на сервере может продолжиться. Проверьте результат или подтвердите уход."
+            : undefined
+        }
+        shouldBlockNavigation={(navigation) => {
+          const { currentLocation, nextLocation } = navigation;
+          if (
+            currentLocation.pathname !== nextLocation.pathname ||
+            shouldBlockNavigation?.(navigation)
+          )
+            return true;
+          // The catalog editor retains its draft across view changes, but not a namespace boundary.
+          const current = projectNavigationScope(currentLocation.search);
+          const next = projectNavigationScope(nextLocation.search);
+          return (
+            current.malformed ||
+            next.malformed ||
+            current.ref?.registry_instance_id !==
+              next.ref?.registry_instance_id ||
+            current.ref?.namespace_id !== next.ref?.namespace_id
+          );
+        }}
+      />
       <PageHeader
         title="Внешний репозиторий"
+        headingRef={heading}
+        headingTabIndex={-1}
         leading={
           <>
             <Button asChild variant="ghost" size="icon">

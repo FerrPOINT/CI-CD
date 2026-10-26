@@ -8,7 +8,8 @@ import {
   cleanup,
   within,
 } from '@testing-library/react'
-import { BrowserRouter, MemoryRouter, Routes, Route, useLocation } from 'react-router'
+import { createBrowserRouter, createMemoryRouter, RouterProvider, Routes, Route, useLocation } from 'react-router'
+import { createContext, useContext, useState, type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ApiError } from '@/api/client'
 import * as apiClient from '@/api/client'
@@ -19,6 +20,27 @@ import {
   RepositorySyncsPage,
   RepositorySyncPage,
 } from './index'
+import '@/shared/i18n/config'
+
+const routedChildren = createContext<ReactNode>(null)
+const testRouters = new Set<ReturnType<typeof createMemoryRouter>>()
+function RoutedChildren() {
+  return useContext(routedChildren)
+}
+/** Preserve child updates and history across rerenders, as the application Data Router does. */
+function DataRouter({ children, initialEntries, browser = false }: {
+  children: ReactNode
+  initialEntries?: string[]
+  browser?: boolean
+}) {
+  const [router] = useState(() => {
+    const routes = [{ path: '*', element: <RoutedChildren /> }]
+    const instance = browser ? createBrowserRouter(routes) : createMemoryRouter(routes, { initialEntries })
+    testRouters.add(instance)
+    return instance
+  })
+  return <routedChildren.Provider value={children}><RouterProvider router={router} /></routedChildren.Provider>
+}
 
 const context = vi.hoisted(() => ({
   ref: null as { registry_instance_id: string; namespace_id: string } | null,
@@ -62,7 +84,7 @@ function mount(component: React.ReactNode, location = '/') {
   })
   return render(
     <QueryClientProvider client={cache}>
-      <MemoryRouter initialEntries={[location]}>{component}</MemoryRouter>
+      <DataRouter initialEntries={[location]}>{component}</DataRouter>
     </QueryClientProvider>,
   )
 }
@@ -72,6 +94,8 @@ function RouterLocation() {
 }
 afterEach(() => {
   cleanup()
+  testRouters.forEach(router => router.dispose())
+  testRouters.clear()
   vi.restoreAllMocks()
   context.ref = null
   context.all = true
@@ -85,10 +109,10 @@ describe('production repository synchronization', () => {
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={cache}>
-        <BrowserRouter>
+        <DataRouter browser>
           <RepositorySyncEditor connection={connection} reload={vi.fn()} />
           <RouterLocation />
-        </BrowserRouter>
+        </DataRouter>
       </QueryClientProvider>,
     )
     const history = screen.getByRole('tab', { name: 'История запусков' })
@@ -374,9 +398,9 @@ describe('production repository synchronization', () => {
     const get = vi.spyOn(repositorySync, 'get').mockResolvedValueOnce(connection)
       .mockRejectedValue(new ApiError({ kind: 'network', message: 'Failed to fetch' }))
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={cache}><MemoryRouter initialEntries={['/catalog/repositories/repo/sync']}>
+    render(<QueryClientProvider client={cache}><DataRouter initialEntries={['/catalog/repositories/repo/sync']}>
       <Routes><Route path="/catalog/repositories/:id/sync" element={<RepositorySyncPage />} /></Routes>
-    </MemoryRouter></QueryClientProvider>)
+    </DataRouter></QueryClientProvider>)
     const input = await screen.findByLabelText('Владелец / репозиторий')
     fireEvent.change(input, { target: { value: 'team/unsaved' } })
     await cache.invalidateQueries({ queryKey: ['repository-sync', 'repo'] })
@@ -520,9 +544,9 @@ describe('production repository synchronization', () => {
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const view = (current: SyncConnection) => (
       <QueryClientProvider client={cache}>
-        <MemoryRouter initialEntries={['/?tab=history&run_id=run']}>
+        <DataRouter initialEntries={['/?tab=history&run_id=run']}>
           <RepositorySyncEditor connection={current} reload={vi.fn()} />
-        </MemoryRouter>
+        </DataRouter>
       </QueryClientProvider>
     )
     const rendered = render(view({ ...connection, active_run: running }))
@@ -555,9 +579,9 @@ describe('production repository synchronization', () => {
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const page = (value: SyncConnection) => (
       <QueryClientProvider client={cache}>
-        <MemoryRouter initialEntries={['/?tab=history&run_id=run']}>
+        <DataRouter initialEntries={['/?tab=history&run_id=run']}>
           <RepositorySyncEditor connection={value} reload={vi.fn()} />
-        </MemoryRouter>
+        </DataRouter>
       </QueryClientProvider>
     )
     const view = render(page({ ...connection, active_run: run }))
@@ -890,9 +914,9 @@ describe('production repository synchronization', () => {
     else refs.mockResolvedValueOnce(reference).mockRejectedValueOnce(unavailable)
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(<QueryClientProvider client={cache}>
-      <MemoryRouter initialEntries={['/?tab=history&run_id=previous&runs_offset=20&refs_offset=50']}>
+      <DataRouter initialEntries={['/?tab=history&run_id=previous&runs_offset=20&refs_offset=50']}>
         <RepositorySyncEditor connection={{ ...connection, version: 2, last_run: previous }} reload={vi.fn()} />
-      </MemoryRouter>
+      </DataRouter>
     </QueryClientProvider>)
     await screen.findByRole('row', { name: /https:\/\/github.com\/team\/previous.git · v1/ })
     await screen.findByRole('row', { name: /refs\/heads\/qa-preserved/ })

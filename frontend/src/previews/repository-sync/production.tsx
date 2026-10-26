@@ -64,6 +64,11 @@ export function ProductionSyncPreview() {
           backLocation="/sync-preview.html"
           connection={connection}
           reload={async () => undefined}
+          shouldBlockNavigation={({ currentLocation, nextLocation }) =>
+            // The entry selector removes this editor when its synthetic mode changes.
+            (new URLSearchParams(currentLocation.search).get('production') === '1') !==
+            (new URLSearchParams(nextLocation.search).get('production') === '1')
+          }
         />
       </main>
     </QueryClientProvider>
