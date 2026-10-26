@@ -865,6 +865,9 @@ impl Execution {
     pub async fn recovery_masks(&self, names: &[String]) -> anyhow::Result<Vec<String>> {
         let value = self.get(&self.path()).await?.ok_or(Held)?;
         self.identity(&value)?;
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
         let env = value["spec"]["containers"][0]["env"]
             .as_array()
             .context("original env missing")?;
@@ -1694,6 +1697,26 @@ mod lifecycle_tests {
             .start_with_admission(|| Ok(grant(&execution.config)))
             .await
             .unwrap();
+        assert_eq!(state.lock().unwrap().creates, 1);
+        task.abort();
+        fs::remove_dir_all(&execution.directory).unwrap();
+    }
+    #[tokio::test]
+    async fn recovery_masks_accepts_omitted_empty_env_only_after_pod_identity() {
+        let (execution, state, task) = fixture().await;
+        execution
+            .start_with_admission(|| Ok(grant(&execution.config)))
+            .await
+            .unwrap();
+        state.lock().unwrap().pod.as_mut().unwrap()["spec"]["containers"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("env");
+        assert!(execution.recovery_masks(&[]).await.unwrap().is_empty());
+        assert!(execution.recovery_masks(&["TOKEN".into()]).await.is_err());
+        state.lock().unwrap().pod.as_mut().unwrap()["metadata"]["namespace"] =
+            json!("foreign-namespace");
+        assert!(execution.recovery_masks(&[]).await.is_err());
         assert_eq!(state.lock().unwrap().creates, 1);
         task.abort();
         fs::remove_dir_all(&execution.directory).unwrap();
