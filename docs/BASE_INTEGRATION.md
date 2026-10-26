@@ -1,10 +1,19 @@
 # Интеграция CI-CD с Base
 
-## Текущая UI-поставка
+## Текущий source-кандидат UI
 
-Объединённая поставка включает Base #298 и #297: общие формы/диалоги, защиту несохранённого ввода, адаптивную оболочку и независимую прокрутку редактора брендинга. На текущем pin заново пройдены298 frontend-тестов, lint/semantic/shell, OpenAPI drift, TypeScript/Vite build, packed consumer и Chromium contrast для3 тем. SDK, skills, backend и установка runtime этим обновлением не меняются.
+Точный UI SHA: `73665aa7bb64cbf16b1537f81c6e8f6129373738` ([pin](../.base-ui-revision)).
+Компоненты и reference берутся из этой версии Base; открытый справочник другой
+версии не подтверждает доступность контракта в продукте. SDK/skills pins
+независимы. Это исходники собственного checkout; установка и authenticated
+приёмка runtime этим значением не подтверждаются. Датированные разделы ниже
+описывают прежние квалификации и не заменяют проверку итогового кандидата.
 
-UI закреплён на `94272dc5512be58ec6c88fb7c1d1d33c7599a3e4` ([pin](../.base-ui-revision)); зависит от [Base #297](https://github.com/FerrPOINT/services-base/pull/297).
+## Исходная UI-поставка — 21 октября 2026
+
+Объединённая поставка включает Base #298 и #297: общие формы/диалоги, защиту несохранённого ввода, адаптивную оболочку и независимую прокрутку редактора брендинга. На прежнем pin заново пройдены298 frontend-тестов, lint/semantic/shell, OpenAPI drift, TypeScript/Vite build, packed consumer и Chromium contrast для3 тем. SDK, skills, backend и установка runtime этим обновлением не меняются.
+
+UI был закреплён на `94272dc5512be58ec6c88fb7c1d1d33c7599a3e4` ([pin](../.base-ui-revision)); зависит от [Base #297](https://github.com/FerrPOINT/services-base/pull/297).
 SDK и skills pins независимы и этим обновлением не меняются. Общая типографика,
 плотность и отдельные радиусы применяются в Base к React, Portal и SSR;
 продукт сохраняет данные, права, запросы и действия. Штатные SSR-ресурсы Workflow
