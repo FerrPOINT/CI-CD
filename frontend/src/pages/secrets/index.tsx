@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  ResourceListTitle,
   ActionGroup,
   PageNavigation,
   PageHeader,
@@ -293,9 +294,11 @@ export function SecretsPage() {
                           aria-hidden
                         />
                         <div className="min-w-0 flex-1">
-                          <p className="break-all font-mono text-sm font-medium">
+                          <ResourceListTitle asChild technical>
+                            <p className="break-all">
                             {secret.key}
                           </p>
+                          </ResourceListTitle>
                           <time
                             dateTime={secret.updated_at}
                             title={new Date(secret.updated_at).toLocaleString()}

@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ResourceListDescription,
+import {
+  ResourceListDescription,
   PageNavigation,
   TextLink,
   EmptyState,
@@ -372,7 +373,8 @@ export function ExecutionList({
                                 </Link>
                               </TextLink>
                             </div>
-                            <p className="mt-1 break-words text-sm text-text-muted">
+                            <ResourceListDescription asChild>
+                              <p className="mt-1 break-words">
                               {row.git_ref} ·{" "}
                               <time dateTime={row.created_at}>
                                 {new Date(row.created_at).toLocaleString()}
@@ -382,8 +384,10 @@ export function ExecutionList({
                                 : ""}
                               {seconds !== undefined ? ` · ${seconds} с` : ""}
                             </p>
+                            </ResourceListDescription>
                             {row.commit_sha && (
-                              <ResourceListDescription asChild className="mt-1"><p >
+                              <ResourceListDescription asChild className="mt-1">
+                                <p >
                                 Коммит{" "}
                                 <TextLink asChild>
                                   <Link
@@ -396,15 +400,18 @@ export function ExecutionList({
                                     {row.commit_sha.slice(0, 8)}
                                   </Link>
                                 </TextLink>
-                              </p></ResourceListDescription>
+                              </p>
+                              </ResourceListDescription>
                             )}
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={tone}>{statusLabel(row.status)}</Badge>
                             {row.approval_state && (
-                              <span className="text-sm text-text-muted">
+                              <ResourceListDescription asChild>
+                                <span>
                                 {approvalLabel(row.approval_state)}
                               </span>
+                              </ResourceListDescription>
                             )}
                             <Button asChild variant="link">
                               <Link

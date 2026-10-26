@@ -1,7 +1,10 @@
 import { RequireAdministrator } from "@pdlc/ui/auth";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ResourceListTitle,
+import {
+  ResourceListDescription,
+  Prose,
+  ResourceListTitle,
   PageNavigation,
   FormField,
   CardContent,
@@ -207,9 +210,11 @@ function AdministrativeRepositoryConfigurations({
                 <li className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <ResourceListTitle asChild><p >{config.name}</p></ResourceListTitle>
-                    <p className="text-sm text-text-muted">
+                    <ResourceListDescription asChild technical>
+                      <p>
                       Ветка: {config.default_branch}
                     </p>
+                    </ResourceListDescription>
                   </div>
                   <div className="flex flex-wrap gap-3 text-sm">
                     {[
@@ -338,10 +343,12 @@ function AdministrativeRepositoryConfigurations({
                     }}
                   >
                     <CardContent className="space-y-3">
-                      <p className="text-sm text-text-muted">
+                      <Prose asChild>
+                        <p>
                         Push запускает одну выбранную конфигурацию. Остальные
                         доступны вручную и по расписанию.
                       </p>
+                      </Prose>
                       {push.isError || choices.isError ? (
                         <Notice role="alert" tone="danger" appearance="inline">
                           Настройки автозапуска недоступны.
@@ -410,9 +417,11 @@ function AdministrativeRepositoryConfigurations({
                     }}
                   >
                     <CardContent className="space-y-3">
-                      <p className="text-sm text-text-muted">
+                      <Prose asChild>
+                        <p>
                         Прежняя история и настройки сохраняются.
                       </p>
+                      </Prose>
                       {unbound.isError ? (
                         <Notice role="alert" tone="danger" appearance="inline">
                           Конфигурации недоступны.

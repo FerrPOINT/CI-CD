@@ -2,6 +2,7 @@ import { useApplicationAccess } from "@pdlc/ui/auth";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ResourceListDescription,
   EmptyState,
   PageNavigation,
   PageHeader,
@@ -73,7 +74,8 @@ export function RepositoriesPage() {
                   <CardTitle asChild>
                     <h2>{repo.public_name}</h2>
                   </CardTitle>
-                  <p className="mt-2 text-sm text-text-muted">
+                  <ResourceListDescription asChild>
+                    <p className="mt-2">
                     {repo.kind === "hosted" ? "Git в Forge" : "Внешний Git"} ·{" "}
                     {repo.availability
                       ? "Хранилище недоступно"
@@ -85,6 +87,7 @@ export function RepositoriesPage() {
                             ? "Подключён"
                             : "Инициализируется"}
                   </p>
+                  </ResourceListDescription>
                 </CardContent>
               </Link>
             </Card>

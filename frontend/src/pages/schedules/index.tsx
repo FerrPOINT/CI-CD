@@ -1,4 +1,5 @@
 import {
+  ResourceListTitle,
   ActionGroup,
   ResourceListDescription,
   Badge,
@@ -276,9 +277,11 @@ export function SchedulesPage() {
                             aria-hidden
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="break-all font-mono text-sm font-medium">
+                            <ResourceListTitle asChild technical>
+                              <p className="break-all">
                               {schedule.cron}
                             </p>
+                            </ResourceListTitle>
                             <ResourceListDescription
                               asChild
                               className="break-all"

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ComponentProps } from "react";
 import {
+  ResourceListDescription,
   ResourceStateView,
   AutocompleteInput,
   Badge,
@@ -88,13 +89,17 @@ function ComparisonResults({ comparison }: { comparison: Comparison }) {
                     {t(`compare.status_${file.status}`)}
                   </Badge>
                   {file.binary ? (
-                    <span className="text-text-muted">
+                    <ResourceListDescription asChild>
+                      <span>
                       {t("compare.binaryFile")}
                     </span>
+                    </ResourceListDescription>
                   ) : (
-                    <span className="font-mono text-text-primary">
+                    <ResourceListDescription asChild technical>
+                      <span>
                       +{file.additions} −{file.deletions}
                     </span>
+                    </ResourceListDescription>
                   )}
                 </div>
               </li>

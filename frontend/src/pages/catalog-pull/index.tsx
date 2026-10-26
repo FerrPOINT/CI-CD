@@ -1,4 +1,5 @@
 import {
+  ResourceListDescription,
   EmptyState,
   CardContent,
   Card,
@@ -188,9 +189,11 @@ export function CatalogPullPage() {
                 ) : (
                   <span>{link.task_key}</span>
                 )}
-                <p className="break-all font-mono text-xs text-text-muted">
+                <ResourceListDescription asChild technical>
+                  <p className="break-all">
                   Commit: {link.source_commit_sha}
                 </p>
+                </ResourceListDescription>
               </CardContent>
             </Card>
           ))

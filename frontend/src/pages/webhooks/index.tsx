@@ -221,12 +221,16 @@ export function WebhooksPage() {
                       <ResourceListRow asChild key={w.id}>
                         <div className="flex items-start gap-2">
                           <div className="min-w-0 flex-1 space-y-2">
-                            <p className="break-all font-mono text-xs">
+                            <ResourceListTitle asChild technical>
+                              <p className="break-all">
                               {w.url}
                             </p>
-                            <ResourceListDescription asChild><p >
+                            </ResourceListTitle>
+                            <ResourceListDescription asChild>
+                              <p >
                               {w.events.length ? w.events.join(", ") : "—"}
-                            </p></ResourceListDescription>
+                            </p>
+                            </ResourceListDescription>
                             <WebhookStatusBadge enabled={w.enabled} />
                           </div>
                           <Button
@@ -543,9 +547,11 @@ function DeliveryHistorySection() {
                                 )
                               }
                             />
-                            <p className="break-all font-mono text-xs text-text-secondary">
+                            <ResourceListDescription asChild technical>
+                              <p className="break-all">
                               {delivery.channel} / {delivery.destination}
                             </p>
+                            </ResourceListDescription>
                             <div className="flex flex-wrap items-center gap-3 text-xs text-text-secondary">
                               <DeliveryStatusBadge status={delivery.status} />
                               <span>
@@ -704,16 +710,20 @@ function DeliveryHistorySection() {
                           <ResourceListRow asChild key={attempt.id}>
                             <div className="space-y-1 text-xs">
                               <div className="flex items-center justify-between gap-2">
-                                <ResourceListTitle asChild><span >
+                                <ResourceListTitle asChild>
+                                  <span >
                                   #{attempt.attempt_number}
-                                </span></ResourceListTitle>
+                                </span>
+                                </ResourceListTitle>
                                 <DeliveryStatusBadge status={attempt.outcome} />
                               </div>
-                              <p className="text-text-secondary">
+                              <ResourceListDescription asChild>
+                                <p>
                                 {t("deliveries.httpStatus")}:{" "}
                                 {attempt.http_status ?? "—"} ·{" "}
                                 {attempt.duration_ms} ms
                               </p>
+                              </ResourceListDescription>
                               {attempt.error_message && (
                                 <Notice
                                   tone="danger"
@@ -987,15 +997,21 @@ function NotificationsSection() {
                   {events.map((event) => (
                     <ResourceListRow asChild key={event.id}>
                       <div className="space-y-2">
-                        <ResourceListTitle asChild className="break-words"><p >
+                        <ResourceListTitle asChild className="break-words">
+                          <p >
                           {event.message}
-                        </p></ResourceListTitle>
-                        <p className="break-all font-mono text-xs text-text-secondary">
+                        </p>
+                        </ResourceListTitle>
+                        <ResourceListDescription asChild technical>
+                          <p className="break-all">
                           {event.event_type} · {event.pipeline_id.slice(0, 8)}
                         </p>
-                        <p className="break-all font-mono text-xs text-text-secondary">
+                        </ResourceListDescription>
+                        <ResourceListDescription asChild technical>
+                          <p className="break-all">
                           {event.channel} / {event.target}
                         </p>
+                        </ResourceListDescription>
                         <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
                           <NotificationStatusBadge event={event} />
                           <time dateTime={event.created_at}>

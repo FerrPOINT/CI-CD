@@ -5,7 +5,9 @@ import { History, Search } from "lucide-react";
 
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-import { ResourceListTitle,
+import {
+  ResourceListDescription,
+  ResourceListTitle,
   DescriptionItem,
   PageNavigation,
   PageHeader,
@@ -298,9 +300,11 @@ export function AuditLogPage() {
                                   { defaultValue: event.resource_type },
                                 )}
                                 {event.resource_id && (
-                                  <span className="ml-2 font-mono">
+                                  <ResourceListDescription asChild technical>
+                                    <span className="ml-2">
                                     {event.resource_id.slice(0, 8)}
                                   </span>
+                                  </ResourceListDescription>
                                 )}
                               </DescriptionItem>
                               <DescriptionItem

@@ -1,4 +1,6 @@
 import {
+  ResourceListDescription,
+  Prose,
   ResourceStateView,
   NamespaceLink as Link,
   ResourceList,
@@ -243,9 +245,11 @@ export function PullRequestDetailPage() {
                         />
                         <code className="flex-1 truncate">{file.path}</code>
                         {file.binary ? (
-                          <span className="text-text-muted">
+                          <ResourceListDescription asChild>
+                            <span>
                             {t("compare.binaryFile")}
                           </span>
+                          </ResourceListDescription>
                         ) : (
                           <>
                             <span className="text-success">
@@ -335,9 +339,11 @@ export function PullRequestDetailPage() {
           <section>
             <CardContent>
               {pr.description && (
-                <p className="whitespace-pre-wrap text-sm text-text-secondary">
+                <Prose asChild>
+                  <p className="whitespace-pre-wrap">
                   {pr.description}
                 </p>
+                </Prose>
               )}
               <dl className="mt-4">
                 <DescriptionItem

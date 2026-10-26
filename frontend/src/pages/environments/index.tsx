@@ -1,4 +1,9 @@
-import { ResourceListTitle, ResourceListDescription, TextLink, FormField } from "@pdlc/ui/ui";
+import {
+  ResourceListTitle,
+  ResourceListDescription,
+  TextLink,
+  FormField,
+} from "@pdlc/ui/ui";
 import {
   Notice,
   PageNavigation,
@@ -314,9 +319,11 @@ export function EnvironmentsPage() {
                               aria-hidden
                             />
                             <div className="min-w-0 flex-1">
-                              <ResourceListTitle asChild className="break-all"><p >
+                              <ResourceListTitle asChild className="break-all">
+                                <p >
                                 {env.name}
-                              </p></ResourceListTitle>
+                              </p>
+                              </ResourceListTitle>
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
                                 <span className="inline-flex items-center gap-1">
                                   <span
@@ -347,12 +354,14 @@ export function EnvironmentsPage() {
                                     {env.url}
                                   </TextLink>
                                 ) : (
-                                  <ResourceListDescription asChild className="block max-w-full truncate"><span
+                                  <ResourceListDescription asChild className="block max-w-full truncate">
+                                    <span
 
                                     title={env.url}
                                   >
                                     {env.url}
-                                  </span></ResourceListDescription>
+                                  </span>
+                                  </ResourceListDescription>
                                 ))}
                             </div>
                             <Button
@@ -633,21 +642,28 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                         className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1  text-xs ${deployment.id === selectedId ? "rounded-md bg-surface-raised  outline-2 outline-accent" : ""}`}
                       >
                         <div className="min-w-0 flex-1 basis-40">
-                          <ResourceListTitle asChild><p >
+                          <ResourceListTitle asChild>
+                            <p >
                             Деплой #{deployment.id.slice(0, 8)}
                             {deployment.id === selectedId ? " · Выбран" : ""}
-                          </p></ResourceListTitle>
-                          <p className="break-all font-mono text-sm font-medium text-text-primary">
+                          </p>
+                          </ResourceListTitle>
+                          <ResourceListTitle asChild technical>
+                            <p className="break-all">
                             {deployment.git_ref}
                           </p>
-                          <p className="text-text-secondary">
+                          </ResourceListTitle>
+                          <ResourceListDescription asChild>
+                            <p>
                             {t(
                               "deployments.status" +
                                 capitalize(deployment.status),
                             )}{" "}
                             · {approvalLabel(deployment, t)}
                           </p>
-                          <p className="text-text-muted">
+                          </ResourceListDescription>
+                          <ResourceListDescription asChild>
+                            <p>
                             <time
                               dateTime={deployment.created_at}
                               title={new Date(
@@ -667,6 +683,7 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                               {traceLabel(deployment, t)}
                             </span>
                           </p>
+                          </ResourceListDescription>
                         </div>
                         <div className="flex flex-wrap gap-1">
                           {deployment.approval_required &&

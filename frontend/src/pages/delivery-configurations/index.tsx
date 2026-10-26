@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  ResourceListDescription,
   PageNavigation,
   PageHeader,
   Input,
@@ -47,9 +48,11 @@ export function DeliveryConfigurationsPage() {
                       {config.name}
                     </Link>
                   </TextLink>
-                  <p className="break-all text-sm text-text-muted">
+                  <ResourceListDescription asChild technical>
+                    <p className="break-all">
                     {config.repository_url}
                   </p>
+                  </ResourceListDescription>
                 </li>
               </ResourceListRow>
             ))}

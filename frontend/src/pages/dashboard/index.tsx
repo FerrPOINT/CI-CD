@@ -1,4 +1,5 @@
 import {
+  ResourceListDescription,
   Metric,
   Card,
   CardContent,
@@ -79,7 +80,8 @@ export function DashboardPage() {
             ) : runners.isPending ? (
               <LoadingState message="Загружаем исполнителей…" />
             ) : (
-              <p className="text-sm text-text-muted">
+              <ResourceListDescription asChild>
+                <p>
                 Онлайн:{" "}
                 {
                   runners.data.filter((runner) => runner.status === "online")
@@ -87,6 +89,7 @@ export function DashboardPage() {
                 }{" "}
                 / {runners.data.length}
               </p>
+              </ResourceListDescription>
             )}
           </CardContent>
         </section>

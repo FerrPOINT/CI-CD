@@ -1,4 +1,5 @@
 import {
+  ResourceListDescription,
   EmptyState,
   PageNavigation,
   PageHeader,
@@ -200,7 +201,8 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
                       </TextLink>
                     </h2>
                   </CardTitle>
-                  <p className="mt-2 text-sm text-text-muted">
+                  <ResourceListDescription asChild>
+                    <p className="mt-2">
                     {repo.kind === "hosted" ? "Git в Forge" : "Внешний Git"} ·{" "}
                     {repo.availability
                       ? "Git-хранилище недоступно"
@@ -208,6 +210,7 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
                         ? "Подключён"
                         : "Инициализируется"}
                   </p>
+                  </ResourceListDescription>
                   <div className="flex flex-wrap gap-3 text-sm">
                     {[
                       ["pipelines", "Пайплайны"],

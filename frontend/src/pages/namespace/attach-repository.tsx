@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Prose,
   SectionHeader,
   Card,
   CardContent,
@@ -96,9 +97,11 @@ export function AttachRepository({
           <SectionHeader
             title={<>Подключить существующий репозиторий Forge</>}
           />
-          <p className="text-sm text-text-muted">
+          <Prose asChild>
+            <p>
             История Git, номера PR и прежний clone URL сохраняются.
           </p>
+          </Prose>
           {available.isError ? (
             <Notice role="alert" tone="danger" appearance="inline">
               Каталог недоступен.

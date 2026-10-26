@@ -1,4 +1,5 @@
 import {
+  Prose,
   ResourceStateView,
   AutocompleteInput,
   Breadcrumbs,
@@ -390,9 +391,11 @@ function CommitsList({
                     <ResourceListTitle asChild className="min-w-0 flex-1 break-words"><span >
                       {commit.message}
                     </span></ResourceListTitle>
-                    <ResourceListDescription asChild className="min-w-0 break-words"><span >
+                    <ResourceListDescription asChild className="min-w-0 break-words">
+                      <span >
                       {commit.author}
-                    </span></ResourceListDescription>
+                    </span>
+                    </ResourceListDescription>
                     <time
                       className="shrink-0 text-xs text-text-muted"
                       dateTime={commit.date}
@@ -549,9 +552,11 @@ function BranchesList({
                       {ref.sha.slice(0, 7)}
                     </code>
                     {ref.target && (
-                      <ResourceListDescription asChild className="w-full break-words sm:w-auto sm:max-w-[40%] sm:truncate"><span >
+                      <ResourceListDescription asChild className="w-full break-words sm:w-auto sm:max-w-[40%] sm:truncate">
+                        <span >
                         {ref.target}
-                      </span></ResourceListDescription>
+                      </span>
+                      </ResourceListDescription>
                     )}
                   </li>
                 </ResourceListRow>
@@ -766,13 +771,17 @@ function FilePreview({
         >
           {(blob) =>
             blob.binary ? (
-              <p className="text-sm text-text-muted">
+              <Prose asChild>
+                <p>
                 {t("repositoryBrowser.binaryFile")}
               </p>
+              </Prose>
             ) : blob.content.length === 0 ? (
-              <p className="text-sm text-text-muted">
+              <Prose asChild>
+                <p>
                 {t("repositoryBrowser.emptyFile")}
               </p>
+              </Prose>
             ) : (
               <div>
                 {blob.truncated && (
@@ -972,9 +981,11 @@ function TreeView({
                       {entry.sha.slice(0, 7)}
                     </code>
                     {entry.size != null && (
-                      <span className="hidden w-20 shrink-0 pr-2 text-right text-xs text-text-muted md:inline">
+                      <ResourceListDescription asChild>
+                        <span className="hidden w-20 shrink-0 pr-2 text-right md:inline">
                         {entry.size} B
                       </span>
+                      </ResourceListDescription>
                     )}
                   </li>
                 ))}
@@ -1066,9 +1077,11 @@ function TagsList({
                       {tag.sha.slice(0, 7)}
                     </code>
                     {tag.message && (
-                      <ResourceListDescription asChild className="w-full min-w-0 break-words sm:w-auto sm:max-w-[40%] sm:truncate"><span >
+                      <ResourceListDescription asChild className="w-full min-w-0 break-words sm:w-auto sm:max-w-[40%] sm:truncate">
+                        <span >
                         {tag.message}
-                      </span></ResourceListDescription>
+                      </span>
+                      </ResourceListDescription>
                     )}
                   </li>
                 </ResourceListRow>
@@ -1226,9 +1239,11 @@ function ReleasesList({ repo }: { repo: string }) {
                         </time>
                       </div>
                       {rel.description && (
-                        <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                        <Prose asChild>
+                          <p className="mt-2 whitespace-pre-wrap break-words">
                           {rel.description}
                         </p>
+                        </Prose>
                       )}
                     </div>
                     <div className="flex w-full shrink-0 items-center justify-end gap-1 sm:w-auto">

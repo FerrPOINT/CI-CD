@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ResourceListDescription,
   EmptyState,
   ResourceListTitle,
   PageNavigation,
@@ -83,26 +84,32 @@ export function ProjectsPage() {
                       />
                       <div className="min-w-0 flex-1">
                         <ResourceListTitle asChild><span >{project.name}</span></ResourceListTitle>
-                        <p className="text-sm text-text-muted">
+                        <ResourceListDescription asChild>
+                          <p>
                           {project.project_key} ·{" "}
                           {project.state === "archived"
                             ? "В архиве"
                             : "Активен"}
                           {project.stale ? " · Метаданные устарели" : ""}
                         </p>
+                        </ResourceListDescription>
                       </div>
-                      <span className="text-sm text-text-muted">
+                      <ResourceListDescription asChild>
+                        <span>
                         {project.group_id
                           ? `Репозитории: ${project.repositories} · Git-группа ${project.group_slug}`
                           : "Git не подключён"}
                       </span>
-                      <span className="text-sm">
+                      </ResourceListDescription>
+                      <ResourceListDescription asChild>
+                        <span>
                         {project.latest_status
                           ? t(`pipelines.${project.latest_status}`, {
                               defaultValue: project.latest_status,
                             })
                           : "Нет запусков"}
                       </span>
+                      </ResourceListDescription>
                     </Link>
                   </ResourceListRow>
                 </li>
