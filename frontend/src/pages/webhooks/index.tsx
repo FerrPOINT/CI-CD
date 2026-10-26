@@ -264,10 +264,10 @@ export function WebhooksPage() {
                     <TableBody>
                       {webhooks.map((w) => (
                         <TableRow key={w.id}>
-                          <TableCell className="max-w-xl break-all font-mono text-xs">
+                          <TableCell className="max-w-xl break-all" technical size="sm">
                             {w.url}
                           </TableCell>
-                          <TableCell className="text-xs text-text-secondary">
+                          <TableCell className="text-text-secondary" size="sm">
                             {w.events.length ? w.events.join(", ") : "—"}
                           </TableCell>
                           <TableCell>
@@ -611,16 +611,16 @@ function DeliveryHistorySection() {
                                 }
                               />
                             </TableCell>
-                            <TableCell className="max-w-md break-all font-mono text-xs">
+                            <TableCell className="max-w-md break-all" technical size="sm">
                               {delivery.channel} / {delivery.destination}
                             </TableCell>
                             <TableCell>
                               <DeliveryStatusBadge status={delivery.status} />
                             </TableCell>
-                            <TableCell className="font-mono text-xs">
+                            <TableCell technical size="sm">
                               {delivery.attempts}
                             </TableCell>
-                            <TableCell className="text-xs text-text-secondary">
+                            <TableCell className="text-text-secondary" size="sm">
                               <time dateTime={delivery.created_at}>
                                 {new Date(delivery.created_at).toLocaleString()}
                               </time>
@@ -752,19 +752,19 @@ function DeliveryHistorySection() {
                         <TableBody>
                           {data.attempts.map((attempt) => (
                             <TableRow key={attempt.id}>
-                              <TableCell className="font-mono text-xs">
+                              <TableCell technical size="sm">
                                 {attempt.attempt_number}
                               </TableCell>
                               <TableCell>
                                 <DeliveryStatusBadge status={attempt.outcome} />
                               </TableCell>
-                              <TableCell className="font-mono text-xs">
+                              <TableCell technical size="sm">
                                 {attempt.http_status ?? "—"}
                               </TableCell>
-                              <TableCell className="font-mono text-xs">
+                              <TableCell technical size="sm">
                                 {attempt.duration_ms} ms
                               </TableCell>
-                              <TableCell className="max-w-lg break-all text-xs text-text-secondary">
+                              <TableCell className="max-w-lg break-all text-text-secondary" size="sm">
                                 {attempt.error_message ?? "—"}
                               </TableCell>
                             </TableRow>
@@ -1047,13 +1047,13 @@ function NotificationsSection() {
                             </p>
                           </div>
                         </TableCell>
-                        <TableCell className="break-all font-mono text-xs">
+                        <TableCell className="break-all" technical size="sm">
                           {event.channel} / {event.target}
                         </TableCell>
                         <TableCell>
                           <NotificationStatusBadge event={event} />
                         </TableCell>
-                        <TableCell className="text-xs text-text-muted">
+                        <TableCell className="text-text-muted" size="sm">
                           {new Date(event.created_at).toLocaleString()}
                         </TableCell>
                       </TableRow>

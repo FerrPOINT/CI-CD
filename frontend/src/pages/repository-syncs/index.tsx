@@ -1152,7 +1152,7 @@ function SyncHistory({
                             ? "Forge → внешний"
                             : "—"}
                       </TableCell>
-                      <TableCell className="font-mono text-xs">
+                      <TableCell technical size="sm">
                         {reference.old_sha?.slice(0, 12) ?? "∅"} →{" "}
                         {reference.new_sha?.slice(0, 12) ?? "∅"}
                       </TableCell>

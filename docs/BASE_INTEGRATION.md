@@ -2,12 +2,14 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA: `fd598ba5c977b9f16855cc619983eb0415db9623` ([pin](../.base-ui-revision)).
+Точный UI SHA: `a2480502b44b07d542357b49403cadcd05d48b5f` ([pin](../.base-ui-revision)).
 Компоненты и reference берутся из этой версии Base; открытый справочник другой
 версии не подтверждает доступность контракта в продукте. SDK/skills pins
 независимы. Это исходники собственного checkout; установка и authenticated
 приёмка runtime этим значением не подтверждаются. Датированные разделы ниже
 описывают прежние квалификации и не заменяют проверку итогового кандидата.
+
+Audit, sync и webhook ячейки используют TableCell technical/size=sm Base; resource ID использует ResourceListDescription technical. Формат, retry, записи и ошибки остаются Forge.
 
 ## Исходная UI-поставка — 21 октября 2026
 

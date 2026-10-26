@@ -332,12 +332,12 @@ export function AuditLogPage() {
                       <TableBody>
                         {result.items.map((event) => (
                           <TableRow key={event.id}>
-                            <TableCell className="text-xs">
+                            <TableCell size="sm">
                               {t(`auditLog.actions.${event.action}`, {
                                 defaultValue: event.action,
                               })}
                             </TableCell>
-                            <TableCell className="text-xs">
+                            <TableCell size="sm">
                               <span className="text-text-muted">
                                 {t(
                                   `auditLog.resources.${event.resource_type}`,
@@ -345,12 +345,12 @@ export function AuditLogPage() {
                                 )}
                               </span>
                               {event.resource_id && (
-                                <span className="ml-2 font-mono text-text-muted">
+                                <ResourceListDescription asChild technical><span className="ml-2">
                                   {event.resource_id.slice(0, 8)}
-                                </span>
+                                </span></ResourceListDescription>
                               )}
                             </TableCell>
-                            <TableCell className="text-xs text-text-muted">
+                            <TableCell className="text-text-muted" size="sm">
                               {event.actor ? (
                                 <span className="inline-flex min-w-0 items-center gap-1.5">
                                   <UserAvatar name={event.actor} size="xs" />
@@ -362,7 +362,7 @@ export function AuditLogPage() {
                                 "—"
                               )}
                             </TableCell>
-                            <TableCell className="text-xs text-text-muted">
+                            <TableCell className="text-text-muted" size="sm">
                               <time
                                 dateTime={event.created_at}
                                 title={event.created_at}
