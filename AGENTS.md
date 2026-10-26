@@ -284,3 +284,10 @@ logout/pending и предметные пункты beforeTheme/children ост�
 Ключ mapped-узла передавать внешнему SidebarList. Данные, ACL, URL, раскрытие
 и внешние margin/width остаются у продукта; внутренний base-sidebar-list и
 его border/padding/gap не копировать. Сначала pdlc-ui show и один example.
+
+
+Текст бокового пункта после проверки UI pin использует SidebarItemLabel Base.
+Не копировать base-sidebar-item-label/truncate: compact и сокращение общие.
+Иконка, полное aria-label/title, маршрут, current state и callbacks остаются
+продукту. У текстового slot нет собственного SSR macro; отдельную кнопку
+или focus target вокруг подписи не добавлять.

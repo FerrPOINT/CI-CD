@@ -6,6 +6,7 @@ import {
   SidebarNavigationGroup,
   useSidebarDisclosure,
   NamespaceNavLink as NavLink,
+  SidebarItemLabel,
   SidebarItem,
   Button,
   PlatformHeader,
@@ -83,7 +84,7 @@ function NavigationList({
               title={label}
             >
               <Icon aria-hidden />
-              <span className="base-sidebar-item-label">{label}</span>
+              <SidebarItemLabel>{label}</SidebarItemLabel>
             </NavLink>
           </SidebarItem>
         ))}

@@ -2,7 +2,7 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA: `675565b5923455c771c22589979a23520cc5d041` ([pin](../.base-ui-revision)).
+Точный UI SHA: `efa4babe176b42530a3e17fc25f10e8678f82d33` ([pin](../.base-ui-revision)).
 Компоненты и reference берутся из этой версии Base; открытый справочник другой
 версии не подтверждает доступность контракта в продукте. SDK/skills pins
 независимы. Это исходники собственного checkout; установка и authenticated
@@ -236,3 +236,17 @@ Codex IAB: light/dark/gray × 320/375/1920/2560, Enter/Escape, focus, сохра
 отмена, позднее подтверждение и новая версия. [Снимки и границы](assets/screens/editor-guard-20261027/README.md).
 Это source-компоненты с синтетическим transport; API/Auth/installed runtime
 не проверялись. Общий интеграционный gate, hosted CI и публикация открыты.
+
+
+## Общая подпись навигации — 2026-10-27
+
+Принят совместимый UI 0.3.4, producer `efa4babe176b42530a3e17fc25f10e8678f82d33`.
+Подписи боковых ссылок используют SidebarItemLabel Base; native span,
+полное доступное имя, title, маршруты, состояние и callbacks сохранены.
+Ellipsis и compact visibility принадлежат Base; private CSS-класс не копируется.
+Проверены настоящий архив, offline CLI и frozen adoption: шесть React consumers
+с одним React, седьмой SSR consumer — через штатный export/check. SDK/skills
+pins неизменны; это source-кандидат, без установки и hosted CI.
+
+Итоговый producer проверен 22 scoped tests боковой навигации;
+TypeScript, lint изменённых модулей и shell contract gate прошли отдельно.

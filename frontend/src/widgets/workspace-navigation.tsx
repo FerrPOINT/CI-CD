@@ -11,6 +11,7 @@ import {
 import {
   SidebarList,
   ProjectNavigationGroup,
+  SidebarItemLabel,
   SidebarItem,
   Notice,
   LoadingState,
@@ -95,7 +96,7 @@ export function WorkspaceNavigation({
                 >
                   <NavLink to={to} end onClick={onNavigate} title={label} aria-label={label}>
                     <Icon aria-hidden />
-                    <span className="base-sidebar-item-label">{label}</span>
+                    <SidebarItemLabel>{label}</SidebarItemLabel>
                   </NavLink>
                 </SidebarItem>
               )
