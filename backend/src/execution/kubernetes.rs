@@ -661,6 +661,24 @@ impl Execution {
         }
         Ok(())
     }
+    /// Snapshot available masked output through the owner's emitter before kubelet removes logs.
+    /// Log transport failure must never prevent a requested cancellation.
+    pub async fn cancel_with_logs<F, Fut>(&self, emit: F) -> anyhow::Result<()>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
+    {
+        if !self.cancelled() {
+            match tokio::time::timeout(Duration::from_secs(3), self.stream_logs(emit)).await {
+                Ok(Ok(())) => {}
+                _ => tracing::warn!(
+                    attempt_id = %self.intent.scope.attempt_id,
+                    "pre-cancel log snapshot unavailable; continuing native cancellation"
+                ),
+            }
+        }
+        self.cancel().await
+    }
     pub async fn stream_logs<F, Fut>(&self, mut emit: F) -> anyhow::Result<()>
     where
         F: FnMut(String) -> Fut,
@@ -1594,6 +1612,8 @@ mod lifecycle_tests {
         pod: Option<Value>,
         creates: usize,
         deletes: usize,
+        log_reads: usize,
+        logs_unavailable: bool,
     }
     async fn fixture() -> (Execution, Arc<Mutex<Api>>, tokio::task::JoinHandle<()>) {
         let config = super::tests::config();
@@ -1602,6 +1622,12 @@ mod lifecycle_tests {
         let c = config.clone();
         let app=Router::new().fallback(move |request:Request|{let api=api.clone();let c=c.clone();async move {
             let path=request.uri().path().to_owned();let method=request.method().clone();let bytes=to_bytes(request.into_body(),MAX_RESPONSE).await.unwrap();let mut api=api.lock().unwrap();
+            if path.ends_with("/log") {
+                api.log_reads += 1;
+                let unavailable = api.logs_unavailable || api.deletes > 0;
+                return Response::builder().status(if unavailable { 500 } else { 200 })
+                    .body(Body::from(if unavailable { "logs removed" } else { "CI_CANCEL_STARTED\n" })).unwrap();
+            }
             let (status,value)=if path.ends_with("/persistentvolumeclaims/workspaces"){(200,json!({"metadata":{"uid":c.workspace_claim_uid},"status":{"phase":"Bound"}}))}
             else if path==format!("/api/v1/namespaces/{}",c.namespace){(200,json!({"metadata":{"uid":c.namespace_uid}}))}
             else if method==Method::POST && path.ends_with("/pods") {api.creates+=1;let mut pod:Value=serde_json::from_slice(&bytes).unwrap();pod["metadata"]["uid"]=json!(Uuid::new_v4().to_string());pod["metadata"]["resourceVersion"]=json!("1");pod["status"]=json!({"phase":"Running","containerStatuses":[{"name":"execution","restartCount":0,"state":{"running":{"startedAt":"2026-10-22T00:00:00Z"}}}]});api.pod=Some(pod.clone());(201,pod)}
@@ -1931,6 +1957,58 @@ mod lifecycle_tests {
         assert!(!files.contains("private-value"));
         fs::remove_dir_all(&execution.directory).unwrap();
         task.abort();
+    }
+    #[tokio::test]
+    async fn cancellation_persists_available_logs_before_delete_without_duplicate_snapshot() {
+        let (execution, state, task) = fixture().await;
+        execution
+            .start_with_admission(|| Ok(grant(&execution.config)))
+            .await
+            .unwrap();
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let captured = lines.clone();
+        execution
+            .cancel_with_logs(move |line| {
+                let captured = captured.clone();
+                async move {
+                    captured.lock().unwrap().push(line);
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            *lines.lock().unwrap(),
+            vec!["CI_CANCEL_STARTED".to_string()]
+        );
+        assert_eq!(state.lock().unwrap().log_reads, 1);
+        execution
+            .cancel_with_logs(|_| async { panic!("cancellation must not duplicate logs") })
+            .await
+            .unwrap();
+        assert_eq!(state.lock().unwrap().log_reads, 1);
+        assert_eq!(execution.observe().await.unwrap().unwrap().exit_code, 143);
+        execution.acknowledge().await.unwrap();
+        task.abort();
+        fs::remove_dir_all(&execution.directory).unwrap();
+    }
+    #[tokio::test]
+    async fn unavailable_logs_do_not_block_native_cancellation() {
+        let (execution, state, task) = fixture().await;
+        execution
+            .start_with_admission(|| Ok(grant(&execution.config)))
+            .await
+            .unwrap();
+        state.lock().unwrap().logs_unavailable = true;
+        execution
+            .cancel_with_logs(|_| async { panic!("unavailable logs must not be published") })
+            .await
+            .unwrap();
+        assert_eq!(state.lock().unwrap().log_reads, 1);
+        assert_eq!(execution.observe().await.unwrap().unwrap().exit_code, 143);
+        execution.acknowledge().await.unwrap();
+        task.abort();
+        fs::remove_dir_all(&execution.directory).unwrap();
     }
     #[tokio::test]
     async fn absent_or_replaced_pod_holds_instead_of_duplicate_effect() {

@@ -1,8 +1,8 @@
 //! Embedded lifecycle integration using the same Kubernetes custody adapter as forge-runner.
 use super::*;
 use crate::execution::kubernetes::{Config, Execution, Scope};
-use anyhow::{Context, ensure};
-use serde_json::{Value, json};
+use anyhow::{ensure, Context};
+use serde_json::{json, Value};
 #[path = "runner_kubernetes_deployment.rs"]
 mod deployment;
 
@@ -342,7 +342,24 @@ async fn run_inner(
             || until.is_some_and(|v| std::time::Instant::now() >= v)
         {
             timed_out |= std::time::Instant::now() >= deadline;
-            if execution.cancel().await.is_err() {
+            if execution
+                .cancel_with_logs(|line| {
+                    let pool = pool.clone();
+                    let masks = masks.clone();
+                    async move {
+                        append_attempt_log(
+                            &pool,
+                            job.id,
+                            lease.attempt_id,
+                            &mask_secrets(&line, &masks),
+                        )
+                        .await
+                        .map_err(|_| anyhow::anyhow!("masked log persistence unavailable"))
+                    }
+                })
+                .await
+                .is_err()
+            {
                 return Ok(ExecutionOutcome::Held);
             }
         }
@@ -355,23 +372,24 @@ async fn run_inner(
         }
     }
     let terminal = terminal.expect("observed terminal");
-    if execution
-        .stream_logs(|line| {
-            let pool = pool.clone();
-            let masks = masks.clone();
-            async move {
-                append_attempt_log(
-                    &pool,
-                    job.id,
-                    lease.attempt_id,
-                    &mask_secrets(&line, &masks),
-                )
-                .await
-                .map_err(|_| anyhow::anyhow!("masked log persistence unavailable"))
-            }
-        })
-        .await
-        .is_err()
+    if !execution.cancelled()
+        && execution
+            .stream_logs(|line| {
+                let pool = pool.clone();
+                let masks = masks.clone();
+                async move {
+                    append_attempt_log(
+                        &pool,
+                        job.id,
+                        lease.attempt_id,
+                        &mask_secrets(&line, &masks),
+                    )
+                    .await
+                    .map_err(|_| anyhow::anyhow!("masked log persistence unavailable"))
+                }
+            })
+            .await
+            .is_err()
     {
         return Ok(ExecutionOutcome::Held);
     }

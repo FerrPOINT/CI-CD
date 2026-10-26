@@ -2344,7 +2344,29 @@ async fn execute_kubernetes(
         };
         timed_out |= std::time::Instant::now() >= deadline;
         if cancel || timed_out {
-            execution.cancel().await.map_err(|_| UnconfirmedExecution)?;
+            if let Some(context) = &log {
+                execution
+                    .cancel_with_logs(|line| {
+                        let context = context.clone();
+                        async move {
+                            append_log_lines(
+                                &context,
+                                vec![RunnerLogLine {
+                                    stream: "stdout",
+                                    message: protocol_log_message(&mask_secrets(
+                                        &line,
+                                        &context.masks,
+                                    )),
+                                }],
+                            )
+                            .await
+                        }
+                    })
+                    .await
+                    .map_err(|_| UnconfirmedExecution)?;
+            } else {
+                execution.cancel().await.map_err(|_| UnconfirmedExecution)?;
+            }
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     };
