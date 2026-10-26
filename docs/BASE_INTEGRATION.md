@@ -152,3 +152,19 @@ frontend types, guards и штатный SSR fingerprint. Изменённые R
 UI API, SDK/skills pins, зависимости и установленный runtime не обновляются.
 Scoped проверки и компонентный IAB не заменяют полный integrated gate
 и authenticated-приёмку страниц.
+
+## Вертикальные группы действий — 2026-10-26
+
+Принят UI producer `7294a7974a898f182c22034b511c6b4b15205cef`; SDK/skills pins сохранены.
+Совместимый `ActionGroup orientation="vertical"` и SSR `action_group`
+описаны в [контракте Base](https://github.com/FerrPOINT/services-base/blob/7294a7974a898f182c22034b511c6b4b15205cef/docs/plans/action-orientation-20261026.md).
+Проверены архив UI, offline frozen install шести React-потребителей,
+singleton React, CLI/reference, шесть frontend types и SSR fingerprint.
+Forge дополнительно прошёл19 адресных тестов и lint двух изменённых модулей;
+остальные backend/application builds не выполнялись.
+
+IAB проверяет source-компонент Forge с синтетическими callbacks:24 сочетания
+темы, ширины и направления; это не приёмка установленного приложения.
+Данные, права, pending и подтверждения остаются у продукта; сетка корзины
+Tracker связана с её данными и не получает общий breakpoint из Base.
+Публикация, полный интеграционный gate и установка учитываются отдельно.

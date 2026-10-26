@@ -163,6 +163,8 @@ Button size=icon, обычное — публичным size; justify-start и �
 Строки явных действий используют ActionGroup (SSR — action_group): перенос и gap
 принадлежат Base, внешние margin/width/grid — экрану. Выбор значения использует
 RadioGroup/Select; контекст ресурса не превращается в фиктивную строку действий.
+Вертикальный список действий использует ActionGroup orientation="vertical";
+сначала сверять наличие props в UI pin. Внешняя ширина rail остаётся у Forge.
 Канонический контракт — Base docs/platform/DESIGN_SYSTEM.md и docs/BRANDING.md.
 UI/SDK/skills pins независимы; source-изменения не означают установку.
 

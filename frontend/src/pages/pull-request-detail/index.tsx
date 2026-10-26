@@ -1,4 +1,5 @@
 import {
+  ActionGroup,
   ResourceListDescription,
   Prose,
   ResourceStateView,
@@ -393,14 +394,14 @@ export function PullRequestDetailPage() {
             headingId="pull-actions-title"
             title={t("pulls.actions")}
           />
-          <div className="mt-3 flex flex-col gap-2">
+          <ActionGroup orientation="vertical" className="mt-3">
             <Button asChild variant="outline" className="justify-start">
               <Link to={buildPrDiffHref(pr)}>
                 <FileDiff className="h-4 w-4" /> {t("pulls.viewDiff")}
               </Link>
             </Button>
             <PullRequestActions repo={repo} pullRequest={pr} />
-          </div>
+          </ActionGroup>
         </aside>
       </div>
     </div>

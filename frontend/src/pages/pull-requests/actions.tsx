@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GitMerge, RotateCcw, XCircle } from "lucide-react";
-import {toast, ConfirmDialog, Button} from '@pdlc/ui/ui'
+import {toast, ConfirmDialog, Button, ActionGroup} from '@pdlc/ui/ui'
 import { usePullRequestAction } from "@/api/hooks";
 import type { PullRequest } from "@/api/types";
 
@@ -42,11 +42,7 @@ export function PullRequestActions({
 
   return (
     <>
-      <div
-        className={
-          compact ? "flex shrink-0 items-center gap-1" : "flex flex-col gap-2"
-        }
-      >
+      <ActionGroup orientation={compact ? "horizontal" : "vertical"}>
         {pullRequest.status === "open" && (
           <>
             <Button
@@ -97,7 +93,7 @@ export function PullRequestActions({
             {!compact && t("pulls.reopen")}
           </Button>
         )}
-      </div>
+      </ActionGroup>
       <ConfirmDialog
         returnFocusRef={actionTrigger}
         open={pendingAction !== null}
