@@ -1149,8 +1149,10 @@ async fn close_unprepared_with_transport(
         Ok(_) => guarded(workspace)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             // Git removes a failed clone destination; its owned parent must still exist.
-            ensure!(workspace.file_name() == Some(std::ffi::OsStr::new("workspace")),
-                "unexpected missing checkout path");
+            ensure!(
+                workspace.file_name() == Some(std::ffi::OsStr::new("workspace")),
+                "unexpected missing checkout path"
+            );
             guarded(workspace.parent().context("checkout parent missing")?)?;
         }
         Err(error) => return Err(error.into()),
@@ -1737,18 +1739,37 @@ mod lifecycle_tests {
         fs::create_dir(&root).unwrap();
         let scope = &execution.intent.scope;
         let workspace = crate::runner_workspace::OwnedWorkspace::create(
-            &root, scope.attempt_id, scope.lease_id, scope.generation,
-        ).unwrap();
-        assert!(workspace.clone_checkout(
-            root.join("missing-repository.git").to_str().unwrap(), None, "",
-        ).await.is_err());
+            &root,
+            scope.attempt_id,
+            scope.lease_id,
+            scope.generation,
+        )
+        .unwrap();
+        assert!(workspace
+            .clone_checkout(
+                root.join("missing-repository.git").to_str().unwrap(),
+                None,
+                "",
+            )
+            .await
+            .is_err());
         assert!(!workspace.checkout().exists());
-        workspace.verify_identity(scope.attempt_id, scope.lease_id, scope.generation).unwrap();
+        workspace
+            .verify_identity(scope.attempt_id, scope.lease_id, scope.generation)
+            .unwrap();
         let transport = || Some((execution.client.clone(), execution.server.clone(), None));
         let directory = close_unprepared_with_transport(
-            &execution.config, &root, scope.attempt_id, scope.lease_id, scope.generation,
-            workspace.checkout(), transport(),
-        ).await.unwrap().unwrap();
+            &execution.config,
+            &root,
+            scope.attempt_id,
+            scope.lease_id,
+            scope.generation,
+            workspace.checkout(),
+            transport(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let proof: Value = read(&directory.join("not-submitted.json")).unwrap();
         assert_eq!(proof["kind"], "forge/kubernetes-unprepared/v1");
         assert!(proof.get("podUid").is_none() && proof.get("exitCode").is_none());
@@ -1757,10 +1778,20 @@ mod lifecycle_tests {
         assert_eq!(state.lock().unwrap().creates, 0);
         write_once(&directory.join("issued.json"), b"{}").unwrap();
         assert!(close_unprepared_with_transport(
-            &execution.config, &root, scope.attempt_id, scope.lease_id, scope.generation,
-            workspace.checkout(), transport(),
-        ).await.is_err());
-        assert_eq!(read::<Value>(&directory.join("not-submitted.json")).unwrap(), proof);
+            &execution.config,
+            &root,
+            scope.attempt_id,
+            scope.lease_id,
+            scope.generation,
+            workspace.checkout(),
+            transport(),
+        )
+        .await
+        .is_err());
+        assert_eq!(
+            read::<Value>(&directory.join("not-submitted.json")).unwrap(),
+            proof
+        );
         task.abort();
         fs::remove_dir_all(&execution.directory).unwrap();
     }
