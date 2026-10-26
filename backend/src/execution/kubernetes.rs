@@ -330,6 +330,9 @@ impl Execution {
         private_dir(&control)?;
         let directory = control.join(&intent.pod_name);
         private_dir(&directory)?;
+        let _submission = submission_lock(&directory)?;
+        ensure!(!directory.join("not-submitted.json").try_exists()?,
+            "execution was closed before submission");
         write_once(
             &directory.join("intent.json"),
             &serde_json::to_vec(&intent)?,
@@ -348,14 +351,7 @@ impl Execution {
     pub fn reopen(root: &Path, attempt: Uuid, generation: i64) -> anyhow::Result<Self> {
         let name = format!("forge-{}-g{}", attempt.simple(), generation);
         let directory = root.join(".kubernetes-control").join(name);
-        let mut intent: Intent = read(&directory.join("intent.json"))?;
-        if directory.join("effect-identity.json").exists() {
-            let effect: Value = read(&directory.join("effect-identity.json"))?;
-            intent.action_sha256 = effect["actionSha256"]
-                .as_str()
-                .context("effective digest missing")?
-                .into();
-        }
+        let intent = retained_intent(&directory)?;
         ensure!(
             intent.scope.attempt_id == attempt && intent.scope.generation == generation,
             "custody scope mismatch"
@@ -526,6 +522,8 @@ impl Execution {
         &self,
         authorize: impl FnOnce() -> anyhow::Result<Admission>,
     ) -> anyhow::Result<()> {
+        let _submission = self.submission_lock()?;
+        ensure!(!self.not_submitted()?, "execution was closed before submission");
         self.identities().await?;
         let issued = self.directory.join("issued.json");
         if !issued.exists() {
@@ -562,6 +560,49 @@ impl Execution {
             &serde_json::to_vec(&uid)?,
         )?;
         Ok(())
+    }
+    // The existing immutable intent inode serializes the two irreversible
+    // outcomes: a submitted request, or a closed-before-submission receipt.
+    fn submission_lock(&self) -> anyhow::Result<fs::File> {
+        submission_lock(&self.directory)
+    }
+    fn unsubmitted_receipt(&self) -> Value {
+        json!({"schemaVersion":1,"kind":"forge/kubernetes-not-submitted/v1",
+            "scope":self.intent.scope,"intentSha256":hash(&serde_json::to_vec(&self.intent).expect("serializable intent"))})
+    }
+    pub fn not_submitted(&self) -> anyhow::Result<bool> {
+        let path = self.directory.join("not-submitted.json");
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+            Ok(_) => {}
+        }
+        self.require_unissued()?;
+        ensure!(read::<Value>(&path)? == self.unsubmitted_receipt(), "not-submitted custody changed");
+        Ok(true)
+    }
+    fn require_unissued(&self) -> anyhow::Result<()> {
+        for name in ["issued.json","created.json","terminal.json","ack.json","cancel.json","cleanup-intent.json"] {
+            match fs::symlink_metadata(self.directory.join(name)) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+                Ok(_) => anyhow::bail!("submission may already have occurred"),
+            }
+        }
+        Ok(())
+    }
+    /// An absent Pod alone is never sufficient: the original writeahead request
+    /// must also be absent under the same lock used before CREATE.
+    pub async fn close_not_submitted(&self) -> anyhow::Result<bool> {
+        let _submission = self.submission_lock()?;
+        if self.directory.join("issued.json").try_exists()? { return Ok(false); }
+        ensure!(retained_intent(&self.directory)?==self.intent,"submission intent changed");
+        self.require_unissued()?;
+        self.identities().await?;
+        ensure!(self.get(&self.path()).await?.is_none(), "unissued intent has an actual Pod");
+        write_once(&self.directory.join("not-submitted.json"),
+            &serde_json::to_vec(&self.unsubmitted_receipt())?)?;
+        Ok(true)
     }
     pub async fn observe(&self) -> anyhow::Result<Option<Terminal>> {
         self.identities().await.map_err(|_| Held)?;
@@ -634,6 +675,15 @@ impl Execution {
     }
     /// Called only after exact durable owner terminal ACK. Never deletes workspace files.
     pub async fn acknowledge(&self) -> anyhow::Result<()> {
+        if self.not_submitted()? {
+            let _submission = self.submission_lock()?;
+            self.require_unissued()?;
+            self.identities().await?;
+            ensure!(self.get(&self.path()).await?.is_none(), "not-submitted intent gained a Pod");
+            write_once(&self.directory.join("not-submitted-ack.json"),
+                &serde_json::to_vec(&self.unsubmitted_receipt())?)?;
+            return self.complete_cleanup();
+        }
         if self.directory.join("cleaned.json").exists() {
             ensure!(
                 read::<bool>(&self.directory.join("cleaned.json"))?,
@@ -979,6 +1029,102 @@ fn terminal(pod: &Value, uid: &str) -> anyhow::Result<Option<Terminal>> {
         exit_code: i32::try_from(code)?,
         reason: state["reason"].as_str().unwrap_or("Terminated").into(),
     }))
+}
+fn retained_intent(directory:&Path)->anyhow::Result<Intent> {
+    let mut intent: Intent = read(&directory.join("intent.json"))?;
+    if directory.join("effect-identity.json").exists() {
+        let effect: Value = read(&directory.join("effect-identity.json"))?;
+        intent.action_sha256 = effect["actionSha256"]
+        .as_str()
+        .context("effective digest missing")?
+        .into();
+    }
+    Ok(intent)
+}
+// One nonblocking per-attempt lock, shared by preparation, CREATE and no-submit closure.
+fn submission_lock(directory: &Path) -> anyhow::Result<fs::File> {
+    let path=directory.join(".submission.lock");
+    let mut options=OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::{fd::AsRawFd,unix::fs::OpenOptionsExt};
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW|libc::O_CLOEXEC);
+        let file=options.open(&path)?;
+        guarded(&path)?;
+        ensure!(unsafe {libc::flock(file.as_raw_fd(),libc::LOCK_EX|libc::LOCK_NB)}==0,
+            "submission custody is owned by another process");
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    anyhow::bail!("Kubernetes submission custody requires flock")
+}
+/// No intent means preparation failed before any CREATE could be issued.
+/// Seal that distinct fact only after real API identity and absence readback.
+pub async fn close_unprepared(config:&Config,root:&Path,attempt:Uuid,lease:Uuid,
+    generation:i64,workspace:&Path)->anyhow::Result<Option<PathBuf>> {
+    close_unprepared_with_transport(config,root,attempt,lease,generation,workspace,None).await
+}
+async fn close_unprepared_with_transport(config:&Config,root:&Path,attempt:Uuid,lease:Uuid,
+    generation:i64,workspace:&Path,provided:Option<(Client,String,Option<PathBuf>)>)->anyhow::Result<Option<PathBuf>> {
+    config.validate()?;
+    ensure!(generation>0 && !attempt.is_nil() && !lease.is_nil(),"invalid unprepared scope");
+    let control=root.join(".kubernetes-control");private_dir(&control)?;
+    let directory=control.join(format!("forge-{}-g{}",attempt.simple(),generation));
+    private_dir(&directory)?;
+    let _submission=submission_lock(&directory)?;
+    if directory.join("intent.json").try_exists()? {return Ok(None)}
+    for name in ["issued.json","created.json","terminal.json","ack.json","cancel.json","cleanup-intent.json"] {
+        ensure!(fs::symlink_metadata(directory.join(name)).is_err_and(|e|e.kind()==std::io::ErrorKind::NotFound),
+            "unprepared custody contains submitted state");
+    }
+    let relative=workspace.strip_prefix(root)?;
+    guarded(workspace)?;
+    let (client,server,token)=match provided {Some(value)=>value,None=>transport(config)?};
+    for (path,expected) in [
+        (format!("/api/v1/namespaces/{}",config.namespace),Some(config.namespace_uid.as_str())),
+        (format!("/api/v1/namespaces/{}/persistentvolumeclaims/{}",config.namespace,config.workspace_claim),
+            Some(config.workspace_claim_uid.as_str())),
+        (format!("/api/v1/namespaces/{}/pods/forge-{}-g{}",config.namespace,attempt.simple(),generation),None)] {
+        let mut request=client.get(format!("{server}{path}"));
+        if let Some(token)=&token {request=request.bearer_auth(fs::read_to_string(token)?.trim());}
+        let mut response=request.send().await?;
+        if expected.is_none(){ensure!(response.status()==StatusCode::NOT_FOUND,"unprepared effect has an actual Pod");continue}
+        ensure!(response.status().is_success(),"unprepared identity unavailable");
+        let mut bytes=Vec::new();
+        while let Some(chunk)=response.chunk().await?{
+            ensure!(bytes.len()+chunk.len()<=MAX_RESPONSE,"unprepared API reply exceeds bound");bytes.extend(chunk);
+        }
+        let value:Value=serde_json::from_slice(&bytes)?;
+        ensure!(value["metadata"]["uid"].as_str()==expected,"unprepared identity changed");
+        if path.contains("persistentvolumeclaims"){ensure!(value["status"]["phase"]=="Bound","workspace not Bound");}
+    }
+    let proof=json!({"schemaVersion":1,"kind":"forge/kubernetes-unprepared/v1",
+        "attemptId":attempt,"leaseId":lease,"generation":generation,
+        "workspace":relative,"configSha256":hash(&serde_json::to_vec(config)?)});
+    write_once(&directory.join("not-submitted.json"),&serde_json::to_vec(&proof)?)?;
+    Ok(Some(directory))
+}
+/// Retain an authenticated owner readback ONLY for a sealed no-submit case.
+pub fn write_not_submitted_readback(directory:&Path,receipt:&[u8])->anyhow::Result<()> {
+    guarded(directory)?;
+    let _submission=submission_lock(directory)?;
+    ensure!(directory.join("not-submitted.json").try_exists()?
+        && !directory.join("issued.json").try_exists()?,"no-submit readback has no original custody");
+    let path=directory.join("not-submitted-owner-readback.json");
+    if path.try_exists()? {
+        let old:Value=read(&path)?;
+        let actual:Value=serde_json::from_slice(receipt)?;
+        if old!=actual {
+            let mut expected=old.clone();
+            ensure!(expected["terminalAcknowledged"]==false && actual["terminalAcknowledged"]==true,
+                "no-submit owner readback changed");
+            expected["terminalAcknowledged"]=json!(true);
+            ensure!(expected==actual,"no-submit owner identity/outcome changed");
+            return write_once(&directory.join("not-submitted-owner-confirmed.json"),receipt);
+        }
+    }
+    write_once(&path,receipt)
 }
 fn guarded(path: &Path) -> anyhow::Result<()> {
     let mut current = PathBuf::new();
@@ -1369,6 +1515,7 @@ mod lifecycle_tests {
             action_sha256: hash(&serde_json::to_vec(&manifest).unwrap()),
             environment_sha256: "e".repeat(64),
         };
+        write_once(&directory.join("intent.json"),&serde_json::to_vec(&intent).unwrap()).unwrap();
         let client = Client::builder()
             .retry(reqwest::retry::never())
             .build()
@@ -1418,7 +1565,8 @@ mod lifecycle_tests {
                 .starts_with("kubernetes_image_build_unqualified:")
         );
         assert_eq!(execution.manifest, original);
-        assert_eq!(fs::read_dir(&execution.directory).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&execution.directory).unwrap().map(|p|p.unwrap().file_name())
+            .collect::<Vec<_>>(),vec![std::ffi::OsString::from("intent.json")]);
         assert_eq!(state.lock().unwrap().creates, 0);
         execution
             .start_with_admission(|| Ok(grant(&execution.config)))
@@ -1427,6 +1575,70 @@ mod lifecycle_tests {
         assert_eq!(state.lock().unwrap().creates, 1);
         task.abort();
         fs::remove_dir_all(&execution.directory).unwrap();
+    }
+    #[tokio::test]
+    async fn failed_before_intent_requires_fresh_identity_and_pod_absence() {
+        let (execution,state,task)=fixture().await;
+        let root=execution.directory.join("unprepared-root");fs::create_dir(&root).unwrap();
+        let workspace=root.join("attempt-owned");fs::create_dir(&workspace).unwrap();
+        let scope=&execution.intent.scope;
+        let transport=||Some((execution.client.clone(),execution.server.clone(),None));
+        let path=close_unprepared_with_transport(&execution.config,&root,scope.attempt_id,
+            scope.lease_id,scope.generation,&workspace,transport()).await.unwrap().unwrap();
+        let proof:Value=read(&path.join("not-submitted.json")).unwrap();
+        assert_eq!(proof["kind"],"forge/kubernetes-unprepared/v1");
+        assert!(proof.get("podUid").is_none() && proof.get("exitCode").is_none());
+        assert!(!path.join("intent.json").exists() && !path.join("issued.json").exists());
+        assert_eq!(state.lock().unwrap().creates,0);
+        state.lock().unwrap().pod=Some(json!({"metadata":{"uid":"foreign"}}));
+        assert!(close_unprepared_with_transport(&execution.config,&root,scope.attempt_id,
+            scope.lease_id,scope.generation,&workspace,transport()).await.is_err());
+        assert_eq!(read::<Value>(&path.join("not-submitted.json")).unwrap(),proof);
+        task.abort();fs::remove_dir_all(&execution.directory).unwrap();
+    }
+    #[tokio::test]
+    async fn rejected_admission_can_close_without_faking_a_terminal_or_replaying_start() {
+        let (execution,state,task)=fixture().await;
+        assert!(execution.start_with_admission(|| anyhow::bail!("expired admission")).await.is_err());
+        let mut files=fs::read_dir(&execution.directory).unwrap()
+            .map(|p|p.unwrap().file_name()).collect::<Vec<_>>();files.sort();
+        assert_eq!(files,vec![std::ffi::OsString::from(".submission.lock"),std::ffi::OsString::from("intent.json")]);
+        assert!(execution.close_not_submitted().await.unwrap());
+        assert!(execution.not_submitted().unwrap());
+        assert!(execution.start_with_admission(|| panic!("closed intent cannot acquire new admission")).await.is_err());
+        assert_eq!(state.lock().unwrap().creates,0);
+        execution.acknowledge().await.unwrap();
+        execution.finish_workspace_cleanup().unwrap();
+        assert!(execution.directory.join("not-submitted-ack.json").exists());
+        assert!(!execution.directory.join("terminal.json").exists());
+        assert!(!execution.directory.join("created.json").exists());
+        assert!(!execution.directory.join("ack.json").exists());
+        task.abort();fs::remove_dir_all(&execution.directory).unwrap();
+    }
+    #[tokio::test]
+    async fn issued_or_foreign_actual_pod_cannot_be_closed_as_not_submitted() {
+        let (execution,state,task)=fixture().await;
+        state.lock().unwrap().pod=Some(json!({"metadata":{"uid":"foreign"}}));
+        assert!(execution.close_not_submitted().await.is_err());
+        assert!(!execution.directory.join("not-submitted.json").exists());
+        state.lock().unwrap().pod=None;
+        execution.start_with_admission(|| Ok(grant(&execution.config))).await.unwrap();
+        assert!(!execution.close_not_submitted().await.unwrap());
+        assert!(execution.not_submitted().unwrap()==false);
+        assert_eq!(state.lock().unwrap().creates,1);
+        task.abort();fs::remove_dir_all(&execution.directory).unwrap();
+    }
+    #[tokio::test]
+    async fn not_submitted_is_bound_to_intent_and_cannot_race_submission_owner() {
+        let (execution,_state,task)=fixture().await;
+        let lock=execution.submission_lock().unwrap();
+        assert!(execution.close_not_submitted().await.is_err());
+        drop(lock);
+        execution.close_not_submitted().await.unwrap();
+        fs::write(execution.directory.join("not-submitted.json"),b"{}").unwrap();
+        assert!(execution.not_submitted().is_err());
+        assert!(execution.acknowledge().await.is_err());
+        task.abort();fs::remove_dir_all(&execution.directory).unwrap();
     }
     #[tokio::test]
     async fn cancel_requires_stopped_uid_before_ack_and_never_recreates() {

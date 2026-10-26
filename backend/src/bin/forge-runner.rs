@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use chrono::Utc;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -193,7 +193,7 @@ struct CompletionAck {
     terminal_status: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LeaseReceipt {
     protocol_version: i32,
@@ -409,6 +409,29 @@ async fn reconcile_workspaces(
                 continue;
             }
             ensure_success(ownership).await?;
+        }
+        if kubernetes_mode() {
+            let known_unsubmitted=async {
+                let workspace=cicd::runner_workspace::OwnedWorkspace::reopen(root,&record.workspace_id)?;
+                workspace.verify_identity(record.attempt_id,record.lease_id,record.generation)?;
+                if cicd::execution::kubernetes::close_unprepared(
+                    &cicd::execution::kubernetes::Config::from_env()?,root,record.attempt_id,
+                    record.lease_id,record.generation,workspace.checkout()).await?.is_some() {
+                    return Ok::<bool,anyhow::Error>(true);
+                }
+                cicd::execution::kubernetes::Execution::reopen(root,record.attempt_id,record.generation)?
+                    .close_not_submitted().await
+            }.await;
+            match known_unsubmitted {
+                Ok(false)=>{} // The original issued/terminal path below is unchanged.
+                Ok(true)=>{
+                    if recover_kubernetes(client,base,credential,root,&record,keep_workspace).await.is_err(){
+                        unresolved+=1;
+                    }
+                    continue;
+                }
+                Err(_)=>{unresolved+=1;continue;}
+            }
         }
         let Some(outcome) = record.terminal_status.as_deref() else {
             if kubernetes_mode() {
@@ -977,13 +1000,16 @@ async fn complete_executed_attempt(
             workspace.record_recovered_termination(outcome)?;
         }
         if kubernetes_mode() {
-            cicd::execution::kubernetes::Execution::reopen(
+            let execution = cicd::execution::kubernetes::Execution::reopen(
                 &workspace_root_for_checkout(workspace.checkout())?,
                 offer.attempt.id,
                 offer.fencing_token,
-            )?
-            .acknowledge()
-            .await?;
+            )?;
+            if execution.not_submitted()? {
+                read_terminal_receipt(client,base,credential,offer.lease_id,
+                    offer.attempt.id,offer.fencing_token,outcome).await?;
+            }
+            execution.acknowledge().await?;
         }
         workspace.acknowledge_completion(outcome)?;
     }
@@ -1516,6 +1542,28 @@ fn truncate_diagnostic(value: &str) -> String {
 mod tests {
     use super::*;
     use cicd::runner_workspace::OwnedWorkspace;
+
+    #[test]
+    fn only_exact_closed_owner_readback_authorizes_unsubmitted_cleanup() {
+        let record=cicd::runner_workspace::RetainedWorkspace {
+            workspace_id:"owned".into(),attempt_id:Uuid::new_v4(),lease_id:Uuid::new_v4(),
+            generation:7,terminal_status:None,acknowledged:false };
+        let mut receipt=LeaseReceipt { protocol_version:1,lease_id:record.lease_id,
+            attempt_id:record.attempt_id,fencing_token:record.generation,
+            lease_status:"canceled".into(),terminal_status:Some("canceled".into()),
+            completed_at:Some(Utc::now()),terminal_acknowledged:false };
+        validate_unsubmitted_owner_readback(&record,&receipt).unwrap();
+        // Keep the real false flag: cancellation of unissued work is not a Pod completion ACK.
+        assert!(!receipt.terminal_acknowledged);
+        receipt.lease_status="active".into();
+        assert!(validate_unsubmitted_owner_readback(&record,&receipt).is_err());
+        receipt.lease_status="expired".into();receipt.terminal_status=Some("success".into());
+        assert!(validate_unsubmitted_owner_readback(&record,&receipt).is_err());
+        receipt.terminal_status=Some("failed".into());receipt.fencing_token+=1;
+        assert!(validate_unsubmitted_owner_readback(&record,&receipt).is_err());
+        receipt.fencing_token=record.generation;receipt.attempt_id=Uuid::new_v4();
+        assert!(validate_unsubmitted_owner_readback(&record,&receipt).is_err());
+    }
 
     fn test_cli(work_dir: PathBuf) -> Cli {
         Cli {
@@ -2065,7 +2113,15 @@ async fn execute_kubernetes(
         &offer.attempt.artifacts,
         &offer.attempt.secrets,
     )?;
-    execution.start().await.map_err(|_| UnconfirmedExecution)?;
+    if let Err(error) = execution.start().await {
+        if execution.close_not_submitted().await.unwrap_or(false) {
+            return Ok((ExecutionResult {
+                outcome: "failed", exit_code: None,
+                diagnostic: Some(truncate_diagnostic(&format!("Kubernetes request not submitted: {error:#}"))),
+            }, workspace));
+        }
+        return Err(UnconfirmedExecution.into());
+    }
     let deadline =
         std::time::Instant::now() + Duration::from_secs(offer.attempt.timeout_seconds as u64);
     let mut timed_out = false;
@@ -2139,6 +2195,36 @@ fn kubernetes_command_vector(commands: &[String]) -> Vec<String> {
     args
 }
 
+async fn unsubmitted_owner_readback(client:&reqwest::Client,base:&str,credential:&str,
+    record:&cicd::runner_workspace::RetainedWorkspace)->anyhow::Result<LeaseReceipt> {
+    let response=client.get(format!("{base}/api/v1/runner/leases/{}/receipt",record.lease_id))
+        .bearer_auth(credential).send().await?;
+    let value:LeaseReceipt=response_json(response).await?;
+    validate_unsubmitted_owner_readback(record,&value)?;
+    Ok(value)
+}
+fn validate_unsubmitted_owner_readback(record:&cicd::runner_workspace::RetainedWorkspace,
+    value:&LeaseReceipt)->anyhow::Result<()> {
+    ensure!(value.protocol_version==PROTOCOL_VERSION && value.lease_id==record.lease_id
+        && value.attempt_id==record.attempt_id && value.fencing_token==record.generation
+        && value.completed_at.is_some()
+        && matches!(value.lease_status.as_str(),"expired"|"completed"|"canceled")
+        && matches!((value.lease_status.as_str(),value.terminal_status.as_deref()),
+            ("expired",Some("failed"|"canceled"))|("completed",Some("failed"))|("canceled",Some("canceled"))),
+        "known-unsubmitted work lacks its exact closed owner receipt");
+    Ok(())
+}
+async fn finish_unsubmitted_workspace(workspace:cicd::runner_workspace::OwnedWorkspace,
+    directory:&Path,receipt:&LeaseReceipt,keep:bool)->anyhow::Result<()> {
+    let outcome=receipt.terminal_status.as_deref().context("closed outcome missing")?;
+    // This records actual server state including terminalAcknowledged:false.
+    // It is owner readback for NO execution, not a fabricated completion/Pod ACK.
+    cicd::execution::kubernetes::write_not_submitted_readback(directory,&serde_json::to_vec(receipt)?)?;
+    workspace.record_completion(outcome).or_else(|_|workspace.record_recovered_termination(outcome))?;
+    workspace.acknowledge_completion(outcome)?;
+    if !keep {workspace.cleanup_after_ack().await?;}
+    Ok(())
+}
 async fn recover_kubernetes(
     client: &reqwest::Client,
     base: &str,
@@ -2148,10 +2234,25 @@ async fn recover_kubernetes(
     keep_workspace: bool,
 ) -> anyhow::Result<()> {
     use cicd::execution::kubernetes::Execution;
+    let workspace=cicd::runner_workspace::OwnedWorkspace::reopen(root,&record.workspace_id)?;
+    workspace.verify_identity(record.attempt_id,record.lease_id,record.generation)?;
+    if let Some(directory)=cicd::execution::kubernetes::close_unprepared(
+        &cicd::execution::kubernetes::Config::from_env()?,root,record.attempt_id,record.lease_id,
+        record.generation,workspace.checkout()).await? {
+        let receipt=unsubmitted_owner_readback(client,base,credential,record).await?;
+        return finish_unsubmitted_workspace(workspace,&directory,&receipt,keep_workspace).await;
+    }
     let execution = Execution::reopen(root, record.attempt_id, record.generation)?;
     let scope = execution.scope();
     if scope.lease_id != record.lease_id {
         bail!("retained lease identity mismatch")
+    }
+    if execution.close_not_submitted().await? {
+        if let Ok(receipt)=unsubmitted_owner_readback(client,base,credential,record).await {
+            let directory=root.join(".kubernetes-control").join(format!(
+                "forge-{}-g{}",record.attempt_id.simple(),record.generation));
+            return finish_unsubmitted_workspace(workspace,&directory,&receipt,keep_workspace).await;
+        }
     }
     let (token, artifacts, secrets) = execution.external_recovery()?;
     let offer = LeaseOffer {
@@ -2177,6 +2278,17 @@ async fn recover_kubernetes(
         },
     };
     let workspace = cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
+    workspace.verify_identity(record.attempt_id,record.lease_id,record.generation)?;
+    if execution.close_not_submitted().await? {
+        let outcome=match record.terminal_status.as_deref() {
+            None | Some("failed") => "failed", Some("canceled") => "canceled",
+            _ => anyhow::bail!("unsubmitted work cannot claim success"),
+        };
+        return complete_executed_attempt(client,base,credential,&offer,
+            (ExecutionResult {outcome,exit_code:None,
+                diagnostic:Some("Kubernetes request was never submitted; retained owner recovery".into())},workspace),
+            keep_workspace).await;
+    }
     let mut terminal = execution.reconcile().await?;
     let mut renew_at = std::time::Instant::now();
     let mut revoked = false;
