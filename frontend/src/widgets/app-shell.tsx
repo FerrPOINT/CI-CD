@@ -1,5 +1,6 @@
 import { useApplicationAccess } from "@pdlc/ui/auth";
 import {
+  SidebarList,
   AccountMenu,
   AppShell as BaseAppShell,
   SidebarNavigationGroup,
@@ -70,23 +71,25 @@ function NavigationList({
     },
   ];
   const links = (items: typeof navItems) => (
-    <nav className="base-sidebar-list" aria-label={t("navigation.main")}>
-      {items.map(({ to, icon: Icon, label }) => (
-        <SidebarItem key={to} asChild compact={compact}>
-          <NavLink
-            to={to + scope}
-            end={to === "/"}
-            onClick={onNavigate}
-            aria-label={label}
-            title={label}
-          >
-            <Icon aria-hidden />
-            <span className="base-sidebar-item-label">{label}</span>
-          </NavLink>
-        </SidebarItem>
-      ))}
-    </nav>
-  );
+    <SidebarList asChild>
+      <nav aria-label={t('navigation.main')}>
+        {items.map(({ to, icon: Icon, label }) => (
+          <SidebarItem key={to} asChild compact={compact}>
+            <NavLink
+              to={to + scope}
+              end={to === '/'}
+              onClick={onNavigate}
+              aria-label={label}
+              title={label}
+            >
+              <Icon aria-hidden />
+              <span className="base-sidebar-item-label">{label}</span>
+            </NavLink>
+          </SidebarItem>
+        ))}
+      </nav>
+    </SidebarList>
+  )
   return (
     <div>
       {links(

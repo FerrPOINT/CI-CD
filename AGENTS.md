@@ -258,3 +258,12 @@ AccountMenu в actions общего PlatformHeader. Identity, permissions,
 logout/pending и предметные пункты beforeTheme/children остаются у продукта;
 не копировать trigger, popup или theme/logout layout. Контракт и пример
 сначала читать через pdlc-ui; custom API/SSO и установленный runtime не меняются.
+
+## Коллекции боковой навигации
+
+После проверки UI pin используйте SidebarList Base для списка и separated
+для его разделителя, nested — для отступа вложенной коллекции. asChild
+сохраняет native nav/ul/li/section, hidden, ID и обработчики без DOM-оболочки.
+Ключ mapped-узла передавать внешнему SidebarList. Данные, ACL, URL, раскрытие
+и внешние margin/width остаются у продукта; внутренний base-sidebar-list и
+его border/padding/gap не копировать. Сначала pdlc-ui show и один example.
