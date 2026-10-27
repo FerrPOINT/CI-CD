@@ -291,3 +291,15 @@ mobileFlow для длинной формы. SSR-аналога этого React
 Настоящий архив из 882 файлов сверён с установленным UI; offline frozen install,
 singleton React и CLI check пройдены. SDK/skills pins сохранены. Это source
 adoption; приложение, backend и Storybook не пересобирались, runtime не менялся.
+
+## Заголовок CapabilityCallout — 2026-10-27
+
+CapabilityCallout сохраняет предметные уровни current/mvp/configuration/target
+и их соответствие семантическим Notice tones. Заголовок оформляет SectionHeader
+Base, подпись уровня — Badge. Локальный flex только компонует текст и подпись;
+он не определяет шрифт или геометрию общего контрола.
+
+TypeScript, scoped ESLint, format, UI guard и AST-сохранность предметного модуля
+проверены. В IAB импортирован настоящий CapabilityCallout с синтетическим текстом:
+четыре состояния, light/dark/gray, 320/375/1920/2560, без overflow; снимок просмотрен.
+Это проверка leaf UI, без backend, SSO и runtime. UI/SDK/skills pins неизменны.
