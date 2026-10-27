@@ -238,7 +238,6 @@ SSR использует checkbox_control/radio_control с appearance='card'; о
 click-handler или повторное input/change для оформления не нужен.
 Контракт и пример: Base docs/platform/CHOICE_CONTROLS.md, pdlc-ui example Checkbox --case cards.
 
-
 Видимый выбор файла использует `Input type="file"` Base: кнопка выбора,
 focus и disabled следуют теме и branding. Native файловый диалог остаётся у ОС;
 чтение, проверка содержимого/размера и отправка — у продукта. Скрытый технический
@@ -249,7 +248,6 @@ file input за Button допустим; видимый raw input не доба�
 поля — FormField Base. Продукт сохраняет текст, htmlFor/id, required, данные
 и обработчики; не копировать типографику подписи и фон/рамку/радиусы/padding
 Input/Textarea. Внешняя компоновка, высота Textarea и моноширинный код допустимы.
-
 
 ## Композиция списков и страниц
 
@@ -267,6 +265,7 @@ URL, курсоры, проверка допустимости страницы 
 и данные остаются у владельца. Для Disclosure используйте appearance, tone=muted/danger
 и size=sm вместо локальных border/padding, цветов и типографики. Внешние margin,
 ширина и предметное содержимое остаются у продукта; наличие props сверять по UI pin.
+
 ## Меню аккаунта Base
 
 При принятом UI pin с AccountMenu использовать общую композицию аккаунта,
@@ -285,7 +284,6 @@ logout/pending и предметные пункты beforeTheme/children ост�
 и внешние margin/width остаются у продукта; внутренний base-sidebar-list и
 его border/padding/gap не копировать. Сначала pdlc-ui show и один example.
 
-
 Текст бокового пункта после проверки UI pin использует SidebarItemLabel Base.
 Не копировать base-sidebar-item-label/truncate: compact и сокращение общие.
 Иконка, полное aria-label/title, маршрут, current state и callbacks остаются
@@ -301,3 +299,11 @@ ResourceListDescription technical для подписи без поверхно�
 оформление: текущий ID, aria-current, ref/tabIndex и действия остаются у продукта.
 SSR: inline_code и resource_list_row из штатного экспорта Base.
 Каноническое руководство — Base docs/platform/DESIGN_SYSTEM.md и pdlc-ui.
+
+## Граница render-ошибки React
+
+После проверки UI pin использовать RenderBoundary Base; собственные
+getDerivedStateFromError/componentDidCatch не добавлять. Fallback, отчёт,
+данные и явный reset key остаются у продукта. Граница не очищает журнал и
+не повторяет операцию; HTTP, async, event handlers и SSR обслуживаются отдельно.
+Контракт и поиск: Base docs/platform/DESIGN_SYSTEM.md и `pdlc-ui show RenderBoundary`.
