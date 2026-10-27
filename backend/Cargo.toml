@@ -78,6 +78,7 @@ cicd-api = { path = "api" }
 reqwest.workspace = true
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls", "tracing", "ring", "webpki-roots"] }
 tokio-stream = "0.1"
+tempfile = "=3.27.0"
 utoipa = { workspace = true }
 rand_core = { workspace = true }
 jsonwebtoken = { workspace = true }

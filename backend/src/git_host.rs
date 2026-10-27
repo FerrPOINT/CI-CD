@@ -4,7 +4,7 @@ use std::{
 };
 
 use axum::{
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{Path as AxumPath, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
@@ -13,7 +13,10 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::{FromRow, PgPool};
-use tokio::{io::AsyncWriteExt, process::Command};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+};
 use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
@@ -623,7 +626,7 @@ async fn run_git_service(
     storage: Option<String>,
     allow_bootstrap: bool,
     task: Option<crate::task_git::Authorization>,
-) -> Result<Vec<u8>, ApiError> {
+) -> Result<std::fs::File, ApiError> {
     // The owner waiter retains the guard until native Git exits, even if HTTP is cancelled.
     let path = path.to_owned();
     let service = service.to_owned();
@@ -715,7 +718,7 @@ async fn run_git_service_owned(
     hooks: Option<receive_hooks::ReceiveHooks>,
     task_variant: bool,
     guard: Option<&cicd_infra::sync_git::MutationGuard>,
-) -> Result<Vec<u8>, ApiError> {
+) -> Result<std::fs::File, ApiError> {
     let mut command = Command::new("git");
     command.kill_on_drop(true);
     if task_variant {
@@ -734,12 +737,36 @@ async fn run_git_service_owned(
         }
         return Err(crate::repository_sync::api_error(error));
     }
+    // Keep large Git packs off the API heap. The anonymous spool lives on
+    // Git storage, never a potentially memory-backed container /tmp.
+    let output_file = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("Git storage parent missing"))
+        .and_then(tempfile::tempfile_in);
+    let mut output_file = match output_file {
+        Ok(file) => file,
+        Err(error) => {
+            if let Some(hooks) = hooks {
+                hooks.cleanup();
+            }
+            return Err(ApiError::internal(sqlx::Error::Io(error)));
+        }
+    };
+    let output_writer = match output_file.try_clone() {
+        Ok(file) => file,
+        Err(error) => {
+            if let Some(hooks) = hooks {
+                hooks.cleanup();
+            }
+            return Err(ApiError::internal(sqlx::Error::Io(error)));
+        }
+    };
     let spawned = command
         .arg(service)
         .arg("--stateless-rpc")
         .arg(path)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::from(output_writer))
         .stderr(Stdio::piped())
         .spawn();
     let mut child = match spawned {
@@ -778,7 +805,36 @@ async fn run_git_service_owned(
             String::from_utf8_lossy(&output.stderr).to_string(),
         ))));
     }
-    Ok(output.stdout)
+    use std::io::Seek;
+    output_file
+        .rewind()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    Ok(output_file)
+}
+
+// At most two queued chunks plus the current read, independent of pack size.
+// Dropping HTTP stops the reader; the OS removes the anonymous spool on close.
+// Native Git has already exited under its original quiescence/mutation guards.
+fn git_response_body(file: std::fs::File) -> Body {
+    let (send, receive) = tokio::sync::mpsc::channel(2);
+    tokio::spawn(async move {
+        let mut file = tokio::fs::File::from_std(file);
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            let chunk = match file.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(size) => Ok(Bytes::copy_from_slice(&buffer[..size])),
+                Err(error) => {
+                    let _ = send.send(Err(error)).await;
+                    break;
+                }
+            };
+            if send.send(chunk).await.is_err() {
+                break;
+            }
+        }
+    });
+    Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(receive))
 }
 
 #[utoipa::path(
@@ -862,7 +918,7 @@ pub async fn git_service_endpoint(
                 header::CONTENT_TYPE,
                 format!("application/x-git-{service}-result"),
             )],
-            out,
+            git_response_body(out),
         )
             .into_response(),
         Err(e) => e.into_response(),
@@ -1148,6 +1204,119 @@ pub async fn delete_repository(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn git_rpc_spools_native_output_and_streams_exact_bytes() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().expect("fixture");
+        let repo = dir.path().join("repo.git");
+        init_bare_repository(&repo).await.expect("bare repo");
+        let mut input = Command::new("git")
+            .args(["hash-object", "-w", "--stdin"])
+            .arg("--literally")
+            .current_dir(&repo)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("blob");
+        let mut bytes = vec![0u8; 2 * 1024 * 1024];
+        let mut seed = 17u32;
+        for byte in &mut bytes {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            *byte = (seed >> 24) as u8;
+        }
+        input
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&bytes)
+            .await
+            .expect("blob input");
+        let blob = input.wait_with_output().await.expect("blob output");
+        assert!(blob.status.success());
+        let oid = std::str::from_utf8(&blob.stdout).unwrap().trim();
+        assert!(
+            Command::new("git")
+                .args(["update-ref", "refs/tags/large-blob", oid])
+                .current_dir(&repo)
+                .status()
+                .await
+                .unwrap()
+                .success()
+        );
+        let mut request = pkt_line(&format!("want {oid}\n"));
+        request.extend_from_slice(b"0000");
+        request.extend_from_slice(&pkt_line("done\n"));
+        let out = run_git_service_owned(&repo, "upload-pack", request.into(), None, false, None)
+            .await
+            .expect("native Git RPC");
+        assert!(out.metadata().unwrap().len() > 1024 * 1024);
+        let body = axum::body::to_bytes(git_response_body(out), 4 * 1024 * 1024)
+            .await
+            .expect("response");
+        let pack = body.strip_prefix(b"0008NAK\n").expect("Git v1 NAK framing");
+        let mut consumer = Command::new("git")
+            .args(["index-pack", "--stdin"])
+            .current_dir(&repo)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("native pack consumer");
+        consumer
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(pack)
+            .await
+            .unwrap();
+        assert!(consumer.wait_with_output().await.unwrap().status.success());
+        // Anonymous response storage never appears among repository entries.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        let mut spool = tempfile::tempfile_in(dir.path()).unwrap();
+        spool.write_all(&body).unwrap();
+        use std::io::Seek;
+        spool.rewind().unwrap();
+        let streamed = axum::body::to_bytes(git_response_body(spool), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(streamed, body);
+    }
+
+    #[tokio::test]
+    async fn git_response_disconnect_releases_anonymous_storage() {
+        use std::io::{Seek, Write};
+        let dir = tempfile::tempdir().unwrap();
+        let mut file = tempfile::tempfile_in(dir.path()).unwrap();
+        file.write_all(&vec![42; 1024 * 1024]).unwrap();
+        file.rewind().unwrap();
+        #[cfg(unix)]
+        let identity = {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = file.metadata().unwrap();
+            (metadata.dev(), metadata.ino())
+        };
+        let response = git_response_body(file);
+        drop(response);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let is_open = || {
+                std::fs::read_dir("/proc/self/fd")
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .filter_map(|fd| std::fs::metadata(fd.path()).ok())
+                    .any(|m| (m.dev(), m.ino()) == identity)
+            };
+            for _ in 0..100 {
+                if !is_open() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            assert!(!is_open(), "HTTP cancellation retained its spool handle");
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 
     #[test]
     fn validates_repo_names() {
