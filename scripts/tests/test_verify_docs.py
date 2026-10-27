@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / "verify_docs.py"
 SPEC = importlib.util.spec_from_file_location("verify_docs", SCRIPT)
@@ -41,26 +42,25 @@ class CapabilityStatusRegressionTests(unittest.TestCase):
 
     def test_readme_contract_rejects_missing_safe_proof(self) -> None:
         readme = verify_docs.ROOT / "README.md"
-        original = readme.read_bytes()
-        try:
-            readme.write_text("# Forge\n<a name=\"overview\"></a>\n", encoding="utf-8")
+        with patch.object(verify_docs, 'read_text', return_value="# Forge\n<a name=\"overview\"></a>\n") as reader:
             verify_docs.check_readme_contract()
             self.assertTrue(
                 any(problem.startswith("README lacks required safe visual proof: 06-pipeline-detail.png")
                     for problem in verify_docs.problems)
             )
-        finally:
-            readme.write_bytes(original)
+            reader.assert_called_once_with(readme)
 
     def test_readme_contract_rejects_mobile_gallery_images(self) -> None:
         readme = verify_docs.ROOT / "README.md"
-        original = readme.read_bytes()
-        try:
-            readme.write_bytes(original + b"\n![Mobile](docs/screenshots/375x812/wide.png)\n")
+        original = readme.read_text(encoding='utf-8')
+        with patch.object(verify_docs, 'read_text', return_value=original + "\n![Mobile](docs/screenshots/375x812/wide.png)\n") as reader:
             verify_docs.check_readme_contract()
             self.assertTrue(any("must not include mobile screenshots" in item for item in verify_docs.problems))
-        finally:
-            readme.write_bytes(original)
+            reader.assert_called_once_with(readme)
+
+    def test_existing_readme_keeps_its_reviewed_safe_proof(self) -> None:
+        verify_docs.check_readme_contract()
+        self.assertEqual(verify_docs.problems, [])
 
 
 if __name__ == "__main__":

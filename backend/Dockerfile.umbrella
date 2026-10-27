@@ -26,7 +26,7 @@ RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src 
  && printf '\n' > api/src/lib.rs \
  && printf 'fn main() {}\n' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs \
- && /usr/local/cargo/bin/cargo build --locked --release \
+ && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner \
  && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
 COPY CI-CD/backend/src ./src
 COPY CI-CD/backend/domain/src domain/src
@@ -42,7 +42,8 @@ COPY CI-CD/scripts/workspace_deploy_admission.py CI-CD/scripts/workspace_deploy_
 COPY services-base/scripts /services-base/scripts
 COPY services-base/base-operator/src /services-base/base-operator/src
 RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
- && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
+ && /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib \
+ && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner
 
 FROM debian:bookworm-slim
 # docker-cli only (DooD): embedded runner spawns job containers through the

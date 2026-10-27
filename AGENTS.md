@@ -37,6 +37,15 @@
 
 ## Docker и команды проверки
 
+Перед build/test/install читать Base `docs/BUILD_PERFORMANCE.md` и `docs/TESTING.md`
+принятого quality tooling. Применение к Forge — [DEVELOPMENT_GUIDE](docs/DEVELOPMENT_GUIDE.md#быстрая-разработка-и-ручная-квалификация).
+В ходе работы выбирать изменённые компоненты, проверить artifact/environment/cache
+reuse, затем admission и повторную проверку после ожидания. Docs/test-only не
+пересобирают production artifact при неизменных build inputs. Перед повторным heavy
+назвать changed inputs или missing proof; полезный cache не чистить вместо диагностики.
+Source workspace команды выполняются в выбранном checkout; `/opt/dev` примеры
+не предписывают перенос задачи на другой host.
+
 ```bash
 # Запуск и управление локальным окружением.
 cp .env.example .env
@@ -54,15 +63,22 @@ cd frontend && pnpm test
 cd frontend && pnpm build
 ```
 
-Для полного backend gate использовать также `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` и `cargo build --release --workspace` в том же Rust-контейнере. `justfile` дублирует основные операции: `just up`, `just down`, `just test-backend`, `just test-frontend`, `just build-frontend`, `just health`.
+Во время разработки/сборки — scoped unit/static, Quick Rust unit `cicd-domain --lib`.
+Полные backend/CLI/Git/PostgreSQL/MSRV/security/data/live gates сохраняются на
+отдельной ручной вехе в `qualification.yml`, включая `git_receive_only`. Full release
+вызывает этот набор один раз. `just test-backend` выбирает domain unit в подготовленной
+pinned Linux среде, `just test-backend-all` — полный manual workspace. На Windows
+raw heavy Cargo/just/helper требует общего Base execution slot; owning Root command
+вторым slot не оборачивать. Source/native/runtime результаты указывать отдельно.
 
 Не использовать `docker compose restart` для применения нового образа или env: пересоздавать сервисы через `docker compose up -d` либо `docker compose up --build -d`.
 
 ## Checklist перед завершением
 
 - [ ] Изменения соответствуют существующей архитектуре и не затёрли чужую работу.
-- [ ] Backend-проверки проходят: fmt, clippy, test, release build.
-- [ ] Frontend-проверки проходят: `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm test`, `pnpm build`.
+- [ ] Затронутые unit/static проходят; отдельный full/manual статус указан явно.
+- [ ] Scoped frontend проверен; полный Vitest/packed/themes/browser gate выполняется
+  на согласованной вехе. Зелёный unit не заменяет security/data/live acceptance.
 - [ ] `docker compose config` и `docker compose build` успешны при изменении контейнеров.
 - [ ] Для новых endpoint выполнена curl-проверка; для UI-изменений сделаны актуальные screenshots при необходимости.
 - [ ] Документация, `.env.example` и ADR обновлены, если изменились контракт, конфигурация или решение.
