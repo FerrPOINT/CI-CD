@@ -1,7 +1,7 @@
 # Umbrella build for PDLC root Compose (context = the parent source workspace).
 # Stages the sibling services-base frontend so the `@pdlc/ui` file dependency
 # (../../services-base/base-modules/ui) resolves.
-FROM node:22.20.0-bookworm-slim AS build
+FROM node:22.22.2-bookworm-slim AS build
 WORKDIR /app
 COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
 COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
