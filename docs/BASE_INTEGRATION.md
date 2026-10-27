@@ -337,3 +337,17 @@ singleton, CLI check, TypeScript, UI contract guard и scoped tests пройде
 Браузерные доказательства относятся к изолированным общим композициям,
 не ко всем страницам приложения/API/Auth. Полный интеграционный gate и
 установленная приёмка остаются отдельными. SDK/skills pins и runtime сохранены.
+
+## Общие метки и inline-код UI 0.3.11 — 2026-10-27
+
+Точный UI producer `755c9f9a27ba81ddd841b43c511bb372a3c93e40` принят отдельно от SDK/skills.
+Девять оформленных code используют InlineCode; четыре SHA-подписи — ResourceListDescription technical с native code. Чип фильтра и dot окружения используют Badge, UTC-пояснение — Notice, readonly ключ — DescriptionItem. ResourceListRow highlighted сохраняет owner ref/tabIndex/aria-current. Оба header действующего repository-sync preview используют PlatformHeader без switcher; история использует ResourceList. Все 78 выбранных tests прошли.
+
+Настоящий архив UI содержит 900 файлов; все production bytes сверены с
+producer и шестью установленными frontend-пакетами. Offline frozen refresh,
+React singleton и CLI check пройдены; runtime и зависимости backend не менялись.
+
+IAB evidence относится к пяти изолированным композициям из настоящих owner/Base
+исходников: 60 сочетаний темы/ширины, 18 branding-пресетов, три статуса Wiki,
+readonly click и Enter/Space. Это не приёмка всех экранов, Auth или API продукта.
+Полный интеграционный gate остаётся отдельной открытой стадией.

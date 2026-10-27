@@ -1,4 +1,5 @@
 import {
+  InlineCode,
   ActionGroup,
   ResourceListTitle,
   ResourceListDescription,
@@ -351,29 +352,26 @@ function JobCard({
     <ResourceListRow>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <ResourceListTitle asChild className="break-words"><span >{job.name}</span></ResourceListTitle>
+          <ResourceListTitle asChild className="break-words">
+            <span>{job.name}</span>
+          </ResourceListTitle>
         </div>
         <Badge appearance="dot" tone={statusTones[job.status]}>
           {t(`pipelines.${job.status}`)}
         </Badge>
       </div>
-      <ResourceListDescription asChild className="mt-2 min-w-0 break-words"><p >
-        <code className="rounded bg-surface-raised px-1 py-0.5">
-          {job.image}
-        </code>
-        <span className="mx-1">·</span>
-        <code className="break-all">{job.command}</code>
-      </p></ResourceListDescription>
+      <ResourceListDescription asChild className="mt-2 min-w-0 break-words">
+        <p>
+          <InlineCode>{job.image}</InlineCode>
+          <span className="mx-1">·</span>
+          <code className="break-all">{job.command}</code>
+        </p>
+      </ResourceListDescription>
       {job.required_tags.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
           <span>{t("jobs.runnerTags")}:</span>
           {job.required_tags.map((tag) => (
-            <code
-              key={tag}
-              className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary"
-            >
-              {tag}
-            </code>
+            <InlineCode key={tag}>{tag}</InlineCode>
           ))}
         </div>
       )}
@@ -381,12 +379,7 @@ function JobCard({
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
           <span>{t("jobs.secrets")}:</span>
           {job.required_secrets.map((secret) => (
-            <code
-              key={secret}
-              className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary"
-            >
-              {secret}
-            </code>
+            <InlineCode key={secret}>{secret}</InlineCode>
           ))}
         </div>
       )}
@@ -394,12 +387,7 @@ function JobCard({
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
           <span>{t("jobs.artifacts")}:</span>
           {job.artifact_paths.map((path) => (
-            <code
-              key={path}
-              className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary"
-            >
-              {path}
-            </code>
+            <InlineCode key={path}>{path}</InlineCode>
           ))}
         </div>
       )}
@@ -429,50 +417,52 @@ function JobCard({
           tone="muted"
           summary={<>{t("jobs.manualStatus")}</>}
         >
-          <div className="pb-1"><ActionGroup align="start">
-            {job.status === "queued" && (
-              <Button
-                size="sm"
-                variant="outline"
-
-                disabled={pending}
-                onClick={() => onStatus(job.id, "running")}
-              >
-                <Play className="h-3 w-3" /> {t("jobs.start")}
-              </Button>
-            )}
-            {job.status === "running" && (
-              <>
+          <div className="pb-1">
+            <ActionGroup align="start">
+              {job.status === "queued" && (
                 <Button
                   size="sm"
                   variant="outline"
 
                   disabled={pending}
-                  onClick={() => onStatus(job.id, "success")}
+                  onClick={() => onStatus(job.id, "running")}
                 >
-                  <CheckCircle2 className="h-3 w-3" /> {t("jobs.pass")}
+                  <Play className="h-3 w-3" /> {t("jobs.start")}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
+              )}
+              {job.status === "running" && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
 
-                  disabled={pending}
-                  onClick={() => onStatus(job.id, "failed")}
-                >
-                  <XCircle className="h-3 w-3" /> {t("jobs.fail")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
+                    disabled={pending}
+                    onClick={() => onStatus(job.id, "success")}
+                  >
+                    <CheckCircle2 className="h-3 w-3" /> {t("jobs.pass")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
 
-                  disabled={pending}
-                  onClick={() => onStatus(job.id, "canceled")}
-                >
-                  <Square className="h-3 w-3" /> {t("jobs.cancel")}
-                </Button>
-              </>
-            )}
-          </ActionGroup></div>
+                    disabled={pending}
+                    onClick={() => onStatus(job.id, "failed")}
+                  >
+                    <XCircle className="h-3 w-3" /> {t("jobs.fail")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+
+                    disabled={pending}
+                    onClick={() => onStatus(job.id, "canceled")}
+                  >
+                    <Square className="h-3 w-3" /> {t("jobs.cancel")}
+                  </Button>
+                </>
+              )}
+            </ActionGroup>
+          </div>
         </Disclosure>
       )}
     </ResourceListRow>
@@ -888,9 +878,7 @@ function JobLogPanel({
       )}
       {!selectedAttempt &&
         !attemptsQuery.isLoading &&
-        !attemptsQuery.isError && (
-          <EmptyState message={t("jobs.noLogs")} />
-        )}
+        !attemptsQuery.isError && <EmptyState message={t("jobs.noLogs")} />}
       {canAppend && (
         <Disclosure
           className="group"
@@ -998,12 +986,16 @@ function JobTestReportPanel({ jobId }: { jobId: string }) {
             {reports.map((r: TestReport) => (
               <ResourceListRow asChild key={r.id}>
                 <div className="text-sm">
-                  <ResourceListTitle asChild><p >{r.suite_name}</p></ResourceListTitle>
-                  <ResourceListDescription asChild className="mt-1"><p >
-                    ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} /{" "}
-                    {r.tests_total}
-                    {r.duration_ms != null && ` · ${r.duration_ms}ms`}
-                  </p></ResourceListDescription>
+                  <ResourceListTitle asChild>
+                    <p>{r.suite_name}</p>
+                  </ResourceListTitle>
+                  <ResourceListDescription asChild className="mt-1">
+                    <p>
+                      ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} /{" "}
+                      {r.tests_total}
+                      {r.duration_ms != null && ` · ${r.duration_ms}ms`}
+                    </p>
+                  </ResourceListDescription>
                 </div>
               </ResourceListRow>
             ))}

@@ -386,16 +386,20 @@ function CommitsList({
               {result.items.map((commit) => (
                 <ResourceListRow asChild key={commit.sha}>
                   <li className="flex min-w-0 flex-col gap-1 text-sm sm:flex-row sm:items-center sm:gap-4">
-                    <code className="shrink-0 text-xs text-accent">
-                      {commit.short_sha}
-                    </code>
-                    <ResourceListTitle asChild className="min-w-0 flex-1 break-words"><span >
-                      {commit.message}
-                    </span></ResourceListTitle>
-                    <ResourceListDescription asChild className="min-w-0 break-words">
-                      <span >
-                      {commit.author}
-                    </span>
+                    <ResourceListDescription asChild technical tone="accent">
+                      <code className="shrink-0">{commit.short_sha}</code>
+                    </ResourceListDescription>
+                    <ResourceListTitle
+                      asChild
+                      className="min-w-0 flex-1 break-words"
+                    >
+                      <span>{commit.message}</span>
+                    </ResourceListTitle>
+                    <ResourceListDescription
+                      asChild
+                      className="min-w-0 break-words"
+                    >
+                      <span>{commit.author}</span>
                     </ResourceListDescription>
                     <time
                       className="shrink-0 text-xs text-text-muted"
@@ -549,14 +553,15 @@ function BranchesList({
                       />
                       <span className="break-all">{ref.name}</span>
                     </Button>
-                    <code className="text-xs text-text-muted">
-                      {ref.sha.slice(0, 7)}
-                    </code>
+                    <ResourceListDescription asChild technical>
+                      <code>{ref.sha.slice(0, 7)}</code>
+                    </ResourceListDescription>
                     {ref.target && (
-                      <ResourceListDescription asChild className="w-full break-words sm:w-auto sm:max-w-[40%] sm:truncate">
-                        <span >
-                        {ref.target}
-                      </span>
+                      <ResourceListDescription
+                        asChild
+                        className="w-full break-words sm:w-auto sm:max-w-[40%] sm:truncate"
+                      >
+                        <span>{ref.target}</span>
                       </ResourceListDescription>
                     )}
                   </li>
@@ -650,15 +655,16 @@ function CodeBrowser({
             type="search"
             options={[
               { value: "HEAD", label: t("repositoryBrowser.defaultRef") },
-              ...(refOptions.map((option) => ({ value: option.value, label: option.label })) ??
-                []),
+              ...(refOptions.map((option) => ({
+                value: option.value,
+                label: option.label,
+              })) ?? []),
             ]}
             className="font-mono"
             placeholder={t("repositoryBrowser.defaultRef")}
             value={draftRef}
             onValueChange={(nextValue) => setDraftRef(nextValue)}
           />
-
         </div>
         <Button
           type="submit"
@@ -773,15 +779,11 @@ function FilePreview({
           {(blob) =>
             blob.binary ? (
               <Prose asChild>
-                <p>
-                {t("repositoryBrowser.binaryFile")}
-              </p>
+                <p>{t("repositoryBrowser.binaryFile")}</p>
               </Prose>
             ) : blob.content.length === 0 ? (
               <Prose asChild>
-                <p>
-                {t("repositoryBrowser.emptyFile")}
-              </p>
+                <p>{t("repositoryBrowser.emptyFile")}</p>
               </Prose>
             ) : (
               <div>
@@ -978,14 +980,16 @@ function TreeView({
                         <span className="min-w-0 break-all">{entry.name}</span>
                       </ResourceListTitle>
                     </ResourceListButton>
-                    <code className="hidden shrink-0 pr-2 text-xs text-text-muted sm:inline">
-                      {entry.sha.slice(0, 7)}
-                    </code>
+                    <ResourceListDescription asChild technical>
+                      <code className="hidden shrink-0 pr-2 sm:inline">
+                        {entry.sha.slice(0, 7)}
+                      </code>
+                    </ResourceListDescription>
                     {entry.size != null && (
                       <ResourceListDescription asChild>
                         <span className="hidden w-20 shrink-0 pr-2 text-right md:inline">
-                        {entry.size} B
-                      </span>
+                          {entry.size} B
+                        </span>
                       </ResourceListDescription>
                     )}
                   </li>
@@ -1074,14 +1078,15 @@ function TagsList({
                       />
                       <span className="break-all">{tag.name}</span>
                     </Button>
-                    <code className="text-xs text-text-muted">
-                      {tag.sha.slice(0, 7)}
-                    </code>
+                    <ResourceListDescription asChild technical>
+                      <code>{tag.sha.slice(0, 7)}</code>
+                    </ResourceListDescription>
                     {tag.message && (
-                      <ResourceListDescription asChild className="w-full min-w-0 break-words sm:w-auto sm:max-w-[40%] sm:truncate">
-                        <span >
-                        {tag.message}
-                      </span>
+                      <ResourceListDescription
+                        asChild
+                        className="w-full min-w-0 break-words sm:w-auto sm:max-w-[40%] sm:truncate"
+                      >
+                        <span>{tag.message}</span>
                       </ResourceListDescription>
                     )}
                   </li>
@@ -1221,9 +1226,12 @@ function ReleasesList({ repo }: { repo: string }) {
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <ResourceListTitle asChild className="min-w-0 break-words"><span >
-                          {rel.name}
-                        </span></ResourceListTitle>
+                        <ResourceListTitle
+                          asChild
+                          className="min-w-0 break-words"
+                        >
+                          <span>{rel.name}</span>
+                        </ResourceListTitle>
                         {rel.prerelease && (
                           <Badge tone="warning">
                             {t("releases.prerelease")}
@@ -1242,12 +1250,15 @@ function ReleasesList({ repo }: { repo: string }) {
                       {rel.description && (
                         <Prose asChild>
                           <p className="mt-2 whitespace-pre-wrap break-words">
-                          {rel.description}
-                        </p>
+                            {rel.description}
+                          </p>
                         </Prose>
                       )}
                     </div>
-                    <ActionGroup align="end" className="w-full shrink-0 sm:w-auto">
+                    <ActionGroup
+                      align="end"
+                      className="w-full shrink-0 sm:w-auto"
+                    >
                       <Button
                         variant="ghost"
                         type="button"

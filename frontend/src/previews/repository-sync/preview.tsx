@@ -1,6 +1,11 @@
 import { ContentSection } from "@pdlc/ui/ui";
 import {
   ActionGroup,
+  PlatformHeader,
+  ResourceList,
+  ResourceListRow,
+  ResourceListTitle,
+  Prose,
   ResourceListDescription,
   Fieldset,
   PageHeader,
@@ -303,12 +308,22 @@ export function RepositorySyncPreview() {
       {!selected && (
         <div className="min-h-screen bg-background text-text-primary">
           <PreviewNotice />
-          <header className="flex items-center gap-3 border-b border-border px-4 py-4 sm:px-8">
-            <GitBranch aria-hidden className="h-6 w-6 text-accent" />
-            <strong>Forge</strong>
-            <span className="text-text-muted">/</span>
-            <span>Репозитории</span>
-          </header>
+          <PlatformHeader
+            currentServiceKey="ci-cd"
+            serviceSwitcher={false}
+            leading={
+              <>
+                <GitBranch aria-hidden className="h-6 w-6 text-accent" />
+                <strong>Forge</strong>
+              </>
+            }
+            context={
+              <>
+                <span className="text-text-muted">/</span>
+                <span>Репозитории</span>
+              </>
+            }
+          />
           <main className="mx-auto max-w-screen-2xl space-y-6 px-4 py-6 sm:px-8">
             <PageHeader
               title="Синхронизации"
@@ -690,17 +705,27 @@ function RepositorySyncEditor({
   return (
     <div className="min-h-screen bg-background text-text-primary">
       <PreviewNotice />
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-8">
-        <div className="flex items-center gap-3">
-          <GitBranch aria-hidden className="h-6 w-6 text-accent" />
-          <strong>Forge</strong>
-          <span className="text-text-muted">/</span>
-          <span>{entry.repository}</span>
-        </div>
-        <span className="text-sm text-text-secondary">
-          Настройки репозитория
-        </span>
-      </header>
+      <PlatformHeader
+        currentServiceKey="ci-cd"
+        serviceSwitcher={false}
+        leading={
+          <>
+            <GitBranch aria-hidden className="h-6 w-6 text-accent" />
+            <strong>Forge</strong>
+          </>
+        }
+        context={
+          <>
+            <span className="text-text-muted">/</span>
+            <span>{entry.repository}</span>
+          </>
+        }
+        actions={
+          <ResourceListDescription>
+            Настройки репозитория
+          </ResourceListDescription>
+        }
+      />
       <main className="mx-auto max-w-6xl space-y-3 px-4 py-4 sm:px-8">
         <PageHeader
           title="Внешний репозиторий"
@@ -1017,23 +1042,32 @@ function RepositorySyncEditor({
                   description="Сохраните подключение и выберите активное направление."
                 />
               ) : (
-                runs.map((run) => (
-                  <article key={run.id} className="border-b border-border pb-4">
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <strong className="text-sm">{run.status}</strong>
-                      <span className="text-xs text-text-muted">
-                        {run.time} ·{" "}
-                        {modes.find((mode) => mode.value === run.mode)?.title}
-                      </span>
-                    </div>
-                    <p className="mt-2 break-all text-xs text-text-muted">
-                      {run.remote}
-                    </p>
-                    <p className="mt-2 text-sm text-text-secondary">
-                      {run.detail}
-                    </p>
-                  </article>
-                ))
+                <ResourceList>
+                  {runs.map((run) => (
+                    <ResourceListRow asChild key={run.id}>
+                      <article>
+                        <div className="flex flex-wrap justify-between gap-2">
+                          <ResourceListTitle asChild>
+                            <strong>{run.status}</strong>
+                          </ResourceListTitle>
+                          <ResourceListDescription>
+                            {run.time} ·{" "}
+                            {
+                              modes.find((mode) => mode.value === run.mode)
+                                ?.title
+                            }
+                          </ResourceListDescription>
+                        </div>
+                        <ResourceListDescription asChild technical>
+                          <p className="mt-2 break-all">{run.remote}</p>
+                        </ResourceListDescription>
+                        <Prose asChild>
+                          <p className="mt-2">{run.detail}</p>
+                        </Prose>
+                      </article>
+                    </ResourceListRow>
+                  ))}
+                </ResourceList>
               )}
             </div>
           </TabsContent>

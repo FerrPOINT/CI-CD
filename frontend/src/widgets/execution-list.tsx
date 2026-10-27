@@ -226,10 +226,7 @@ export function ExecutionList({
       {!!activeKeys.length && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {activeKeys.map((key) => (
-            <span
-              key={key}
-              className="max-w-full break-words rounded-md bg-surface-raised px-2 py-1"
-            >
+            <Badge key={key}>
               {key === "repository_id"
                 ? (selectedRepository.data ?? "Репозиторий недоступен")
                 : key === "configuration_id"
@@ -241,7 +238,7 @@ export function ExecutionList({
                       : key === "environment_id"
                         ? "Выбрано окружение"
                         : `${({ git_ref: "Git", since: "С", until: "По" } as Record<string, string>)[key]}: ${applied[key]}`}
-            </span>
+            </Badge>
           ))}
           <Button type="button" variant="ghost" onClick={reset}>
             Сбросить
@@ -375,32 +372,32 @@ export function ExecutionList({
                             </div>
                             <ResourceListDescription asChild>
                               <p className="mt-1 break-words">
-                              {row.git_ref} ·{" "}
-                              <time dateTime={row.created_at}>
-                                {new Date(row.created_at).toLocaleString()}
-                              </time>
-                              {row.environment_name
-                                ? ` · ${row.environment_name}`
-                                : ""}
-                              {seconds !== undefined ? ` · ${seconds} с` : ""}
-                            </p>
+                                {row.git_ref} ·{" "}
+                                <time dateTime={row.created_at}>
+                                  {new Date(row.created_at).toLocaleString()}
+                                </time>
+                                {row.environment_name
+                                  ? ` · ${row.environment_name}`
+                                  : ""}
+                                {seconds !== undefined ? ` · ${seconds} с` : ""}
+                              </p>
                             </ResourceListDescription>
                             {row.commit_sha && (
                               <ResourceListDescription asChild className="mt-1">
-                                <p >
-                                Коммит{" "}
-                                <TextLink asChild>
-                                  <Link
-                                    className="font-mono"
-                                    to={withNamespaceLocation(
-                                      `/catalog/repositories/${row.repository_id}?tab=files&ref=${encodeURIComponent(row.commit_sha)}`,
-                                      row.namespace,
-                                    )}
-                                  >
-                                    {row.commit_sha.slice(0, 8)}
-                                  </Link>
-                                </TextLink>
-                              </p>
+                                <p>
+                                  Коммит{" "}
+                                  <TextLink asChild>
+                                    <Link
+                                      className="font-mono"
+                                      to={withNamespaceLocation(
+                                        `/catalog/repositories/${row.repository_id}?tab=files&ref=${encodeURIComponent(row.commit_sha)}`,
+                                        row.namespace,
+                                      )}
+                                    >
+                                      {row.commit_sha.slice(0, 8)}
+                                    </Link>
+                                  </TextLink>
+                                </p>
                               </ResourceListDescription>
                             )}
                           </div>
@@ -408,9 +405,7 @@ export function ExecutionList({
                             <Badge tone={tone}>{statusLabel(row.status)}</Badge>
                             {row.approval_state && (
                               <ResourceListDescription asChild>
-                                <span>
-                                {approvalLabel(row.approval_state)}
-                              </span>
+                                <span>{approvalLabel(row.approval_state)}</span>
                               </ResourceListDescription>
                             )}
                             <Button asChild variant="link">

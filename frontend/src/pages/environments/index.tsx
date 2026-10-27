@@ -1,5 +1,6 @@
 import { ContentSection } from "@pdlc/ui/ui";
 import {
+  Badge,
   ActionGroup,
   ResourceListTitle,
   ResourceListDescription,
@@ -327,16 +328,21 @@ export function EnvironmentsPage() {
                                 <p>{env.name}</p>
                               </ResourceListTitle>
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
-                                <span className="inline-flex items-center gap-1">
-                                  <span
-                                    aria-hidden
-                                    className={`h-2 w-2 rounded-full ${env.status === "available" ? "bg-success" : env.status === "degraded" ? "bg-warning" : "bg-text-muted"}`}
-                                  />
+                                <Badge
+                                  appearance="dot"
+                                  tone={
+                                    env.status === "available"
+                                      ? "success"
+                                      : env.status === "degraded"
+                                        ? "warning"
+                                        : "muted"
+                                  }
+                                >
                                   {t(
                                     "environments.status" +
                                       capitalize(env.status),
                                   )}
-                                </span>
+                                </Badge>
                                 {env.protected && (
                                   <span>
                                     {t("environments.protected")} ·{" "}
@@ -635,7 +641,11 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
               <ResourceList asChild>
                 <ul>
                   {visible.map((deployment) => (
-                    <ResourceListRow asChild key={deployment.id}>
+                    <ResourceListRow
+                      asChild
+                      key={deployment.id}
+                      highlighted={deployment.id === selectedId}
+                    >
                       <li
                         ref={
                           deployment.id === selectedId
@@ -646,7 +656,7 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                         aria-current={
                           deployment.id === selectedId ? "true" : undefined
                         }
-                        className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1  text-xs ${deployment.id === selectedId ? "rounded-md bg-surface-raised  outline-2 outline-accent" : ""}`}
+                        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs"
                       >
                         <div className="min-w-0 flex-1 basis-40">
                           <ResourceListTitle asChild>

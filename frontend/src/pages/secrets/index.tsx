@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  DescriptionItem,
   ResourceListTitle,
   ActionGroup,
   PageNavigation,
@@ -163,14 +164,11 @@ export function SecretsPage() {
           >
             <div className="min-w-0 space-y-1.5">
               {editingKey !== null ? (
-                <>
-                  <span className="text-sm font-medium">
-                    {t("secrets.key")}
-                  </span>
-                  <p className="flex min-h-10 min-w-0 items-center break-all border-b border-border py-2 font-mono text-sm">
+                <dl>
+                  <DescriptionItem label={t("secrets.key")} technical>
                     {form.key}
-                  </p>
-                </>
+                  </DescriptionItem>
+                </dl>
               ) : (
                 <>
                   <Label htmlFor="secret-key">{t("secrets.key")}</Label>

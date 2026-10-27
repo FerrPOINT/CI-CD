@@ -151,9 +151,9 @@ export function SchedulesPage() {
         }
       />
 
-      <p className="border-y border-border py-3 text-xs text-text-secondary">
-        {t("schedules.utcNotice")}
-      </p>
+      <Notice appearance="inline" separated>
+        <p>{t("schedules.utcNotice")}</p>
+      </Notice>
 
       {showForm && (
         <ContentSection asChild dividers="end">

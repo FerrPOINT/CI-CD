@@ -1,4 +1,4 @@
-import { ContentSection } from "@pdlc/ui/ui";
+import { InlineCode, ContentSection } from "@pdlc/ui/ui";
 import { useEffect, useState, type ComponentProps } from "react";
 import {
   ResourceListDescription,
@@ -58,9 +58,7 @@ function ComparisonResults({ comparison }: { comparison: Comparison }) {
       <ContentSection asChild dividers="both" density="compact">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <span className="text-text-muted">{t("compare.mergeBase")}:</span>
-          <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
-            {comparison.merge_base}
-          </code>
+          <InlineCode className="break-all">{comparison.merge_base}</InlineCode>
           <span className="font-mono text-text-primary">+{totalAdditions}</span>
           <span className="font-mono text-text-primary">−{totalDeletions}</span>
         </div>

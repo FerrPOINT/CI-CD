@@ -1,4 +1,4 @@
-import { ContentSection } from "@pdlc/ui/ui";
+import { InlineCode, ContentSection } from "@pdlc/ui/ui";
 import {
   ActionGroup,
   ResourceListDescription,
@@ -221,9 +221,9 @@ export function PullRequestDetailPage() {
                 <span className="text-text-muted">
                   {t("compare.mergeBase")}:{" "}
                 </span>
-                <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
+                <InlineCode className="break-all">
                   {comparison.merge_base}
-                </code>
+                </InlineCode>
                 {comparison.files.some((file) => !file.binary) ? (
                   <>
                     <span className="text-success">
@@ -358,17 +358,17 @@ export function PullRequestDetailPage() {
                   layout="inline"
                   label={t("pulls.sourceBranch")}
                 >
-                  <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
+                  <InlineCode className="break-all">
                     {pr.source_branch}
-                  </code>
+                  </InlineCode>
                 </DescriptionItem>
                 <DescriptionItem
                   layout="inline"
                   label={t("pulls.targetBranch")}
                 >
-                  <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
+                  <InlineCode className="break-all">
                     {pr.target_branch}
-                  </code>
+                  </InlineCode>
                 </DescriptionItem>
                 <DescriptionItem layout="inline" label={t("pulls.createdBy")}>
                   <UserAvatar name={pr.created_by} size="sm" withName />
@@ -386,9 +386,7 @@ export function PullRequestDetailPage() {
                     layout="inline"
                     label={t("pulls.mergeCommit")}
                   >
-                    <code className="rounded bg-surface-raised px-1.5 py-0.5">
-                      {pr.merge_commit_sha.slice(0, 7)}
-                    </code>
+                    <InlineCode>{pr.merge_commit_sha.slice(0, 7)}</InlineCode>
                   </DescriptionItem>
                 )}
               </dl>

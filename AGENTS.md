@@ -291,3 +291,13 @@ logout/pending и предметные пункты beforeTheme/children ост�
 Иконка, полное aria-label/title, маршрут, current state и callbacks остаются
 продукту. У текстового slot нет собственного SSR macro; отдельную кнопку
 или focus target вокруг подписи не добавлять.
+
+## Общий inline-код и выделение записи
+
+После проверки UI pin используйте InlineCode для оформленного одиночного кода,
+Prose для prepared текста, CodeBlock для многострочного блока и
+ResourceListDescription technical для подписи без поверхности. Не копируйте
+фон/padding/radius native code. ResourceListRow highlighted задаёт только
+оформление: текущий ID, aria-current, ref/tabIndex и действия остаются у продукта.
+SSR: inline_code и resource_list_row из штатного экспорта Base.
+Каноническое руководство — Base docs/platform/DESIGN_SYSTEM.md и pdlc-ui.
