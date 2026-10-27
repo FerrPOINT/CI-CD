@@ -950,7 +950,10 @@ async fn pr_action_owned(
             }
             // Use git merge-tree for bare repos (no worktree needed)
             let mut merge_command = tokio::process::Command::new("git");
+            // Custom merge drivers create temporary files in Git's cwd.
+            // Keep these in this repository's writable storage, not the application directory.
             merge_command
+                .current_dir(&path)
                 .arg(format!("--git-dir={}", path.display()))
                 .args(["merge-tree", "--write-tree", "-z", &target.oid, &source.oid]);
             mutation_guard
@@ -1003,6 +1006,16 @@ async fn pr_action_owned(
             let merge_sha = String::from_utf8_lossy(&commit_output.stdout)
                 .trim()
                 .to_string();
+            crate::outbox::enqueue_merge_ci(
+                &mut transaction,
+                pool,
+                repository_id,
+                &repo,
+                pr.id,
+                &target.reference,
+                &merge_sha,
+            )
+            .await?;
             publish_merge(&path, &source, &target, &merge_sha, Some(&mutation_guard)).await?;
             let updated = sqlx::query_as::<_, PullRequest>(
                 "UPDATE pull_requests SET status = 'merged', merged_at = now(), updated_at = now(), merge_commit_sha = $2 WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",

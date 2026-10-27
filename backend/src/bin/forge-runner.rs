@@ -1556,27 +1556,157 @@ where
     Ok(())
 }
 
-async fn append_log_lines(context: &LogContext, lines: Vec<RunnerLogLine>) -> anyhow::Result<()> {
-    let response = context
-        .client
-        .post(format!(
-            "{}/api/v1/runner/leases/{}/logs",
-            context.base, context.lease_id
-        ))
-        .bearer_auth(&context.credential)
-        .json(&json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "leaseToken": &context.lease_token,
-            "fencingToken": context.fencing_token,
-            "attemptId": context.attempt_id,
-            "lines": lines,
-        }))
-        .send()
-        .await
-        .context("append runner logs request failed")?;
-    ensure_success(response)
-        .await
-        .context("append runner logs failed")
+// Match the existing log protocol without increasing its server-side limits.
+const LOG_BATCH_MAX_LINES: usize = 100;
+const LOG_BATCH_MAX_BYTES: usize = 256 * 1024;
+const LOG_APPEND_MAX_BYTES: usize = 1024 * 1024;
+const LOG_APPEND_MAX_ATTEMPTS: usize = 3;
+const LOG_APPEND_RETRY_BUDGET: Duration = Duration::from_secs(75);
+
+#[derive(Default)]
+struct RunnerLogBatch {
+    lines: Vec<RunnerLogLine>,
+    encoded_bytes: usize,
+}
+
+impl RunnerLogBatch {
+    async fn push(&mut self, context: &LogContext, line: String) -> anyhow::Result<()> {
+        let line = RunnerLogLine {
+            stream: "stdout",
+            message: protocol_log_message(&mask_secrets(&line, &context.masks)),
+        };
+        let bytes = serde_json::to_vec(&line)?.len() + 1;
+        if !self.lines.is_empty()
+            && (self.lines.len() == LOG_BATCH_MAX_LINES
+                || self.encoded_bytes + bytes > LOG_BATCH_MAX_BYTES)
+        {
+            self.flush(context).await?;
+        }
+        ensure!(bytes <= LOG_BATCH_MAX_BYTES, "runner log line exceeds batch bound");
+        self.encoded_bytes += bytes;
+        self.lines.push(line);
+        if self.lines.len() == LOG_BATCH_MAX_LINES {
+            self.flush(context).await?;
+        }
+        Ok(())
+    }
+
+    async fn flush(&mut self, context: &LogContext) -> anyhow::Result<()> {
+        if !self.lines.is_empty() {
+            append_log_batch(context, &self.lines, true).await?;
+            self.lines.clear();
+            self.encoded_bytes = 0;
+        }
+        Ok(())
+    }
+}
+
+/// Terminal Pod output is a snapshot, not a live one-line HTTP stream.
+/// Await each bounded batch before reading more; completion waits for the final flush.
+async fn forward_kubernetes_logs(
+    execution: &cicd::execution::kubernetes::Execution,
+    context: &LogContext,
+) -> anyhow::Result<()> {
+    let sink = tokio::sync::Mutex::new(RunnerLogBatch::default());
+    let batch = &sink;
+    execution
+        .stream_logs(move |line| async move { batch.lock().await.push(context, line).await })
+        .await?;
+    sink.into_inner().flush(context).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LogAppendAck {
+    protocol_version: i32,
+    accepted: usize,
+    next_after: Option<i32>,
+}
+
+fn log_retry_delay(value: Option<&reqwest::header::HeaderValue>, now: chrono::DateTime<Utc>) -> Duration {
+    if let Some(value) = value.and_then(|value| value.to_str().ok()) {
+        if let Ok(seconds) = value.parse::<u64>() {
+            return Duration::from_secs(seconds);
+        }
+        if let Ok(date) = chrono::DateTime::parse_from_rfc2822(value) {
+            return (date.with_timezone(&Utc) - now).to_std().unwrap_or_default();
+        }
+    }
+    // The current shared runner-protocol bucket has a 60-second window.
+    Duration::from_secs(60)
+}
+
+async fn append_log_lines(
+    context: &LogContext,
+    lines: impl AsRef<[RunnerLogLine]>,
+) -> anyhow::Result<()> {
+    // Existing live/shell and pre-cancel emitters remain fail-fast. In
+    // particular, a log rate limit must not postpone killing a canceled child.
+    append_log_batch(context, lines.as_ref(), false).await
+}
+
+async fn append_log_batch(
+    context: &LogContext,
+    lines: &[RunnerLogLine],
+    retry_rate_limit: bool,
+) -> anyhow::Result<()> {
+    ensure!(
+        !lines.is_empty() && lines.len() <= LOG_BATCH_MAX_LINES,
+        "invalid runner log batch size"
+    );
+    let body = serde_json::to_vec(&json!({
+        "protocolVersion": PROTOCOL_VERSION,
+        "leaseToken": &context.lease_token,
+        "fencingToken": context.fencing_token,
+        "attemptId": context.attempt_id,
+        "lines": lines,
+    }))?;
+    ensure!(body.len() <= LOG_APPEND_MAX_BYTES, "runner log request exceeds body limit");
+    let deadline = tokio::time::Instant::now() + LOG_APPEND_RETRY_BUDGET;
+    for attempt in 1..=LOG_APPEND_MAX_ATTEMPTS {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        ensure!(!remaining.is_zero(), "runner log rate-limit retry budget exhausted");
+        let response = context
+            .client
+            .post(format!(
+                "{}/api/v1/runner/leases/{}/logs",
+                context.base, context.lease_id
+            ))
+            .bearer_auth(&context.credential)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.clone())
+            .timeout(remaining.min(Duration::from_secs(45)))
+            .send()
+            .await
+            .context("append runner logs request failed; append outcome is unknown")?;
+        if retry_rate_limit && response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            // Middleware rejects 429 before any append. Other errors (including
+            // transport loss or 5xx after a partial append) are never replayed.
+            let delay = log_retry_delay(
+                response.headers().get(reqwest::header::RETRY_AFTER),
+                Utc::now(),
+            );
+            drop(response);
+            ensure!(
+                attempt < LOG_APPEND_MAX_ATTEMPTS
+                    && delay < deadline.saturating_duration_since(tokio::time::Instant::now()),
+                "runner log rate-limit retry budget exhausted"
+            );
+            tokio::time::sleep(delay).await;
+            continue;
+        }
+        let ack: LogAppendAck = response_json(response)
+            .await
+            .context("append runner logs failed; append outcome is unknown")?;
+        ensure!(
+            ack.protocol_version == PROTOCOL_VERSION
+                && ack.accepted == lines.len()
+                && ack.next_after.is_some_and(|sequence| sequence >= 0),
+            "runner log acknowledgement does not match the full batch"
+        );
+        return Ok(());
+    }
+    unreachable!("bounded runner log append attempts")
 }
 
 fn truncate_log_message(value: &str) -> String {
@@ -2500,22 +2630,12 @@ async fn execute_kubernetes(
         .map_err(|_| UnconfirmedExecution)?;
     if let Some(context) = &log {
         if !execution.cancelled() {
-            execution
-                .stream_logs(|line| {
-                    let context = context.clone();
-                    async move {
-                        append_log_lines(
-                            &context,
-                            vec![RunnerLogLine {
-                                stream: "stdout",
-                                message: protocol_log_message(&mask_secrets(&line, &context.masks)),
-                            }],
-                        )
-                        .await
-                    }
-                })
+            forward_kubernetes_logs(&execution, context)
                 .await
-                .map_err(|_| UnconfirmedExecution)?;
+                .map_err(|error| {
+                    anyhow::Error::new(UnconfirmedExecution)
+                        .context(format!("terminal Pod log forwarding incomplete: {error:#}"))
+                })?;
             upload_terminal_artifacts(
                 context,
                 offer,
@@ -2835,21 +2955,7 @@ async fn recover_kubernetes(
         .await
         .map_err(|_| UnconfirmedExecution)?;
     if !revoked && outcome != "canceled" {
-        execution
-            .stream_logs(|line| {
-                let context = context.clone();
-                async move {
-                    append_log_lines(
-                        &context,
-                        vec![RunnerLogLine {
-                            stream: "stdout",
-                            message: protocol_log_message(&mask_secrets(&line, &context.masks)),
-                        }],
-                    )
-                    .await
-                }
-            })
-            .await?;
+        forward_kubernetes_logs(&execution, &context).await?;
         if outcome != "canceled" {
             upload_terminal_artifacts(
                 &context,
@@ -2909,5 +3015,183 @@ mod kubernetes_command_tests {
             .unwrap();
         assert!(result.status.success());
         assert_eq!(String::from_utf8(result.stdout).unwrap(), "one\nunset\n");
+    }
+}
+
+#[cfg(test)]
+mod runner_log_forwarding_tests {
+    use super::*;
+    use axum::{Json, response::IntoResponse};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    fn context(base: String) -> LogContext {
+        LogContext {
+            client: reqwest::Client::builder().retry(reqwest::retry::never()).build().unwrap(),
+            base,
+            credential: "fixture".into(),
+            lease_id: Uuid::new_v4(),
+            lease_token: "fixture-lease".into(),
+            fencing_token: 1,
+            attempt_id: Uuid::new_v4(),
+            masks: vec!["fixture-secret".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_log_snapshot_batches_preserve_order_masking_and_final_tail() {
+        let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let received = requests.clone();
+        let sequence = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().fallback(move |Json(body): Json<serde_json::Value>| {
+            let received = received.clone();
+            let sequence = sequence.clone();
+            async move {
+                let count = body["lines"].as_array().unwrap().len();
+                let next = sequence.fetch_add(count, Ordering::SeqCst) + count;
+                received.lock().unwrap().push(body);
+                Json(json!({"protocolVersion":1,"accepted":count,"nextAfter":next}))
+            }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let context = context(base);
+        let mut batch = RunnerLogBatch::default();
+        // The original failure exhausted the 1200-request bucket after 1159
+        // one-line appends. This larger real-sized snapshot needs only 69.
+        for index in 0..6805 {
+            batch.push(&context, format!("line-{index}:fixture-secret\r")).await.unwrap();
+        }
+        assert_eq!(batch.lines.len(), 5, "the final partial batch is not acknowledged yet");
+        batch.flush(&context).await.unwrap();
+        assert!(batch.lines.is_empty());
+        let bodies = requests.lock().unwrap();
+        assert_eq!(bodies.len(), 69);
+        let lines: Vec<_> = bodies.iter().flat_map(|body| body["lines"].as_array().unwrap()).collect();
+        assert_eq!(lines.len(), 6805);
+        for (index, line) in lines.iter().enumerate() {
+            assert_eq!(line["message"], format!("line-{index}:***\\r"));
+            assert_eq!(line["stream"], "stdout");
+        }
+        assert!(bodies.iter().all(|body| body["lines"].as_array().unwrap().len() <= 100));
+        drop(bodies);
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn terminal_log_batches_bound_serialized_bytes_including_json_escaping() {
+        let bodies = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let received = bodies.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().fallback(move |Json(body): Json<serde_json::Value>| {
+            let received = received.clone();
+            async move {
+                let count = body["lines"].as_array().unwrap().len();
+                received.lock().unwrap().push(body);
+                Json(json!({"protocolVersion":1,"accepted":count,"nextAfter":100}))
+            }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let context = context(base);
+        let mut batch = RunnerLogBatch::default();
+        for _ in 0..12 {
+            batch.push(&context, "\u{0001}".repeat(8192)).await.unwrap();
+        }
+        batch.flush(&context).await.unwrap();
+        let bodies = bodies.lock().unwrap();
+        assert!(bodies.len() > 1, "byte bound must flush before reaching 100 lines");
+        assert_eq!(bodies.iter().map(|b| b["lines"].as_array().unwrap().len()).sum::<usize>(), 12);
+        assert!(bodies.iter().all(|b| serde_json::to_vec(b).unwrap().len() < LOG_APPEND_MAX_BYTES));
+        assert!(bodies.iter().all(|b| serde_json::to_vec(&b["lines"]).unwrap().len() <= LOG_BATCH_MAX_BYTES + 2));
+        drop(bodies);
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn log_append_retries_only_rejected_429_with_the_same_batch() {
+        let bodies = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let received = bodies.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().fallback(move |Json(body): Json<serde_json::Value>| {
+            let received = received.clone();
+            async move {
+                let mut bodies = received.lock().unwrap();
+                let first = bodies.is_empty();
+                let count = body["lines"].as_array().unwrap().len();
+                bodies.push(body);
+                if first {
+                    (axum::http::StatusCode::TOO_MANY_REQUESTS, [("retry-after", "0")]).into_response()
+                } else {
+                    Json(json!({"protocolVersion":1,"accepted":count,"nextAfter":7})).into_response()
+                }
+            }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let context = context(base);
+        let mut batch = RunnerLogBatch::default();
+        batch.push(&context, "retained ordered line".into()).await.unwrap();
+        batch.flush(&context).await.unwrap();
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 2);
+        assert_eq!(bodies[0], bodies[1]);
+        assert!(batch.lines.is_empty());
+        drop(bodies);
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn rejected_or_uncertain_log_append_retains_batch_without_unbounded_retry() {
+        for mode in ["limited", "live-limited", "partial", "server"] {
+            let requests = Arc::new(AtomicUsize::new(0));
+            let received = requests.clone();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let app = axum::Router::new().fallback(move || {
+                let received = received.clone();
+                async move {
+                    received.fetch_add(1, Ordering::SeqCst);
+                    match mode {
+                        "limited" | "live-limited" => (axum::http::StatusCode::TOO_MANY_REQUESTS, [("retry-after", "0")]).into_response(),
+                        "partial" => Json(json!({"protocolVersion":1,"accepted":0,"nextAfter":2})).into_response(),
+                        _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    }
+                }
+            });
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let context = context(base);
+            let mut batch = RunnerLogBatch::default();
+            batch.push(&context, "unacknowledged".into()).await.unwrap();
+            if mode == "live-limited" {
+                assert!(append_log_lines(&context, &batch.lines).await.is_err());
+            } else {
+                assert!(batch.flush(&context).await.is_err());
+            }
+            assert_eq!(batch.lines.len(), 1, "incomplete logging cannot be acknowledged");
+            assert_eq!(requests.load(Ordering::SeqCst), if mode == "limited" { 3 } else { 1 });
+            server.abort();
+            let _ = server.await;
+        }
+    }
+
+    #[test]
+    fn log_rate_limit_delay_honors_seconds_http_date_and_window_default() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-27T15:44:00Z").unwrap().with_timezone(&Utc);
+        let seconds = reqwest::header::HeaderValue::from_static("7");
+        assert_eq!(log_retry_delay(Some(&seconds), now), Duration::from_secs(7));
+        let date = reqwest::header::HeaderValue::from_static("Tue, 27 Oct 2026 15:44:09 GMT");
+        assert_eq!(log_retry_delay(Some(&date), now), Duration::from_secs(9));
+        let past = reqwest::header::HeaderValue::from_static("Tue, 27 Oct 2026 15:43:00 GMT");
+        assert_eq!(log_retry_delay(Some(&past), now), Duration::ZERO);
+        assert_eq!(log_retry_delay(None, now), Duration::from_secs(60));
+        let invalid = reqwest::header::HeaderValue::from_static("invalid");
+        assert_eq!(log_retry_delay(Some(&invalid), now), Duration::from_secs(60));
     }
 }

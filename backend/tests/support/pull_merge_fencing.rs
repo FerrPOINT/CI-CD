@@ -126,6 +126,58 @@ impl Case {
         }
     }
 
+    async fn configure_ci(&self, refs: &[&str]) -> Uuid {
+        let configuration = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO projects(id,name,repository_url,repository_id,default_branch,protected_branches) \
+             VALUES($1,$2,'https://example.invalid/fixture.git',$3,'main',ARRAY['main'])",
+        )
+        .bind(configuration)
+        .bind(format!("CI {configuration}"))
+        .bind(self.repository)
+        .execute(&self.pool)
+        .await
+        .unwrap();
+        // The existing protected-main rule still requires source-head success.
+        sqlx::query(
+            "INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status) VALUES($1,$2,'task',$3,'success')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(configuration)
+        .bind(&self.source)
+        .execute(&self.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO repository_push_configs(repository_id,configuration_id,refs) VALUES($1,$2,$3) \
+             ON CONFLICT(repository_id) DO UPDATE SET configuration_id=EXCLUDED.configuration_id,refs=EXCLUDED.refs",
+        )
+        .bind(self.repository)
+        .bind(configuration)
+        .bind(refs.iter().map(|reference| reference.to_string()).collect::<Vec<_>>())
+        .execute(&self.pool)
+        .await
+        .unwrap();
+        configuration
+    }
+
+    async fn ci_messages(&self) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM outbox_messages WHERE channel='pipeline_trigger'")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+
+    async fn deliver_ci(&self) -> usize {
+        cicd::outbox::deliver_due_with_git_root(
+            &self.pool,
+            &reqwest::Client::new(),
+            &cicd::config::SmtpConfig::default(),
+            &self.root,
+        )
+        .await
+    }
+
     async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
         let response = self
             .app
@@ -201,6 +253,12 @@ async fn accepted_merge_keeps_its_owner_and_finishes_after_http_caller_disconnec
     let number = case.create("task", "main").await;
     let request = request_action(case.app.clone(), case.merge_path(number), "merge");
     let waiting = wait_for_driver(&entered).await;
+    if !waiting && request.is_finished() {
+        let response = request.await.unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.unwrap();
+        panic!("merge finished before driver barrier: {status}: {}", String::from_utf8_lossy(&body));
+    }
     request.abort();
     assert!(request.await.unwrap_err().is_cancelled());
     let exclusive_available: bool =
@@ -367,6 +425,7 @@ async fn pr_merge_uses_branch_heads_for_policy_and_preserves_data_despite_same_n
 async fn concurrent_source_or_target_change_returns_conflict_and_does_not_close_pr() {
     for changed in ["main", "task"] {
         let case = Case::new(true).await;
+        case.configure_ci(&["refs/heads/main"]).await;
         let entered = case.root.join("entered");
         let release = case.root.join("release");
         let driver = case.root.join("merge-driver.sh");
@@ -440,6 +499,10 @@ async fn concurrent_source_or_target_change_returns_conflict_and_does_not_close_
             "stale {changed} must not publish"
         );
         case.is_open(number).await;
+        assert_eq!(case.ci_messages().await, 0, "failed publication must roll back CI dispatch");
+        let events: i64 = sqlx::query_scalar("SELECT count(*) FROM domain_events WHERE event_type='git.merge'")
+            .fetch_one(&case.pool).await.unwrap();
+        assert_eq!(events, 0);
         for (branch, initial) in [("main", &case.target), ("task", &case.source)] {
             let expected = if branch == changed {
                 &advanced
@@ -453,4 +516,108 @@ async fn concurrent_source_or_target_change_returns_conflict_and_does_not_close_
         }
         case.pool.close().await;
     }
+}
+
+#[tokio::test]
+async fn native_merge_dispatches_exact_main_ci_once() {
+    let case = Case::new(false).await;
+    let configuration = case.configure_ci(&["refs/heads/main"]).await;
+    let number = case.create("task", "main").await;
+    let (status, merged) = case.post(&case.merge_path(number), json!({"action":"merge"})).await;
+    assert_eq!(status, StatusCode::OK, "{merged}");
+    let sha = merged["merge_commit_sha"].as_str().unwrap();
+    assert_eq!(git(&case.bare, &["rev-parse", "refs/heads/main"]), sha);
+    assert_eq!(case.ci_messages().await, 1);
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM pipelines WHERE project_id=$1 AND git_ref='main'")
+        .bind(configuration).fetch_one(&case.pool).await.unwrap();
+    assert_eq!(before, 0, "the request captures intent; the worker starts CI");
+    let (destination, payload): (String, Value) = sqlx::query_as(
+        "SELECT destination,payload FROM outbox_messages WHERE channel='pipeline_trigger'",
+    ).fetch_one(&case.pool).await.unwrap();
+    assert!(destination.starts_with("forge-ci:"));
+    assert_eq!(payload["configurationId"], configuration.to_string());
+    assert_eq!(payload["reference"], "refs/heads/main");
+    assert_eq!(payload["commitSha"], sha);
+
+    assert_eq!(case.deliver_ci().await, 1, "internal delivery cannot use its non-HTTP destination");
+    let (id, commit, key): (Uuid, String, String) = sqlx::query_as(
+        "SELECT p.id,p.commit_sha,t.idempotency_key FROM pipelines p JOIN pipeline_triggers t ON t.pipeline_id=p.id \
+         WHERE p.project_id=$1 AND p.git_ref='main' AND t.source='git-push'",
+    ).bind(configuration).fetch_one(&case.pool).await.unwrap();
+    assert_eq!(commit, sha);
+    assert_eq!(key, payload["idempotencyKey"].as_str().unwrap());
+    assert_eq!(case.deliver_ci().await, 0);
+    let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM pipelines WHERE project_id=$1 AND git_ref='main'")
+        .bind(configuration).fetch_all(&case.pool).await.unwrap();
+    assert_eq!(ids, vec![id]);
+    case.pool.close().await;
+}
+
+#[tokio::test]
+async fn native_merge_ci_replays_captured_policy_and_commit_after_lost_ack() {
+    let case = Case::new(false).await;
+    let original = case.configure_ci(&["refs/heads/main"]).await;
+    let number = case.create("task", "main").await;
+    let (status, merged) = case.post(&case.merge_path(number), json!({"action":"merge"})).await;
+    assert_eq!(status, StatusCode::OK, "{merged}");
+    let sha = merged["merge_commit_sha"].as_str().unwrap().to_string();
+    let changed = case.configure_ci(&["refs/heads/another"]).await;
+    let tree = git(&case.bare, &["rev-parse", &format!("{sha}^{{tree}}")]);
+    let advanced = git(&case.bare, &["commit-tree", &tree, "-p", &sha, "-m", "later main"]);
+    git(&case.bare, &["update-ref", "refs/heads/main", &advanced]);
+
+    assert_eq!(case.deliver_ci().await, 1);
+    let (pipeline, commit): (Uuid, String) = sqlx::query_as(
+        "SELECT id,commit_sha FROM pipelines WHERE project_id=$1 AND git_ref='main'",
+    ).bind(original).fetch_one(&case.pool).await.unwrap();
+    assert_eq!(commit, sha, "delivery must not substitute current main");
+    let changed_count: i64 = sqlx::query_scalar("SELECT count(*) FROM pipelines WHERE project_id=$1 AND git_ref='main'")
+        .bind(changed).fetch_one(&case.pool).await.unwrap();
+    assert_eq!(changed_count, 0, "later policy must not retarget a captured event");
+
+    // Simulate loss of the delivery acknowledgement after pipeline creation.
+    sqlx::query("UPDATE outbox_messages SET delivered_at=NULL,next_attempt_at=now() WHERE channel='pipeline_trigger'")
+        .execute(&case.pool).await.unwrap();
+    assert_eq!(case.deliver_ci().await, 1);
+    let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM pipelines WHERE project_id=$1 AND git_ref='main'")
+        .bind(original).fetch_all(&case.pool).await.unwrap();
+    assert_eq!(ids, vec![pipeline], "retry must reuse the existing trigger receipt");
+    let attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbox_delivery_attempts a JOIN outbox_messages m ON m.id=a.message_id \
+         WHERE m.channel='pipeline_trigger' AND a.outcome='delivered'",
+    ).fetch_one(&case.pool).await.unwrap();
+    assert_eq!(attempts, 2);
+    case.pool.close().await;
+}
+
+#[tokio::test]
+async fn native_merge_respects_ref_filter_and_preserves_legacy_delivery() {
+    let case = Case::new(false).await;
+    let configuration = case.configure_ci(&["refs/heads/other"]).await;
+    let number = case.create("task", "main").await;
+    let (status, merged) = case.post(&case.merge_path(number), json!({"action":"merge"})).await;
+    assert_eq!(status, StatusCode::OK, "{merged}");
+    assert_eq!(case.ci_messages().await, 0, "main is not an allowed push ref");
+    let event = Uuid::new_v4();
+    let message = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO domain_events(id,event_type,aggregate_type,aggregate_id) VALUES($1,'fixture','project',$2)",
+    ).bind(event).bind(configuration).execute(&case.pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO outbox_messages(id,event_id,project_id,subscription_id,channel,destination,payload) \
+         VALUES($1,$2,$3,'fixture','notification','fixture',$4)",
+    ).bind(message).bind(event).bind(configuration)
+        .bind(json!({"channel":"in_app","target":"fixture"}))
+        .execute(&case.pool).await.unwrap();
+    // The pre-existing public API and local notification channel remain supported.
+    assert_eq!(cicd::outbox::deliver_due(
+        &case.pool, &reqwest::Client::new(), &cicd::config::SmtpConfig::default(),
+    ).await, 1);
+    let delivered: bool = sqlx::query_scalar("SELECT delivered_at IS NOT NULL FROM outbox_messages WHERE id=$1")
+        .bind(message).fetch_one(&case.pool).await.unwrap();
+    assert!(delivered);
+    let main: i64 = sqlx::query_scalar("SELECT count(*) FROM pipelines WHERE git_ref='main'")
+        .fetch_one(&case.pool).await.unwrap();
+    assert_eq!(main, 0);
+    case.pool.close().await;
 }
