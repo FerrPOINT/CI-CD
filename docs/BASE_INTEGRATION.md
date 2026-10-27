@@ -2,7 +2,7 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA: `623deb7da5813fa9d1185ded7688c35bb15cd43e` ([pin](../.base-ui-revision)).
+Точный UI SHA: `cf88f7094044a403e6bb7105cfa88b12c4208c96` ([pin](../.base-ui-revision)).
 Компоненты и reference берутся из этой версии Base; открытый справочник другой
 версии не подтверждает доступность контракта в продукте. SDK/skills pins
 независимы. Это исходники собственного checkout; установка и authenticated
@@ -269,3 +269,14 @@ hosted CI, публикация и установка здесь не выпол
 неизменных inputs. Настоящий архив из 868 файлов сверён с установленным UI,
 offline frozen install, singleton React и CLI check пройдены. SDK/skills pins
 неизменны. Это source adoption, без hosted CI и установленного runtime.
+
+
+## SSR композиции и native reset — 2026-10-27
+
+Текущий UI 0.3.8, producer `cf88f7094044a403e6bb7105cfa88b12c4208c96`.
+Общие SSR parts принимают native attributes. В отдельном select-runtime
+исправлено обновление trigger после нативного reset; API React и CSS/types
+не менялись. Root UI/lib не импортируют этот runtime, прямых импортов
+select-runtime в React runtime source продукта нет. Настоящий архив из
+868 файлов сверён, offline frozen install, singleton React и CLI пройдены.
+SDK/skills pins неизменны. Это source adoption, без установки и hosted CI.
