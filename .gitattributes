@@ -22,3 +22,5 @@ scripts/task-delivery-qa.sh text eol=lf
 scripts/postgres-delivery.py text eol=lf
 # Generated API snapshots match the Linux generator byte for byte.
 /openapi/openapi.yaml text eol=lf
+
+scripts/vendor/base_quality_selection.py text eol=lf

@@ -13,13 +13,20 @@ logs:
     docker compose logs -f
 
 test-backend:
-    docker run --rm --entrypoint /bin/bash -v "{{justfile_directory()}}/backend:/workspace" -w /workspace rust:1.88-bookworm -lc '/usr/local/cargo/bin/cargo test'
+    cd backend && cargo test --locked -p cicd-domain --lib
+
+# Manual full gate in the prepared pinned Linux environment.
+test-backend-all:
+    cd backend && cargo test --locked --workspace
 
 test-frontend:
     cd frontend && pnpm test
 
 build-frontend:
     cd frontend && pnpm build
+
+build-backend:
+    python3 scripts/build.py backend
 
 health:
     curl -fsS http://127.0.0.1:22801/api/v1/health

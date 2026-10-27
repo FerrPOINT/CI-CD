@@ -1,4 +1,3 @@
-/// <reference types="vitest/config" />
 import { createUiProviderDedupe, createUiFontAssetsPlugin } from '@pdlc/ui/build'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -8,12 +7,6 @@ import { fileURLToPath, URL } from 'node:url'
 export default defineConfig({
   base: process.env.VITE_APP_BASE_PATH ?? '/',
   plugins: [createUiFontAssetsPlugin(), react(), tailwindcss()],
-  test: {
-    environment: 'jsdom',
-    maxWorkers: 4,
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
-    setupFiles: ['./src/test-setup.ts'],
-  },
   resolve: {
     dedupe: createUiProviderDedupe(),
     alias: {

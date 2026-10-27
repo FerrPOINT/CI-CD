@@ -38,6 +38,58 @@ gitignored каталог; `SDLC_HEADER_EVIDENCE_DIR` переопределяе
 - **Configuration only** -- сущность или экран можно настроить, но execution/delivery не реализованы.
 - **Target approved** -- требование принято ADR или контрактом, но не должно выдаваться за работающую возможность.
 
+## Быстрая разработка и ручная квалификация
+
+Configuration only: source-маршруты внедрены; actual native/runtime acceptance
+фиксируется отдельно. Общие решения принадлежат Base BUILD_PERFORMANCE/TESTING
+принятого quality tooling. План Forge: [выбор сборок](plans/2026-10-27-scoped-build-adoption.md).
+SDK/UI/skills/operator pins от quality pin независимы.
+
+Из корня PDLC workspace после enter-dev.ps1:
+
+```powershell
+./check-workspace.ps1 -Profile Build -Repository CI-CD -BaseRef HEAD -PlanOnly
+./check-workspace.ps1 -Profile Unit -Repository CI-CD -Component tooling -BaseRef HEAD
+```
+
+Обычный запуск учитывает staged/unstaged/untracked/deleted inputs. All — намеренный
+полный обход; неизвестный путь расширяет продукт. Пустой план не означает готовый
+artifact; холодную подготовку/компонент задавать явно. Docs/test-only не создают
+production producer при неизменных build inputs. Backend runtime содержит только
+cicd-server и forge-runner; отдельные cli/delivery/pg-migrate/migration компоненты
+сохраняют остальные поставляемые tools. OpenAPI dump остаётся generator.
+
+Quick Rust unit — cargo test --locked -p cicd-domain --lib. CLI/static и typed
+compile tools не выдаются за их полную unit/integration qualification. Разделение
+pure CLI/tool tests и native gates пока открыто. Полные текущие команды ниже —
+каталог отдельной согласованной вехи, не цикл после каждой правки.
+
+Frontend test:unit запускает Node source fixtures и Vitest без integration/slow/e2e
+filename tiers; test:all сохраняет полный Vitest набор. Unit/typecheck/compile
+выполняются по одному разу; CI после unit/types использует build:compile. Vite и
+Vitest configs разделены; existing tsconfig включает оба config-файла, сохраняя
+typing одним вызовом tsc.
+Workers4 прежние. Postinstall готовит schema.d.ts; независимый OpenAPI drift check
+сохраняется. Host generated types исключены из recipe contexts. Tailwind сканирует
+явные app/index/UI roots без test/spec/setup inputs; actual UI/visual proof отдельны.
+
+Container inputs отделены от binary/Vite inputs: recipe/recipe ignore/nginx выбирают
+упаковку соответствующего сервиса. Это не доказательство native layer reuse.
+python scripts/build.py без аргументов выбирает изменённые container producers,
+backend/frontend задают конкретный, --all — оба. No-change не вызывает SDK verifier
+или Docker и не подтверждает image readiness. Mixed SDK/UI pins требуют qualified
+multi-pin route; pins ради запуска не менять. Raw heavy Cargo/just/helper на Windows
+оборачивать общим Base execution slot, owning Root вторым slot не оборачивать.
+
+Compiler/dependency layers и timestamp reset local crates сохраняются. Shared
+compiled target между exports не вводится. CI сохраняет download cache, но не
+восстанавливает compiled target без qualified guard (cache-targets: false).
+README negative tests используют read boundary вместо записи tracked README.
+Real PowerShell/Git delivery preflight сохранён отдельным manual integration module.
+
+Native graphs/old timestamps/cache/resource profiles, integration/slow/release/live
+и восьмичасовая стабильность остаются отдельными gates; source PASS их не заменяет.
+
 ## Быстрый старт
 
 ### Требования
@@ -217,39 +269,37 @@ Secret scan: 440 text files PASS. Ни deployment, ни live seven-agent scenari
 
 ## Команды локальной проверки
 
-### Backend в Rust Docker image
+### Backend в закреплённой Linux среде
 
-Команда ниже повторяет текущий backend CI набор в pinned image и сохраняет artifacts в `backend/target/`:
-
-```bash
-cd /opt/dev/CI-CD
-docker run --rm --entrypoint /bin/bash \
-  -v "$PWD/backend:/workspace" \
-  -w /workspace \
-  -e CARGO_TARGET_DIR=/workspace/target \
-  rust:1.88-bookworm \
-  -lc '/usr/local/cargo/bin/cargo fmt --all -- --check && \
-       /usr/local/cargo/bin/cargo clippy --workspace --all-targets -- -D warnings && \
-       /usr/local/cargo/bin/cargo test --workspace && \
-       /usr/local/cargo/bin/cargo build --release --workspace'
-```
-
-Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. CLI real-API smoke запускается тем же PostgreSQL service командой `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1`. Backend release build входит в current CI gate.
-
-### Frontend через Node Docker image
-
-Текущий `just test-frontend` и `just build-frontend` используют host pnpm. Если host Node/pnpm отсутствуют, запускайте эквивалент в pinned Node image:
+Предпочтителен штатный Root profile. Для standalone prepared source environment
+с Rust1.88 и проверенным exact SDK доступны scoped команды:
 
 ```bash
-cd /opt/dev/CI-CD
-docker run --rm -it \
-  -v "$PWD/frontend:/workspace" \
-  -w /workspace \
-  node:22-bookworm-slim \
-  bash -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm test && pnpm build'
+just test-backend
 ```
 
-Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; CI устанавливает его только с `--frozen-lockfile`. Current GitHub Actions frontend job запускает generated-client drift gate, `pnpm lint`, `pnpm test` и `pnpm build`.
+just test-backend-all сохраняет полный manual workspace test. Full clippy,
+PostgreSQL/Git/CLI и release checks находятся в qualification.yml. Контейнерная
+qualification использует существующий owner/purpose Compose contract Base;
+raw docker run и общий mutable target не являются fallback для Root guards.
+
+### Frontend в подготовленном окружении
+
+Node22.20.0/pnpm10.28.1 и frozen dependencies берутся из штатного preparer.
+При готовом совместимом environment повторная установка не нужна:
+
+```bash
+cd frontend
+pnpm test:unit
+pnpm typecheck
+# Только если production inputs изменились и ready artifact отсутствует.
+pnpm build:compile
+```
+
+pnpm build объединяет эти три стадии для самостоятельного build. Не вызывать
+его после уже выполненных unit/typecheck. Dependency changes сохраняют frozen
+lockfile и проверку принятого UI pin; browser install выполняется один раз на
+ручной browser-вехе, а не при каждом unit/build.
 
 Для браузерной проверки нужен поднятый disposable Compose stack и synthetic `CICD_SECRETS_KEY` для seeded secrets:
 
@@ -287,22 +337,45 @@ python3 scripts/verify_docs.py --all
 
 ## CI-гейты
 
-### Current verified
+### Configuration only: source workflow routes
 
-`.github/workflows/ci.yml` запускается на `push` и `pull_request` в `main`, отменяет устаревшие in-progress runs для того же ref через concurrency и ограничивает jobs `docs`, `backend` и `frontend` через `timeout-minutes`.
+Automatic ci.yml вызывается на push/PR в main. Exact Base selector выбирает
+компоненты до Node/Rust preparation; checkouts используют candidate head.
 
-| Job | Фактические проверки |
+| Job | Настроенные проверки |
 |---|---|
-| `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate |
-| `frontend` | `pnpm install --no-frozen-lockfile`, `pnpm openapi:check`, `pnpm test -- --run`, `pnpm lint`, `pnpm build` |
-| Local extended gate | Release build, CLI real-API smoke, Compose health smoke, Playwright/axe/performance, audits, secret scan, SBOM and image scan run locally when their scope is touched. |
-| `docs` | `python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py`, backup helper self-test/dry-run, shell wrapper syntax, `python3 scripts/verify_docs.py --all` |
+| changes | Exact base/head, packaged selector checksum, product plan flags |
+| docs | Pure/source regressions, scoped docs contracts, SBOM drift, Python/shell syntax; SDK checkout отсутствует |
+| backend | Один verified SDK checkout; retained import/Compose ownership model guards до Rust setup; fmt/domain unit, selected target checks и нужный OpenAPI drift |
+| frontend | Frozen install, dependency audit, OpenAPI drift/compat, typed production/test config, unit/lint и selected compile-only |
 
-В current workflow нет release build, CLI real-API smoke с auth/RBAC/PAT, OpenAPI backward compatibility diff, RU/EN i18n contract, Compose smoke, Playwright/axe/performance, dependency/security scans, а также isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI examples validation, Lighthouse, `cargo-deny`, history/container secret scans или coverage ratchet. Эти расширенные проверки выполняются локально по затронутому scope; часть из них остаётся target, когда требует ещё не поставленного контракта. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
+Модели SDK/Compose не создают actual Docker resources и не заменяют live
+ownership acceptance. Они сохраняются automatic для затронутого Rust component;
+нужный SDK checkout не дублируется в docs job.
+
+### Configuration only: manual full/addressed qualification
+
+release.yml имеет canonical workflow_dispatch и один вызов qualification.yml с
+git_receive_only=false. Qualification сохраняет direct workflow_dispatch и прежний
+typed git_receive_only, все четыре legacy jobs и их conditions. Только callee
+владеет concurrency; full caller не задаёт совпадающую группу. Передаётся прежний
+Base secret по имени, permissions не расширяются.
+
+Full manual cohort сохраняет workspace/CLI/MSRV, real PostgreSQL/native Git races,
+task credential/namespace/owner regressions, populated upgrade, полный docs set,
+SDK QA, packed consumer и themes. PowerShell/Git delivery preflight выделен в
+test_delivery_pin_preflight_integration.py с прежним class body. Source validation
+не означает выполненный hosted/manual pipeline.
+
+Local integration/slow/release, Compose/live/E2E/accessibility/performance,
+security/data gates и SDK/DB compatibility выполняются на согласованной вехе.
+Target gaps (например, полная migration owner/runtime matrix, broader image policy,
+cargo-deny, Lighthouse и coverage ratchet) не выдавать за реализованные проверки.
+Branch protection/approval policy подтверждаются настройками GitHub отдельно.
 
 ### Target approved
 
-Планируемый PR gate дополняет, а не ослабляет current checks:
+Следующие target requirements сохраняются; их source-конфигурация и фактическое выполнение проверяются отдельно. Полный gate относится к согласованной вехе:
 
 | Gate | Требуемое evidence |
 |---|---|

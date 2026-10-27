@@ -11,3 +11,6 @@ backend/target-cache*/
 
 # Incremental TypeScript compiler metadata.
 *.tsbuildinfo
+
+# Owned evidence/cache is not a changed application input.
+/.local/

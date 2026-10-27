@@ -1,22 +1,72 @@
 name: CI
-
 on:
-  workflow_dispatch:
-    inputs:
-      git_receive_only:
-        description: 'Addressed native receive races; reuse separately verified unchanged production gates'
-        type: boolean
-        default: false
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
-
+    branches:
+      - main
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+      frontend_build: ${{ steps.classify.outputs.frontend_build }}
+      backend_build: ${{ steps.classify.outputs.backend_build }}
+      openapi_check: ${{ steps.classify.outputs.openapi_check }}
+      cli_build: ${{ steps.classify.outputs.cli_build }}
+      server_checks: ${{ steps.classify.outputs.server_checks }}
+      delivery_build: ${{ steps.classify.outputs.delivery_build }}
+      pg_migrate_build: ${{ steps.classify.outputs.pg_migrate_build }}
+      migration_build: ${{ steps.classify.outputs.migration_build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: CI-CD
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch exact comparison commits
+        working-directory: CI-CD
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          case "$HEAD_SHA" in *[!0-9a-f]*|"") echo "Invalid exact head" >&2; exit 1;; esac
+          [ "${#HEAD_SHA}" -eq 40 ] || exit 1
+          [ "$(git rev-parse HEAD)" = "$HEAD_SHA" ] || { echo "Checkout differs from head" >&2; exit 1; }
+          if [ "$EVENT_NAME" = push ] && [ "$BASE_SHA" = 0000000000000000000000000000000000000000 ]; then
+            : # Initial push intentionally selects all components.
+          else
+            case "$BASE_SHA" in *[!0-9a-f]*|"") echo "Invalid exact base" >&2; exit 1;; esac
+            [ "${#BASE_SHA}" -eq 40 ] || exit 1
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA"
+            git cat-file -e "$BASE_SHA^{commit}"
+            git cat-file -e "$HEAD_SHA^{commit}"
+          fi
+      - name: Verify packaged Base selector
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('CI-CD')
+          pin=(root/'.quality-tooling-revision').read_text().strip()
+          receipt=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v1' or receipt['revision']!=pin:
+              raise SystemExit('Packaged Base revision mismatch')
+          if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
+              raise SystemExit('Packaged Base selector checksum mismatch')
+          PY
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 -m scripts.select_ci
+        working-directory: CI-CD
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -27,70 +77,33 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: CI-CD
-      - name: Read pinned Base revision
-        id: base
-        working-directory: CI-CD
-        run: |
-          pin=.base-revision
-          if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
-          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
-          echo "pin=$pin" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        with:
-          repository: FerrPOINT/services-base
-          path: services-base
-          token: ${{ secrets.SERVICES_BASE_TOKEN }}
-          ref: ${{ steps.base.outputs.sha }}
-      - name: Verify pinned Base checkout
-        working-directory: CI-CD
-        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: documentation regression tests
-        run: python3 -m unittest scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks scripts.tests.test_postgres_rejection scripts.tests.test_backend_dockerfile scripts.tests.test_postgres_import_boundary
+        run: python3 -B -m unittest scripts.tests.test_quality_routes scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks scripts.tests.test_postgres_rejection scripts.tests.test_backend_dockerfile scripts.tests.test_frontend_toolchain scripts.tests.test_build_pin
       - name: documentation checks
-        run: python3 scripts/verify_docs.py --all
-      - name: Native QA Compose ownership regressions
-        env:
-          SDLC_MAINTENANCE_BASE: ${{ github.workspace }}/services-base
-          SDLC_MAINTENANCE_SDK_SHA256: 73059ebbfeb3a294cce503675b44fa71959882d89fd702edbd358aae4abcf4f8
-        run: python3 -B scripts/tests/test_native_qa_compose.py
+        run: python3 -B scripts/verify_docs.py --links --anchors --canonical --frontend-contracts
       - name: dependency inventory drift
         run: python3 scripts/generate_sbom.py --check
       - name: script checks
         run: |
           python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py
           bash -n scripts/backup.sh scripts/backup-stand.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
-
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
         working-directory: CI-CD/backend
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: forge_owner
-          POSTGRES_PASSWORD: forge_test_owner
-          POSTGRES_DB: forge_test_cicd
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U forge_owner"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
-      CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cicd
-      CICD_NAMESPACE__INSTANCE_ID: 75b72b83-2897-4114-a2d1-d9cd40aee232
-      CICD_NAMESPACE__REGISTRY_INSTANCE_ID: 366087c3-b9a4-4a05-b98d-fc28f748ed33
-      CICD_NAMESPACE__PUBLIC_GIT_ORIGIN: https://forge-qa.invalid
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v4
         with:
           path: CI-CD
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Read pinned Base revision
         id: base
         working-directory: CI-CD
@@ -108,92 +121,54 @@ jobs:
       - name: Verify pinned Base checkout
         working-directory: CI-CD
         run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
+      - name: Pinned SDK import boundary regressions
+        working-directory: CI-CD
+        run: python3 -B -m unittest scripts.tests.test_postgres_import_boundary
+      - name: Native QA Compose ownership regressions
+        env:
+          SDLC_MAINTENANCE_BASE: ${{ github.workspace }}/services-base
+          SDLC_MAINTENANCE_SDK_SHA256: 73059ebbfeb3a294cce503675b44fa71959882d89fd702edbd358aae4abcf4f8
+        run: python3 -B scripts/tests/test_native_qa_compose.py
+        working-directory: CI-CD
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88.0"
+          toolchain: 1.88.0
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: CI-CD/backend
+          cache-targets: false
       - name: fmt
         run: cargo fmt --all -- --check
-      - name: clippy
-        if: ${{ !inputs.git_receive_only }}
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: Integration target clippy
-        if: github.event_name == 'workflow_dispatch'
-        run: cargo clippy --locked --features integration --test integration_db -- -D warnings
       - name: Quick domain/SDK unit tests
-        if: ${{ !inputs.git_receive_only }}
+        if: needs.changes.outputs.server_checks == 'true'
         run: cargo test --locked -p cicd-domain --lib
-      - name: unit tests
-        if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
-        run: cargo test --locked --workspace
-      - name: integration tests (real PostgreSQL)
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          GIT_RECEIVE_ONLY: ${{ inputs.git_receive_only }}
-        run: |
-          set -euo pipefail
-          if [ "$GIT_RECEIVE_ONLY" = true ]; then
-            cargo test --locked --features integration --test integration_db git_sat_receive:: -- --test-threads=1 | tee "$RUNNER_TEMP/git-receive-races.log"
-            grep -F 'test result: ok. 4 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/git-receive-races.log"
-            for name in cancelled_http_receive_keeps_native_child_and_namespace_lease_until_exit concurrent_bootstrap_and_receive_finish_around_waiting_namespace_archive; do
-              grep -F "test git_sat_receive::$name ... ok" "$RUNNER_TEMP/git-receive-races.log"
-            done
-          else
-            cargo test --locked --features integration --test integration_db -- --test-threads=1
-          fi
-      - name: Task credential renewal PostgreSQL regressions
-        if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
-        run: |
-          set -euo pipefail
-          cargo test --locked -p cicd-server --lib renewal_pg_ -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/task-credential-renewal.log"
-          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/task-credential-renewal.log"
-      - name: Namespace DevOps evidence PostgreSQL regressions
-        if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
-        run: |
-          set -euo pipefail
-          cargo test --locked -p cicd-server --lib namespace_devops_evidence_pg_ -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/namespace-devops-evidence.log"
-          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/namespace-devops-evidence.log"
-      - name: Exact owner selection and artifact observer PostgreSQL regressions
-        if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
-        run: |
-          set -euo pipefail
-          cargo test --locked -p cicd-server --lib owner_selection::tests:: -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/owner-selection.log"
-          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/owner-selection.log"
-          cargo test --locked -p cicd-infra candidate_jobs_nested_names_stale_rows_duplicates_and_aliases_fail_closed -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/candidate-artifacts.log"
-          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/candidate-artifacts.log"
-      - name: Populated task credential migration upgrade
-        if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
-        run: |
-          set -euo pipefail
-          cargo test --locked --features integration --test integration_db task_credential_successor_migration:: -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/task-credential-upgrade.log"
-          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/task-credential-upgrade.log"
-      - name: Create isolated CLI test database
-        if: ${{ !inputs.git_receive_only }}
-        env:
-          PGPASSWORD: forge_test_owner
-        run: createdb -h 127.0.0.1 -p 5432 -U forge_owner forge_test_cli
-      - name: CLI tests (real PostgreSQL)
-        if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
-        env:
-          CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cli
-        run: cargo test --locked -p cicd-cli --features integration --test cli_real_api -- --test-threads=1
-      - name: CLI integration clippy
-        if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
-        run: cargo clippy --locked -p cicd-cli --all-targets --features integration -- -D warnings
-      - name: release build
-        if: ${{ !inputs.git_receive_only }}
-        run: cargo build --locked --release --workspace
+      - name: Check selected backend_build
+        if: needs.changes.outputs.backend_build == 'true'
+        run: cargo check --locked -p cicd-server --bin cicd-server --bin forge-runner
+      - name: Check selected cli_build
+        if: needs.changes.outputs.cli_build == 'true'
+        run: cargo check --locked -p cicd-cli --bin cicd-cli
+      - name: Check selected delivery_build
+        if: needs.changes.outputs.delivery_build == 'true'
+        run: cargo check --locked -p cicd-server --bin forge-delivery
+      - name: Check selected pg_migrate_build
+        if: needs.changes.outputs.pg_migrate_build == 'true'
+        run: cargo check --locked -p cicd-server --bin forge-pg-migrate
+      - name: Check selected migration_build
+        if: needs.changes.outputs.migration_build == 'true'
+        run: cargo check --locked -p cicd-migrate --bin cicd-migrate
       - name: openapi drift gate
-        if: ${{ !inputs.git_receive_only }}
+        if: needs.changes.outputs.openapi_check == 'true'
         run: |
           cargo run --locked --bin openapi-dump -- /tmp/openapi.yaml
           diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
-
+    needs:
+      - changes
+      - docs
+    if: needs.changes.outputs.backend == 'true'
   frontend:
-    if: ${{ !inputs.git_receive_only }}
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -203,6 +178,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: CI-CD
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Read pinned Base revision
         id: base
         working-directory: CI-CD
@@ -225,7 +202,7 @@ jobs:
           version: 10.28.1
       - uses: actions/setup-node@v6
         with:
-          node-version: "22.20.0"
+          node-version: 22.20.0
           cache: pnpm
           cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -234,7 +211,9 @@ jobs:
       - name: dependency advisories
         run: pnpm audit --audit-level low
       - run: pnpm openapi:check
-      - run: pnpm test -- --run
+      - name: Typecheck prepared generated sources once
+        run: pnpm typecheck
+      - run: pnpm test:unit
       - run: pnpm lint
       - name: OpenAPI compatibility against target branch
         run: |
@@ -242,47 +221,8 @@ jobs:
           pnpm openapi:compat
       - name: Generated contract and lockfile stay unchanged
         run: git diff --exit-code -- pnpm-lock.yaml src/api/generated.ts src/api/schema.d.ts
-      - run: pnpm build
-      - name: Packed Base consumer
-        run: python ../../services-base/scripts/check_ui_consumer.py
-      - name: Effective themes in the built consumer
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          pnpm exec playwright install --with-deps chromium
-          pnpm exec vite preview --host 127.0.0.1 --port 4173 --strictPort > /tmp/theme-preview.log 2>&1 &
-          pnpm theme:check http://127.0.0.1:4173
-
-  minimum-rust:
-    if: ${{ !inputs.git_receive_only }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          path: CI-CD
-      - name: Read pinned Base revision
-        id: base
-        working-directory: CI-CD
-        run: |
-          pin=.base-revision
-          if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
-          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
-          echo "pin=$pin" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v7
-        with:
-          repository: FerrPOINT/services-base
-          path: services-base
-          ref: ${{ steps.base.outputs.sha }}
-          token: ${{ secrets.SERVICES_BASE_TOKEN }}
-      - name: Verify pinned Base checkout
-        working-directory: CI-CD
-        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.88.0"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: CI-CD/backend
-      - name: Check declared minimum independently of release builds
-        working-directory: CI-CD/backend
-        run: cargo check --locked --workspace --all-targets
+      - run: pnpm build:compile
+        if: needs.changes.outputs.frontend_build == 'true'
+    needs:
+      - changes
+      - docs
