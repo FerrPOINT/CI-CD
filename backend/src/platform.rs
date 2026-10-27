@@ -1086,7 +1086,8 @@ async fn ensure_deployment_exists(db: &PgPool, deployment_id: Uuid) -> Result<()
 
 pub(crate) fn deployment_select(where_clause: &str, tail_clause: &str) -> String {
     format!(
-        "SELECT d.id, d.environment_id, d.pipeline_id, d.rollback_of_id, d.git_ref, d.status, d.created_at, \
+        "SELECT d.id, d.environment_id, d.pipeline_id, d.rollback_of_id, d.git_ref, d.status, \
+                d.runtime_phase, d.runtime_receipt, d.created_at, \
                 (e.protected AND e.required_approvals > 0) AS approval_required, \
                 e.required_approvals, \
                 COALESCE(COUNT(a.id) FILTER (WHERE a.decision = 'approved'), 0)::bigint AS approval_count, \

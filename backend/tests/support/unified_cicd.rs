@@ -156,3 +156,152 @@ async fn environment_target_is_optional_preserved_and_cannot_claim_manual_succes
             .is_none()
     );
 }
+
+async fn deployment_projection_request(
+    app: &axum::Router,
+    method: axum::http::Method,
+    path: &str,
+    input: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .body(input.map_or_else(Body::empty, |value| Body::from(value.to_string())))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let body = response_json(response).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+#[tokio::test]
+async fn deployment_projection_preserves_legacy_create_list_and_rollback_response() {
+    use axum::http::Method;
+    use serde_json::json;
+
+    let pool = test_pool().await;
+    let project = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.invalid/projection.git')")
+        .bind(project).bind(format!("projection-{project}")).execute(&pool).await.unwrap();
+    let app = authenticated_app(pool.clone()).await;
+    let environment = deployment_projection_request(
+        &app, Method::POST, &format!("/api/v1/projects/{project}/environments"),
+        Some(json!({"name":"legacy","url":"https://legacy.example.invalid"})),
+    ).await;
+    let environment_id = environment["id"].as_str().unwrap();
+    let path = format!("/api/v1/environments/{environment_id}/deployments");
+    let source = deployment_projection_request(
+        &app, Method::POST, &path,
+        Some(json!({"git_ref":"legacy-release","status":"success"})),
+    ).await;
+    assert_eq!(source["status"], "success");
+    assert_eq!(source["approval_state"], "not_required");
+    assert_eq!(source["approval_count"], 0);
+    assert_eq!(source["required_approvals"], 0);
+    assert!(source.get("runtime_phase").is_none());
+    assert!(source.get("runtime_receipt").is_none());
+
+    let listed = deployment_projection_request(&app, Method::GET, &path, None).await;
+    assert_eq!(listed.as_array().unwrap(), &vec![source.clone()]);
+    let source_id = source["id"].as_str().unwrap();
+
+    // This exercises the actual rollback HTTP response after its pipeline is
+    // created. No worker runs and no external deployment success is fabricated.
+    let rollback = deployment_projection_request(
+        &app, Method::POST, &format!("/api/v1/deployments/{source_id}/rollback"),
+        Some(json!({})),
+    ).await;
+    assert_ne!(rollback["id"], source["id"]);
+    assert_eq!(rollback["rollback_of_id"], source["id"]);
+    assert_eq!(rollback["git_ref"], "legacy-release");
+    assert_eq!(rollback["status"], "pending");
+    assert!(rollback.get("runtime_phase").is_none());
+    assert!(rollback.get("runtime_receipt").is_none());
+    let pipeline = Uuid::parse_str(rollback["pipeline_id"].as_str().unwrap()).unwrap();
+    let (status, variables): (String, serde_json::Value) =
+        sqlx::query_as("SELECT status,variables FROM pipelines WHERE id=$1 AND project_id=$2")
+            .bind(pipeline).bind(project).fetch_one(&pool).await.unwrap();
+    assert_eq!(status, "queued");
+    assert_eq!(variables["deployment_id"], rollback["id"]);
+    assert_eq!(variables["rollback_of_deployment_id"], source["id"]);
+
+    let listed = deployment_projection_request(&app, Method::GET, &path, None).await;
+    let rows = listed.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.contains(&source));
+    assert!(rows.contains(&rollback));
+    let source_after: (String, Option<String>, Option<serde_json::Value>) = sqlx::query_as(
+        "SELECT status,runtime_phase,runtime_receipt FROM deployments WHERE id=$1",
+    ).bind(Uuid::parse_str(source_id).unwrap()).fetch_one(&pool).await.unwrap();
+    assert_eq!(source_after, ("success".into(), None, None));
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn deployment_projection_preserves_kubernetes_runtime_on_list_and_fetch_response() {
+    use axum::http::Method;
+    use serde_json::json;
+
+    let pool = test_pool().await;
+    let project = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.invalid/kube-projection.git')")
+        .bind(project).bind(format!("kube-projection-{project}")).execute(&pool).await.unwrap();
+    let app = authenticated_app(pool.clone()).await;
+    let environment = deployment_projection_request(
+        &app, Method::POST, &format!("/api/v1/projects/{project}/environments"),
+        Some(json!({
+            "name":"kubernetes","protected":true,"required_approvals":1,
+            "kubernetes_target":{
+                "schema":"forge/kubernetes-environment/v1","cluster":"fixture-cluster",
+                "namespace":"fixture-dev","release":"fixture-app","chart":"chart","values":[],
+                "health_url":"https://fixture.example.invalid/health"
+            }
+        })),
+    ).await;
+    let environment_id = environment["id"].as_str().unwrap();
+    let path = format!("/api/v1/environments/{environment_id}/deployments");
+    let pending = deployment_projection_request(
+        &app, Method::POST, &path, Some(json!({"git_ref":"main"})),
+    ).await;
+    assert_eq!(pending["status"], "pending");
+    assert_eq!(pending["approval_state"], "pending");
+    assert!(pending["pipeline_id"].is_null());
+    assert!(pending.get("runtime_phase").is_none());
+    assert!(pending.get("runtime_receipt").is_none());
+    let deployment = Uuid::parse_str(pending["id"].as_str().unwrap()).unwrap();
+
+    // Populate only the isolated PostgreSQL read-model fixture. This marker
+    // claims neither execution nor a qualified successful runtime observation.
+    let receipt = json!({"fixture":"projection-only","diagnostic":"no executor was run"});
+    sqlx::query("UPDATE deployments SET runtime_phase='prepared',runtime_receipt=$2 WHERE id=$1")
+        .bind(deployment).bind(&receipt).execute(&pool).await.unwrap();
+    let listed = deployment_projection_request(&app, Method::GET, &path, None).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["id"], pending["id"]);
+    assert_eq!(listed[0]["runtime_phase"], "prepared");
+    assert_eq!(listed[0]["runtime_receipt"], receipt);
+    assert_eq!(listed[0]["status"], "pending");
+    assert_eq!(listed[0]["approval_state"], "pending");
+    assert_eq!(listed[0]["required_approvals"], 1);
+
+    // Rejection invokes the shared fetch_deployment projection without starting
+    // a pipeline, a Kubernetes client or an external execution.
+    let rejected = deployment_projection_request(
+        &app, Method::POST, &format!("/api/v1/deployments/{deployment}/approvals"),
+        Some(json!({"decision":"rejected","comment":"projection regression fixture"})),
+    ).await;
+    assert_eq!(rejected["id"], pending["id"]);
+    assert_eq!(rejected["status"], "failed");
+    assert_eq!(rejected["approval_state"], "rejected");
+    assert_eq!(rejected["runtime_phase"], "prepared");
+    assert_eq!(rejected["runtime_receipt"], receipt);
+    assert!(rejected["pipeline_id"].is_null());
+    let pipelines: i64 = sqlx::query_scalar("SELECT count(*) FROM pipelines WHERE project_id=$1")
+        .bind(project).fetch_one(&pool).await.unwrap();
+    assert_eq!(pipelines, 0);
+    let listed = deployment_projection_request(&app, Method::GET, &path, None).await;
+    assert_eq!(listed.as_array().unwrap(), &vec![rejected]);
+    pool.close().await;
+}
