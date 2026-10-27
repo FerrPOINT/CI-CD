@@ -382,3 +382,26 @@ IAB source proof: 27 Tracker viewport transitions, 30 shell/drawer checks и
 сохранены. Это source-композиции, не приёмка полного authenticated приложения.
 Прежний IAB attachment gap закрыт новым успешным run; ошибки сохранены в истории.
 Полный интеграционный gate, Rust transport vectors, hosted CI и публикация отдельно.
+
+## Общая геометрия истории UI 0.3.14 — 2026-10-27
+
+UI producer `f3b99e3ce15a4a447d58790f118c6be70e931a18` принят независимо от SDK/skills.
+Архив содержит 910 файлов; offline CLI, шесть frozen refresh и production bytes
+проверены. В Workflow штатный SSR export остался byte-identical. Это обновление
+source-поставки; установленный runtime не менялся.
+
+JobLogPanel использует useScrollViewport и useDebouncedValue(300). Debounce
+сохраняет raw-input lifetime; trim выполняется после него. Scope включает job,
+attempt и поисковый запрос. Live append не завершает restore старой страницы;
+CodeBlock получает stable host rows, сохраняя линейный текст. Tail/filter/unread
+и загрузка страниц остаются у Forge. 12 owner tests, types и scoped lint прошли.
+Сравнение с прежним source дало RED 250 вместо100 px; текущий вариант проходит.
+IAB использовал извлечённый настоящий JobLogPanel с синтетическим query adapter,
+а не полный продукт с backend. Native DOM воспроизвёл прежний сдвиг 0→18 px при
+append. Текущий вариант сохраняет anchor в 12 theme/width contexts; ошибка,
+явный jump и новая identity проверены отдельно. Установленная приёмка отдельно.
+
+Base qualification: 17 hook tests, 69 primitive checks и 37 search assertions.
+IAB Base/Forge source-compositions: 24 theme/width cases плюс три intent/error
+cases; это не полная authenticated-приёмка продуктов. Полный интеграционный gate,
+Rust search transport, hosted CI и публикация остаются отдельными стадиями.

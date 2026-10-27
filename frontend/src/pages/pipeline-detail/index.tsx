@@ -42,6 +42,7 @@ import {
 
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
+import { useDebouncedValue, useScrollViewport } from "@pdlc/ui/lib";
 import { ApiError } from "@/api/client";
 import { ConfigurationContext } from "@/widgets/configuration-context";
 import { ForbiddenPage } from "@/pages/forbidden";
@@ -536,7 +537,8 @@ function JobLogPanel({
     null,
   );
   const [logSearch, setLogSearch] = useState("");
-  const [appliedLogSearch, setAppliedLogSearch] = useState("");
+  const debouncedLogSearch = useDebouncedValue(logSearch, 300);
+  const appliedLogSearch = debouncedLogSearch.trim();
   const selectedAttempt =
     attempts.find((a) => a.id === selectedAttemptId) ?? attempts[0];
   const logPages = useJobLogPages(
@@ -552,8 +554,16 @@ function JobLogPanel({
     return orderedPages.flatMap((page) => page.items);
   }, [logPages.data, tailMode]);
   const logViewportRef = useRef<HTMLPreElement>(null);
+  const viewport = useScrollViewport(
+    logViewportRef,
+    JSON.stringify([jobId, selectedAttempt?.id, appliedLogSearch]),
+  );
+  const logPageCount = logPages.data?.pages.length ?? 0;
   const followTailRef = useRef(true);
-  const preserveScrollHeightRef = useRef<number | null>(null);
+  const prependRestoreRef = useRef<{
+    pages: number;
+    finish: ReturnType<typeof viewport.preservePrepend>;
+  } | null>(null);
   const previousLastSequenceRef = useRef<number | null>(null);
   const [showLatestLogs, setShowLatestLogs] = useState(false);
   const initialLogsError = logPages.isError && logPages.data == null;
@@ -562,14 +572,6 @@ function JobLogPanel({
   const appendLog = useAppendLog();
   const activeAttemptId = attempts[0]?.id;
   const canAppend = !!selectedAttempt && selectedAttempt.id === activeAttemptId;
-
-  useEffect(() => {
-    const timeout = window.setTimeout(
-      () => setAppliedLogSearch(logSearch.trim()),
-      300,
-    );
-    return () => window.clearTimeout(timeout);
-  }, [logSearch]);
 
   useEffect(() => {
     if (attempts.length === 0) {
@@ -586,10 +588,11 @@ function JobLogPanel({
 
   useEffect(() => {
     followTailRef.current = tailMode;
-    preserveScrollHeightRef.current = null;
+    prependRestoreRef.current?.finish.cancel();
+    prependRestoreRef.current = null;
     previousLastSequenceRef.current = null;
     setShowLatestLogs(false);
-  }, [appliedLogSearch, selectedAttempt?.id, tailMode]);
+  }, [jobId, appliedLogSearch, selectedAttempt?.id, tailMode]);
 
   useEffect(() => {
     const lastSequence = logs[logs.length - 1]?.sequence ?? null;
@@ -598,18 +601,18 @@ function JobLogPanel({
       return;
     }
 
-    const viewport = logViewportRef.current;
-    const preservedHeight = preserveScrollHeightRef.current;
-    if (viewport && preservedHeight != null) {
-      viewport.scrollTop += viewport.scrollHeight - preservedHeight;
-      preserveScrollHeightRef.current = null;
+    const pending = prependRestoreRef.current;
+    // Live appends do not confirm that the requested older page committed.
+    if (pending && logPageCount > pending.pages) {
+      prependRestoreRef.current = null;
+      pending.finish({ defer: false });
       previousLastSequenceRef.current = lastSequence;
       return;
     }
 
     const previousLastSequence = previousLastSequenceRef.current;
-    if (viewport && followTailRef.current && logs.length > 0) {
-      viewport.scrollTop = viewport.scrollHeight;
+    if (followTailRef.current && logs.length > 0) {
+      viewport.scrollToEnd();
     } else if (
       previousLastSequence != null &&
       lastSequence != null &&
@@ -618,21 +621,35 @@ function JobLogPanel({
       setShowLatestLogs(true);
     }
     previousLastSequenceRef.current = lastSequence;
-  }, [logs, tailMode]);
+  }, [logs, tailMode, logPageCount, viewport]);
 
   function loadNextLogPage() {
+    if (prependRestoreRef.current) return;
     if (tailMode) {
-      preserveScrollHeightRef.current =
-        logViewportRef.current?.scrollHeight ?? null;
+      const pending = {
+        pages: logPageCount,
+        finish: viewport.preservePrepend(),
+      };
+      prependRestoreRef.current = pending;
       followTailRef.current = false;
       setShowLatestLogs(true);
+      const cancel = () => {
+        if (prependRestoreRef.current !== pending) return;
+        pending.finish.cancel();
+        prependRestoreRef.current = null;
+      };
+      void logPages.fetchNextPage().then((result) => {
+        if (result.isError || (result.data?.pages.length ?? 0) <= pending.pages)
+          cancel();
+      }, cancel);
+      return;
     }
     void logPages.fetchNextPage();
   }
 
   function scrollToLatestLog() {
-    const viewport = logViewportRef.current;
-    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    prependRestoreRef.current = null;
+    viewport.scrollToEnd();
     followTailRef.current = true;
     setShowLatestLogs(false);
   }
@@ -816,16 +833,12 @@ function JobLogPanel({
               role="log"
               aria-label={t("jobs.logs")}
               tabIndex={0}
-              onScroll={(event) => {
+              onScroll={() => {
                 if (!tailMode) return;
-                const viewport = event.currentTarget;
-                const nearBottom =
-                  viewport.scrollHeight -
-                    viewport.scrollTop -
-                    viewport.clientHeight <=
-                  24;
-                followTailRef.current = nearBottom;
-                setShowLatestLogs(!nearBottom);
+                const position = viewport.observe(24, true);
+                if (!position) return;
+                followTailRef.current = position.atEnd;
+                setShowLatestLogs(!position.atEnd);
               }}
               className="max-h-80"
               wrap={false}
@@ -834,12 +847,11 @@ function JobLogPanel({
                 ? t("common.loading")
                 : logs.length === 0
                   ? t("jobs.noLogs")
-                  : logs
-                      .map(
-                        (l) =>
-                          `${String(l.sequence).padStart(3, "0")}  ${l.message}`,
-                      )
-                      .join("\n")}
+                  : logs.map((line, index) => (
+                      <span key={line.sequence} data-scroll-anchor="">
+                        {`${String(line.sequence).padStart(3, "0")}  ${line.message}${index < logs.length - 1 ? "\n" : ""}`}
+                      </span>
+                    ))}
             </CodeBlock>
           )}
           {tailMode &&

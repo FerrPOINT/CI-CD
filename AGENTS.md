@@ -315,3 +315,12 @@ matchMedia/listener/useSyncExternalStore пар. Query, grid, данные и д
 остаются у владельца. Для чистого оформления достаточно CSS. Callback перед
 React update сохраняет focus исчезающего control; mount/query changes не должны
 записывать данные. Контракт: Base DESIGN_SYSTEM.md и `pdlc-ui show useMediaQuery`.
+
+## Геометрия live-истории
+
+Геометрия live-истории использует useScrollViewport Base после проверки UI pin.
+Стабильные host-строки отмечаются data-scroll-anchor. Completion вызывается после
+commit старой страницы; live append не подтверждает её загрузку. При ошибке
+completion.cancel() отменяет restore без навигации. Scope — ресурс/фильтр;
+загрузка, порядок, follow/unread и active tab остаются у продукта. Одиночный
+scrollIntoView к предметной записи не требует новой обёртки.
