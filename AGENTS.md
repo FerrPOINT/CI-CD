@@ -307,3 +307,11 @@ getDerivedStateFromError/componentDidCatch не добавлять. Fallback, о
 данные и явный reset key остаются у продукта. Граница не очищает журнал и
 не повторяет операцию; HTTP, async, event handlers и SSR обслуживаются отдельно.
 Контракт и поиск: Base docs/platform/DESIGN_SYSTEM.md и `pdlc-ui show RenderBoundary`.
+
+## Условия браузера и responsive-поведение
+
+После проверки UI pin применять useMediaQuery из Base вместо локальных
+matchMedia/listener/useSyncExternalStore пар. Query, grid, данные и действия
+остаются у владельца. Для чистого оформления достаточно CSS. Callback перед
+React update сохраняет focus исчезающего control; mount/query changes не должны
+записывать данные. Контракт: Base DESIGN_SYSTEM.md и `pdlc-ui show useMediaQuery`.
