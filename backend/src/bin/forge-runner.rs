@@ -1201,13 +1201,22 @@ async fn prepare_workspace(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .context("lease requires checkout but checkoutUrl is missing")?;
-        workspace
-            .clone_checkout(
-                url,
-                offer.attempt.commit_sha.as_deref(),
-                &offer.attempt.git_ref,
-            )
-            .await?;
+        if offer.attempt.image_publish.is_some() || offer.attempt.helm_deploy.is_some() {
+            let pin = offer
+                .attempt
+                .commit_sha
+                .as_deref()
+                .context("typed delivery requires source pin")?;
+            workspace.checkout_source_snapshot(url, pin).await?;
+        } else {
+            workspace
+                .clone_checkout(
+                    url,
+                    offer.attempt.commit_sha.as_deref(),
+                    &offer.attempt.git_ref,
+                )
+                .await?;
+        }
     } else {
         workspace.create_empty_checkout()?;
     }

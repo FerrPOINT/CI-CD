@@ -338,6 +338,28 @@ impl OwnedWorkspace {
         commit_sha: Option<&str>,
         git_ref: &str,
     ) -> anyhow::Result<()> {
+        self.clone_checkout_inner(repository, commit_sha, git_ref, false)
+            .await
+    }
+
+    /// Typed build/deploy consumes a tracked tree, never repository history.
+    /// Fetch the assigned object itself so a moving branch cannot change inputs.
+    pub async fn checkout_source_snapshot(
+        &self,
+        repository: &str,
+        commit_sha: &str,
+    ) -> anyhow::Result<()> {
+        self.clone_checkout_inner(repository, Some(commit_sha), "", true)
+            .await
+    }
+
+    async fn clone_checkout_inner(
+        &self,
+        repository: &str,
+        commit_sha: Option<&str>,
+        git_ref: &str,
+        snapshot: bool,
+    ) -> anyhow::Result<()> {
         self.verify_owner()?;
         if let Some(sha) = commit_sha {
             ensure!(
@@ -345,13 +367,31 @@ impl OwnedWorkspace {
                 "checkout requires a full commit SHA"
             );
         }
-        let mut clone = self.git(&self.directory);
-        clone.args(["clone", "--quiet", "--no-checkout", "--no-hardlinks"]);
-        if commit_sha.is_none() && !git_ref.is_empty() {
-            clone.args(["--branch", git_ref]);
+        if snapshot {
+            let pin = commit_sha.context("source snapshot requires an exact commit")?;
+            fs::create_dir(&self.checkout)?;
+            let mut init = self.git(&self.checkout);
+            init.args(["init", "--quiet"]);
+            run_git(init, "source snapshot init failed").await?;
+            let mut remote = self.git(&self.checkout);
+            remote.args(["remote", "add", "--", "origin", repository]);
+            run_git(remote, "source snapshot remote failed").await?;
+            let mut fetch = self.git(&self.checkout);
+            fetch.args(["fetch", "--quiet", "--depth=1", "--no-tags", "origin", pin]);
+            run_git(
+                fetch,
+                "source snapshot fetch failed; workspace retained for reconciliation",
+            )
+            .await?;
+        } else {
+            let mut clone = self.git(&self.directory);
+            clone.args(["clone", "--quiet", "--no-checkout", "--no-hardlinks"]);
+            if commit_sha.is_none() && !git_ref.is_empty() {
+                clone.args(["--branch", git_ref]);
+            }
+            clone.args(["--", repository, "workspace"]);
+            run_git(clone, "clone failed; workspace retained for reconciliation").await?;
         }
-        clone.args(["--", repository, "workspace"]);
-        run_git(clone, "clone failed; workspace retained for reconciliation").await?;
         let target = commit_sha.unwrap_or("HEAD");
         let mut checkout = self.git(&self.checkout);
         checkout.args(["checkout", "--quiet", "--detach", target, "--"]);
@@ -613,8 +653,28 @@ mod tests {
             fs::read_to_string(owned.checkout().join("tracked.txt")).unwrap(),
             "first"
         );
+        assert!(!owned.checkout().join(".git/shallow").exists());
         acknowledge_fixture(&owned);
         owned.cleanup_after_ack().await.unwrap();
+        let snapshot = workspace(&root);
+        snapshot
+            .checkout_source_snapshot(repository.to_str().unwrap(), &pin)
+            .await
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(snapshot.checkout().join("tracked.txt")).unwrap(),
+            "first"
+        );
+        assert!(snapshot.checkout().join(".git/shallow").is_file());
+        let count = std::process::Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(snapshot.checkout())
+            .output()
+            .unwrap();
+        assert!(count.status.success());
+        assert_eq!(String::from_utf8(count.stdout).unwrap().trim(), "1");
+        acknowledge_fixture(&snapshot);
+        snapshot.cleanup_after_ack().await.unwrap();
         let invalid = workspace(&root);
         assert!(
             invalid
