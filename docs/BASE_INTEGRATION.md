@@ -303,3 +303,17 @@ TypeScript, scoped ESLint, format, UI guard и AST-сохранность пре
 проверены. В IAB импортирован настоящий CapabilityCallout с синтетическим текстом:
 четыре состояния, light/dark/gray, 320/375/1920/2560, без overflow; снимок просмотрен.
 Это проверка leaf UI, без backend, SSO и runtime. UI/SDK/skills pins неизменны.
+
+## Пояснение секретов и pending preview — 2026-10-27
+
+Статическое пояснение страницы секретов использует Notice appearance=inline
+separated с прежней ShieldCheck и строкой локализации. Общие отступы, типографика
+и цвет принадлежат Base; новый alert/live-region для статического текста не создан.
+Сохранение, замена и удаление секретов остаются прежними.
+
+В действующем preview синхронизаций при busy сохраняется прежняя надпись и
+native disabled. RefreshCw остаётся в состоянии покоя; локальная animate-spin
+удалена. Статический Loader рядом с уже содержащей многоточие надписью не нужен.
+TypeScript, scoped ESLint/format, guards, 6 secrets и 12 preview cases пройдены.
+IAB: точные JSX-композиции с CSS Forge, три темы и четыре ширины, без overflow,
+мобильная кнопка минимум 44px. Это не backend/runtime acceptance. Pins неизменны.

@@ -146,10 +146,9 @@ export function SecretsPage() {
         }
       />
 
-      <div className="flex items-start gap-2 border-y border-border py-3 text-xs text-text-secondary">
-        <ShieldCheck className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+      <Notice appearance="inline" separated icon={<ShieldCheck aria-hidden />}>
         <p>{t("secrets.encryptedNotice")}</p>
-      </div>
+      </Notice>
 
       {showForm && (
         <form
@@ -295,9 +294,7 @@ export function SecretsPage() {
                         />
                         <div className="min-w-0 flex-1">
                           <ResourceListTitle asChild technical>
-                            <p className="break-all">
-                            {secret.key}
-                          </p>
+                            <p className="break-all">{secret.key}</p>
                           </ResourceListTitle>
                           <time
                             dateTime={secret.updated_at}

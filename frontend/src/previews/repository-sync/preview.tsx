@@ -294,7 +294,8 @@ export function RepositorySyncPreview() {
         shouldBlockNavigation={({ currentLocation, nextLocation }) =>
           // List, editor and history share retained drafts; changing preview mode unmounts them.
           currentLocation.pathname !== nextLocation.pathname ||
-          (new URLSearchParams(currentLocation.search).get("production") === "1") !==
+          (new URLSearchParams(currentLocation.search).get("production") ===
+            "1") !==
             (new URLSearchParams(nextLocation.search).get("production") === "1")
         }
       />
@@ -725,10 +726,7 @@ function RepositorySyncEditor({
                   readOnly
                 }
               >
-                <RefreshCw
-                  aria-hidden
-                  className={`h-4 w-4 ${busy ? "animate-spin" : ""}`}
-                />
+                {!busy && <RefreshCw aria-hidden className="h-4 w-4" />}
                 {busy ? "Синхронизация…" : "Синхронизировать сейчас"}
               </Button>
             </>
