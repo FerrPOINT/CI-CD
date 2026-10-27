@@ -251,15 +251,12 @@ packages:
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
 
-  '@dicebear/core@9.4.3':
-    resolution: {integrity: sha512-9ITrQI57k3p5hKuU8HZJ1d0kPdrmTKEJDOdlKQ8CpaChbtmnD1R+dtWmNz5IesYThXM8F64pJ0ZvJ2rsY8Hciw==}
-    engines: {node: '>=18.0.0'}
+  '@dicebear/core@10.7.0':
+    resolution: {integrity: sha512-JUOzKOd8RUByJJo8ZL+C7YE/pvEsWewfpbWUmR8OIQZWv/PvUQHnohdevySC3icyyxe6EIU/8B/rQgA42us1QA==}
+    engines: {node: '>=22.0.0'}
 
-  '@dicebear/micah@9.4.3':
-    resolution: {integrity: sha512-+76eH3Scu8jfiSbhGjK3OBWeTK+qiuKxrlZFimevaIUzNe6UjqEeaiBUg9R7LPAx3CNIXJOLhuzkHPEkOSnXtg==}
-    engines: {node: '>=18.0.0'}
-    peerDependencies:
-      '@dicebear/core': ^9.0.0
+  '@dicebear/styles@10.6.0':
+    resolution: {integrity: sha512-KhxbEVI+z8TaenX58+ZhIRFBt7adggu/F+8g6ZYLu43H2/lgLuWA3Kg8vHBrCVWdfTTTt1p2wUhQomIkkypTuQ==}
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -520,7 +517,7 @@ packages:
       i18next: '>=25 <27'
       react: '>=19 <20'
       react-dom: '>=19 <20'
-      react-i18next: '>=15 <17'
+      react-i18next: '>=15 <18'
       react-router: '>=8.1 <9'
       sonner: '>=2.0.8 <3'
       zustand: ^5.0.0
@@ -1646,8 +1643,8 @@ packages:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
 
-  jose@6.2.12:
-    resolution: {integrity: sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==}
+  jose@6.2.13:
+    resolution: {integrity: sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==}
 
   js-levenshtein@1.1.6:
     resolution: {integrity: sha512-X2BB11YZtrRqY4EnQcLX5Rh373zbK4alC1FW7D7MBhL2gtcC17cTnr6DmfHZeS0s2rTHjUTMMHfG7gO8SSdw+g==}
@@ -1819,6 +1816,11 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
+  nanoid@3.3.20:
+    resolution: {integrity: sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ==}
+    engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
+    hasBin: true
+
   natural-compare@1.4.0:
     resolution: {integrity: sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw==}
 
@@ -1890,12 +1892,12 @@ packages:
     resolution: {integrity: sha512-Nc3IT5yHzflTfbjgqWcCPpo7DaKy4FnpB0l/zCAW0Tc7jxAiuqSxHasntB3D7887LSrA93kDJ9IXovxJYxyLCA==}
     engines: {node: '>=4'}
 
-  postcss@8.5.23:
-    resolution: {integrity: sha512-g50586zr4bZmwFiTlflMu8E0bDTb5I5gertgwAKmsdUlTQIhZtunzUlD1WSzwcVWPoAVpsrA6vlfCD7oXvRwgg==}
-    engines: {node: ^10 || ^12 || >=14}
-
   postcss@8.5.26:
     resolution: {integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==}
+    engines: {node: ^10 || ^12 || >=14}
+
+  postcss@8.5.31:
+    resolution: {integrity: sha512-YUbWYCgErwnMAVkjUnYa+KlMBzGpHwiIt/DE7f0G33AuX2LH9UcTk6KgWxd3zRU+pN3u/C+Xl3EnMLM4Hea7Sg==}
     engines: {node: ^10 || ^12 || >=14}
 
   prelude-ls@1.2.1:
@@ -2504,13 +2506,9 @@ snapshots:
 
   '@csstools/css-tokenizer@3.0.4': {}
 
-  '@dicebear/core@9.4.3':
-    dependencies:
-      '@types/json-schema': 7.0.15
+  '@dicebear/core@10.7.0': {}
 
-  '@dicebear/micah@9.4.3(@dicebear/core@9.4.3)':
-    dependencies:
-      '@dicebear/core': 9.4.3
+  '@dicebear/styles@10.6.0': {}
 
   '@esbuild/aix-ppc64@0.25.12':
     optional: true
@@ -2681,8 +2679,8 @@ snapshots:
 
   '@pdlc/ui@file:../../services-base/base-modules/ui(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react-i18next@15.7.4(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-router@8.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(sonner@2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(zustand@5.0.15(@types/react@19.2.18)(react@19.2.8))':
     dependencies:
-      '@dicebear/core': 9.4.3
-      '@dicebear/micah': 9.4.3(@dicebear/core@9.4.3)
+      '@dicebear/core': 10.7.0
+      '@dicebear/styles': 10.6.0
       '@radix-ui/react-alert-dialog': 1.2.1(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@radix-ui/react-compose-refs': 1.1.5(@types/react@19.2.18)(react@19.2.8)
       '@radix-ui/react-dialog': 1.3.1(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -2694,9 +2692,9 @@ snapshots:
       class-variance-authority: 0.7.1
       clsx: 2.1.1
       i18next: 26.4.0(typescript@5.9.3)
-      jose: 6.2.12
+      jose: 6.2.13
       lucide-react: 1.52.0(@types/react@19.2.18)(react@19.2.8)
-      postcss: 8.5.23
+      postcss: 8.5.31
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
       react-i18next: 15.7.4(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)
@@ -3804,7 +3802,7 @@ snapshots:
 
   jiti@2.7.0: {}
 
-  jose@6.2.12: {}
+  jose@6.2.13: {}
 
   js-levenshtein@1.1.6: {}
 
@@ -3951,6 +3949,8 @@ snapshots:
 
   nanoid@3.3.18: {}
 
+  nanoid@3.3.20: {}
+
   natural-compare@1.4.0: {}
 
   node-releases@2.0.53: {}
@@ -4016,15 +4016,15 @@ snapshots:
 
   pluralize@8.0.0: {}
 
-  postcss@8.5.23:
+  postcss@8.5.26:
     dependencies:
       nanoid: 3.3.18
       picocolors: 1.1.1
       source-map-js: 1.2.2
 
-  postcss@8.5.26:
+  postcss@8.5.31:
     dependencies:
-      nanoid: 3.3.18
+      nanoid: 3.3.20
       picocolors: 1.1.1
       source-map-js: 1.2.2
 

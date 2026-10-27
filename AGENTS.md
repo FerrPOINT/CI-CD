@@ -106,7 +106,7 @@ Button size="icon" с доступным именем. Локальные w-10/p
 
 См. [BASE_INTEGRATION](docs/BASE_INTEGRATION.md). Обязательны pinned Base SHA,
 locked/frozen зависимости и проверка актуальных checkout до сборки.
-Rust build toolchain 1.88.0, Node 22.20.0, pnpm 10.28.1; MSRV отдельно.
+Rust build toolchain 1.88.0, Node 22.22.2, pnpm 10.28.1; MSRV отдельно.
 
 ## Локальные Docker jobs и helpers
 
