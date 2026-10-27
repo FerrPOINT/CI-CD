@@ -2,7 +2,7 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA: `8bdd8ecd54eb6a6f553bfbadcfaf07c99f4a801d` ([pin](../.base-ui-revision)).
+Точный UI SHA: `623deb7da5813fa9d1185ded7688c35bb15cd43e` ([pin](../.base-ui-revision)).
 Компоненты и reference берутся из этой версии Base; открытый справочник другой
 версии не подтверждает доступность контракта в продукте. SDK/skills pins
 независимы. Это исходники собственного checkout; установка и authenticated
@@ -259,3 +259,13 @@ React/JS/CSS и типы API не менялись; frontend/backend не пер
 Новые SSR параметры доступны в этом точном Base, не являются новым React API.
 Архив UI и offline frozen adoption проверены; общий интеграционный gate,
 hosted CI, публикация и установка здесь не выполнялись.
+
+
+## Общие нативные элементы SSR — 2026-10-27
+
+Принят совместимый UI 0.3.6, producer `623deb7da5813fa9d1185ded7688c35bb15cd43e`.
+Изменения принадлежат SSR macros и справочнику; React API, JS/CSS/types и
+зависимости совпадают с 0.3.5. Повторная frontend/backend-сборка не нужна при
+неизменных inputs. Настоящий архив из 868 файлов сверён с установленным UI,
+offline frozen install, singleton React и CLI check пройдены. SDK/skills pins
+неизменны. Это source adoption, без hosted CI и установленного runtime.
