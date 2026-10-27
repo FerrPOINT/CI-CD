@@ -280,3 +280,14 @@ offline frozen install, singleton React и CLI check пройдены. SDK/skill
 select-runtime в React runtime source продукта нет. Настоящий архив из
 868 файлов сверён, offline frozen install, singleton React и CLI пройдены.
 SDK/skills pins неизменны. Это source adoption, без установки и hosted CI.
+
+
+## Рабочая область Base — 2026-10-27
+
+Текущий UI 0.3.9, producer `bab93d2683367117784c2f01fcbed7f80fd3ef15`.
+Workbench и семь частей добавляют общий каркас рабочей области внутри PageFrame:
+высота по настоящим gutter, внутренний scroll, адаптивные Aside/AsideAction и
+mobileFlow для длинной формы. SSR-аналога этого React-контракта нет.
+Настоящий архив из 882 файлов сверён с установленным UI; offline frozen install,
+singleton React и CLI check пройдены. SDK/skills pins сохранены. Это source
+adoption; приложение, backend и Storybook не пересобирались, runtime не менялся.
