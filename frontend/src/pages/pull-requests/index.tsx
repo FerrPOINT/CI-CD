@@ -1,3 +1,4 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import {
   ActionGroup,
   ResourceStateView,
@@ -113,143 +114,149 @@ function CreatePullRequestForm({
   }
 
   return (
-    <form
-      aria-label={t("pulls.create")}
-      onSubmit={handleSubmit}
-      className="grid gap-4 border-y border-border py-4 sm:grid-cols-2"
-    >
-      <div className="sm:col-span-2">
-        <FormField id="pr-title" label={t("pulls.titleField")} required>
+    <ContentSection asChild dividers="both">
+      <form
+        aria-label={t("pulls.create")}
+        onSubmit={handleSubmit}
+        className="grid gap-4 sm:grid-cols-2"
+      >
+        <div className="sm:col-span-2">
+          <FormField id="pr-title" label={t("pulls.titleField")} required>
+            {(attrs) => (
+              <Input
+                {...attrs}
+                value={form.title}
+                onChange={(event) =>
+                  setForm({ ...form, title: event.target.value })
+                }
+              />
+            )}
+          </FormField>
+        </div>
+        <FormField id="pr-source" label={t("pulls.sourceBranch")} required>
           {(attrs) => (
-            <Input
+            <AutocompleteInput
               {...attrs}
-              value={form.title}
-              onChange={(event) =>
-                setForm({ ...form, title: event.target.value })
+              options={
+                sourceRefs.data
+                  ?.filter((ref) => ref.kind === "branch")
+                  .slice(0, 50)
+                  .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
+              }
+              className="font-mono"
+              value={form.source_branch}
+              onValueChange={(nextValue) =>
+                setForm({ ...form, source_branch: nextValue })
               }
             />
           )}
         </FormField>
-      </div>
-      <FormField id="pr-source" label={t("pulls.sourceBranch")} required>
-        {(attrs) => (
-          <AutocompleteInput
-            {...attrs}
-            options={
-              sourceRefs.data
-                ?.filter((ref) => ref.kind === "branch")
-                .slice(0, 50)
-                .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
-            }
-            className="font-mono"
-            value={form.source_branch}
-            onValueChange={(nextValue) => setForm({ ...form, source_branch: nextValue })}
-          />
-        )}
-      </FormField>
-      <FormField id="pr-target" label={t("pulls.targetBranch")} required>
-        {(attrs) => (
-          <AutocompleteInput
-            {...attrs}
-            options={
-              targetRefs.data
-                ?.filter((ref) => ref.kind === "branch")
-                .slice(0, 50)
-                .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
-            }
-            className="font-mono"
-            value={form.target_branch}
-            onValueChange={(nextValue) => setForm({ ...form, target_branch: nextValue })}
-          />
-        )}
-      </FormField>
-      {sameBranch && (
-        <Notice
-          role="alert"
-          tone="danger"
-          appearance="inline"
-          className="sm:col-span-2"
-        >
-          {t("pulls.branchesMustDiffer")}
-        </Notice>
-      )}
-      {refsLoading && (
-        <Notice
-          role="status"
-          tone="neutral"
-          appearance="inline"
-          className="sm:col-span-2"
-        >
-          {t("pulls.loadingRefs")}
-        </Notice>
-      )}
-      {((sourceRefs.data?.length ?? 0) > 50 ||
-        (targetRefs.data?.length ?? 0) > 50) && (
-        <Notice
-          role="status"
-          tone="neutral"
-          appearance="inline"
-          className="sm:col-span-2"
-        >
-          {t("pulls.refSuggestionsLimited")}
-        </Notice>
-      )}
-      {Boolean(refsError) && (
-        <Notice
-          tone="warning"
-          appearance="inline"
-          role="alert"
-          className="sm:col-span-2"
-          actions={
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-
-              onClick={() => {
-                if (sourceRefs.error) void sourceRefs.refetch();
-                if (targetRefs.error) void targetRefs.refetch();
-              }}
-            >
-              {t("common.retry")}
-            </Button>
-          }
-        >
-          {t("pulls.refsUnavailable")}
-        </Notice>
-      )}
-      <div className="sm:col-span-2">
-        <FormField id="pr-description" label={t("pulls.descriptionField")}>
+        <FormField id="pr-target" label={t("pulls.targetBranch")} required>
           {(attrs) => (
-            <Textarea
+            <AutocompleteInput
               {...attrs}
-              rows={3}
-              value={form.description}
-              onChange={(event) =>
-                setForm({ ...form, description: event.target.value })
+              options={
+                targetRefs.data
+                  ?.filter((ref) => ref.kind === "branch")
+                  .slice(0, 50)
+                  .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
+              }
+              className="font-mono"
+              value={form.target_branch}
+              onValueChange={(nextValue) =>
+                setForm({ ...form, target_branch: nextValue })
               }
             />
           )}
         </FormField>
-      </div>
-      <ActionGroup align="start" className="sm:col-span-2">
-        <Button
-          type="submit"
+        {sameBranch && (
+          <Notice
+            role="alert"
+            tone="danger"
+            appearance="inline"
+            className="sm:col-span-2"
+          >
+            {t("pulls.branchesMustDiffer")}
+          </Notice>
+        )}
+        {refsLoading && (
+          <Notice
+            role="status"
+            tone="neutral"
+            appearance="inline"
+            className="sm:col-span-2"
+          >
+            {t("pulls.loadingRefs")}
+          </Notice>
+        )}
+        {((sourceRefs.data?.length ?? 0) > 50 ||
+          (targetRefs.data?.length ?? 0) > 50) && (
+          <Notice
+            role="status"
+            tone="neutral"
+            appearance="inline"
+            className="sm:col-span-2"
+          >
+            {t("pulls.refSuggestionsLimited")}
+          </Notice>
+        )}
+        {Boolean(refsError) && (
+          <Notice
+            tone="warning"
+            appearance="inline"
+            role="alert"
+            className="sm:col-span-2"
+            actions={
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
 
-          disabled={createPullRequest.isPending || sameBranch}
-        >
-          {t("pulls.create")}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
+                onClick={() => {
+                  if (sourceRefs.error) void sourceRefs.refetch();
+                  if (targetRefs.error) void targetRefs.refetch();
+                }}
+              >
+                {t("common.retry")}
+              </Button>
+            }
+          >
+            {t("pulls.refsUnavailable")}
+          </Notice>
+        )}
+        <div className="sm:col-span-2">
+          <FormField id="pr-description" label={t("pulls.descriptionField")}>
+            {(attrs) => (
+              <Textarea
+                {...attrs}
+                rows={3}
+                value={form.description}
+                onChange={(event) =>
+                  setForm({ ...form, description: event.target.value })
+                }
+              />
+            )}
+          </FormField>
+        </div>
+        <ActionGroup align="start" className="sm:col-span-2">
+          <Button
+            type="submit"
 
-          onClick={onClose}
-        >
-          {t("common.cancel")}
-        </Button>
-      </ActionGroup>
-    </form>
+            disabled={createPullRequest.isPending || sameBranch}
+          >
+            {t("pulls.create")}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+
+            onClick={onClose}
+          >
+            {t("common.cancel")}
+          </Button>
+        </ActionGroup>
+      </form>
+    </ContentSection>
   );
 }
 

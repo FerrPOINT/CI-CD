@@ -1,3 +1,4 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams, useSearchParams, type BlockerFunction } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -209,80 +210,83 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
         }
       />
       {adding && (
-        <section
-          className="space-y-3 border-y border-border py-4"
-          aria-label="Выбор репозитория"
-        >
-          <Label htmlFor="select-search">Поиск репозитория Forge</Label>
-          <Input
-            id="select-search"
-            value={params.get("select_search") ?? ""}
-            onChange={(event) => update("select_search", event.target.value)}
-          />
-          {available.isError && (
-            <Notice
-              role="alert"
-              tone="danger"
-              appearance="panel"
-              actions={
-                <Button
-                  variant="outline"
-                  onClick={() => void available.refetch()}
-                >
-                  Повторить
-                </Button>
-              }
-            >
-              Не удалось загрузить репозитории.{" "}
-            </Notice>
-          )}
-          {available.isPending && (
-            <LoadingState message="Загружаем репозитории…" />
-          )}
-          {available.data && (
-            <>
-              <Label htmlFor="new-repository">
-                Доступный hosted-репозиторий без подключения
-              </Label>
-              <Select
-                id="new-repository"
-                className="w-full"
-                value={selection}
-                onValueChange={(nextValue) => setSelection(nextValue)}
-                options={[
-                  { value: "", label: "Выберите репозиторий" },
-                  ...(available.data.items.map((repo) => ({
-                    value: String(repo.id),
-                    label: String(repo.public_name),
-                  })) ?? []),
-                ]}
-              />
-              {selection &&
-                available.data.items.some((repo) => repo.id === selection) && (
-                  <Button asChild>
-                    <Link
-                      to={location(
-                        selection,
-                        false,
-                        available.data.items.find(
-                          (repo) => repo.id === selection,
-                        )?.namespace,
-                      )}
-                    >
-                      Настроить подключение
-                    </Link>
+        <ContentSection asChild dividers="both">
+          <section className="space-y-3" aria-label="Выбор репозитория">
+            <Label htmlFor="select-search">Поиск репозитория Forge</Label>
+            <Input
+              id="select-search"
+              value={params.get("select_search") ?? ""}
+              onChange={(event) => update("select_search", event.target.value)}
+            />
+            {available.isError && (
+              <Notice
+                role="alert"
+                tone="danger"
+                appearance="panel"
+                actions={
+                  <Button
+                    variant="outline"
+                    onClick={() => void available.refetch()}
+                  >
+                    Повторить
                   </Button>
-                )}
-              <OffsetPageNavigation
-                label="Доступные репозитории"
-                offset={offsetOf(params.get("select_offset"))}
-                total={available.data.total}
-                limit={20}
-                onOffsetChange={(next) => update("select_offset", String(next))}
-              />
-            </>
-          )}
-        </section>
+                }
+              >
+                Не удалось загрузить репозитории.{" "}
+              </Notice>
+            )}
+            {available.isPending && (
+              <LoadingState message="Загружаем репозитории…" />
+            )}
+            {available.data && (
+              <>
+                <Label htmlFor="new-repository">
+                  Доступный hosted-репозиторий без подключения
+                </Label>
+                <Select
+                  id="new-repository"
+                  className="w-full"
+                  value={selection}
+                  onValueChange={(nextValue) => setSelection(nextValue)}
+                  options={[
+                    { value: "", label: "Выберите репозиторий" },
+                    ...(available.data.items.map((repo) => ({
+                      value: String(repo.id),
+                      label: String(repo.public_name),
+                    })) ?? []),
+                  ]}
+                />
+                {selection &&
+                  available.data.items.some(
+                    (repo) => repo.id === selection,
+                  ) && (
+                    <Button asChild>
+                      <Link
+                        to={location(
+                          selection,
+                          false,
+                          available.data.items.find(
+                            (repo) => repo.id === selection,
+                          )?.namespace,
+                        )}
+                      >
+                        Настроить подключение
+                      </Link>
+                    </Button>
+                  )}
+                <OffsetPageNavigation
+                  label="Доступные репозитории"
+                  offset={offsetOf(params.get("select_offset"))}
+                  total={available.data.total}
+                  limit={20}
+                  onOffsetChange={(next) =>
+                    update("select_offset", String(next))
+                  }
+                />
+              </>
+            )}
+          </section>
+        </ContentSection>
       )}
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
         <div>
@@ -724,28 +728,31 @@ export function RepositorySyncEditor({
           </>
         }
       />
-      <div className="flex flex-wrap justify-between gap-2 border-y border-border py-3 text-sm">
-        <div>
-          <strong>
-            {
-              modes.find((mode) => mode.value === connection.settings.direction)
-                ?.title
-            }
-          </strong>
-          {connection.version > 0 && (
-            <span className="mt-1 block break-all text-text-secondary">
-              {remote(connection.settings)}
-            </span>
-          )}
+      <ContentSection asChild dividers="both" density="compact">
+        <div className="flex flex-wrap justify-between gap-2 text-sm">
+          <div>
+            <strong>
+              {
+                modes.find(
+                  (mode) => mode.value === connection.settings.direction,
+                )?.title
+              }
+            </strong>
+            {connection.version > 0 && (
+              <span className="mt-1 block break-all text-text-secondary">
+                {remote(connection.settings)}
+              </span>
+            )}
+          </div>
+          <span>
+            {connection.active_run
+              ? runState(connection.active_run)
+              : connection.last_run
+                ? `${runState(connection.last_run)} · ${time(connection.last_run.created_at)}`
+                : "Запусков ещё нет"}
+          </span>
         </div>
-        <span>
-          {connection.active_run
-            ? runState(connection.active_run)
-            : connection.last_run
-              ? `${runState(connection.last_run)} · ${time(connection.last_run.created_at)}`
-              : "Запусков ещё нет"}
-        </span>
-      </div>
+      </ContentSection>
       {connection.paused_reason && (
         <Notice role="status" tone="warning" appearance="inline">
           Синхронизация приостановлена:{" "}

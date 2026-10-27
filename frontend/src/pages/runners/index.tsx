@@ -1,3 +1,4 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Server, Trash2 } from "lucide-react";
@@ -114,61 +115,63 @@ export function RunnersPage() {
       />
 
       {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          aria-label={t("runners.register")}
-          className="grid gap-3 border-y border-border py-4 sm:grid-cols-2"
-        >
-          <FormField id="runner-name" label={t("runners.name")}>
-            {(baseFieldAttrs) => (
-              <Input
-                {...baseFieldAttrs}
-                required
-                autoFocus
-                value={form.name}
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
-              />
-            )}
-          </FormField>
-          <FormField id="runner-tags" label={t("runners.tags")}>
-            {(baseFieldAttrs) => (
-              <Input
-                {...baseFieldAttrs}
-                placeholder="linux, docker"
-                value={form.tags}
-                onChange={(event) =>
-                  setForm({ ...form, tags: event.target.value })
-                }
-              />
-            )}
-          </FormField>
-          <p className="text-xs text-text-secondary sm:col-span-2">
-            {t("runners.manualNotice")}
-          </p>
-          <ActionGroup align="end" className="sm:col-span-2">
-            <Button
-              type="button"
-              variant="outline"
+        <ContentSection asChild dividers="both">
+          <form
+            onSubmit={handleSubmit}
+            aria-label={t("runners.register")}
+            className="grid gap-3 sm:grid-cols-2"
+          >
+            <FormField id="runner-name" label={t("runners.name")}>
+              {(baseFieldAttrs) => (
+                <Input
+                  {...baseFieldAttrs}
+                  required
+                  autoFocus
+                  value={form.name}
+                  onChange={(event) =>
+                    setForm({ ...form, name: event.target.value })
+                  }
+                />
+              )}
+            </FormField>
+            <FormField id="runner-tags" label={t("runners.tags")}>
+              {(baseFieldAttrs) => (
+                <Input
+                  {...baseFieldAttrs}
+                  placeholder="linux, docker"
+                  value={form.tags}
+                  onChange={(event) =>
+                    setForm({ ...form, tags: event.target.value })
+                  }
+                />
+              )}
+            </FormField>
+            <p className="text-xs text-text-secondary sm:col-span-2">
+              {t("runners.manualNotice")}
+            </p>
+            <ActionGroup align="end" className="sm:col-span-2">
+              <Button
+                type="button"
+                variant="outline"
 
-              disabled={registerRunner.isPending}
-              onClick={() => {
-                setShowForm(false);
-                setForm({ name: "", tags: "" });
-              }}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button
-              type="submit"
+                disabled={registerRunner.isPending}
+                onClick={() => {
+                  setShowForm(false);
+                  setForm({ name: "", tags: "" });
+                }}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="submit"
 
-              disabled={registerRunner.isPending || !form.name.trim()}
-            >
-              {t("runners.register")}
-            </Button>
-          </ActionGroup>
-        </form>
+                disabled={registerRunner.isPending || !form.name.trim()}
+              >
+                {t("runners.register")}
+              </Button>
+            </ActionGroup>
+          </form>
+        </ContentSection>
       )}
 
       <QueryState

@@ -317,3 +317,23 @@ native disabled. RefreshCw остаётся в состоянии покоя; л
 TypeScript, scoped ESLint/format, guards, 6 secrets и 12 preview cases пройдены.
 IAB: точные JSX-композиции с CSS Forge, три темы и четыре ширины, без overflow,
 мобильная кнопка минимум 44px. Это не backend/runtime acceptance. Pins неизменны.
+
+
+## Общие секции и полосы данных — 2026-10-27
+
+UI 0.3.10, точный producer `94f2ccd9e6f09eba9fbf67f4582a9fa7a91c44b9`.
+Прозрачные области экранов используют ContentSection. Статическое
+распределение отчёта использует DataBar, сохраняя исходные counts/scale/label
+и точные форматтеры владельца. Responsive-сетка метрик остаётся у Forge.
+
+Фирменные разделители, inset и плотность принадлежат Base. Данные, DTO,
+права, формы, смысловые статусы и внешний grid/gap остаются у продукта.
+В справочнике доступны самостоятельные ContentSection/Form и DataBar/basic;
+для статических данных применяется DataBar, для выполнения операции — Progress.
+
+Архив 895 файлов и установленный UI сверены; offline frozen refresh, React
+singleton, CLI check, TypeScript, UI contract guard и scoped tests пройдены.
+Изменённые TSX также прошли scoped ESLint.
+Браузерные доказательства относятся к изолированным общим композициям,
+не ко всем страницам приложения/API/Auth. Полный интеграционный gate и
+установленная приёмка остаются отдельными. SDK/skills pins и runtime сохранены.

@@ -1,3 +1,4 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import {
   ActionGroup,
   ResourceListDescription,
@@ -105,11 +106,15 @@ export function PullRequestDetailPage() {
     (error instanceof ApiError && error.status === 404)
   ) {
     return (
-        <ResourceStateView
-          scope="local"
-          state={{ kind: "not-found", title: t("pulls.notFound"), headingLevel: 1 }}
-        />
-      );
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("pulls.notFound"),
+          headingLevel: 1,
+        }}
+      />
+    );
   }
   if (isLoading || error)
     return (
@@ -124,11 +129,15 @@ export function PullRequestDetailPage() {
     );
   if (!pr)
     return (
-        <ResourceStateView
-          scope="local"
-          state={{ kind: "not-found", title: t("pulls.notFound"), headingLevel: 1 }}
-        />
-      );
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("pulls.notFound"),
+          headingLevel: 1,
+        }}
+      />
+    );
 
   if (showDiff) {
     return (
@@ -207,32 +216,34 @@ export function PullRequestDetailPage() {
           <EmptyState message={t("compare.noChanges")} />
         ) : (
           <>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-y border-border py-3 text-sm">
-              <span className="text-text-muted">
-                {t("compare.mergeBase")}:{" "}
-              </span>
-              <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
-                {comparison.merge_base}
-              </code>
-              {comparison.files.some((file) => !file.binary) ? (
-                <>
-                  <span className="text-success">
-                    +
-                    {comparison.files.reduce(
-                      (sum, file) => sum + file.additions,
-                      0,
-                    )}
-                  </span>
-                  <span className="text-danger">
-                    −
-                    {comparison.files.reduce(
-                      (sum, file) => sum + file.deletions,
-                      0,
-                    )}
-                  </span>
-                </>
-              ) : null}
-            </div>
+            <ContentSection asChild dividers="both" density="compact">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="text-text-muted">
+                  {t("compare.mergeBase")}:{" "}
+                </span>
+                <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
+                  {comparison.merge_base}
+                </code>
+                {comparison.files.some((file) => !file.binary) ? (
+                  <>
+                    <span className="text-success">
+                      +
+                      {comparison.files.reduce(
+                        (sum, file) => sum + file.additions,
+                        0,
+                      )}
+                    </span>
+                    <span className="text-danger">
+                      −
+                      {comparison.files.reduce(
+                        (sum, file) => sum + file.deletions,
+                        0,
+                      )}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            </ContentSection>
             <div>
               <SectionHeader title={t("compare.filesChanged")} />
               <ResourceList asChild variant="bordered">
@@ -247,9 +258,7 @@ export function PullRequestDetailPage() {
                         <code className="flex-1 truncate">{file.path}</code>
                         {file.binary ? (
                           <ResourceListDescription asChild>
-                            <span>
-                            {t("compare.binaryFile")}
-                          </span>
+                            <span>{t("compare.binaryFile")}</span>
                           </ResourceListDescription>
                         ) : (
                           <>
@@ -341,9 +350,7 @@ export function PullRequestDetailPage() {
             <CardContent>
               {pr.description && (
                 <Prose asChild>
-                  <p className="whitespace-pre-wrap">
-                  {pr.description}
-                </p>
+                  <p className="whitespace-pre-wrap">{pr.description}</p>
                 </Prose>
               )}
               <dl className="mt-4">

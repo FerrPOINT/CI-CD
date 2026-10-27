@@ -1,8 +1,11 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { Configuration } from "@/api/workspaces";
 import { FormEvent, useEffect, useState, type ComponentProps } from "react";
-import { Badge, ResourceListDescription,
+import {
+  Badge,
+  ResourceListDescription,
   PageNavigation,
   PageHeader,
   NamespaceLink as Link,
@@ -106,41 +109,43 @@ export function PipelinesPage() {
       </>
 
       {showForm && (
-        <form
-          id="pipeline-trigger-form"
-          aria-label={t("pipelines.run")}
-          onSubmit={handleSubmit}
-          className="flex flex-wrap items-end gap-3 border-y border-border py-3"
-        >
-          <div className="min-w-48 flex-1 space-y-1.5 sm:max-w-xs">
-            <Label htmlFor="git-ref">{t("pipelines.gitRef")}</Label>
-            <Input
-              id="git-ref"
+        <ContentSection asChild dividers="both" density="compact">
+          <form
+            id="pipeline-trigger-form"
+            aria-label={t("pipelines.run")}
+            onSubmit={handleSubmit}
+            className="flex flex-wrap items-end gap-3"
+          >
+            <div className="min-w-48 flex-1 space-y-1.5 sm:max-w-xs">
+              <Label htmlFor="git-ref">{t("pipelines.gitRef")}</Label>
+              <Input
+                id="git-ref"
 
-              required
-              placeholder="main"
-              value={gitRef}
-              onChange={(event) => setGitRef(event.target.value)}
+                required
+                placeholder="main"
+                value={gitRef}
+                onChange={(event) => setGitRef(event.target.value)}
+                disabled={trigger.isPending}
+              />
+            </div>
+            <Button
+              type="submit"
+
+              disabled={trigger.isPending || !gitRef.trim()}
+            >
+              {t("pipelines.run")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+
               disabled={trigger.isPending}
-            />
-          </div>
-          <Button
-            type="submit"
-
-            disabled={trigger.isPending || !gitRef.trim()}
-          >
-            {t("pipelines.run")}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-
-            disabled={trigger.isPending}
-            onClick={() => setShowForm(false)}
-          >
-            {t("common.cancel")}
-          </Button>
-        </form>
+              onClick={() => setShowForm(false)}
+            >
+              {t("common.cancel")}
+            </Button>
+          </form>
+        </ContentSection>
       )}
 
       <QueryState
@@ -167,17 +172,25 @@ export function PipelinesPage() {
                       <code className="min-w-0 break-all text-xs text-text-secondary">
                         {pipeline.git_ref}
                       </code>
-                      <Badge appearance="inline" tone={statusTones[pipeline.status] ?? "neutral"}>
+                      <Badge
+                        appearance="inline"
+                        tone={statusTones[pipeline.status] ?? "neutral"}
+                      >
                         {t(`pipelines.${pipeline.status}`)}
                       </Badge>
                     </span>
-                    <ResourceListDescription asChild className="flex items-center gap-2"><span >
-                      <Clock className="h-4 w-4" aria-hidden />
-                      <time dateTime={pipeline.created_at}>
-                        {new Date(pipeline.created_at).toLocaleString()}
-                      </time>
-                      <ChevronRight className="h-4 w-4" aria-hidden />
-                    </span></ResourceListDescription>
+                    <ResourceListDescription
+                      asChild
+                      className="flex items-center gap-2"
+                    >
+                      <span>
+                        <Clock className="h-4 w-4" aria-hidden />
+                        <time dateTime={pipeline.created_at}>
+                          {new Date(pipeline.created_at).toLocaleString()}
+                        </time>
+                        <ChevronRight className="h-4 w-4" aria-hidden />
+                      </span>
+                    </ResourceListDescription>
                   </Link>
                 </ResourceListRow>
               ))}

@@ -1,3 +1,4 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import {
   ActionGroup,
   ResourceListDescription,
@@ -328,51 +329,55 @@ export function RepositorySyncPreview() {
               }
             />
             {adding && (
-              <form
-                className="flex flex-wrap items-end gap-3 border-y border-border py-4"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  add();
-                }}
-              >
-                {available.length ? (
-                  <>
-                    <div className="min-w-48 flex-1 space-y-2">
-                      <Label htmlFor="new-repository">Репозиторий Forge</Label>
-                      <Select
-                        id="new-repository"
-                        className="min-w-0"
-                        value={
-                          available.includes(newRepository)
-                            ? newRepository
-                            : available[0]
-                        }
-                        onValueChange={(nextValue) =>
-                          setNewRepository(nextValue)
-                        }
-                        options={[
-                          ...(available.map((id) => ({
-                            value: String(id),
-                            label: ["platform / ", id].join(""),
-                          })) ?? []),
-                        ]}
-                      />
-                    </div>
-                    <Button type="submit">Настроить подключение</Button>
-                  </>
-                ) : (
-                  <p className="text-sm">
-                    Все демонстрационные репозитории уже подключены.
-                  </p>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setAdding(false)}
+              <ContentSection asChild dividers="both">
+                <form
+                  className="flex flex-wrap items-end gap-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    add();
+                  }}
                 >
-                  Отмена
-                </Button>
-              </form>
+                  {available.length ? (
+                    <>
+                      <div className="min-w-48 flex-1 space-y-2">
+                        <Label htmlFor="new-repository">
+                          Репозиторий Forge
+                        </Label>
+                        <Select
+                          id="new-repository"
+                          className="min-w-0"
+                          value={
+                            available.includes(newRepository)
+                              ? newRepository
+                              : available[0]
+                          }
+                          onValueChange={(nextValue) =>
+                            setNewRepository(nextValue)
+                          }
+                          options={[
+                            ...(available.map((id) => ({
+                              value: String(id),
+                              label: ["platform / ", id].join(""),
+                            })) ?? []),
+                          ]}
+                        />
+                      </div>
+                      <Button type="submit">Настроить подключение</Button>
+                    </>
+                  ) : (
+                    <p className="text-sm">
+                      Все демонстрационные репозитории уже подключены.
+                    </p>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setAdding(false)}
+                  >
+                    Отмена
+                  </Button>
+                </form>
+              </ContentSection>
             )}
             <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
               <FormField id="sync-search" label={"Поиск"}>
@@ -732,30 +737,32 @@ function RepositorySyncEditor({
             </>
           }
         />
-        <section
-          aria-label="Состояние подключения"
-          className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border pb-3 text-xs"
-        >
-          <strong className="shrink-0">
-            {busy
-              ? "Синхронизация выполняется"
-              : !saved
-                ? "Подключение не настроено"
-                : saved.mode === "disabled"
-                  ? "Синхронизация отключена"
-                  : modes.find((mode) => mode.value === saved.mode)?.title}
-          </strong>
-          {remote && (
-            <span className="min-w-0 break-all text-text-secondary">
-              {remote}
+        <ContentSection asChild dividers="end" density="compact">
+          <section
+            aria-label="Состояние подключения"
+            className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs"
+          >
+            <strong className="shrink-0">
+              {busy
+                ? "Синхронизация выполняется"
+                : !saved
+                  ? "Подключение не настроено"
+                  : saved.mode === "disabled"
+                    ? "Синхронизация отключена"
+                    : modes.find((mode) => mode.value === saved.mode)?.title}
+            </strong>
+            {remote && (
+              <span className="min-w-0 break-all text-text-secondary">
+                {remote}
+              </span>
+            )}
+            <span className="text-text-secondary sm:ml-auto">
+              {lastRun
+                ? `${lastRun.time} · ${lastRun.status}`
+                : "Запусков ещё нет"}
             </span>
-          )}
-          <span className="text-text-secondary sm:ml-auto">
-            {lastRun
-              ? `${lastRun.time} · ${lastRun.status}`
-              : "Запусков ещё нет"}
-          </span>
-        </section>
+          </section>
+        </ContentSection>
         {readOnly && (
           <Notice tone="neutral" appearance="inline">
             Доступ только для чтения. Изменение подключения и запуск

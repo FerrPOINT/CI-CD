@@ -4,6 +4,7 @@ import {
   Button,
   PageHeader,
   Metric,
+  DataBar,
   NamespaceLink as Link,
 } from "@pdlc/ui/ui";
 import { useParams } from "react-router";
@@ -57,7 +58,8 @@ export function ReportsPage() {
               action={
                 <Button asChild variant="link">
                   <Link to={pipelinesPath}>
-                    {t("reports.openPipelines")} <ArrowRight className="h-4 w-4" aria-hidden />
+                    {t("reports.openPipelines")}{" "}
+                    <ArrowRight className="h-4 w-4" aria-hidden />
                   </Link>
                 </Button>
               }
@@ -91,9 +93,6 @@ function ReportSummary({
     maximumFractionDigits: 1,
   });
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
-  const share = (count: number) =>
-    `${Math.min(100, Math.max(0, (count / report.total_pipelines) * 100))}%`;
-
   const counts = [
     {
       label: t("reports.totalPipelines"),
@@ -141,25 +140,23 @@ function ReportSummary({
         <p className="text-xs text-text-secondary">
           {t("reports.statusDistribution")}
         </p>
-        <div
-          className="flex h-2 overflow-hidden rounded-sm bg-surface-raised"
-          role="img"
-          aria-label={t("reports.distribution", {
+        <DataBar
+          max={report.total_pipelines}
+          label={t("reports.distribution", {
             successful: report.successful_pipelines,
             failed: report.failed_pipelines,
             other,
           })}
-        >
-          <span
-            className="bg-success"
-            style={{ width: share(report.successful_pipelines) }}
-          />
-          <span
-            className="bg-danger"
-            style={{ width: share(report.failed_pipelines) }}
-          />
-          <span className="bg-text-muted" style={{ width: share(other) }} />
-        </div>
+          segments={[
+            {
+              id: "successful",
+              value: report.successful_pipelines,
+              tone: "success",
+            },
+            { id: "failed", value: report.failed_pipelines, tone: "danger" },
+            { id: "other", value: other, tone: "muted" },
+          ]}
+        />
       </div>
 
       <div className="grid grid-cols-2 border-y border-border sm:grid-cols-4">

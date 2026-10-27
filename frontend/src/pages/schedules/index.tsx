@@ -1,3 +1,4 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import {
   ResourceListTitle,
   ActionGroup,
@@ -155,82 +156,84 @@ export function SchedulesPage() {
       </p>
 
       {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          aria-label={t(editing ? "schedules.edit" : "schedules.create")}
-          aria-busy={saving}
-          className="grid gap-3 border-b border-border pb-4 sm:grid-cols-2"
-        >
-          <div className="min-w-0 space-y-1.5">
-            <Label htmlFor="schedule-cron">{t("schedules.cron")}</Label>
-            <Input
-              id="schedule-cron"
-              ref={cronRef}
-              className="min-w-0 font-mono"
-              required
-              disabled={saving}
-              placeholder="0 4 * * 1"
-              value={form.cron}
-              onChange={(event) => {
-                setForm({ ...form, cron: event.target.value });
-                setSaveError("");
-              }}
-            />
-          </div>
-          <div className="min-w-0 space-y-1.5">
-            <Label htmlFor="schedule-ref">{t("schedules.gitRef")}</Label>
-            <Input
-              id="schedule-ref"
-              className="min-w-0"
-              required
-              disabled={saving}
-              value={form.git_ref}
-              onChange={(event) => {
-                setForm({ ...form, git_ref: event.target.value });
-                setSaveError("");
-              }}
-            />
-          </div>
-          <Checkbox
-            className="sm:col-span-2"
-            checked={form.enabled}
-            disabled={saving}
-            onCheckedChange={(checked) => {
-              setForm({ ...form, enabled: checked === true });
-              setSaveError("");
-            }}
+        <ContentSection asChild dividers="end">
+          <form
+            onSubmit={handleSubmit}
+            aria-label={t(editing ? "schedules.edit" : "schedules.create")}
+            aria-busy={saving}
+            className="grid gap-3 sm:grid-cols-2"
           >
-            {t("schedules.enabled")}
-          </Checkbox>
-          {saveError && (
-            <Notice
-              role="alert"
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor="schedule-cron">{t("schedules.cron")}</Label>
+              <Input
+                id="schedule-cron"
+                ref={cronRef}
+                className="min-w-0 font-mono"
+                required
+                disabled={saving}
+                placeholder="0 4 * * 1"
+                value={form.cron}
+                onChange={(event) => {
+                  setForm({ ...form, cron: event.target.value });
+                  setSaveError("");
+                }}
+              />
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor="schedule-ref">{t("schedules.gitRef")}</Label>
+              <Input
+                id="schedule-ref"
+                className="min-w-0"
+                required
+                disabled={saving}
+                value={form.git_ref}
+                onChange={(event) => {
+                  setForm({ ...form, git_ref: event.target.value });
+                  setSaveError("");
+                }}
+              />
+            </div>
+            <Checkbox
               className="sm:col-span-2"
-              tone="danger"
-              appearance="inline"
-            >
-              {saveError}
-            </Notice>
-          )}
-          <ActionGroup align="end" className="sm:col-span-2">
-            <Button
-              type="button"
-              variant="outline"
-
+              checked={form.enabled}
               disabled={saving}
-              onClick={closeForm}
+              onCheckedChange={(checked) => {
+                setForm({ ...form, enabled: checked === true });
+                setSaveError("");
+              }}
             >
-              {t("common.cancel")}
-            </Button>
-            <Button
-              type="submit"
+              {t("schedules.enabled")}
+            </Checkbox>
+            {saveError && (
+              <Notice
+                role="alert"
+                className="sm:col-span-2"
+                tone="danger"
+                appearance="inline"
+              >
+                {saveError}
+              </Notice>
+            )}
+            <ActionGroup align="end" className="sm:col-span-2">
+              <Button
+                type="button"
+                variant="outline"
 
-              disabled={saving || !form.cron.trim() || !form.git_ref.trim()}
-            >
-              {t(editing ? "schedules.save" : "schedules.create")}
-            </Button>
-          </ActionGroup>
-        </form>
+                disabled={saving}
+                onClick={closeForm}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="submit"
+
+                disabled={saving || !form.cron.trim() || !form.git_ref.trim()}
+              >
+                {t(editing ? "schedules.save" : "schedules.create")}
+              </Button>
+            </ActionGroup>
+          </form>
+        </ContentSection>
       )}
 
       <QueryState
@@ -278,9 +281,7 @@ export function SchedulesPage() {
                           />
                           <div className="min-w-0 flex-1">
                             <ResourceListTitle asChild technical>
-                              <p className="break-all">
-                              {schedule.cron}
-                            </p>
+                              <p className="break-all">{schedule.cron}</p>
                             </ResourceListTitle>
                             <ResourceListDescription
                               asChild
