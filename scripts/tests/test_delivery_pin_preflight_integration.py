@@ -85,3 +85,7 @@ class DeliveryPinPreflightTests(unittest.TestCase):
                 hashlib.sha256(selected_pin.read_bytes()).hexdigest().upper(),
             )
 
+
+if __name__ == '__main__':
+    unittest.main()
+
