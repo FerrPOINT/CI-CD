@@ -208,7 +208,19 @@ export interface Artifact {
 
 export type EnvironmentStatus = 'available' | 'stopped' | 'degraded'
 
+export interface KubernetesTarget {
+  schema: 'forge/kubernetes-environment/v1'
+  cluster: string
+  namespace: string
+  release: string
+  chart: string
+  values: string[]
+  files?: Record<string, string>
+  health_url: string
+}
+
 export interface Environment {
+  kubernetes_target?: KubernetesTarget | null
   id: string
   project_id: string
   name: string
@@ -227,6 +239,8 @@ export interface Deployment {
   environment_id: string
   pipeline_id: string | null
   rollback_of_id: string | null
+  runtime_phase?: 'prepared' | 'running' | 'held' | 'finished'
+  runtime_receipt?: { phase: string; releaseRevision?: number; receipt?: { sourceCommit: string; images: Record<string, string>; healthTransport: string } }
   git_ref: string
   status: DeploymentStatus
   approval_required: boolean

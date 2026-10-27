@@ -1,9 +1,9 @@
 //! One execution/custody adapter for embedded and external Forge runners.
 //! A missing Pod or a failed API request never proves that execution stopped.
-use anyhow::{ensure, Context};
+use anyhow::{Context, ensure};
 use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -40,6 +40,10 @@ pub struct Config {
     pub installation: String,
     #[serde(default)]
     pub builder_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_build: Option<HostBuild>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub helm_targets: Vec<HelmGrant>,
     #[serde(default)]
     pub builder_service_account: String,
     pub cluster_ca_sha256: String,
@@ -60,6 +64,70 @@ pub struct Config {
     pub deployment_recipes: Vec<deployment::Recipe>,
     pub resources: Resources,
     pub security: Security,
+}
+/// Optional host-worker transport; missing configuration preserves all old modes.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HostBuild {
+    pub client_image: String,
+    pub service_account: String,
+    pub connection_secret: String,
+    pub registry_prefix: String,
+}
+impl HostBuild {
+    fn validate(&self, config: &Config) -> anyhow::Result<()> {
+        ensure!(
+            digest_image(&self.client_image)
+                && dns(&self.service_account)
+                && self.service_account != config.job_service_account
+                && dns(&self.connection_secret),
+            "Invalid host build identity"
+        );
+        ensure!(
+            crate::domain::published_image::immutable_registry_ref(&format!(
+                "{}/probe@sha256:{}",
+                self.registry_prefix,
+                "a".repeat(64)
+            )),
+            "Invalid host build registry prefix"
+        );
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HelmGrant {
+    pub environment_id: Uuid,
+    pub cluster: String,
+    pub namespace: String,
+    pub namespace_uid: Uuid,
+    pub cluster_ca_sha256: String,
+    pub release: String,
+    pub client_image: String,
+    pub service_account: String,
+    pub target_secret: String,
+}
+impl HelmGrant {
+    fn validate(&self, config: &Config) -> anyhow::Result<()> {
+        ensure!(
+            !self.environment_id.is_nil()
+                && !self.namespace_uid.is_nil()
+                && dns(&self.cluster)
+                && dns(&self.namespace)
+                && dns(&self.release)
+                && dns(&self.service_account)
+                && self.service_account != config.job_service_account
+                && dns(&self.target_secret)
+                && digest_image(&self.client_image)
+                && self.cluster_ca_sha256.len() == 64
+                && self
+                    .cluster_ca_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "Invalid operator Helm grant"
+        );
+        Ok(())
+    }
 }
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
@@ -117,6 +185,25 @@ impl Config {
         );
         if self.builder_enabled {
             self.validate_builder()?;
+        }
+        if let Some(host) = &self.host_build {
+            host.validate(self)?;
+        }
+        ensure!(
+            self.helm_targets.len() <= 32,
+            "Helm target grant inventory exceeds bound"
+        );
+        for (index, grant) in self.helm_targets.iter().enumerate() {
+            grant.validate(self)?;
+            ensure!(
+                !self.helm_targets[..index]
+                    .iter()
+                    .any(|prior| prior.environment_id == grant.environment_id
+                        || (prior.cluster == grant.cluster
+                            && prior.namespace == grant.namespace
+                            && prior.release == grant.release)),
+                "Duplicate Helm target grant"
+            );
         }
         ensure!(
             self.resources.cpu_millis > 0
@@ -268,7 +355,15 @@ impl Execution {
             digest_image(image)
                 && (config.allowed_images.is_empty()
                     || config.allowed_images.iter().any(|v| v == image)
-                    || (config.builder_enabled && image == config.builder_image)),
+                    || (config.builder_enabled && image == config.builder_image)
+                    || config
+                        .host_build
+                        .as_ref()
+                        .is_some_and(|host| image == host.client_image)
+                    || config
+                        .helm_targets
+                        .iter()
+                        .any(|grant| image == grant.client_image)),
             "image outside operator allowlist"
         );
         ensure!(
@@ -818,6 +913,153 @@ impl Execution {
         }
         Ok(())
     }
+    pub fn helm_template(
+        &mut self,
+        offer: &crate::domain::helm_deploy::DeploymentOffer,
+    ) -> anyhow::Result<()> {
+        offer.validate().map_err(anyhow::Error::msg)?;
+        ensure!(
+            offer.job_id == self.intent.scope.job_id
+                && offer.attempt_id == self.intent.scope.attempt_id
+                && offer.lease_id == self.intent.scope.lease_id
+                && offer.generation == self.intent.scope.generation
+                && offer.source_commit == self.intent.scope.source_commit,
+            "Helm execution custody differs"
+        );
+        let grant = self
+            .config
+            .helm_targets
+            .iter()
+            .find(|grant| grant.environment_id == offer.environment_id)
+            .context("Environment has no operator Helm grant")?;
+        ensure!(
+            self.intent.image == grant.client_image
+                && offer.target.cluster == grant.cluster
+                && offer.target.namespace == grant.namespace
+                && offer.target.release == grant.release,
+            "Deployment differs from its operator target"
+        );
+        self.manifest["spec"]["serviceAccountName"] = json!(grant.service_account);
+        self.manifest["metadata"]["labels"]["pdlc.forge-executor"] = json!("helm-deployer");
+        // Typed clients never execute repository commands with their operator credentials.
+        self.manifest["spec"]["containers"][0]["env"] = json!([
+            {"name":"HOME","value":"/tmp"},{"name":"TMPDIR","value":"/tmp"}]);
+
+        self.manifest["spec"]["volumes"].as_array_mut().context("volumes missing")?.push(
+            json!({"name":"helm-target","secret":{"secretName":grant.target_secret,"defaultMode":288}}));
+        self.manifest["spec"]["containers"][0]["volumeMounts"].as_array_mut().context("mounts missing")?
+            .push(json!({"name":"helm-target","mountPath":"/run/forge-deploy-target","readOnly":true}));
+        write_once(
+            &self.directory.join("helm-deployment.json"),
+            &serde_json::to_vec(offer)?,
+        )?;
+        self.seal_effect()?;
+        Ok(())
+    }
+    pub fn helm_offer(
+        &self,
+    ) -> anyhow::Result<Option<crate::domain::helm_deploy::DeploymentOffer>> {
+        let path = self.directory.join("helm-deployment.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let offer: crate::domain::helm_deploy::DeploymentOffer = read(&path)?;
+        let grant = self
+            .config
+            .helm_targets
+            .iter()
+            .find(|grant| grant.environment_id == offer.environment_id)
+            .context("Retained Helm grant missing")?;
+        ensure!(
+            self.intent.image == grant.client_image
+                && self.expected_service_account()? == grant.service_account
+                && offer.target.cluster == grant.cluster
+                && offer.target.namespace == grant.namespace
+                && offer.target.release == grant.release,
+            "Retained Helm target changed"
+        );
+        Ok(Some(offer))
+    }
+    pub fn workspace_subpath(&self) -> &Path {
+        Path::new(&self.intent.workspace)
+    }
+    pub fn helm_grant(&self) -> anyhow::Result<Option<HelmGrant>> {
+        let Some(offer) = self.helm_offer()? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.config
+                .helm_targets
+                .iter()
+                .find(|grant| grant.environment_id == offer.environment_id)
+                .context("Helm grant missing")?
+                .clone(),
+        ))
+    }
+    pub fn host_build_template(
+        &mut self,
+        spec: &crate::domain::image_publish::ImagePublishSpec,
+    ) -> anyhow::Result<()> {
+        spec.validate().map_err(anyhow::Error::msg)?;
+        let host = self
+            .config
+            .host_build
+            .as_ref()
+            .context("Host image build disabled")?;
+        ensure!(
+            self.intent.image == host.client_image
+                && spec
+                    .repository
+                    .starts_with(&format!("{}/", host.registry_prefix)),
+            "Publication target outside this operator grant"
+        );
+        self.manifest["spec"]["serviceAccountName"] = json!(host.service_account);
+        self.manifest["metadata"]["labels"]["pdlc.forge-executor"] = json!("host-builder");
+        // Typed clients never execute repository commands with their operator credentials.
+        self.manifest["spec"]["containers"][0]["env"] = json!([
+            {"name":"HOME","value":"/tmp"},{"name":"TMPDIR","value":"/tmp"}]);
+
+        self.manifest["spec"]["volumes"]
+            .as_array_mut()
+            .context("volumes missing")?
+            .push(json!({"name":"host-build-connection","secret":{
+                "secretName":host.connection_secret,"defaultMode":288}}));
+        self.manifest["spec"]["containers"][0]["volumeMounts"]
+            .as_array_mut()
+            .context("mounts missing")?
+            .push(json!({"name":"host-build-connection",
+                "mountPath":"/run/forge-build-host","readOnly":true}));
+        write_once(
+            &self.directory.join("host-image-publish.json"),
+            &serde_json::to_vec(spec)?,
+        )?;
+        self.seal_effect()?;
+        Ok(())
+    }
+    pub fn host_build_spec(
+        &self,
+    ) -> anyhow::Result<Option<crate::domain::image_publish::ImagePublishSpec>> {
+        let path = self.directory.join("host-image-publish.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let spec: crate::domain::image_publish::ImagePublishSpec = read(&path)?;
+        spec.validate().map_err(anyhow::Error::msg)?;
+        let host = self
+            .config
+            .host_build
+            .as_ref()
+            .context("Retained build configuration missing")?;
+        ensure!(
+            self.intent.image == host.client_image
+                && self.expected_service_account()? == host.service_account
+                && spec
+                    .repository
+                    .starts_with(&format!("{}/", host.registry_prefix)),
+            "Retained publication identity differs"
+        );
+        Ok(Some(spec))
+    }
     pub fn build_template(&mut self, registry: &str) -> anyhow::Result<()> {
         self.config.require_image_build()?;
         ensure!(
@@ -1356,6 +1598,8 @@ mod tests {
             installation_sha256: "d".repeat(64),
             installation: "fixture".into(),
             builder_enabled: false,
+            host_build: None,
+            helm_targets: Vec::new(),
             builder_service_account: "forge-builder-job".into(),
             cluster_ca_sha256: "c".repeat(64),
             namespace: "app-a".into(),
@@ -1387,11 +1631,13 @@ mod tests {
         let legacy: Config = serde_json::from_value(legacy).unwrap();
         legacy.validate().unwrap();
         assert!(!legacy.builder_enabled);
-        assert!(legacy
-            .require_image_build()
-            .unwrap_err()
-            .to_string()
-            .starts_with("kubernetes_image_build_unqualified:"));
+        assert!(
+            legacy
+                .require_image_build()
+                .unwrap_err()
+                .to_string()
+                .starts_with("kubernetes_image_build_unqualified:")
+        );
         let mut command = serde_json::to_value(config()).unwrap();
         for key in [
             "builderEnabled",
@@ -1601,10 +1847,10 @@ fn validate_admission(config: &Config, a: &Admission, now: u64) -> anyhow::Resul
 mod lifecycle_tests {
     use super::*;
     use axum::{
-        body::{to_bytes, Body},
+        Router,
+        body::{Body, to_bytes},
         extract::Request,
         response::Response,
-        Router,
     };
     use std::sync::{Arc, Mutex};
     #[derive(Default)]
@@ -1718,9 +1964,11 @@ mod lifecycle_tests {
         let error = execution
             .build_template("registry.test/forge/attempt")
             .unwrap_err();
-        assert!(error
-            .to_string()
-            .starts_with("kubernetes_image_build_unqualified:"));
+        assert!(
+            error
+                .to_string()
+                .starts_with("kubernetes_image_build_unqualified:")
+        );
         assert_eq!(execution.manifest, original);
         assert_eq!(
             fs::read_dir(&execution.directory)
@@ -1771,14 +2019,16 @@ mod lifecycle_tests {
             scope.generation,
         )
         .unwrap();
-        assert!(workspace
-            .clone_checkout(
-                root.join("missing-repository.git").to_str().unwrap(),
-                None,
-                "",
-            )
-            .await
-            .is_err());
+        assert!(
+            workspace
+                .clone_checkout(
+                    root.join("missing-repository.git").to_str().unwrap(),
+                    None,
+                    "",
+                )
+                .await
+                .is_err()
+        );
         assert!(!workspace.checkout().exists());
         workspace
             .verify_identity(scope.attempt_id, scope.lease_id, scope.generation)
@@ -1803,17 +2053,19 @@ mod lifecycle_tests {
         assert!(!workspace.checkout().exists());
         assert_eq!(state.lock().unwrap().creates, 0);
         write_once(&directory.join("issued.json"), b"{}").unwrap();
-        assert!(close_unprepared_with_transport(
-            &execution.config,
-            &root,
-            scope.attempt_id,
-            scope.lease_id,
-            scope.generation,
-            workspace.checkout(),
-            transport(),
-        )
-        .await
-        .is_err());
+        assert!(
+            close_unprepared_with_transport(
+                &execution.config,
+                &root,
+                scope.attempt_id,
+                scope.lease_id,
+                scope.generation,
+                workspace.checkout(),
+                transport(),
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(
             read::<Value>(&directory.join("not-submitted.json")).unwrap(),
             proof
@@ -1848,17 +2100,19 @@ mod lifecycle_tests {
         assert!(!path.join("intent.json").exists() && !path.join("issued.json").exists());
         assert_eq!(state.lock().unwrap().creates, 0);
         state.lock().unwrap().pod = Some(json!({"metadata":{"uid":"foreign"}}));
-        assert!(close_unprepared_with_transport(
-            &execution.config,
-            &root,
-            scope.attempt_id,
-            scope.lease_id,
-            scope.generation,
-            &workspace,
-            transport()
-        )
-        .await
-        .is_err());
+        assert!(
+            close_unprepared_with_transport(
+                &execution.config,
+                &root,
+                scope.attempt_id,
+                scope.lease_id,
+                scope.generation,
+                &workspace,
+                transport()
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(
             read::<Value>(&path.join("not-submitted.json")).unwrap(),
             proof
@@ -1869,10 +2123,12 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn rejected_admission_can_close_without_faking_a_terminal_or_replaying_start() {
         let (execution, state, task) = fixture().await;
-        assert!(execution
-            .start_with_admission(|| anyhow::bail!("expired admission"))
-            .await
-            .is_err());
+        assert!(
+            execution
+                .start_with_admission(|| anyhow::bail!("expired admission"))
+                .await
+                .is_err()
+        );
         let mut files = fs::read_dir(&execution.directory)
             .unwrap()
             .map(|p| p.unwrap().file_name())
@@ -1887,10 +2143,12 @@ mod lifecycle_tests {
         );
         assert!(execution.close_not_submitted().await.unwrap());
         assert!(execution.not_submitted().unwrap());
-        assert!(execution
-            .start_with_admission(|| panic!("closed intent cannot acquire new admission"))
-            .await
-            .is_err());
+        assert!(
+            execution
+                .start_with_admission(|| panic!("closed intent cannot acquire new admission"))
+                .await
+                .is_err()
+        );
         assert_eq!(state.lock().unwrap().creates, 0);
         execution.acknowledge().await.unwrap();
         execution.finish_workspace_cleanup().unwrap();
@@ -2019,10 +2277,12 @@ mod lifecycle_tests {
             .unwrap();
         let original = state.lock().unwrap().pod.take();
         assert!(execution.observe().await.unwrap_err().is::<Held>());
-        assert!(execution
-            .start_with_admission(|| panic!("no new admission"))
-            .await
-            .is_err());
+        assert!(
+            execution
+                .start_with_admission(|| panic!("no new admission"))
+                .await
+                .is_err()
+        );
         assert_eq!(state.lock().unwrap().creates, 1);
         state.lock().unwrap().pod = original;
         state.lock().unwrap().pod.as_mut().unwrap()["metadata"]["uid"] =

@@ -1010,9 +1010,13 @@ pub async fn internal_git_push(
         .as_deref()
         .filter(|rev| is_probable_object_id(rev))
         .map(|rev| git_push_idempotency_key(&name, &event.ref_name, rev));
-    let project_id =
-        crate::delivery_configs::push_decision(pool, repository_id, idempotency_key.as_deref())
-            .await?;
+    let project_id = crate::delivery_configs::push_decision_for_ref(
+        pool,
+        repository_id,
+        idempotency_key.as_deref(),
+        Some(&event.ref_name),
+    )
+    .await?;
     match project_id {
         Some(project_id) => {
             let outcome = if let (Some(key), Some(sha)) =

@@ -2683,6 +2683,7 @@ export interface components {
             status?: string | null;
         };
         CreateEnvironment: {
+            kubernetes_target?: null | components["schemas"]["KubernetesTarget"];
             name: string;
             protected?: boolean | null;
             /** Format: int32 */
@@ -2883,6 +2884,8 @@ export interface components {
             required_approvals: number;
             /** Format: uuid */
             rollback_of_id?: string | null;
+            runtime_phase?: string | null;
+            runtime_receipt?: unknown;
             status: string;
         };
         DeploymentApproval: {
@@ -2895,6 +2898,79 @@ export interface components {
             deployment_id: string;
             /** Format: uuid */
             id: string;
+        };
+        DeploymentObservation: {
+            /** Format: uuid */
+            attemptId: string;
+            /** Format: uuid */
+            deploymentId: string;
+            /** Format: int64 */
+            generation: number;
+            /** Format: uuid */
+            leaseId: string;
+            /** Format: uuid */
+            namespaceUid: string;
+            phase: string;
+            /** Format: uuid */
+            pipelineId: string;
+            receipt?: null | components["schemas"]["DeploymentReceipt"];
+            /** Format: int32 */
+            releaseRevision?: number | null;
+            schema: string;
+            sourceCommit: string;
+        };
+        /** @description Immutable execution input; never contains a kubeconfig or service-account token. */
+        DeploymentOffer: {
+            /** Format: uuid */
+            attemptId: string;
+            /** Format: uuid */
+            deploymentId: string;
+            /** Format: uuid */
+            environmentId: string;
+            /** Format: int64 */
+            generation: number;
+            images: {
+                [key: string]: components["schemas"]["PublishedImage"];
+            };
+            /** Format: uuid */
+            jobId: string;
+            /** Format: uuid */
+            leaseId: string;
+            /** Format: uuid */
+            pipelineId: string;
+            /** Format: int64 */
+            pipelineOrder: number;
+            receiptArtifact: string;
+            rollback?: null | components["schemas"]["RollbackRelease"];
+            sourceCommit: string;
+            target: components["schemas"]["KubernetesTarget"];
+        };
+        DeploymentReceipt: {
+            /** Format: uuid */
+            attemptId: string;
+            cluster: string;
+            /** Format: uuid */
+            deploymentId: string;
+            /** Format: int64 */
+            generation: number;
+            /** Format: int32 */
+            healthStatus: number;
+            healthTransport: string;
+            images: {
+                [key: string]: string;
+            };
+            /** Format: uuid */
+            leaseId: string;
+            namespace: string;
+            /** Format: uuid */
+            namespaceUid: string;
+            /** Format: uuid */
+            pipelineId: string;
+            release: string;
+            /** Format: int32 */
+            releaseRevision: number;
+            schema: string;
+            sourceCommit: string;
         };
         DestinationAlert: {
             channel: string;
@@ -2940,6 +3016,7 @@ export interface components {
             created_at: string;
             /** Format: uuid */
             id: string;
+            kubernetes_target?: null | components["schemas"]["KubernetesTarget"];
             name: string;
             /** Format: uuid */
             project_id: string;
@@ -3003,6 +3080,17 @@ export interface components {
             repository: string;
             /** Format: uuid */
             repository_id?: string | null;
+        };
+        ImagePublishSpec: {
+            build_args?: {
+                [key: string]: string;
+            };
+            context: string;
+            descriptor_artifact: string;
+            dockerfile: string;
+            published_artifact: string;
+            repository: string;
+            target?: string | null;
         };
         IssueServiceAccountToken: {
             /** Format: int32 */
@@ -3089,6 +3177,24 @@ export interface components {
         };
         /** @enum {string} */
         JobStatus: "queued" | "running" | "success" | "failed" | "canceled";
+        KubernetesTarget: {
+            chart: string;
+            cluster: string;
+            files?: {
+                [key: string]: string;
+            };
+            health_url: string;
+            namespace: string;
+            release: string;
+            schema: string;
+            values?: string[];
+        };
+        KubernetesTerminationProof: {
+            clusterCaSha256: string;
+            namespaceUid: string;
+            podUid: string;
+            workspaceClaimUid: string;
+        };
         LoginRequest: {
             password: string;
             username: string;
@@ -3452,6 +3558,12 @@ export interface components {
             /** Format: uuid */
             user_id: string;
         };
+        PublishedImage: {
+            descriptorSha256: string;
+            imageRef: string;
+            schema: string;
+            sourceCommit: string;
+        };
         PullRequest: {
             /** Format: date-time */
             created_at: string;
@@ -3492,6 +3604,7 @@ export interface components {
         PushConfig: {
             /** Format: uuid */
             configuration_id?: string | null;
+            refs?: string[] | null;
         };
         Readiness: {
             database: string;
@@ -3534,6 +3647,26 @@ export interface components {
             prerelease: boolean;
             repository_name: string;
             tag_name: string;
+        };
+        ReleaseMetadata: {
+            /** Format: uuid */
+            attemptId: string;
+            /** Format: uuid */
+            deploymentId: string;
+            /** Format: uuid */
+            environmentId: string;
+            /** Format: int64 */
+            generation: number;
+            images: {
+                [key: string]: string;
+            };
+            /** Format: uuid */
+            leaseId: string;
+            /** Format: uuid */
+            pipelineId: string;
+            /** Format: int64 */
+            pipelineOrder: number;
+            sourceCommit: string;
         };
         RenewalReadback: {
             contextHash: string;
@@ -3705,6 +3838,13 @@ export interface components {
         RollbackDeployment: {
             git_ref?: string | null;
         };
+        RollbackRelease: {
+            /** Format: int32 */
+            expectedCurrentRevision: number;
+            metadata: components["schemas"]["ReleaseMetadata"];
+            /** Format: int32 */
+            revision: number;
+        };
         RunPage: {
             items: components["schemas"]["RepositorySyncSyncRun"][];
             /** Format: int64 */
@@ -3730,9 +3870,11 @@ export interface components {
             };
             executor: string;
             gitRef: string;
+            helmDeploy?: null | components["schemas"]["DeploymentOffer"];
             /** Format: uuid */
             id: string;
             image: string;
+            imagePublish?: null | components["schemas"]["ImagePublishSpec"];
             /** Format: uuid */
             jobId: string;
             jobKey: string;
@@ -3754,6 +3896,7 @@ export interface components {
         RunnerCompleteRequest: {
             /** Format: uuid */
             attemptId: string;
+            deploymentObservation?: null | components["schemas"]["DeploymentObservation"];
             diagnostic?: string | null;
             /** Format: int32 */
             exitCode?: number | null;
@@ -3765,6 +3908,7 @@ export interface components {
             outcome: string;
             /** Format: int32 */
             protocolVersion: number;
+            terminationProof?: null | components["schemas"]["KubernetesTerminationProof"];
         };
         RunnerCompleteResponse: {
             accepted: boolean;
@@ -4163,6 +4307,7 @@ export interface components {
             } | null;
         };
         UpdateEnvironment: {
+            kubernetes_target?: null | components["schemas"]["KubernetesTarget"];
             name?: string | null;
             protected?: boolean | null;
             /** Format: int32 */

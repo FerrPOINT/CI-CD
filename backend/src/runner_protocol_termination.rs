@@ -60,7 +60,7 @@ pub(super) async fn complete(
         return Err(ApiError::conflict("Termination observation mismatch"));
     }
     let terminal_status = terminal_status_for_outcome(&input.outcome)?;
-    if !acknowledge(
+    if !acknowledge_with_observation(
         db,
         runner.id,
         lease,
@@ -68,9 +68,9 @@ pub(super) async fn complete(
         scope,
         &terminal,
         terminal_status,
+        input.deployment_observation.as_ref(),
     )
-    .await
-    .map_err(ApiError::internal)?
+    .await?
     {
         return Err(ApiError::conflict(
             "Expired termination no longer owns this attempt",
@@ -85,6 +85,7 @@ pub(super) async fn complete(
 
 /// Caller supplies only a stop observation verified from exact retained custody/API identity.
 /// Lock the job BEFORE evaluating generation so the normal retry/claim producers serialize here.
+#[cfg(all(test, feature = "integration"))]
 async fn acknowledge(
     db: &PgPool,
     runner: Uuid,
@@ -93,27 +94,59 @@ async fn acknowledge(
     scope: &Scope,
     _terminal: &Terminal,
     outcome: &str,
-) -> Result<bool, sqlx::Error> {
+) -> Result<bool, ApiError> {
+    acknowledge_with_observation(
+        db, runner, lease, token_hash, scope, _terminal, outcome, None,
+    )
+    .await
+}
+
+async fn acknowledge_with_observation(
+    db: &PgPool,
+    runner: Uuid,
+    lease: Uuid,
+    token_hash: &str,
+    scope: &Scope,
+    _terminal: &Terminal,
+    outcome: &str,
+    observation: Option<&crate::domain::helm_deploy::DeploymentObservation>,
+) -> Result<bool, ApiError> {
     if !matches!(outcome, "failed" | "canceled") {
         return Ok(false);
     }
-    let mut tx = db.begin().await?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
     let exists = sqlx::query_scalar::<_, Uuid>("SELECT id FROM jobs WHERE id=$1 FOR UPDATE")
         .bind(scope.job_id)
         .fetch_optional(&mut *tx)
-        .await?;
+        .await
+        .map_err(ApiError::internal)?;
     if exists.is_none() {
         return Ok(false);
     }
-    let row=sqlx::query_as::<_,(Uuid,bool)>("SELECT l.id,l.completion_received_at IS NOT NULL FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN execution_attempts a ON a.id=l.attempt_id JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id WHERE l.id=$1 AND l.runner_id=$2 AND l.lease_token_hash=$3 AND l.job_id=$4 AND l.attempt_id=$5 AND l.generation=$6 AND l.acknowledged_at IS NOT NULL AND l.lease_expires_at<=now() AND l.lease_status IN ('expired','completed','canceled') AND l.terminal_status=$7 AND j.status=$7 AND a.status=$7 AND a.finished_at IS NOT NULL AND p.commit_sha=$8 AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id) AND NOT EXISTS(SELECT 1 FROM job_leases other WHERE other.job_id=j.id AND other.id<>l.id AND other.lease_status='active') FOR UPDATE OF l,a").bind(lease).bind(runner).bind(token_hash).bind(scope.job_id).bind(scope.attempt_id).bind(scope.generation).bind(outcome).bind(&scope.source_commit).fetch_optional(&mut *tx).await?;
-    let Some((_, accepted)) = row else {
+    let row=sqlx::query_as::<_,(Uuid,bool,String)>("SELECT l.id,l.completion_received_at IS NOT NULL,j.command FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN execution_attempts a ON a.id=l.attempt_id JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id WHERE l.id=$1 AND l.runner_id=$2 AND l.lease_token_hash=$3 AND l.job_id=$4 AND l.attempt_id=$5 AND l.generation=$6 AND l.acknowledged_at IS NOT NULL AND l.lease_expires_at<=now() AND l.lease_status IN ('expired','completed','canceled') AND l.terminal_status=$7 AND j.status=$7 AND a.status=$7 AND a.finished_at IS NOT NULL AND p.commit_sha=$8 AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id) AND NOT EXISTS(SELECT 1 FROM job_leases other WHERE other.job_id=j.id AND other.id<>l.id AND other.lease_status='active') FOR UPDATE OF l,a").bind(lease).bind(runner).bind(token_hash).bind(scope.job_id).bind(scope.attempt_id).bind(scope.generation).bind(outcome).bind(&scope.source_commit).fetch_optional(&mut *tx).await.map_err(ApiError::internal)?;
+    let Some((_, accepted, command)) = row else {
         return Ok(false);
     };
     if !accepted {
-        sqlx::query("UPDATE job_leases SET lease_status=$2,completion_received_at=now() WHERE id=$1 AND completion_received_at IS NULL").bind(lease).bind(lease_status_for_terminal(outcome)).execute(&mut *tx).await?;
+        sqlx::query("UPDATE job_leases SET lease_status=$2,completion_received_at=now() WHERE id=$1 AND completion_received_at IS NULL").bind(lease).bind(lease_status_for_terminal(outcome)).execute(&mut *tx).await.map_err(ApiError::internal)?;
+    }
+    if command == "forge:helm-deploy" {
+        crate::deployment_runtime::finish(
+            &mut tx,
+            scope.attempt_id,
+            lease,
+            scope.generation,
+            outcome,
+            observation,
+        )
+        .await?;
+    } else if observation.is_some() {
+        return Err(ApiError::conflict(
+            "Ordinary stopped job cannot submit a deployment observation",
+        ));
     }
     // Preserve projection, original finished_at, queue state, diagnostic and source binding.
-    tx.commit().await?;
+    tx.commit().await.map_err(ApiError::internal)?;
     Ok(true)
 }
 

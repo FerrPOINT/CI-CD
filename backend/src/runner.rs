@@ -280,6 +280,7 @@ async fn claim_embedded_job_lease(
               AND q.state = 'queued'
               AND q.not_before <= now()
               AND cardinality(q.required_tags) = 0
+               AND j.command NOT IN ('forge:image-publish','forge:helm-deploy')
               AND j.status = 'queued'
               AND a.status = 'queued'
               AND NOT j.manual
@@ -825,7 +826,8 @@ pub async fn reconcile_queue_timeouts_with_config(
                  WHERE ys.pipeline_id = p.id AND ys.position = s.position \
                    AND y.status = 'failed' AND NOT y.allow_failure \
                ) \
-               AND NOT ($2::boolean AND cardinality(q.required_tags) = 0) \
+               AND NOT ($2::boolean AND cardinality(q.required_tags) = 0
+               AND j.command NOT IN ('forge:image-publish','forge:helm-deploy')) \
                AND NOT EXISTS ( \
                  SELECT 1 \
                  FROM runners r \
@@ -835,6 +837,15 @@ pub async fn reconcile_queue_timeouts_with_config(
                    AND r.credential_hash IS NOT NULL \
                    AND (r.credential_expires_at IS NULL OR r.credential_expires_at > now()) \
                    AND q.required_tags <@ r.tags \
+                   AND (j.command <> 'forge:image-publish' OR \
+                        r.capabilities->'jobKinds' @> '[\"image-publish-v1\"]'::jsonb AND r.capabilities->'executorKinds' @> '[\"kubernetes\"]'::jsonb) \
+                   AND (j.command <> 'forge:helm-deploy' OR ( \
+                        r.capabilities->'jobKinds' @> '[\"helm-deploy-v1\"]'::jsonb AND \
+                        r.capabilities->'executorKinds' @> '[\"kubernetes\"]'::jsonb AND \
+                        EXISTS(SELECT 1 FROM pipeline_plans pp, jsonb_array_elements(pp.plan->'jobs') entry \
+                            WHERE pp.pipeline_id=p.id AND entry->>'key'=j.name AND \
+                            r.capabilities->'helmTargets' ? (entry->'helm_deploy'->>'environment_id')))) \
+                   AND j.command <> 'forge:image-build' \
                    AND ( \
                      NOT (r.capabilities ? 'executorKinds') \
                      OR EXISTS ( \
@@ -2440,7 +2451,8 @@ async fn poll_and_dispatch_with_config(
          JOIN pipelines p ON p.id = s.pipeline_id \
          WHERE q.state = 'queued' \
            AND q.not_before <= now() \
-           AND cardinality(q.required_tags) = 0 \
+           AND cardinality(q.required_tags) = 0
+               AND j.command NOT IN ('forge:image-publish','forge:helm-deploy') \
            AND j.status = 'queued' \
            AND a.status = 'queued' \
            AND NOT j.manual \

@@ -206,7 +206,30 @@ async fn create_pipeline_bound(
         Some(raw_config) => ("repository", raw_config),
         None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
     };
-    let parsed_config = parse_pipeline_config(Some(&raw_config)).map_err(ApiError::bad_request)?;
+    let mut parsed_config =
+        parse_pipeline_config(Some(&raw_config)).map_err(ApiError::bad_request)?;
+    if matches!(source, "deployment-rollback" | "deployment-approval")
+        && variables
+            .get("rollback_of_deployment_id")
+            .is_some_and(|v| !v.is_null())
+    {
+        let operation = variables
+            .get("deployment_id")
+            .and_then(|v| v.as_str())
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .ok_or_else(|| ApiError::conflict("Rollback operation identity missing"))?;
+        let target:Option<Uuid>=sqlx::query_scalar(
+            "SELECT d.environment_id FROM deployments d JOIN environments e ON e.id=d.environment_id
+             JOIN deployments previous ON previous.id=d.rollback_of_id AND previous.environment_id=e.id
+             WHERE d.id=$1 AND e.project_id=$2 AND previous.runtime_input IS NOT NULL
+             AND previous.runtime_phase='finished' AND previous.status='success'")
+            .bind(operation).bind(project_id).fetch_optional(pool).await.map_err(ApiError::internal)?;
+        if let Some(environment) = target {
+            parsed_config
+                .helm_rollback_only(environment)
+                .map_err(ApiError::conflict)?;
+        }
+    }
     if (parsed_config.has_image_build() || parsed_config.has_workspace_deploy()) && task.is_none() {
         return Err(ApiError::bad_request(
             "image_build/workspace_deploy доступны только для авторизованного task pipeline",
@@ -645,6 +668,46 @@ impl ParsedPipelineConfig {
             if plan.jobs.iter().any(|job| job.image_build.is_some()))
     }
 
+    fn helm_rollback_only(&mut self, environment: Uuid) -> Result<(), String> {
+        let ParsedPipelinePlan::V1(plan) = &mut self.plan else {
+            return Err("Qualified Helm rollback requires its original typed pipeline".into());
+        };
+        let selected: Vec<_> = plan
+            .jobs
+            .iter()
+            .filter(|job| {
+                job.helm_deploy
+                    .as_ref()
+                    .is_some_and(|spec| spec.environment_id == environment)
+            })
+            .cloned()
+            .collect();
+        if selected.len() != 1 {
+            return Err("Rollback must select exactly one environment job".into());
+        }
+        let mut job = selected.into_iter().next().unwrap();
+        job.needs.clear();
+        job.stage_position = 0;
+        job.position = 0;
+        self.stages = vec![CiStage {
+            name: job.stage.clone(),
+            jobs: vec![CiJob {
+                name: job.key.clone(),
+                image: job.image.clone(),
+                command: job.command.clone(),
+                required_tags: job.required_tags.clone(),
+                required_secrets: job.required_secrets.clone(),
+                artifact_paths: job.artifact_paths.clone(),
+                timeout_seconds: job.timeout_seconds,
+                allow_failure: false,
+                manual: false,
+            }],
+        }];
+        plan.jobs = vec![job];
+        plan.dependencies.clear();
+        Ok(())
+    }
+
     fn parser_version(&self) -> &'static str {
         match self.plan {
             ParsedPipelinePlan::Legacy => LEGACY_PIPELINE_PLAN_PARSER_VERSION,
@@ -742,6 +805,10 @@ struct V1PlanJob {
     needs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     image_build: Option<crate::domain::image_build::ImageBuildSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    image_publish: Option<crate::domain::image_publish::ImagePublishSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    helm_deploy: Option<crate::domain::helm_deploy::HelmDeploySpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     workspace_deploy: Option<WorkspaceDeploySpec>,
 }
@@ -943,6 +1010,14 @@ fn parse_forge_ci(raw: Option<&str>) -> Result<Vec<CiStage>, String> {
     Ok(parse_pipeline_config(raw)?.stages)
 }
 
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 fn parse_pipeline_config(raw: Option<&str>) -> Result<ParsedPipelineConfig, String> {
     let Some(raw) = raw else {
         return Ok(ParsedPipelineConfig {
@@ -976,6 +1051,10 @@ fn parse_legacy_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, Strin
         #[serde(default = "default_image")]
         image: String,
         command: String,
+        #[serde(default, deserialize_with = "deserialize_present")]
+        image_publish: Option<serde_yaml::Value>,
+        #[serde(default, deserialize_with = "deserialize_present")]
+        helm_deploy: Option<serde_yaml::Value>,
         #[serde(default, deserialize_with = "deserialize_workspace_deploy")]
         workspace_deploy: Option<WorkspaceDeploySpec>,
         /// e.g. "30s", "5m", "1h" — default 1h.
@@ -1009,9 +1088,13 @@ fn parse_legacy_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, Strin
         .stages
         .iter()
         .flat_map(|stage| &stage.jobs)
-        .any(|job| job.workspace_deploy.is_some())
+        .any(|job| {
+            job.workspace_deploy.is_some()
+                || job.image_publish.is_some()
+                || job.helm_deploy.is_some()
+        })
     {
-        return Err("workspace_deploy execution is unavailable in legacy jobs".into());
+        return Err("workspace_deploy execution is unavailable in legacy jobs; typed image/deploy declarations require version: 1".into());
     }
     let mut stages: Vec<CiStage> = parsed
         .stages
@@ -1056,6 +1139,8 @@ struct NormalizedV1Job {
     allow_failure: bool,
     needs: Vec<String>,
     image_build: Option<crate::domain::image_build::ImageBuildSpec>,
+    image_publish: Option<crate::domain::image_publish::ImagePublishSpec>,
+    helm_deploy: Option<crate::domain::helm_deploy::HelmDeploySpec>,
     workspace_deploy: Option<WorkspaceDeploySpec>,
 }
 
@@ -1115,6 +1200,10 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         #[serde(default)]
         commands: Vec<String>,
         image_build: Option<crate::domain::image_build::ImageBuildSpec>,
+        #[serde(default, deserialize_with = "deserialize_present")]
+        image_publish: Option<crate::domain::image_publish::ImagePublishSpec>,
+        #[serde(default, deserialize_with = "deserialize_present")]
+        helm_deploy: Option<crate::domain::helm_deploy::HelmDeploySpec>,
         #[serde(default, deserialize_with = "deserialize_workspace_deploy")]
         workspace_deploy: Option<WorkspaceDeploySpec>,
         timeout: Option<String>,
@@ -1167,12 +1256,46 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         if let Some(deployment) = &job.workspace_deploy {
             deployment.validate()?;
             if job.image_build.is_some()
+                || job.image_publish.is_some()
+                || job.helm_deploy.is_some()
                 || job.artifacts.is_some()
                 || job.allow_failure
                 || job.tags.is_some()
                 || !default_tags.is_empty()
             {
                 return Err("workspace_deploy requires repo commands and owner receipt only; no image_build, artifacts, allow_failure or external tags".into());
+            }
+        }
+        if let Some(deploy) = &job.helm_deploy {
+            deploy.validate()?;
+            if job.image_build.is_some()
+                || job.image_publish.is_some()
+                || job.workspace_deploy.is_some()
+                || !job.commands.is_empty()
+                || job.image.is_some()
+                || job.artifacts.is_some()
+                || !job.secrets.is_empty()
+                || job.allow_failure
+            {
+                return Err(
+                    "helm_deploy cannot be combined with arbitrary execution or secrets".into(),
+                );
+            }
+        }
+        if let Some(build) = &job.image_publish {
+            build.validate()?;
+            if job.image_build.is_some()
+                || job.workspace_deploy.is_some()
+                || !job.commands.is_empty()
+                || job.image.is_some()
+                || job.artifacts.is_some()
+                || !job.secrets.is_empty()
+                || job.allow_failure
+            {
+                return Err(
+                    "image_publish cannot be combined with another execution or arbitrary secrets"
+                        .into(),
+                );
             }
         }
         if let Some(build) = &job.image_build {
@@ -1189,7 +1312,10 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                     ".forge-ci.yml v1 job '{key}': image_build несовместим с commands, image, tags, secrets, artifacts и allow_failure"
                 ));
             }
-        } else if job.commands.is_empty() || job.commands.len() > 64 {
+        } else if job.image_publish.is_none()
+            && job.helm_deploy.is_none()
+            && (job.commands.is_empty() || job.commands.len() > 64)
+        {
             return Err(format!(
                 ".forge-ci.yml v1 job '{key}' must define 1..64 commands"
             ));
@@ -1202,7 +1328,11 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
             }
         }
 
-        let image = if job.image_build.is_some() {
+        let image = if job.helm_deploy.is_some() {
+            "forge:runner-helm-deploy".into()
+        } else if job.image_publish.is_some() {
+            "forge:runner-image-publish".into()
+        } else if job.image_build.is_some() {
             "forge:backend-image-build".into()
         } else {
             job.image.unwrap_or_else(|| default_image.clone())
@@ -1222,7 +1352,14 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         };
         let required_secrets =
             normalize_v1_secret_names(&format!("jobs.{key}.secrets"), job.secrets)?;
-        let artifact_paths = if let Some(deployment) = &job.workspace_deploy {
+        let artifact_paths = if let Some(deploy) = &job.helm_deploy {
+            vec![deploy.receipt_artifact.clone()]
+        } else if let Some(build) = &job.image_publish {
+            vec![
+                build.descriptor_artifact.clone(),
+                build.published_artifact.clone(),
+            ]
+        } else if let Some(deployment) = &job.workspace_deploy {
             vec![deployment.images_manifest.clone()]
         } else {
             match &job.image_build {
@@ -1282,6 +1419,8 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs,
+                helm_deploy: job.helm_deploy,
+                image_publish: job.image_publish,
                 image_build: job.image_build,
                 workspace_deploy: job.workspace_deploy,
             },
@@ -1289,6 +1428,21 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
     }
 
     for job in jobs.values() {
+        if let Some(deploy) = &job.helm_deploy {
+            for binding in deploy.images.values() {
+                let producer = jobs
+                    .get(&binding.job)
+                    .ok_or("helm_deploy references an unknown build job")?;
+                let build = producer
+                    .image_publish
+                    .as_ref()
+                    .ok_or("helm_deploy accepts only typed image publication artifacts")?;
+                if !job.needs.contains(&binding.job) || binding.artifact != build.published_artifact
+                {
+                    return Err("helm_deploy image binding must match a required build and its publication artifact".into());
+                }
+            }
+        }
         for need in &job.needs {
             if need == &job.key {
                 return Err(format!(
@@ -1322,7 +1476,11 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         let mut ci_jobs = Vec::with_capacity(jobs.len());
         for (job_position, job) in jobs.into_iter().enumerate() {
             let job_position = job_position as i32;
-            let command = if job.image_build.is_some() {
+            let command = if job.helm_deploy.is_some() {
+                "forge:helm-deploy".into()
+            } else if job.image_publish.is_some() {
+                "forge:image-publish".into()
+            } else if job.image_build.is_some() {
                 "forge:image-build".into()
             } else {
                 v1_runtime_command(&job.commands)
@@ -1352,6 +1510,8 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 timeout_seconds: job.timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs: job.needs,
+                helm_deploy: job.helm_deploy,
+                image_publish: job.image_publish,
                 image_build: job.image_build,
                 workspace_deploy: job.workspace_deploy,
             });
@@ -2572,6 +2732,79 @@ jobs:
                 "version: 1\ndefaults:\n  image: '{image}'\njobs:\n  build:\n    commands: [echo build]\n"
             );
             assert!(parse_pipeline_config(Some(&source)).is_err(), "{image}");
+        }
+    }
+
+    #[test]
+    fn publication_and_helm_jobs_bind_exact_producers_without_changing_ordinary_jobs() {
+        let source = r#"version: 1
+jobs:
+  test:
+    image: alpine:3.21
+    commands: [echo test]
+  build:
+    needs: [test]
+    image_publish:
+      context: .
+      dockerfile: Dockerfile
+      repository: registry.test/ci/app
+      descriptor_artifact: out/build.json
+      published_artifact: out/image.json
+  deploy:
+    needs: [build]
+    helm_deploy:
+      environment_id: 6d589eaa-95e8-4d1b-99af-5a00686dea77
+      images:
+        images.web:
+          job: build
+          artifact: out/image.json
+      receipt_artifact: out/deploy.json
+"#;
+        let parsed = parse_pipeline_config(Some(source)).unwrap();
+        assert!(!parsed.has_workspace_deploy());
+        assert!(!parsed.has_image_build());
+        let snapshot = build_pipeline_plan_snapshot(
+            "main",
+            Some(&"a".repeat(40)),
+            "repository",
+            source.into(),
+            &parsed,
+        );
+        let entries = snapshot.plan["jobs"].as_array().unwrap();
+        let test = entries.iter().find(|entry| entry["key"] == "test").unwrap();
+        assert!(test.get("image_publish").is_none());
+        assert!(test.get("helm_deploy").is_none());
+        assert_eq!(test["commands"], serde_json::json!(["echo test"]));
+        let mut rollback = parse_pipeline_config(Some(source)).unwrap();
+        rollback
+            .helm_rollback_only(Uuid::parse_str("6d589eaa-95e8-4d1b-99af-5a00686dea77").unwrap())
+            .unwrap();
+        assert_eq!(rollback.stages.len(), 1);
+        assert_eq!(rollback.stages[0].jobs.len(), 1);
+        assert_eq!(rollback.stages[0].jobs[0].command, "forge:helm-deploy");
+        if let ParsedPipelinePlan::V1(plan) = rollback.plan {
+            assert!(plan.jobs[0].needs.is_empty());
+            assert!(plan.dependencies.is_empty());
+        } else {
+            panic!("typed rollback required");
+        }
+        // Renaming both ends is a legitimate neighboring configuration.
+        assert!(
+            parse_pipeline_config(Some(&source.replace("out/image.json", "out/renamed.json")))
+                .is_ok()
+        );
+        for changed in [
+            source.replace("          artifact: out/image.json", "          artifact: out/other.json"),
+            source.replace("needs: [build]", "needs: [test]"),
+            "version: 1\njobs:\n  test:\n    commands: [echo ordinary]\n    image_publish: null\n".into(),
+            "version: 1\njobs:\n  test:\n    commands: [echo ordinary]\n    helm_deploy: null\n".into(),
+            "stages:\n- name: legacy\n  jobs:\n  - name: test\n    command: echo ordinary\n    image_publish: null\n".into(),
+            source.replace(
+                "image_publish:",
+                "commands: [echo forged]\n    image_publish:",
+            ),
+        ] {
+            assert!(parse_pipeline_config(Some(&changed)).is_err(),"{changed}");
         }
     }
 

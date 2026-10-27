@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, ensure, Context};
+use anyhow::{Context, bail, ensure};
 use chrono::Utc;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -98,6 +98,10 @@ struct AttemptSpec {
     artifacts: Vec<String>,
     timeout_seconds: i32,
     workspace: WorkspaceSpec,
+    #[serde(default)]
+    image_publish: Option<cicd::domain::image_publish::ImagePublishSpec>,
+    #[serde(default)]
+    helm_deploy: Option<cicd::domain::helm_deploy::DeploymentOffer>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -570,7 +574,7 @@ async fn ensure_credential(
             "registrationToken": registration_token,
             "name": &cli.name,
             "tags": &cli.tags,
-            "capabilities": runner_capabilities(),
+            "capabilities": runner_capabilities().await,
         }))
         .send()
         .await
@@ -623,7 +627,7 @@ async fn heartbeat_with_config(
                 "busySlots": busy_slots,
             },
             "tags": &config.tags,
-            "capabilities": runner_capabilities(),
+            "capabilities": runner_capabilities().await,
             "activeLeaseIds": active_lease_ids,
         }))
         .send()
@@ -954,6 +958,15 @@ async fn complete_lease(
     offer: &LeaseOffer,
     result: ExecutionResult,
 ) -> anyhow::Result<()> {
+    let deployment_observation = if kubernetes_mode() {
+        cicd::execution::helm::completion_observation(
+            Path::new("/workspaces"),
+            offer.attempt.id,
+            offer.fencing_token,
+        )?
+    } else {
+        None
+    };
     let response = client
         .post(format!(
             "{base}/api/v1/runner/leases/{}/complete",
@@ -969,6 +982,7 @@ async fn complete_lease(
             "finishedAt": Utc::now(),
             "exitCode": result.exit_code,
             "diagnostic": result.diagnostic,
+            "deploymentObservation": deployment_observation,
             "terminationProof": if kubernetes_mode(){cicd::execution::kubernetes::Execution::reopen(Path::new("/workspaces"),offer.attempt.id,offer.fencing_token).ok().and_then(|e|e.termination_proof().ok())}else{None},
         }))
         .send()
@@ -1623,11 +1637,43 @@ fn workspace_root_for_checkout(path: &Path) -> anyhow::Result<PathBuf> {
         .to_path_buf())
 }
 
-fn runner_capabilities() -> serde_json::Value {
+async fn runner_capabilities() -> serde_json::Value {
+    let config = if kubernetes_mode() {
+        cicd::execution::kubernetes::Config::from_env().ok()
+    } else {
+        None
+    };
+    let publication = config.as_ref().is_some_and(|c| c.host_build.is_some())
+        && Path::new("/run/forge-build-host/connection.json").is_file()
+        && cicd::execution::publication::available().await;
+    let target_root = std::env::var("CICD_HELM_TARGET_ROOT")
+        .unwrap_or_else(|_| "/run/forge-deploy-targets".into());
+    let targets: Vec<String> = config
+        .as_ref()
+        .map(|c| {
+            c.helm_targets
+                .iter()
+                .filter(|grant| {
+                    Path::new(&target_root)
+                        .join(grant.environment_id.to_string())
+                        .join("target.json")
+                        .is_file()
+                })
+                .map(|grant| grant.environment_id.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut kinds = Vec::new();
+    if publication {
+        kinds.push("image-publish-v1");
+    }
+    if !targets.is_empty() {
+        kinds.push("helm-deploy-v1");
+    }
     json!({
-        "executorKinds": [if kubernetes_mode(){"kubernetes"}else{"shell"}],
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
+        "jobKinds":kinds,"helmTargets":targets,
+        "executorKinds":[if kubernetes_mode(){"kubernetes"}else{"shell"}],
+        "os":std::env::consts::OS,"arch":std::env::consts::ARCH
     })
 }
 
@@ -1700,6 +1746,8 @@ mod tests {
             lease_token: "lease-token".to_string(),
             fencing_token: 1,
             attempt: AttemptSpec {
+                image_publish: None,
+                helm_deploy: None,
                 id: Uuid::new_v4(),
                 job_id: Uuid::new_v4(),
                 executor: "shell".into(),
@@ -1722,8 +1770,8 @@ mod tests {
     #[tokio::test]
     async fn unconfirmed_execution_never_submits_terminal_completion() {
         use std::sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         };
         let requests = Arc::new(AtomicUsize::new(0));
         let count = requests.clone();
@@ -1843,16 +1891,11 @@ mod tests {
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
-        assert!(complete_executed_attempt(
-            &client,
-            &base,
-            "test-credential",
-            &offer,
-            executed,
-            false
-        )
-        .await
-        .is_err());
+        assert!(
+            complete_executed_attempt(&client, &base, "test-credential", &offer, executed, false)
+                .await
+                .is_err()
+        );
         server.await.unwrap();
         assert!(checkout.exists());
         let inventory = cicd::runner_workspace::OwnedWorkspace::inventory(&work_dir).unwrap();
@@ -1873,8 +1916,8 @@ mod tests {
     #[tokio::test]
     async fn unknown_completion_uses_readback_without_resending_post() {
         use std::sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         };
         let root = std::env::temp_dir().join(format!("forge-readback-{}", Uuid::new_v4()));
         let cli = test_cli(root.clone());
@@ -1910,9 +1953,11 @@ mod tests {
         reconcile_workspaces(&reqwest::Client::new(), &base, "fixture", &root, false)
             .await
             .unwrap();
-        assert!(cicd::runner_workspace::OwnedWorkspace::inventory(&root)
-            .unwrap()
-            .is_empty());
+        assert!(
+            cicd::runner_workspace::OwnedWorkspace::inventory(&root)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(posts.load(Ordering::SeqCst), 1);
         server.abort();
         let _ = server.await;
@@ -1984,15 +2029,17 @@ mod tests {
             .await
             .unwrap();
         assert!(ensure_no_unresolved_workspaces(&root).is_err());
-        assert!(reconcile_workspaces(
-            &reqwest::Client::new(),
-            "http://127.0.0.1:1",
-            "fixture",
-            &root,
-            false
-        )
-        .await
-        .is_err());
+        assert!(
+            reconcile_workspaces(
+                &reqwest::Client::new(),
+                "http://127.0.0.1:1",
+                "fixture",
+                &root,
+                false
+            )
+            .await
+            .is_err()
+        );
         assert!(workspace.checkout().exists());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2120,9 +2167,11 @@ mod tests {
         );
         uploads.lock().unwrap().clear();
         // Existing success/shell contract still rejects the missing required output.
-        assert!(upload_declared_artifacts(&context, &offer, &root)
-            .await
-            .is_err());
+        assert!(
+            upload_declared_artifacts(&context, &offer, &root)
+                .await
+                .is_err()
+        );
         assert!(uploads.lock().unwrap().is_empty());
         server.abort();
         let _ = server.await;
@@ -2139,27 +2188,37 @@ mod tests {
         let workspace = std::fs::canonicalize(root.join("workspace")).unwrap();
         symlink(root.join("outside"), workspace.join("escape")).unwrap();
         symlink(workspace.join("not-created"), workspace.join("dangling")).unwrap();
-        assert!(terminal_artifact_path(&workspace, "output/missing", true)
-            .await
-            .unwrap()
-            .is_none());
-        assert!(terminal_artifact_path(&workspace, "escape/missing", true)
-            .await
-            .is_err());
-        assert!(terminal_artifact_path(&workspace, "dangling/missing", true)
-            .await
-            .is_err());
+        assert!(
+            terminal_artifact_path(&workspace, "output/missing", true)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            terminal_artifact_path(&workspace, "escape/missing", true)
+                .await
+                .is_err()
+        );
+        assert!(
+            terminal_artifact_path(&workspace, "dangling/missing", true)
+                .await
+                .is_err()
+        );
         assert!(
             terminal_artifact_path(&workspace, "../outside/missing", true)
                 .await
                 .is_err()
         );
-        assert!(terminal_artifact_path(&workspace, "/outside/missing", true)
-            .await
-            .is_err());
-        assert!(terminal_artifact_path(&workspace, "output/missing", false)
-            .await
-            .is_err());
+        assert!(
+            terminal_artifact_path(&workspace, "/outside/missing", true)
+                .await
+                .is_err()
+        );
+        assert!(
+            terminal_artifact_path(&workspace, "output/missing", false)
+                .await
+                .is_err()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -2174,12 +2233,16 @@ mod tests {
         let workspace = tokio::fs::canonicalize(&workspace)
             .await
             .expect("canonical workspace");
-        assert!(resolve_workspace_artifact(&workspace, "report.txt")
-            .await
-            .is_ok());
-        assert!(resolve_workspace_artifact(&workspace, "../outside.txt")
-            .await
-            .is_err());
+        assert!(
+            resolve_workspace_artifact(&workspace, "report.txt")
+                .await
+                .is_ok()
+        );
+        assert!(
+            resolve_workspace_artifact(&workspace, "../outside.txt")
+                .await
+                .is_err()
+        );
 
         let _ = std::fs::remove_dir_all(work_dir);
     }
@@ -2261,10 +2324,12 @@ mod tests {
         workspace.record_completion(result.outcome).unwrap();
         workspace.acknowledge_completion(result.outcome).unwrap();
         workspace.cleanup_after_ack().await.unwrap();
-        assert!(result
-            .diagnostic
-            .as_deref()
-            .is_some_and(|value| value.contains("timed out")));
+        assert!(
+            result
+                .diagnostic
+                .as_deref()
+                .is_some_and(|value| value.contains("timed out"))
+        );
         let _ = std::fs::remove_dir_all(work_dir);
     }
 }
@@ -2288,23 +2353,68 @@ async fn execute_kubernetes(
         .commit_sha
         .clone()
         .context("Kubernetes execution requires exact source pin")?;
-    let image = cicd::execution::kubernetes::resolve_image(&offer.attempt.image).await?;
-    let execution = Execution::prepare(
-        Config::from_env()?,
+    let config = Config::from_env()?;
+    let scope = Scope {
+        job_id: offer.attempt.job_id,
+        attempt_id: offer.attempt.id,
+        lease_id: offer.lease_id,
+        generation: offer.fencing_token,
+        source_commit: source,
+    };
+    let (image, command) = if let Some(deploy) = &offer.attempt.helm_deploy {
+        if offer.attempt.image_publish.is_some()
+            || offer.attempt.image != "forge:runner-helm-deploy"
+            || offer.attempt.commands != ["forge:helm-deploy"]
+            || !secrets.is_empty()
+        {
+            bail!("Typed Helm deployment contains arbitrary execution");
+        }
+        let grant = config
+            .helm_targets
+            .iter()
+            .find(|grant| grant.environment_id == deploy.environment_id)
+            .context("Environment has no operator deployment grant")?;
+        (
+            grant.client_image.clone(),
+            cicd::execution::helm::command(&scope, deploy, grant)?,
+        )
+    } else if let Some(spec) = &offer.attempt.image_publish {
+        if offer.attempt.image != "forge:runner-image-publish"
+            || offer.attempt.commands != ["forge:image-publish"]
+            || !secrets.is_empty()
+        {
+            bail!("Typed image publication contains arbitrary execution");
+        }
+        let host = config
+            .host_build
+            .as_ref()
+            .context("Host image publication disabled")?;
+        (
+            host.client_image.clone(),
+            cicd::execution::publication::command(&scope, spec)?,
+        )
+    } else {
+        (
+            cicd::execution::kubernetes::resolve_image(&offer.attempt.image).await?,
+            kubernetes_command_vector(&offer.attempt.commands),
+        )
+    };
+    let mut execution = Execution::prepare(
+        config,
         &workspace_root(cli),
-        Scope {
-            job_id: offer.attempt.job_id,
-            attempt_id: offer.attempt.id,
-            lease_id: offer.lease_id,
-            generation: offer.fencing_token,
-            source_commit: source,
-        },
+        scope,
         workspace.checkout(),
         &image,
-        &kubernetes_command_vector(&offer.attempt.commands),
+        &command,
         secrets,
         offer.attempt.timeout_seconds as u64,
     )?;
+    if let Some(spec) = &offer.attempt.image_publish {
+        execution.host_build_template(spec)?;
+    }
+    if let Some(deploy) = &offer.attempt.helm_deploy {
+        execution.helm_template(deploy)?;
+    }
     execution.save_external_recovery(
         &offer.lease_token,
         &offer.attempt.artifacts,
@@ -2344,6 +2454,9 @@ async fn execute_kubernetes(
         };
         timed_out |= std::time::Instant::now() >= deadline;
         if cancel || timed_out {
+            cicd::execution::publication::cancel(&execution)
+                .await
+                .map_err(|_| UnconfirmedExecution)?;
             if let Some(context) = &log {
                 execution
                     .cancel_with_logs(|line| {
@@ -2370,6 +2483,12 @@ async fn execute_kubernetes(
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     };
+    cicd::execution::publication::finalize(&execution, workspace.checkout(), terminal.exit_code)
+        .await
+        .map_err(|_| UnconfirmedExecution)?;
+    cicd::execution::helm::finalize(&execution, workspace.checkout(), terminal.exit_code)
+        .await
+        .map_err(|_| UnconfirmedExecution)?;
     if let Some(context) = &log {
         if !execution.cancelled() {
             execution
@@ -2396,6 +2515,20 @@ async fn execute_kubernetes(
             )
             .await
             .map_err(|_| UnconfirmedExecution)?;
+        }
+    }
+    if execution.cancelled()
+        && offer.attempt.helm_deploy.as_ref().is_some_and(|deploy| {
+            workspace
+                .checkout()
+                .join(&deploy.receipt_artifact)
+                .is_file()
+        })
+    {
+        if let Some(context) = &log {
+            upload_declared_artifacts(context, offer, workspace.checkout())
+                .await
+                .map_err(|_| UnconfirmedExecution)?;
         }
     }
     let result = ExecutionResult {
@@ -2541,6 +2674,8 @@ async fn recover_kubernetes(
         lease_token: token,
         fencing_token: record.generation,
         attempt: AttemptSpec {
+            image_publish: None,
+            helm_deploy: None,
             id: record.attempt_id,
             job_id: scope.job_id,
             job_key: "recovery".into(),
@@ -2624,6 +2759,7 @@ async fn recover_kubernetes(
             }
         };
         if cancel || revoked {
+            cicd::execution::publication::cancel(&execution).await?;
             execution.cancel().await?;
         }
         terminal = execution.observe().await?;
@@ -2683,6 +2819,12 @@ async fn recover_kubernetes(
         execution.finish_workspace_cleanup()?;
         return Ok(());
     }
+    cicd::execution::publication::finalize(&execution, workspace.checkout(), terminal.exit_code)
+        .await
+        .map_err(|_| UnconfirmedExecution)?;
+    cicd::execution::helm::finalize(&execution, workspace.checkout(), terminal.exit_code)
+        .await
+        .map_err(|_| UnconfirmedExecution)?;
     if !revoked && outcome != "canceled" {
         execution
             .stream_logs(|line| {

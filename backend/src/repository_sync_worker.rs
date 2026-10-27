@@ -502,9 +502,14 @@ async fn deliver_event(
         .await
         .map_err(|_| Error::Unavailable("Git storage недоступен"))?;
     let key = crate::git_host::git_push_idempotency_key(&storage, &reference.ref_name, sha);
-    let project = crate::delivery_configs::push_decision(&store.pool, repository, Some(&key))
-        .await
-        .map_err(|_| Error::Unavailable("Не удалось прочитать push policy"))?;
+    let project = crate::delivery_configs::push_decision_for_ref(
+        &store.pool,
+        repository,
+        Some(&key),
+        Some(&reference.ref_name),
+    )
+    .await
+    .map_err(|_| Error::Unavailable("Не удалось прочитать push policy"))?;
     if let Some(project) = project {
         // Git tags may legally point to a blob/tree. Transfer them, but there is no
         // commit to build; persist that terminal CI decision instead of retrying forever.

@@ -554,6 +554,9 @@ pub async fn artifact_retention_loop_with_config(pool: PgPool, artifacts: Artifa
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 pub(crate) struct Environment {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<crate::domain::helm_deploy::KubernetesTarget>)]
+    kubernetes_target: Option<serde_json::Value>,
     id: Uuid,
     project_id: Uuid,
     name: String,
@@ -565,6 +568,7 @@ pub(crate) struct Environment {
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct CreateEnvironment {
+    kubernetes_target: Option<crate::domain::helm_deploy::KubernetesTarget>,
     name: String,
     url: Option<String>,
     #[serde(default)]
@@ -574,18 +578,32 @@ pub(crate) struct CreateEnvironment {
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct UpdateEnvironment {
+    #[serde(default, deserialize_with = "nullable_kubernetes_target")]
+    kubernetes_target: Option<Option<crate::domain::helm_deploy::KubernetesTarget>>,
     name: Option<String>,
     url: Option<String>,
     status: Option<String>,
     protected: Option<bool>,
     required_approvals: Option<i32>,
 }
+fn nullable_kubernetes_target<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<crate::domain::helm_deploy::KubernetesTarget>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <Option<crate::domain::helm_deploy::KubernetesTarget> as serde::Deserialize>::deserialize(
+        deserializer,
+    )
+    .map(Some)
+}
+
 #[utoipa::path(get, path = "/api/v1/projects/{project_id}/environments", tag = "environments", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Environment])))]
 async fn list_environments(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Vec<Environment>> {
-    Ok(Json(sqlx::query_as("SELECT id, project_id, name, url, status, protected, required_approvals, created_at FROM environments WHERE project_id = $1 ORDER BY name").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+    Ok(Json(sqlx::query_as("SELECT id, project_id, name, url, status, protected, required_approvals, created_at, kubernetes_target FROM environments WHERE project_id = $1 ORDER BY name").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(post, path = "/api/v1/projects/{project_id}/environments", tag = "environments", request_body = CreateEnvironment, params(("project_id" = Uuid, Path)), responses((status = 200, body = Environment), (status = 400)))]
 async fn create_environment(
@@ -596,16 +614,25 @@ async fn create_environment(
     if input.name.trim().is_empty() {
         return Err(ApiError::bad_request("environment name is required"));
     }
+    if let Some(target) = &input.kubernetes_target {
+        target.validate().map_err(ApiError::bad_request)?;
+    }
+    let kubernetes_target = input
+        .kubernetes_target
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|_| ApiError::conflict("Invalid Kubernetes target serialization"))?;
     let protected = input.protected.unwrap_or(false);
     let required_approvals =
         normalize_required_approvals(protected, input.required_approvals, None)?;
-    let value = sqlx::query_as("INSERT INTO environments (id, project_id, name, url, protected, required_approvals) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, project_id, name, url, status, protected, required_approvals, created_at")
+    let value = sqlx::query_as("INSERT INTO environments (id, project_id, name, url, protected, required_approvals, kubernetes_target) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, project_id, name, url, status, protected, required_approvals, created_at, kubernetes_target")
         .bind(Uuid::new_v4())
         .bind(project_id)
         .bind(input.name.trim())
         .bind(trim_optional(input.url))
         .bind(protected)
         .bind(required_approvals)
+        .bind(kubernetes_target)
         .fetch_one(pool(&state)?)
         .await
         .map_err(ApiError::internal)?;
@@ -626,18 +653,30 @@ async fn update_environment(
             return Err(ApiError::bad_request("invalid environment status"));
         }
     }
+    let update_target = input.kubernetes_target.is_some();
+    if let Some(Some(target)) = &input.kubernetes_target {
+        target.validate().map_err(ApiError::bad_request)?;
+    }
+    let kubernetes_target = input
+        .kubernetes_target
+        .flatten()
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|_| ApiError::conflict("Invalid Kubernetes target serialization"))?;
     let db = pool(&state)?;
     let current = fetch_environment_policy(db, id).await?;
     let protected = input.protected.unwrap_or(current.protected);
     let required_approvals =
         normalize_required_approvals(protected, input.required_approvals, Some(&current))?;
-    let value = sqlx::query_as("UPDATE environments SET name = COALESCE($2, name), url = COALESCE($3, url), status = COALESCE($4, status), protected = $5, required_approvals = $6 WHERE id = $1 RETURNING id, project_id, name, url, status, protected, required_approvals, created_at")
+    let value = sqlx::query_as("UPDATE environments SET name = COALESCE($2, name), url = COALESCE($3, url), status = COALESCE($4, status), protected = $5, required_approvals = $6, kubernetes_target = CASE WHEN $7 THEN $8 ELSE kubernetes_target END WHERE id = $1 RETURNING id, project_id, name, url, status, protected, required_approvals, created_at, kubernetes_target")
         .bind(id)
         .bind(name)
         .bind(trim_optional(input.url))
         .bind(input.status)
         .bind(protected)
         .bind(required_approvals)
+        .bind(update_target)
+        .bind(kubernetes_target)
         .fetch_optional(db)
         .await
         .map_err(ApiError::internal)?
@@ -666,6 +705,10 @@ pub(crate) struct Deployment {
     rollback_of_id: Option<Uuid>,
     git_ref: String,
     status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_receipt: Option<serde_json::Value>,
     approval_required: bool,
     approval_state: String,
     approval_count: i64,
@@ -707,6 +750,19 @@ async fn create_deployment(
     let db = pool(&state)?;
     let policy = fetch_environment_policy(db, environment_id).await?;
     validate_pipeline_project(db, input.pipeline_id, policy.project_id).await?;
+    let typed_target: bool =
+        sqlx::query_scalar("SELECT kubernetes_target IS NOT NULL FROM environments WHERE id=$1")
+            .bind(environment_id)
+            .fetch_one(db)
+            .await
+            .map_err(ApiError::internal)?;
+    if typed_target
+        && (input.pipeline_id.is_some() || input.status.as_deref().is_some_and(|s| s != "pending"))
+    {
+        return Err(ApiError::bad_request(
+            "Kubernetes deployment status is owned by verified runtime execution",
+        ));
+    }
     let approval_required = policy.requires_approval();
     if approval_required && input.pipeline_id.is_some() {
         return Err(ApiError::bad_request(
@@ -714,7 +770,7 @@ async fn create_deployment(
         ));
     }
     let status = input.status.unwrap_or_else(|| {
-        if approval_required {
+        if approval_required || typed_target {
             "pending".into()
         } else {
             "success".into()
@@ -736,6 +792,21 @@ async fn create_deployment(
         .execute(db)
         .await
         .map_err(ApiError::internal)?;
+    if typed_target && !approval_required {
+        start_deployment_pipeline(
+            db,
+            DeploymentPipelineStart {
+                deployment_id: id,
+                project_id: policy.project_id,
+                environment_id,
+                git_ref: input.git_ref.trim().into(),
+                rollback_of_id: None,
+                source: "deployment-approval",
+                git_root: &state.config.git.root,
+            },
+        )
+        .await?;
+    }
     audit(db, "deployment.created", "deployment", id, None).await?;
     let value = fetch_deployment(db, id).await?;
     Ok(Json(value))
@@ -825,13 +896,37 @@ async fn rollback_deployment(
             "only successful deployments can be rollback targets",
         ));
     }
-    let git_ref = input
+    let mut git_ref = input
         .git_ref
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(source.git_ref.as_str())
         .to_owned();
+    if let Some(value) = source.runtime_input.as_ref() {
+        let snapshot: crate::domain::helm_deploy::DeploymentOffer =
+            serde_json::from_value(value.clone())
+                .map_err(|_| ApiError::conflict("Rollback deployment snapshot is invalid"))?;
+        let observed: crate::domain::helm_deploy::DeploymentObservation = serde_json::from_value(
+            source
+                .runtime_receipt
+                .clone()
+                .ok_or_else(|| ApiError::conflict("Rollback live receipt missing"))?,
+        )
+        .map_err(|_| ApiError::conflict("Rollback live receipt is invalid"))?;
+        if !observed.validates(&snapshot)
+            || observed.phase != "deployed"
+            || input
+                .git_ref
+                .as_deref()
+                .is_some_and(|value| value.trim() != snapshot.source_commit)
+        {
+            return Err(ApiError::conflict(
+                "Kubernetes rollback requires the exact qualified source and image snapshot",
+            ));
+        }
+        git_ref = snapshot.source_commit;
+    }
     let new_id = Uuid::new_v4();
     sqlx::query("INSERT INTO deployments (id, environment_id, pipeline_id, rollback_of_id, git_ref, status) VALUES ($1, $2, $3, $4, $5, $6)")
         .bind(new_id)
@@ -928,6 +1023,8 @@ struct RollbackSource {
     status: String,
     protected: bool,
     required_approvals: i32,
+    runtime_input: Option<serde_json::Value>,
+    runtime_receipt: Option<serde_json::Value>,
 }
 
 impl RollbackSource {
@@ -1149,7 +1246,7 @@ async fn fetch_rollback_source(
     deployment_id: Uuid,
 ) -> Result<RollbackSource, ApiError> {
     sqlx::query_as(
-        "SELECT d.environment_id, e.project_id, d.git_ref, d.status, e.protected, e.required_approvals \
+        "SELECT d.environment_id, e.project_id, d.git_ref, d.status, e.protected, e.required_approvals, d.runtime_input, d.runtime_receipt \
          FROM deployments d \
          JOIN environments e ON e.id = d.environment_id \
          WHERE d.id = $1",
@@ -1209,6 +1306,15 @@ fn deployment_status_from_pipeline(status: &str) -> &'static str {
 /// Reconcile only owner-triggered, unfinished deployments. Manual records and
 /// terminal deployment history do not follow later pipeline retries.
 pub(crate) async fn reconcile_deployment_results(db: &PgPool) -> Result<u64, sqlx::Error> {
+    sqlx::query(
+        "UPDATE deployments d SET runtime_phase='held'
+        WHERE d.runtime_phase IN ('prepared','running') AND NOT EXISTS(
+            SELECT 1 FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id
+            WHERE l.attempt_id=d.execution_attempt_id AND l.lease_status='active'
+            AND l.lease_expires_at>now() AND a.status IN ('queued','running'))",
+    )
+    .execute(db)
+    .await?;
     let result = sqlx::query(
         "WITH candidates AS ( \
            SELECT d.id, m.deployment_status FROM deployments d \
@@ -1216,7 +1322,7 @@ pub(crate) async fn reconcile_deployment_results(db: &PgPool) -> Result<u64, sql
            JOIN pipelines p ON p.id=d.pipeline_id AND p.project_id=e.project_id \
            JOIN (VALUES ('queued',$1::text),('running',$2),('success',$3),('failed',$4),('canceled',$5)) \
              AS m(pipeline_status,deployment_status) ON m.pipeline_status=p.status \
-           WHERE d.status IN ('pending','running') AND d.status<>m.deployment_status \
+           WHERE d.status IN ('pending','running') AND d.runtime_phase IS NULL AND d.status<>m.deployment_status \
              AND p.variables->>'deployment_id'=d.id::text \
              AND EXISTS (SELECT 1 FROM pipeline_triggers t WHERE t.pipeline_id=p.id \
                AND t.project_id=p.project_id AND t.source IN ('deployment-approval','deployment-rollback')) \
@@ -2876,7 +2982,7 @@ fn new_artifact_path(artifacts: &ArtifactsConfig, id: Uuid) -> Result<PathBuf, A
     Ok(root.join(format!("{id}.bin")))
 }
 
-fn contained_artifact_path(
+pub(crate) fn contained_artifact_path(
     artifacts: &ArtifactsConfig,
     raw_path: &str,
 ) -> Result<PathBuf, ApiError> {
