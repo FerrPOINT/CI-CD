@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Hosted-репозиторий поддерживает несколько независимых подключений синхронизации
+  к GitHub и GitLab: отдельные credentials, направления, расписания и история.
+  Записи в Git выполняются последовательно; существующие подключения сохраняются.
+
 - Добавлен private identity owner-протокол check/freeze/release с immutable legacy
   aliases, транзакционными guards 26 источников и проверкой исходного COMMIT deadline.
   Исходный компонент проверен локально; real Auth/cohort/Kubernetes и rollout

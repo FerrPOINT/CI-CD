@@ -1,5 +1,7 @@
 # Архитектура Forge CI/CD
 
+Несколько подключений GitHub/GitLab на hosted-репозиторий: [ADR-0040](adr/0040-multiple-repository-sync-connections.md). Стабильный connection UUID, раздельные настройки/credentials/история и последовательная запись в Git. Query `connection_id` выбирает подключение, `repository_id` фильтрует общий список до пагинации. Миграция 0106 сохраняет существующие данные и original-key readback.
+
 Source-кандидат [identity owner fences](adr/0039-identity-deletion-owner.md)
 сохраняет границу Auth identity и локальных Forge profiles. Typed alias ledger
 и общий DB writer guard охватывают также JIT, legacy ports и workers;

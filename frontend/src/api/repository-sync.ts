@@ -13,34 +13,36 @@ export interface Page<T> {
 export type SaveSync = components['schemas']['RepositorySyncSaveConnection']
 const path = (id: string) =>
   `/catalog/repositories/${encodeURIComponent(id)}/sync`
+const selected = (url: string, connection?: string) =>
+  connection !== undefined ? `${url}${url.includes('?') ? '&' : '?'}connection_id=${encodeURIComponent(connection)}` : url
 export const repositorySync = {
   list: (query: URLSearchParams, signal?: AbortSignal) =>
     api<Page<SyncConnection>>(`/repository-syncs?${query}`, { signal }),
-  get: (id: string, signal?: AbortSignal) =>
-    api<SyncConnection>(path(id), { signal }),
-  save: (id: string, payload: SaveSync, key: string) =>
-    api<SyncConnection>(path(id), {
+  get: (id: string, signal?: AbortSignal, connection?: string) =>
+    api<SyncConnection>(selected(path(id), connection), { signal }),
+  save: (id: string, payload: SaveSync, key: string, connection?: string) =>
+    api<SyncConnection>(selected(path(id), connection), {
       method: 'PUT',
       headers: { 'Idempotency-Key': key },
       body: JSON.stringify(payload),
     }),
-  check: (id: string, payload: Omit<SaveSync, 'expected_version'>) =>
+  check: (id: string, payload: Omit<SaveSync, 'expected_version'>, connection?: string) =>
     api<components['schemas']['RepositorySyncCheckResult']>(
-      `${path(id)}/check`,
+      selected(`${path(id)}/check`, connection),
       { method: 'POST', body: JSON.stringify(payload) },
     ),
-  start: (id: string, key: string) =>
-    api<SyncRun>(`${path(id)}/runs`, {
+  start: (id: string, key: string, connection?: string) =>
+    api<SyncRun>(selected(`${path(id)}/runs`, connection), {
       method: 'POST',
       headers: { 'Idempotency-Key': key },
     }),
-  runs: (id: string, offset: number, signal?: AbortSignal) =>
-    api<Page<SyncRun>>(`${path(id)}/runs?limit=20&offset=${offset}`, {
+  runs: (id: string, offset: number, signal?: AbortSignal, connection?: string) =>
+    api<Page<SyncRun>>(selected(`${path(id)}/runs?limit=20&offset=${offset}`, connection), {
       signal,
     }),
-  refs: (id: string, run: string, offset: number, signal?: AbortSignal) =>
+  refs: (id: string, run: string, offset: number, signal?: AbortSignal, connection?: string) =>
     api<Page<SyncRef>>(
-      `${path(id)}/runs/${encodeURIComponent(run)}/refs?limit=50&offset=${offset}`,
+      selected(`${path(id)}/runs/${encodeURIComponent(run)}/refs?limit=50&offset=${offset}`, connection),
       { signal },
     ),
 }

@@ -141,3 +141,4 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 
 - [ADR-0031](adr/0031-external-repository-synchronization.md) — Git HTTPS синхронизация, durable refs и общая mutation guard.
 - [ADR-0039](adr/0039-identity-deletion-owner.md) — identity owner fences, immutable aliases и truthful legacy unknown.
+- [ADR-0040](adr/0040-multiple-repository-sync-connections.md) — несколько подключений репозитория, раздельная история и последовательное исполнение.

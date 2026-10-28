@@ -3,6 +3,9 @@ use cicd_app::repository_sync::{self as app, Access, Crypto};
 use cicd_domain::repository_sync::{Direction, Provider, SaveConnection, Settings};
 use cicd_infra::{repository_sync::PgSyncStore, secrets::Secrets};
 
+#[path = "repository_sync_multiple.rs"]
+mod multiple;
+
 #[path = "repository_sync_api_contract.rs"]
 mod api_contract;
 #[path = "repository_sync_ci_pinned_config.rs"]

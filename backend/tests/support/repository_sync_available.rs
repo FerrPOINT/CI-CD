@@ -232,9 +232,9 @@ async fn available_hosted_catalog_pages_filter_exclusions_and_save_by_exact_uuid
         .with_state(state.clone())
         .layer(axum::Extension(claims));
     let mut actual = BTreeMap::new();
-    for (offset, length) in [(0, 20), (20, 20), (40, 5)] {
+    for (offset, length) in [(0, 20), (20, 20), (40, 6)] {
         let result = page(&router, &format!("limit=20&offset={offset}")).await;
-        assert_eq!(result["total"], 45);
+        assert_eq!(result["total"], 46);
         assert_eq!(result["items"].as_array().unwrap().len(), length);
         for item in result["items"].as_array().unwrap() {
             let id: Uuid = item["id"].as_str().unwrap().parse().unwrap();
@@ -258,14 +258,22 @@ async fn available_hosted_catalog_pages_filter_exclusions_and_save_by_exact_uuid
             );
         }
     }
+    expected.insert(
+        connected,
+        (
+            a.resource.resource_id,
+            a.namespace.namespace_id,
+            "omit-connected".into(),
+        ),
+    );
     assert_eq!(actual, expected);
-    for excluded in [connected, external, pending, archived_repo] {
+    for excluded in [external, pending, archived_repo] {
         assert!(!actual.contains_key(&excluded));
     }
     let search = page(&router, "limit=20&search=SaMe-000").await;
     assert_eq!(search["total"], 2);
     assert_eq!(search["items"].as_array().unwrap().len(), 2);
-    for (owner, count) in [(&a, 23), (&b, 22)] {
+    for (owner, count) in [(&a, 24), (&b, 22)] {
         let result = page(
             &router,
             &format!("group_id={}&limit=100", owner.resource.resource_id),
@@ -288,9 +296,9 @@ async fn available_hosted_catalog_pages_filter_exclusions_and_save_by_exact_uuid
     let saved = response_json(response).await;
     assert_eq!(saved["repository_id"], selected.to_string());
     assert_eq!(saved["version"], 1);
-    assert_eq!(page(&router, "limit=100").await["total"], 44);
+    assert_eq!(page(&router, "limit=100").await["total"], 46);
     let remaining = page(&router, "search=same-000").await;
-    assert_eq!(remaining["total"], 1);
+    assert_eq!(remaining["total"], 2);
     assert_eq!(remaining["items"][0]["id"], duplicates[0].to_string());
     assert_eq!(
         page(
@@ -298,7 +306,7 @@ async fn available_hosted_catalog_pages_filter_exclusions_and_save_by_exact_uuid
             &format!("group_id={}&limit=100", b.resource.resource_id)
         )
         .await["total"],
-        21
+        22
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
@@ -311,7 +319,7 @@ async fn available_hosted_catalog_pages_filter_exclusions_and_save_by_exact_uuid
         0
     );
     println!(
-        "SYNC_AVAILABLE_CATALOG_OK eligible_before=45 eligible_after=44 pages=3 duplicate_slug_uuids_distinct=true excluded=connected,external,pending,archived selected_uuid={selected}"
+        "SYNC_AVAILABLE_CATALOG_OK eligible_before=46 eligible_after=46 pages=3 duplicate_slug_uuids_distinct=true excluded=external,pending,archived selected_uuid={selected}"
     );
     drop(router);
     drop(state);

@@ -1,5 +1,7 @@
 # API v1 Specification — Forge CI/CD
 
+Несколько подключений GitHub/GitLab на hosted-репозиторий: [ADR-0040](adr/0040-multiple-repository-sync-connections.md). Стабильный connection UUID, раздельные настройки/credentials/история и последовательная запись в Git. Query `connection_id` выбирает подключение, `repository_id` фильтрует общий список до пагинации. Миграция 0106 сохраняет существующие данные и original-key readback.
+
 Source-кандидат identity owner v1: отдельный POST transport
 `/api/internal/v1/user-deletions/{operation_id}/{check|freeze|release}` со строгим
 Base DeletionRequest и no-store на всех ответах. Только fresh registered Auth
@@ -617,8 +619,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 105,
-    "latest_required_version": 105,
+    "latest_applied_version": 106,
+    "latest_required_version": 106,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
