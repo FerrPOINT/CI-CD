@@ -1,6 +1,7 @@
 """Product Docker source graph controls; native qualification remains separate."""
 import json
 import re
+import shlex
 from pathlib import Path
 import tomllib
 import unittest
@@ -125,8 +126,10 @@ class BackendDependencyLayerTests(unittest.TestCase):
             prefix='backend/' if PRODUCT=='fleet-control' and recipe.name=='Dockerfile' else PRODUCT+'/backend/'
             for name in seen:
                 member=by_name[name]
-                token=('COPY '+prefix+'src ./src' if member=='.' else 'COPY '+prefix+member+' ./'+member)
-                self.assertIn(token,full,name)
+                source, destination = ((prefix+'src', './src') if member=='.'
+                                       else (prefix+member, './'+member))
+                copies = [shlex.split(line) for line in full.splitlines() if line.startswith('COPY ')]
+                self.assertTrue(any(row[-2:] == [source, destination] for row in copies), name)
 
     def test_actual_delivery_targets_and_guard_have_one_owner(self):
         for recipe in RECIPES:

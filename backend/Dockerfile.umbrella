@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # Workspace-root context with original sibling SDK.
 FROM rust:1.88.0-slim-bookworm AS manifests
 ARG PDLC_RUN_SLOT_SHARING=locked
@@ -72,7 +72,7 @@ FROM dependencies AS build
 ARG PDLC_RUN_SLOT_SHARING=locked
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=bind,from=unit,source=/tmp/rust-unit-check,target=/tmp/rust-unit-check test "$(cat /tmp/rust-unit-check)" = passed
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} rm -rf -- src domain/src app/src infra/src api/src
-COPY CI-CD/backend/src ./src
+COPY --exclude=**/src/bin/tests/forge_runner.rs CI-CD/backend/src ./src
 COPY CI-CD/backend/domain ./domain
 COPY CI-CD/backend/app ./app
 COPY CI-CD/backend/infra ./infra

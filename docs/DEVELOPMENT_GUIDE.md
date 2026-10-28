@@ -19,7 +19,7 @@ source checkout другого UI pin не заменяет такой export.
 Это source-этап. Холодный install, реальный cache hit, failed-unit publication,
 Vite/dist handoff и затраты CPU/RAM проверяются на общей native-вехе. До неё
 ускорение в секундах и production readiness не заявляются. Общий контракт —
-[Base BUILD_PERFORMANCE](../../services-base/docs/BUILD_PERFORMANCE.md).
+[Base BUILD_PERFORMANCE](https://github.com/FerrPOINT/services-base/blob/00aa287377e4b390e336af78e63e63a5f62b0f37/docs/BUILD_PERFORMANCE.md).
 
 ## Production CSS source graph
 
@@ -30,7 +30,7 @@ Tailwind читает application src, index.html и прежний UI source; t
 Отдельно из frontend с готовыми dependencies: `node --test scripts/tailwind-source-inputs.test.mjs`.
 Fixture-only изменение не выбирает application artifact в quality/CI; реальный CSS сохраняет Build.
 Это source checks, полный Vite/dist и native/container acceptance выполняются отдельно на общей вехе.
-Общий стандарт — [Base BUILD_PERFORMANCE](../../services-base/docs/BUILD_PERFORMANCE.md).
+Общий стандарт — [Base BUILD_PERFORMANCE](https://github.com/FerrPOINT/services-base/blob/00aa287377e4b390e336af78e63e63a5f62b0f37/docs/BUILD_PERFORMANCE.md).
 
 
 Этот документ описывает воспроизводимый локальный цикл разработки и проверки. Он не заменяет нормативные контракты: порядок источников и статус утверждений определены в [DOCUMENTATION GOVERNANCE](DOCUMENTATION_GOVERNANCE.md). Фактически работающие возможности перечислены в [CURRENT STATE](CURRENT_STATE.md); код, committed migrations и OpenAPI после их появления имеют приоритет над этим guide.
@@ -357,3 +357,13 @@ git diff --exit-code
 - [ENV](ENV.md), `docker-compose.yml`, `.env.example` и `justfile` -- local configuration and executable commands.
 - [TESTING](DEVELOPMENT_GUIDE.md) и [CI/CD](DEVELOPMENT_GUIDE.md) -- historical/detail references; current CI source is `.github/workflows/ci.yml`.
 - [DOCUMENTATION GOVERNANCE](DOCUMENTATION_GOVERNANCE.md) -- authority matrix, status taxonomy and documentation checks.
+
+## Test-only исходники runner/delivery
+
+Тестовые модули отдельных binaries находятся в `backend/src/bin/tests/`;
+production parent сохраняет `#[cfg(test)]` и имя `tests`. Их изменения выбирают
+`backend:unit` и static `tooling:bin-test-inputs`, без application producer.
+Domain/cache unit не объявляются исполнением bin process tests: их прежний
+полный владелец `backend:quality` остаётся на ручной интегрированной/release вехе.
+Source command: `python -B -m unittest scripts.tests.test_bin_test_inputs -q`.
+Перенос, ограничения и финальные проверки: [план](plans/bin-test-source-boundary-20261029.md).

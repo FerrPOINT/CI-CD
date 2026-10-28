@@ -38,10 +38,46 @@
       "backend/Dockerfile.dockerignore",
       "backend/Dockerfile.umbrella.dockerignore",
       "backend/Cargo.toml",
-      "backend/*/Cargo.toml"
+      "backend/*/Cargo.toml",
+      "scripts/tests/test_bin_test_inputs.py",
+      "backend/src/bin/forge-runner.rs",
+      "backend/src/bin/tests/forge_runner.rs"
     ]
   },
   "gates": [
+    {
+      "id": "tooling:bin-test-inputs",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_bin_test_inputs",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_bin_test_inputs.py",
+        "backend/Cargo.toml",
+        "backend/src/bin/forge-runner.rs",
+        "backend/src/bin/tests/forge_runner.rs",
+        "backend/Dockerfile",
+        "backend/Dockerfile.umbrella",
+        ".quality-gate.json",
+        "scripts/vendor/base_quality_selection.py"
+      ],
+      "cacheable": true,
+      "execution_slot": "none",
+      "test_tier": "static"
+    },
     {
       "id": "tooling:quality-routes",
       "component": "tooling",
@@ -456,7 +492,10 @@
         "C_INCLUDE_PATH",
         "CPLUS_INCLUDE_PATH"
       ],
-      "test_tier": "artifact"
+      "test_tier": "artifact",
+      "exclude_inputs": [
+        "backend/src/bin/tests/forge_runner.rs"
+      ]
     }
   ],
   "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
@@ -492,5 +531,28 @@
       "live"
     ],
     "release_required": true
+  },
+  "affected_checks": {
+    "tooling": [
+      {
+        "paths": [
+          "scripts/verify_docs.py",
+          "scripts/tests/test_verify_docs.py"
+        ],
+        "gates": [
+          "tooling:quality-routes"
+        ]
+      },
+      {
+        "paths": [
+          "scripts/tests/test_bin_test_inputs.py",
+          "backend/src/bin/forge-runner.rs",
+          "backend/src/bin/tests/forge_runner.rs"
+        ],
+        "gates": [
+          "tooling:bin-test-inputs"
+        ]
+      }
+    ]
   }
 }

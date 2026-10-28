@@ -14,3 +14,13 @@ Fast для source validator также сохраняет `docs:contracts`; Uni
 Source command: `python -B -m unittest scripts.tests.test_verify_docs`.
 Mixed backend и неизвестные source paths сохраняют своих consumers; actual CI
 и ручные release gates остаются прежними.
+
+## Test-only исходники runner/delivery
+
+Тестовые модули отдельных binaries находятся в `backend/src/bin/tests/`;
+production parent сохраняет `#[cfg(test)]` и имя `tests`. Их изменения выбирают
+`backend:unit` и static `tooling:bin-test-inputs`, без application producer.
+Domain/cache unit не объявляются исполнением bin process tests: их прежний
+полный владелец `backend:quality` остаётся на ручной интегрированной/release вехе.
+Source command: `python -B -m unittest scripts.tests.test_bin_test_inputs -q`.
+Перенос, ограничения и финальные проверки: [план](plans/bin-test-source-boundary-20261029.md).
