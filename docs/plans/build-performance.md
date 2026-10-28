@@ -103,3 +103,22 @@ workspace. Они входят в existing tooling/CI checks; дешёвый `to
 явно выполняется вне heavy host slot. Его receipt покрывает consumed descriptor,
 workspace manifests и selector. Native Release/failure/receipt lifecycle и actual
 time savings остаются отдельной согласованной вехой без автоматического PG run.
+
+## 2026-10-29: Отдельный слой compile-time delivery witnesses
+
+Оба backend recipes раньше копировали весь `services-base/scripts` прямо перед
+Cargo. Изменение постороннего helper становилось входом слоя компиляции.
+Новый `delivery-witnesses` на существующем manifests parent экспортирует только
+три обязательных файла из `postgres.rs`; `private_acl.py` переносится при наличии.
+Прежний `build.rs` проверяет потребность в ACL, а compiled bytes проверяются
+прежним privileged owner. Rust-код, SDK pin, dependency/unit stages и runtime
+не изменены. Полный candidate key и runtime SDK пока остаются консервативными.
+
+Для SDK `19a7a381` compiler-visible payload — 3 файла / 77 117 B вместо
+84 файлов / 953 410 B. Это размер Git blobs на границе compiler input, не
+Docker transfer, весь context или RAM приложения. 24 scoped source cases и
+16 actual extraction-shell cases PASS, включая missing required inputs,
+optional ACL, постороннюю правку и изменение содержимого со старым timestamp.
+Native layer hit, binary freshness и CPU/RAM/time проверяются на общей вехе;
+сборка ради этого source этапа не запускается. PDLC2 имеет другую transitive
+witness closure, PDLC3 не использует этот coordinator; список туда не копировать.

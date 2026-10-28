@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression checks for the runner image's Docker CLI supply-chain pin."""
+"""Source contracts for runtime binaries, unit ancestry and compiler inputs."""
 
 from __future__ import annotations
 
@@ -12,6 +12,36 @@ DOCKERFILE = Path(__file__).resolve().parents[2] / "backend/Dockerfile.umbrella"
 
 
 class BackendDockerfileTests(unittest.TestCase):
+    def test_delivery_witness_projection_matches_real_embeds_and_optional_acl(self):
+        root = DOCKERFILE.parents[1]
+        source = (root / 'backend/src/task_delivery/postgres.rs').read_text(encoding='utf-8')
+        required = set(re.findall(r'include_bytes!\("(?:\.\./)+services-base/scripts/([^"/]+)"\)', source))
+        optional = 'private_acl.py'
+        self.assertEqual(required, {'platform_backup.py', 'platform_postgres.py', 'compose_helpers.py', optional})
+        self.assertIn('#[cfg(base_private_acl_witness)]', source)
+        build_script = (root / 'backend/build.rs').read_text(encoding='utf-8')
+        self.assertIn('!source.contains("scripts.private_acl") || acl.is_file()', build_script)
+        self.assertIn('if acl.is_file()', build_script)
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            with self.subTest(recipe=name):
+                text = (DOCKERFILE.parent / name).read_text(encoding='utf-8')
+                stages = re.split(r'(?m)^FROM ', text)[1:]
+                witness = next(stage for stage in stages if stage.startswith('manifests AS delivery-witnesses\n'))
+                build = next(stage for stage in stages if stage.startswith('dependencies AS build\n'))
+                self.assertIn('COPY services-base/scripts /delivery-source', witness)
+                command = witness.replace('\\\n', ' ')
+                copies = re.findall(r'\bcp ([^;&\n]+)', command)
+                self.assertEqual(len(copies), 2)
+                mandatory, conditional = (shlex.split(copy) for copy in copies)
+                self.assertEqual(mandatory[-1], '/delivery-witnesses/')
+                self.assertEqual({Path(path).name for path in mandatory[:-1]}, required - {optional})
+                self.assertEqual(conditional, ['/delivery-source/private_acl.py', '/delivery-witnesses/'])
+                self.assertIn('if [ -e /delivery-source/private_acl.py ]; then cp ', command)
+                self.assertNotIn('cargo ', witness)
+                self.assertNotIn('services-base/scripts /services-base/scripts', build)
+                self.assertEqual(build.count('COPY --from=delivery-witnesses /delivery-witnesses/ /services-base/scripts/'), 1)
+                self.assertLess(build.index('COPY --from=delivery-witnesses'), build.index('/usr/local/cargo/bin/cargo build'))
+
     def test_unit_ancestry_excludes_server_preparation_and_keeps_both_suites(self):
         import json
         from fnmatch import fnmatchcase

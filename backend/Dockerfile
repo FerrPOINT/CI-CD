@@ -61,6 +61,14 @@ COPY CI-CD/scripts/vendor/base_forge_job_cache.py CI-CD/scripts/vendor/base-buil
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked CARGO_TARGET_DIR=/app/target /usr/local/cargo/bin/cargo test --locked --release --manifest-path tests/cache-protocol/Cargo.toml --lib && printf 'passed\n' > /tmp/rust-unit-check
 
+FROM manifests AS delivery-witnesses
+ARG PDLC_RUN_SLOT_SHARING=locked
+# Preserve optional ACL support from newer SDKs, while exporting only embedded bytes.
+COPY services-base/scripts /delivery-source
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} mkdir -p /delivery-witnesses \
+ && cp /delivery-source/platform_backup.py /delivery-source/platform_postgres.py /delivery-source/compose_helpers.py /delivery-witnesses/ \
+ && if [ -e /delivery-source/private_acl.py ]; then cp /delivery-source/private_acl.py /delivery-witnesses/; fi
+
 FROM dependencies AS build
 ARG PDLC_RUN_SLOT_SHARING=locked
 ARG TARGETARCH
@@ -79,7 +87,7 @@ COPY CI-CD/backend/migration/src migration/src
 COPY CI-CD/backend/migrations ./migrations
 # Compile-time delivery witnesses must come from the same pinned source set.
 COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
-COPY services-base/scripts /services-base/scripts
+COPY --from=delivery-witnesses /delivery-witnesses/ /services-base/scripts/
 # Only the server and external runner ship in this image. The standalone CLI
 # has its own Fleet producer; workspace CI and release retain its checks.
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
