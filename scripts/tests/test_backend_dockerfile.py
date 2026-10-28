@@ -6,12 +6,57 @@ from __future__ import annotations
 import unittest
 import re
 import shlex
+import tomllib
 from pathlib import Path
 
 DOCKERFILE = Path(__file__).resolve().parents[2] / "backend/Dockerfile.umbrella"
 
 
 class BackendDockerfileTests(unittest.TestCase):
+    def test_sdk_copy_follows_production_local_dependencies_without_cli_source(self):
+        product = DOCKERFILE.parents[1]
+        backend = product / 'backend'
+        base = product.parent / 'services-base'
+        workspace = tomllib.loads((backend / 'Cargo.toml').read_text(encoding='utf-8'))
+        pending, seen, sdk = [backend], set(), set()
+        while pending:
+            directory = pending.pop().resolve()
+            if directory in seen:
+                continue
+            seen.add(directory)
+            manifest = tomllib.loads((directory / 'Cargo.toml').read_text(encoding='utf-8'))
+            tables = [manifest, *manifest.get('target', {}).values()]
+            for table in tables:
+                for kind in ('dependencies', 'build-dependencies'):
+                    for name, dependency in table.get(kind, {}).items():
+                        if not isinstance(dependency, dict):
+                            continue
+                        owner = directory
+                        if dependency.get('workspace'):
+                            dependency = workspace['workspace']['dependencies'][name]
+                            owner = backend
+                        if not isinstance(dependency, dict) or 'path' not in dependency:
+                            continue
+                        path = (owner / dependency['path']).resolve()
+                        if path.is_relative_to(base):
+                            sdk.add(path.relative_to(base).as_posix())
+                        else:
+                            self.assertTrue(path.is_relative_to(backend), 'Unaudited local dependency: ' + str(path))
+                            pending.append(path)
+        self.assertEqual(sdk, {'crates/sdlc-auth-core', 'crates/sdlc-shared', 'crates/sdlc-telemetry'})
+        self.assertNotIn((backend / 'cli').resolve(), seen)
+        cli = tomllib.loads((backend / 'cli/Cargo.toml').read_text(encoding='utf-8'))
+        self.assertEqual(cli['dependencies']['sdlc-cli-core']['path'], '../../../services-base/crates/sdlc-cli-core')
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            with self.subTest(recipe=name):
+                text = (DOCKERFILE.parent / name).read_text(encoding='utf-8')
+                copied = set(re.findall(r'^COPY services-base/(crates\S*)\s', text, re.M))
+                self.assertEqual(copied, sdk | {'crates/sdlc-cli-core/Cargo.toml'})
+                manifest_stage = re.split(r'(?m)^FROM ', text)[1]
+                self.assertIn('/services-base/crates/sdlc-cli-core/src/lib.rs', manifest_stage)
+                self.assertIn('compile_error!("metadata-only sdlc-cli-core must not be compiled");', manifest_stage)
+                self.assertNotIn('COPY services-base/crates ', text)
+
     def test_delivery_witness_projection_matches_real_embeds_and_optional_acl(self):
         root = DOCKERFILE.parents[1]
         source = (root / 'backend/src/task_delivery/postgres.rs').read_text(encoding='utf-8')

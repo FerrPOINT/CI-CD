@@ -125,3 +125,21 @@ optional ACL, постороннюю правку и изменение соде
 Native layer hit, binary freshness и CPU/RAM/time проверяются на общей вехе;
 сборка ради этого source этапа не запускается. PDLC2 имеет другую transitive
 witness closure, PDLC3 не использует этот coordinator; список туда не копировать.
+
+## 2026-10-29: Только необходимые Rust-исходники SDK
+
+Production local-path graph `cicd-server`/`forge-runner` использует
+`sdlc-auth-core`, `sdlc-shared`, `sdlc-telemetry`. В обоих recipes широкая копия
+`services-base/crates` заменена этими тремя деревьями. Workspace member CLI
+не выбирается для поставки, но Cargo читает manifest его `sdlc-cli-core`:
+manifest сохранён с synthetic target, который явно запрещает компиляцию.
+CLI sources и его собственный полный CI/producer не менялись.
+
+По фактически выбранному SDK `33ce7042` crates COPY input сокращён с
+87 файлов / 589 909 B до 18 / 91 072 B. Generated poison target учитывается
+отдельно. Полный candidate SDK export/key, pins, регистровые зависимости,
+unit suites, shipped bins и runtime прежние. Новый opt-in profile не включается.
+
+25 scoped source cases и оба actual stub-shell controls PASS. Native Cargo
+resolution/poison, layer reuse, old-mtime binary correctness и CPU/RAM/time
+остаются на согласованной финальной вехе; сборки для source среза не запускались.
