@@ -212,6 +212,60 @@ class DeliveryPinPreflightTests(unittest.TestCase):
                 hashlib.sha256(selected_pin.read_bytes()).hexdigest().upper(),
             )
 
+class ServerCliMetadataTests(unittest.TestCase):
+    def test_server_graph_keeps_unselected_cli_metadata_and_a_compilation_guard(self):
+        import re
+        import shlex
+        import tomllib
+        from pathlib import Path
+
+        product = Path(__file__).resolve().parents[2]
+        backend = product / 'backend'
+        workspace = tomllib.loads((backend / 'Cargo.toml').read_text(encoding='utf-8'))
+        cli = tomllib.loads((backend / 'cli/Cargo.toml').read_text(encoding='utf-8'))
+        self.assertEqual(cli['bin'], [{'name': 'cicd-cli', 'path': 'src/main.rs'}])
+        pending, seen = [backend], set()
+        while pending:
+            directory = pending.pop().resolve()
+            if directory in seen:
+                continue
+            seen.add(directory)
+            manifest = tomllib.loads((directory / 'Cargo.toml').read_text(encoding='utf-8'))
+            for table in [manifest, *manifest.get('target', {}).values()]:
+                for kind in ('dependencies', 'build-dependencies'):
+                    for name, dependency in table.get(kind, {}).items():
+                        if not isinstance(dependency, dict):
+                            continue
+                        owner = directory
+                        if dependency.get('workspace'):
+                            dependency = workspace['workspace']['dependencies'][name]
+                            owner = backend
+                        if isinstance(dependency, dict) and 'path' in dependency:
+                            path = (owner / dependency['path']).resolve()
+                            if path.is_relative_to(backend):
+                                pending.append(path)
+        self.assertNotIn((backend / 'cli').resolve(), seen,
+                         'A production CLI dependency requires a new source closure')
+        self.assertTrue((backend / 'cli/src/main.rs').is_file(), 'Real CLI remains available separately')
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            with self.subTest(recipe=name):
+                text = (backend / name).read_text(encoding='utf-8')
+                copied = [item for line in text.splitlines() if line.startswith('COPY ')
+                          for item in shlex.split(line)[1:-1] if item.startswith('CI-CD/backend/cli')]
+                self.assertEqual(copied, ['CI-CD/backend/cli/Cargo.toml'])
+                self.assertIn('compile_error!("metadata-only cicd-cli must not be compiled");', text)
+                self.assertNotRegex(text, r'rm -rf --[^\n]*\bcli/src\b')
+                self.assertNotIn('> cli/src/lib.rs', text, 'Do not introduce an empty auto-library')
+                shipped = set(re.findall(r'COPY --from=build /app/target/release/([A-Za-z0-9_-]+)', text))
+                self.assertEqual(shipped, {'cicd-server', 'forge-runner'})
+                builds = re.findall(r'(?:/usr/local/cargo/bin/)?cargo build ([^\n\\]+)', text)
+                self.assertEqual(len(builds), 2)
+                for command in builds:
+                    args = shlex.split(command)
+                    self.assertEqual({args[i + 1] for i, value in enumerate(args) if value == '--bin'}, shipped)
+                    self.assertIn('--locked', args)
+                    self.assertIn('--release', args)
+
 
 if __name__ == "__main__":
     unittest.main()

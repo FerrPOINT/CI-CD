@@ -22,6 +22,7 @@ COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
 COPY CI-CD/backend/infra/Cargo.toml infra/Cargo.toml
 COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
+# Unselected standalone CLI: retain workspace metadata and reject accidental compilation.
 COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src /services-base/crates/sdlc-cli-core/src \
@@ -33,7 +34,7 @@ RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sha
  && printf '\n' > app/src/lib.rs \
  && printf '\n' > infra/src/lib.rs \
  && printf '\n' > api/src/lib.rs \
- && printf 'fn main() {}\n' > cli/src/main.rs \
+ && printf '%s\n' 'compile_error!("metadata-only cicd-cli must not be compiled");' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs
 
 FROM manifests AS unit-dependencies
@@ -79,7 +80,7 @@ ARG PDLC_RUN_SLOT_SHARING=locked
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=bind,from=unit,source=/tmp/rust-unit-check,target=/tmp/rust-unit-check test "$(cat /tmp/rust-unit-check)" = passed
-RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} rm -rf -- src domain/src app/src infra/src api/src cli/src migration/src
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} rm -rf -- src domain/src app/src infra/src api/src migration/src
 COPY --exclude=**/src/bin/tests/forge_runner.rs --exclude=**/src/bin/tests/forge_delivery.rs CI-CD/backend/src ./src
 COPY CI-CD/scripts/vendor/base_forge_job_cache.py CI-CD/scripts/vendor/base-build-cache-policy.json CI-CD/scripts/vendor/base-forge-cache-tooling.json /scripts/vendor/
 COPY CI-CD/backend/build.rs ./build.rs
@@ -87,7 +88,6 @@ COPY CI-CD/backend/domain/src domain/src
 COPY CI-CD/backend/app/src app/src
 COPY CI-CD/backend/infra/src infra/src
 COPY CI-CD/backend/api/src api/src
-COPY CI-CD/backend/cli/src cli/src
 COPY CI-CD/backend/migration/src migration/src
 COPY CI-CD/backend/migrations ./migrations
 # Compile-time delivery witnesses must come from the same pinned source set.
