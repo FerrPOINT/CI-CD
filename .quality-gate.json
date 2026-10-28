@@ -31,7 +31,12 @@
       "frontend/vitest.config.ts",
       "frontend/tsconfig.json",
       "frontend/Dockerfile",
-      "frontend/Dockerfile.umbrella"
+      "frontend/Dockerfile.umbrella",
+      "scripts/tests/test_bin_test_inputs.py",
+      "backend/src/bin/forge-runner.rs",
+      "backend/src/bin/tests/forge_runner.rs",
+      "backend/src/bin/forge-delivery.rs",
+      "backend/src/bin/tests/forge_delivery.rs"
     ],
     "docs": [
       "scripts/verify_docs.py",
@@ -65,6 +70,41 @@
     ]
   },
   "gates": [
+    {
+      "id": "tooling:bin-test-inputs",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_bin_test_inputs",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_bin_test_inputs.py",
+        "backend/Cargo.toml",
+        "backend/src/bin/forge-runner.rs",
+        "backend/src/bin/tests/forge_runner.rs",
+        "backend/src/bin/forge-delivery.rs",
+        "backend/src/bin/tests/forge_delivery.rs",
+        "backend/Dockerfile",
+        "backend/Dockerfile.umbrella",
+        ".quality-gate.json",
+        "scripts/vendor/base_quality_selection.py"
+      ],
+      "cacheable": true,
+      "execution_slot": "none",
+      "test_tier": "static"
+    },
     {
       "id": "maintenance:wrapper-unit",
       "component": "maintenance",
@@ -189,7 +229,8 @@
         "backend/src/bin/forge-delivery.rs",
         "scripts/vendor/base_quality_selection.py",
         ".quality-gate.json",
-        ".github/workflows/ci.yml"
+        ".github/workflows/ci.yml",
+        "backend/src/bin/tests/forge_delivery.rs"
       ],
       "cacheable": true,
       "execution_slot": "none",
@@ -763,6 +804,18 @@
         ],
         "gates": [
           "tooling:build-contracts"
+        ]
+      },
+      {
+        "paths": [
+          "scripts/tests/test_bin_test_inputs.py",
+          "backend/src/bin/forge-runner.rs",
+          "backend/src/bin/tests/forge_runner.rs",
+          "backend/src/bin/forge-delivery.rs",
+          "backend/src/bin/tests/forge_delivery.rs"
+        ],
+        "gates": [
+          "tooling:bin-test-inputs"
         ]
       }
     ]

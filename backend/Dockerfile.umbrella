@@ -67,7 +67,7 @@ ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=bind,from=unit,source=/tmp/rust-unit-check,target=/tmp/rust-unit-check test "$(cat /tmp/rust-unit-check)" = passed
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} rm -rf -- src domain/src app/src infra/src api/src cli/src migration/src
-COPY CI-CD/backend/src ./src
+COPY --exclude=**/src/bin/tests/forge_runner.rs --exclude=**/src/bin/tests/forge_delivery.rs CI-CD/backend/src ./src
 COPY CI-CD/scripts/vendor/base_forge_job_cache.py CI-CD/scripts/vendor/base-build-cache-policy.json CI-CD/scripts/vendor/base-forge-cache-tooling.json /scripts/vendor/
 COPY CI-CD/backend/build.rs ./build.rs
 COPY CI-CD/backend/domain/src domain/src

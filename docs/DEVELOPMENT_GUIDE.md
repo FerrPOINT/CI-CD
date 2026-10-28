@@ -416,3 +416,13 @@ CI `frontend` передаёт `tested-frontend-dist` в `frontend-package`; о�
 Проверка графа: `python scripts/vendor/base_frontend_artifact.py check-ci --root .`.
 [Формат/команды Base](https://github.com/FerrPOINT/services-base/blob/a9b1ae9869784676957c193a75bd92a2a0480dc1/docs/BUILD_PERFORMANCE.md#передача-frontend-artifact); packet pin — `.quality-tooling-revision`.
 Node 22.20.0; OpenAPI generation/checks сохраняются в producer.
+
+## Test-only исходники runner/delivery
+
+Тестовые модули отдельных binaries находятся в `backend/src/bin/tests/`;
+production parent сохраняет `#[cfg(test)]` и имя `tests`. Их изменения выбирают
+`backend:unit` и static `tooling:bin-test-inputs`, без application producer.
+Domain/cache unit не объявляются исполнением bin process tests: их прежний
+полный владелец `backend:quality` остаётся на ручной интегрированной/release вехе.
+Source command: `python -B -m unittest scripts.tests.test_bin_test_inputs -q`.
+Перенос, ограничения и финальные проверки: [план](plans/bin-test-source-boundary-20261029.md).
