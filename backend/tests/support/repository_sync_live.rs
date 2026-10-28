@@ -434,6 +434,7 @@ impl Live {
             repository_path: path,
             direction: Direction::Disabled,
             automatic: false,
+            protected_branch_updates: Default::default(),
         };
         let mut config = cicd::config::RuntimeConfig::from_env_source(|_| None, false)
             .unwrap()

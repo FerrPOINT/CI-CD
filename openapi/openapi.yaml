@@ -9344,6 +9344,8 @@ components:
           oneOf:
           - type: 'null'
           - $ref: '#/components/schemas/RepositorySyncSyncRun'
+        can_manage_protected_branch_updates:
+          type: boolean
         has_credential:
           type: boolean
         last_run:
@@ -9396,6 +9398,11 @@ components:
         registry_instance_id:
           type: string
           format: uuid
+    RepositorySyncProtectedBranchUpdates:
+      type: string
+      enum:
+      - blocked
+      - source_fast_forward
     RepositorySyncProvider:
       type: string
       enum:
@@ -9462,6 +9469,8 @@ components:
           $ref: '#/components/schemas/RepositorySyncDirection'
         instance_url:
           type: string
+        protected_branch_updates:
+          $ref: '#/components/schemas/RepositorySyncProtectedBranchUpdates'
         provider:
           $ref: '#/components/schemas/RepositorySyncProvider'
         repository_path:

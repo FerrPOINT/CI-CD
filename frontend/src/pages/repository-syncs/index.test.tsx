@@ -360,3 +360,36 @@ describe('production repository synchronization', () => {
     ).not.toBeInTheDocument()
   })
 })
+
+describe('protected branch source policy', () => {
+
+  it('clears the protected policy when the connection is disabled', async () => {
+    const editable: SyncConnection = { ...connection, can_manage_protected_branch_updates: true, settings: { ...connection.settings, direction: 'pull', protected_branch_updates: 'source_fast_forward' } }
+    const save = vi.spyOn(repositorySync, 'save').mockResolvedValue({ ...editable, version: 2 })
+    mount(<RepositorySyncEditor connection={editable} reload={vi.fn()} />)
+    fireEvent.click(screen.getByRole('radio', { name: /Отключено/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Сохранить/ }))
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    expect(save.mock.calls[0][1].settings.direction).toBe('disabled')
+    expect(save.mock.calls[0][1].settings.protected_branch_updates).toBe('blocked')
+  })
+  it('keeps an admin-managed trusted connection read-only for other users', () => {
+    mount(<RepositorySyncEditor connection={{ ...connection, settings: { ...connection.settings, direction: 'pull', protected_branch_updates: 'source_fast_forward' } }} reload={vi.fn()} />)
+    expect(screen.getByRole('button', { name: /Сохранить/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Синхронизировать сейчас/ })).toBeEnabled()
+  })
+  it('shows the setting only with the backend capability and keeps old forms usable', () => {
+    mount(<RepositorySyncEditor connection={connection} reload={vi.fn()} />)
+    expect(screen.queryByRole('checkbox', { name: /Обновлять защищённые ветки/ })).not.toBeInTheDocument()
+  })
+  it('saves an explicit admin pull policy without changing provider credentials', async () => {
+    const editable: SyncConnection = { ...connection, can_manage_protected_branch_updates: true, settings: { ...connection.settings, direction: 'pull' } }
+    const save = vi.spyOn(repositorySync, 'save').mockResolvedValue({ ...editable, version: 2 })
+    mount(<RepositorySyncEditor connection={editable} reload={vi.fn()} />)
+    fireEvent.click(screen.getByRole('checkbox', { name: /Обновлять защищённые ветки/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Сохранить/ }))
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    expect(save.mock.calls[0][1].settings.protected_branch_updates).toBe('source_fast_forward')
+    expect(save.mock.calls[0][1]).not.toHaveProperty('token')
+  })
+})

@@ -386,6 +386,8 @@ impl Store for PgSyncStore {
         if active {
             let mut disabling = old.ok_or(Error::NotFound)?;
             disabling.direction = Direction::Disabled;
+            disabling.protected_branch_updates =
+                cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked;
             if input.settings != disabling || encrypted.is_some() {
                 return Err(Error::Conflict("sync_running"));
             }

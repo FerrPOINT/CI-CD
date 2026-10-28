@@ -2179,3 +2179,25 @@ token сохраняет старый; пустой token ошибочен. Но
 для machine/PAT principals вместе с существующим api scope/project binding.
 Archive admission применяется перед изменениями. Pagination server-side,
 сортировка истории created_at/id DESC, refs — по имени.
+
+
+## Политика защищённых веток внешней синхронизации
+
+В Settings существующих repository-sync routes добавлено optional поле
+protected_branch_updates: blocked | source_fast_forward. Отсутствующее поле
+сохраняет прежний blocked. Значение source_fast_forward может сохранять
+только human admin и только при direction=pull; остальные субъекты получают
+403, недопустимое направление — 400. JSONB snapshots используют ту же модель;
+таблицы и миграции не добавлены.
+
+Connection возвращает optional boolean can_manage_protected_branch_updates.
+GET/list/save вычисляют его из полномочий текущего principal; это подсказка UI,
+проверка записи остаётся в application service. Политика применяется при
+планировании и непосредственно перед effect; смена connection version
+закрывает старый run. Ancestry, tag conflicts, expected old SHA и lease/fencing
+остаются обязательными.
+
+Сначала устанавливается backend, затем UI. Перед откатом на backend, который
+не знает нового поля, надо штатно вернуть blocked у изменённых подключений,
+дождаться завершения/остановки их runs и проверить readback. Старый parser
+нельзя запускать поверх сохранённых settings source_fast_forward.

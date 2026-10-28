@@ -3732,6 +3732,7 @@ export interface components {
         };
         RepositorySyncConnection: {
             active_run?: null | components["schemas"]["RepositorySyncSyncRun"];
+            can_manage_protected_branch_updates?: boolean;
             has_credential: boolean;
             last_run?: null | components["schemas"]["RepositorySyncSyncRun"];
             namespace?: null | components["schemas"]["RepositorySyncNamespace"];
@@ -3756,6 +3757,8 @@ export interface components {
             registry_instance_id: string;
         };
         /** @enum {string} */
+        RepositorySyncProtectedBranchUpdates: "blocked" | "source_fast_forward";
+        /** @enum {string} */
         RepositorySyncProvider: "gitlab" | "github";
         RepositorySyncRefResult: {
             direction: string;
@@ -3777,6 +3780,7 @@ export interface components {
             automatic: boolean;
             direction: components["schemas"]["RepositorySyncDirection"];
             instance_url: string;
+            protected_branch_updates?: components["schemas"]["RepositorySyncProtectedBranchUpdates"];
             provider: components["schemas"]["RepositorySyncProvider"];
             repository_path: string;
         };

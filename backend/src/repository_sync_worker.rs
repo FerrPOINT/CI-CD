@@ -248,7 +248,7 @@ async fn execute_claimed(
             let plan = plan_ref(
                 run.settings.direction,
                 tag,
-                protected,
+                protected && !run.settings.permits_protected_pull(),
                 a.map(String::as_str),
                 b.map(String::as_str),
                 a_ancestor,
@@ -336,6 +336,7 @@ async fn execute_claimed(
                 .ref_name
                 .strip_prefix("refs/heads/")
                 .is_some_and(|branch| protected.iter().any(|p| p == branch))
+                && !run.settings.permits_protected_pull()
             {
                 reference.state = "blocked".into();
                 store

@@ -685,6 +685,7 @@ mod tests {
             repository_path: repository,
             direction: cicd_domain::repository_sync::Direction::Both,
             automatic: false,
+            protected_branch_updates: Default::default(),
         };
         let mut session = GitSession::new(
             &root,
@@ -807,6 +808,7 @@ mod tests {
             repository_path: "a/b".into(),
             direction: cicd_domain::repository_sync::Direction::Both,
             automatic: false,
+            protected_branch_updates: Default::default(),
         };
         let guard = MutationGuard::acquire(&root, Uuid::new_v4()).await.unwrap();
         let mut session = GitSession::new(

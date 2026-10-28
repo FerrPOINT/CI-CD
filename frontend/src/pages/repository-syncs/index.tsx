@@ -495,7 +495,8 @@ export function RepositorySyncEditor({
   const [runUncertain, setRunUncertain] = useState(false)
   const pending = useRef<{ key: string; payload: SaveSync } | null>(null)
   const runKey = useRef<string | null>(null)
-  const writable = connection.writable && !busy && !uncertain
+  const policyEditable = connection.settings.protected_branch_updates !== 'source_fast_forward' || connection.can_manage_protected_branch_updates === true
+  const writable = connection.writable && policyEditable && !busy && !uncertain
   const endpointChanged =
     draft.provider !== connection.settings.provider ||
     draft.instance_url !== connection.settings.instance_url
@@ -504,7 +505,11 @@ export function RepositorySyncEditor({
     token !== '' ||
     JSON.stringify(draft) !== JSON.stringify(connection.settings)
   function patch(next: Partial<SyncSettings>) {
-    setDraft({ ...draft, ...next })
+    const updated = { ...draft, ...next }
+    if (updated.direction !== 'pull' && updated.protected_branch_updates === 'source_fast_forward') {
+      updated.protected_branch_updates = 'blocked'
+    }
+    setDraft(updated)
     pending.current = null
     setFeedback('')
   }
@@ -672,6 +677,9 @@ export function RepositorySyncEditor({
         </p>
       )}
       {!connection.writable && <p role="status">Доступно только чтение.</p>}
+      {connection.writable && !policyEditable && (
+        <p role="status">Настройками доверенного источника управляет администратор.</p>
+      )}
       <Tabs
         value={params.get('tab') === 'history' ? 'history' : 'connection'}
         onValueChange={tab}
@@ -802,6 +810,26 @@ export function RepositorySyncEditor({
                 ))}
               </div>
             </fieldset>
+            {connection.can_manage_protected_branch_updates && (
+              <fieldset disabled={!writable || !!connection.active_run || draft.direction !== 'pull'}>
+                <legend className="mb-2 font-medium">Защищённые ветки</legend>
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={draft.protected_branch_updates === 'source_fast_forward'}
+                    onChange={(event) => patch({
+                      protected_branch_updates: event.target.checked ? 'source_fast_forward' : 'blocked',
+                    })}
+                  />
+                  <span>
+                    Обновлять защищённые ветки из источника
+                    <span className="block text-xs text-text-secondary">
+                      Только fast-forward при получении в Forge. Защита обычного Git push сохраняется.
+                    </span>
+                  </span>
+                </label>
+              </fieldset>
+            )}
             <fieldset disabled={!writable || !!connection.active_run}>
               <legend className="mb-2 font-medium">Способ запуска</legend>
               <div className="grid grid-cols-2 gap-2">
@@ -831,7 +859,9 @@ export function RepositorySyncEditor({
               </div>
             </fieldset>
             <p className="text-xs text-text-secondary">
-              Защищённые ветки принимают изменения через обычный PR.
+              {draft.protected_branch_updates === 'source_fast_forward'
+                ? 'Защищённые ветки обновляет доверенный источник, только fast-forward.'
+                : 'Защищённые ветки принимают изменения через обычный PR.'}
               Расходящаяся история и отличающиеся теги требуют ручного
               разрешения.
             </p>

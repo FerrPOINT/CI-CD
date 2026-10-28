@@ -152,6 +152,8 @@ pub async fn list(
     for item in &mut items {
         let Json(repo) =
             crate::repository_catalog::get(State(state.clone()), Path(item.repository_id)).await?;
+        item.can_manage_protected_branch_updates =
+            access(&claims).can_manage_protected_branch_updates();
         item.writable = item.writable
             && repo.availability.is_none()
             && store(&state)?
@@ -192,15 +194,18 @@ pub async fn get_connection(
                 repository_path: String::new(),
                 direction: Direction::Disabled,
                 automatic: false,
+                protected_branch_updates: Default::default(),
             },
             has_credential: false,
             writable: false,
+            can_manage_protected_branch_updates: false,
             paused_reason: None,
             worker_enabled: state.config.git_sync.enabled,
             next_check_at: None,
             active_run: None,
             last_run: None,
         });
+    connection.can_manage_protected_branch_updates = access.can_manage_protected_branch_updates();
     connection.writable = sync_store.authorize(id, access, true).await.is_ok()
         && crate::api::bearer_token_has_scope(&claims, "git:write")
         && repo.ready
@@ -222,7 +227,7 @@ pub async fn save_connection(
 ) -> Result<Json<Connection>, ApiError> {
     let access = authorize(&state, id, &claims, true).await?;
     let _lease = writable_lease(&state, id).await?;
-    let result = app::save(
+    let mut result = app::save(
         &store(&state)?,
         &Secrets(state.config.secrets.key),
         id,
@@ -233,6 +238,7 @@ pub async fn save_connection(
     )
     .await
     .map_err(api_error)?;
+    result.can_manage_protected_branch_updates = access.can_manage_protected_branch_updates();
     Ok(Json(result))
 }
 #[utoipa::path(post,operation_id="forge_repository_sync_check",path="/api/v1/catalog/repositories/{id}/sync/check",tag="repository-sync",params(("id"=Uuid,Path)),request_body=CheckConnection,responses((status=200,body=CheckResult),(status=503)))]
