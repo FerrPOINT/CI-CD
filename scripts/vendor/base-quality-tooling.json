@@ -1,7 +1,7 @@
 {
   "schema": "base-quality-tooling/v2",
   "repository": "https://github.com/FerrPOINT/services-base",
-  "revision": "0e0970833e7c9b0e8ee472074ec0d66a8c6f35f3",
+  "revision": "2eb64f657135704ef054a74321eb2c2dcc44e2b8",
   "source": "scripts/quality_selection.py",
   "sha256": "dca61d52594f3031c77c4227b5df6d3f73638bac3573d485c1ff77fadc407623",
   "rust_target_cache": {
@@ -24,6 +24,6 @@
     "source": "scripts/generate_openapi.mjs",
     "file": "frontend/scripts/base-generate-openapi.mjs",
     "contract": "base-openapi-generation/v1",
-    "sha256": "45075dc68bf9fafde13caf89a889931c737e2a243a7c3a38ab7699f8603614bf"
+    "sha256": "5ebf98e39fcf73f792975b0f01c2b9cd0774e92819a2119df07a18233d5911ff"
   }
 }

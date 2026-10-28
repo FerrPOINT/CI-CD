@@ -1,7 +1,7 @@
 /** One closed-source postinstall producer; broader manual generators stay product-owned. */
 import { createHash, randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -18,6 +18,32 @@ function withoutLinks(path) {
       if (error.code !== 'ENOENT') throw error
     }
     if (dirname(current) === current) break
+  }
+}
+
+function sameOutput(path, expected) {
+  let descriptor
+  try {
+    if (!lstatSync(path).isFile()) throw new Error('Generated TypeScript output must be a regular file')
+    descriptor = openSync(path, 'r')
+    const details = fstatSync(descriptor)
+    if (!details.isFile()) throw new Error('Generated TypeScript output must be a regular file')
+    if (details.size !== expected.length) return false
+    // The expected declarations already exist in memory. Compare the existing
+    // file in bounded chunks, including short reads and EOF; never trust mtime.
+    const buffer = Buffer.alloc(Math.min(expected.length + 1, 65536))
+    let position = 0
+    while (position < expected.length) {
+      const count = readSync(descriptor, buffer, 0, Math.min(buffer.length, expected.length - position), position)
+      if (count === 0 || !buffer.subarray(0, count).equals(expected.subarray(position, position + count))) return false
+      position += count
+    }
+    return readSync(descriptor, buffer, 0, 1, position) === 0
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    return false
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
   }
 }
 
@@ -99,13 +125,16 @@ export async function generate({ frontend = process.cwd(), schema, output, specV
   const api = compiler(frontend, 'openapi-typescript', '7.13.0')
   const declarations = api.COMMENT_HEADER + api.astToString(await api.default(document))
   mkdirSync(dirname(target), { recursive: true }); withoutLinks(dirname(target))
-  const temporary = join(dirname(target), '.' + basename(target) + '.' + randomUUID() + '.tmp')
-  try {
-    writeFileSync(temporary, declarations, { flag: 'wx' })
-    withoutLinks(target)
-    renameSync(temporary, target)
-  } finally {
-    if (existsSync(temporary)) unlinkSync(temporary)
+  withoutLinks(target)
+  if (!sameOutput(target, Buffer.from(declarations, 'utf8'))) {
+    const temporary = join(dirname(target), '.' + basename(target) + '.' + randomUUID() + '.tmp')
+    try {
+      writeFileSync(temporary, declarations, { flag: 'wx' })
+      withoutLinks(target)
+      renameSync(temporary, target)
+    } finally {
+      if (existsSync(temporary)) unlinkSync(temporary)
+    }
   }
   return { schema: 'base-openapi-generation/v1', input: relative(resolve(frontend, '..'), source).split(sep).join('/'),
     output: relative(frontend, target).split(sep).join('/'), source_sha256: createHash('sha256').update(bytes).digest('hex') }
