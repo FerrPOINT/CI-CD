@@ -45,7 +45,11 @@
       "backend/src/bin/forge-runner.rs",
       "backend/src/bin/tests/forge_runner.rs",
       "backend/src/bin/forge-delivery.rs",
-      "backend/src/bin/tests/forge_delivery.rs"
+      "backend/src/bin/tests/forge_delivery.rs",
+      "backend/Cargo.toml",
+      "backend/*/Cargo.toml",
+      "backend/Dockerfile",
+      "backend/Dockerfile.umbrella"
     ],
     "cli": [
       "backend/cli/**"
@@ -153,7 +157,9 @@
         "docs/screenshots/33-job-logs.png",
         "docs/screenshots/19-audit-log.png",
         "docs/screenshots/24-project-delete-confirm.png",
-        "docs/assets/forge-readme-banner.svg"
+        "docs/assets/forge-readme-banner.svg",
+        "backend/Cargo.toml",
+        "backend/*/Cargo.toml"
       ]
     },
     {

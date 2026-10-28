@@ -15,6 +15,7 @@ COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
 COPY CI-CD/backend/infra/Cargo.toml infra/Cargo.toml
 COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
+# Unselected standalone CLI: retain workspace metadata and reject accidental compilation.
 COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
 RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
@@ -25,7 +26,7 @@ RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src 
  && printf '\n' > app/src/lib.rs \
  && printf '\n' > infra/src/lib.rs \
  && printf '\n' > api/src/lib.rs \
- && printf 'fn main() {}\n' > cli/src/main.rs \
+ && printf '%s\n' 'compile_error!("metadata-only cicd-cli must not be compiled");' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner \
  && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
@@ -34,7 +35,6 @@ COPY CI-CD/backend/domain/src domain/src
 COPY CI-CD/backend/app/src app/src
 COPY CI-CD/backend/infra/src infra/src
 COPY CI-CD/backend/api/src api/src
-COPY CI-CD/backend/cli/src cli/src
 COPY CI-CD/backend/migration/src migration/src
 COPY CI-CD/backend/migrations ./migrations
 # Compile-time delivery witnesses must come from the same pinned source set.
