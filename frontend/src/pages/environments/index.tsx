@@ -269,26 +269,13 @@ export function EnvironmentsPage() {
                   }}
                 />
               </div>
-              <Select
-                aria-label={t("environments.statusFilter")}
-                className="w-auto"
-                value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value as StatusFilter);
+              <Select aria-label={t("environments.statusFilter")}
+className="w-auto"
+value={status}
+onValueChange={(nextValue) => {
+                  setStatus(nextValue as StatusFilter);
                   setPage(1);
-                }}
-              >
-                <option value="all">{t("environments.all")}</option>
-                <option value="available">
-                  {t("environments.statusAvailable")}
-                </option>
-                <option value="stopped">
-                  {t("environments.statusStopped")}
-                </option>
-                <option value="degraded">
-                  {t("environments.statusDegraded")}
-                </option>
-              </Select>
+                }} options={[{ value: "all", label: String(t("environments.all")) }, { value: "available", label: String(t("environments.statusAvailable")) }, { value: "stopped", label: String(t("environments.statusStopped")) }, { value: "degraded", label: String(t("environments.statusDegraded")) }]} />
             </div>
             <p className="text-xs text-text-muted">
               {t("environments.shown", {

@@ -238,7 +238,8 @@ describe('pull request workflow', () => {
 
   it('distinguishes a detail load error from a missing pull request and retries', () => {
     setup([], '/repositories/platform/pulls/1', { detail: new Error('Unavailable') })
-    expect(screen.getByRole('alert')).toHaveTextContent('Unavailable')
+    expect(screen.getByRole('alert')).toHaveTextContent('baseUi.readError')
+    expect(screen.queryByText('Unavailable')).not.toBeInTheDocument()
     expect(screen.queryByText('pulls.notFound')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
     expect(mocks.refetchDetail).toHaveBeenCalled()

@@ -135,7 +135,8 @@ describe('PipelinesPage', () => {
       refetch: mocks.refetch,
     })
     setup()
-    expect(screen.getByRole('alert')).toHaveTextContent('offline')
+    expect(screen.getByRole('alert')).toHaveTextContent('baseUi.readError')
+    expect(screen.queryByText('offline')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
     expect(mocks.refetch).toHaveBeenCalledOnce()
   })

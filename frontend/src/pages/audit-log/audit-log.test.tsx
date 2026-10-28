@@ -156,7 +156,7 @@ describe('AuditLogPage', () => {
       q: undefined,
     })
     expect(screen.getByRole('alert')).toHaveTextContent('auditLog.loadFailed')
-    fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
     expect(mocks.refetch).toHaveBeenCalledOnce()
   })
 })

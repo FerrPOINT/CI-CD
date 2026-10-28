@@ -1,3 +1,4 @@
+import { CurrentApplicationAccess } from '@/shared/auth/current-application-access'
 import { LoadingState } from '@pdlc/ui/ui'
 import { createProductRouter, PlatformRoute } from '@pdlc/ui/platform'
 import { ConfigurationContext } from '@/widgets/configuration-context'
@@ -88,7 +89,9 @@ export const appRoutes = [
   {
     element: (
       <AuthProvider>
-        <Outlet />
+        <CurrentApplicationAccess>
+          <Outlet />
+        </CurrentApplicationAccess>
       </AuthProvider>
     ),
     children: [
