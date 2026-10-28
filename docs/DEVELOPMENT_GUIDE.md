@@ -442,3 +442,13 @@ script witnesses также копируются из того же закреп
 postgres-delivery.py и три Base helper, сравниваемые через `include_bytes!`.
 Текущая корректировка:
 [план проверки](../plans/2026-10-10-production-backend-build.md).
+
+## Test-only исходники runner/delivery
+
+Тестовые модули отдельных binaries находятся в `backend/src/bin/tests/`;
+production parent сохраняет `#[cfg(test)]` и имя `tests`. Их изменения выбирают
+`backend:unit` и static `tooling:bin-test-inputs`, без application producer.
+Domain/cache unit не объявляются исполнением bin process tests: их прежний
+полный владелец `backend:quality` остаётся на ручной интегрированной/release вехе.
+Source command: `python -B -m unittest scripts.tests.test_bin_test_inputs -q`.
+Перенос, ограничения и финальные проверки: [план](plans/bin-test-source-boundary-20261029.md).
