@@ -15,6 +15,7 @@ COPY services-base/crates/sdlc-cli-core /services-base/crates/sdlc-cli-core
 COPY services-base/crates/sdlc-telemetry /services-base/crates/sdlc-telemetry
 COPY CI-CD/backend/Cargo.toml CI-CD/backend/Cargo.lock* ./
 COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
+# Unselected standalone CLI: retain workspace metadata and reject accidental compilation.
 COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
@@ -33,9 +34,8 @@ RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sha
     && printf '%s\n' '' > domain/src/lib.rs \
     && printf '%s\n' 'fn main() {}' > domain/src/main.rs \
     && mkdir -p cli/src \
-    && printf '%s\n' '' > cli/src/lib.rs \
     && mkdir -p cli/src \
-    && printf '%s\n' 'fn main() {}' > cli/src/main.rs \
+    && printf '%s\n' 'compile_error!("metadata-only cicd-cli must not be compiled");' > cli/src/main.rs \
     && mkdir -p migration/src \
     && printf '%s\n' '' > migration/src/lib.rs \
     && mkdir -p migration/src \
