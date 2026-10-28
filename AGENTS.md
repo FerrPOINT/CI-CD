@@ -200,3 +200,10 @@ role/lifecycle/PR SQL locks с исходным proof. MutationGuard берёт�
 перезапускать по таймеру или старому target OID. Повтор требует текущих прав и
 точных source/candidate refs; только metadata recovery, без native retry/ancestry.
 [ADR-0038](docs/adr/0038-durable-pull-merge-recovery.md) определяет журнал и rollout.
+
+## Проверка Git-гигиены
+
+Перед коммитом: `python3 -B scripts/check_repository_hygiene.py --index`.
+Перед публикацией проверять точный кандидат через `--ref <commit>`. Установка
+hooks и допустимые артефакты: [правила](docs/REPOSITORY_HYGIENE.md).
+Копии проверки принадлежат Base; SDK/UI pins не меняются.

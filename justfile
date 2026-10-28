@@ -26,3 +26,9 @@ health:
 
 readiness:
     curl -fsS http://127.0.0.1:22801/api/v1/readiness
+
+repository-hygiene:
+    python3 -B scripts/check_repository_hygiene.py --index
+
+repository-hygiene-ref:
+    python3 -B scripts/check_repository_hygiene.py --ref HEAD
