@@ -114,8 +114,11 @@ Cargo. Изменение постороннего helper становилось
 прежним privileged owner. Rust-код, SDK pin, dependency/unit stages и runtime
 не изменены. Полный candidate key и runtime SDK пока остаются консервативными.
 
-Для SDK `19a7a381` compiler-visible payload — 3 файла / 77 117 B вместо
-84 файлов / 953 410 B. Это размер Git blobs на границе compiler input, не
+Штатный backend выбирает `.namespace-base-revision`: SDK `33ce7042`.
+Его compiler-visible payload — 3 файла / 96 894 B вместо
+130 файлов / 1 695 949 B. Ранее указанные `19a7a381`, 84 / 953 410 B и 3 /
+77 117 B относятся к legacy compatibility fixture, не текущему backend.
+Это размер Git blobs на границе compiler input, не
 Docker transfer, весь context или RAM приложения. 24 scoped source cases и
 16 actual extraction-shell cases PASS, включая missing required inputs,
 optional ACL, постороннюю правку и изменение содержимого со старым timestamp.
