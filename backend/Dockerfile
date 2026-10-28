@@ -9,7 +9,11 @@ WORKDIR /app
 # backend/Cargo.toml: pdlc-auth-core = { path = "../../../services-base/..." }
 # /app/../../services-base == /services-base (WORKDIR is repo backend/).
 COPY services-base/Cargo.toml /services-base/Cargo.toml
-COPY services-base/base-modules/rust /services-base/base-modules/rust
+COPY services-base/base-modules/rust/pdlc-auth-core /services-base/base-modules/rust/pdlc-auth-core
+COPY services-base/base-modules/rust/pdlc-shared /services-base/base-modules/rust/pdlc-shared
+COPY services-base/base-modules/rust/pdlc-telemetry /services-base/base-modules/rust/pdlc-telemetry
+# Keep unselected CLI dependency metadata without its implementation.
+COPY services-base/base-modules/rust/pdlc-cli-core/Cargo.toml /services-base/base-modules/rust/pdlc-cli-core/Cargo.toml
 COPY CI-CD/backend/Cargo.toml CI-CD/backend/Cargo.lock* ./
 COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
@@ -18,7 +22,8 @@ COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
 # Unselected standalone CLI: retain workspace metadata and reject accidental compilation.
 COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
-RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
+RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src /services-base/base-modules/rust/pdlc-cli-core/src \
+ && printf '%s\n' 'compile_error!("metadata-only pdlc-cli-core must not be compiled");' > /services-base/base-modules/rust/pdlc-cli-core/src/lib.rs \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
  && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs \
  && printf 'fn main() {}\n' > src/bin/forge-delivery.rs && printf 'fn main() {}\n' > src/bin/forge-pg-migrate.rs \
