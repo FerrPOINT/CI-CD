@@ -2,6 +2,10 @@
 
 Статус: принято, 2026-10-17.
 
+Кардинальность и идентичность подключения уточнены в
+[ADR-0040](0040-multiple-repository-sync-connections.md): один репозиторий
+допускает несколько независимых подключений. Остальные правила Git сохраняются.
+
 Forge исполняет Git HTTPS сам, без provider mirroring, OAuth и CI runner.
 Поддерживаются GitHub.com и операторский allowlist HTTPS origins GitLab.
 Подключение принадлежит UUID hosted-репозитория. Настройки по умолчанию:

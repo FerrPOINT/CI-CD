@@ -33,6 +33,7 @@ vi.mock('@/api/workspaces', () => ({
   useWorkspace: () => ({ data: { group_id: 'group-a' } }),
 }))
 const connection: SyncConnection = {
+  id: 'repo',
   repository_id: 'repo',
   repository_name: 'platform/service',
   namespace: null,
@@ -78,6 +79,33 @@ afterEach(() => {
   context.malformed = false
 })
 describe('production repository synchronization', () => {
+  it('opens distinct settings and histories for two connections of the same repository', async () => {
+    const second={...connection,id:'gitlab-connection',settings:{...connection.settings,provider:'gitlab' as const,instance_url:'https://gitlab.example.test'}}
+    vi.spyOn(repositorySync,'list').mockResolvedValue({items:[connection,second],total:2})
+    const get=vi.spyOn(repositorySync,'get').mockImplementation(async (_repository,_signal,id) => id===second.id?second:connection)
+    const runs=vi.spyOn(repositorySync,'runs').mockResolvedValue({items:[],total:0})
+    mount(<Routes><Route path="/repository-syncs" element={<RepositorySyncsPage/>}/><Route path="/catalog/repositories/:id/sync" element={<RepositorySyncPage/>}/></Routes>,'/repository-syncs?project_scope=all')
+    const links=await screen.findAllByRole('link',{name:connection.repository_name})
+    expect(links).toHaveLength(2)
+    expect(links.map(link=>new URL(link.getAttribute('href')!,'https://fixture.invalid').searchParams.get('connection_id'))).toEqual([connection.id,second.id])
+    fireEvent.click(links[1])
+    await screen.findByDisplayValue('https://gitlab.example.test')
+    expect(get.mock.calls.at(-1)?.[2]).toBe(second.id)
+    fireEvent.mouseDown(screen.getByRole('tab',{name:'История запусков'}),{button:0,ctrlKey:false})
+    await waitFor(()=>expect(runs.mock.calls.at(-1)?.[3]).toBe(second.id))
+  })
+  it('lists existing repository connections and allocates a stable UUID for an additional one', async () => {
+    const list=vi.spyOn(repositorySync,'list').mockResolvedValue({items:[connection],total:1})
+    mount(<Routes><Route path="/catalog/repositories/:id/sync" element={<RepositorySyncPage/>}/></Routes>,'/catalog/repositories/repo/sync?project_scope=all')
+    await screen.findByRole('link',{name:connection.repository_name})
+    expect(list.mock.calls[0][0].get('repository_id')).toBe('repo')
+    const link=screen.getByRole('link',{name:'Добавить синхронизацию'})
+    const url=new URL(link.getAttribute('href')!,'https://fixture.invalid')
+    expect(url.pathname).toBe('/catalog/repositories/repo/sync')
+    expect(url.searchParams.get('connection_id')).toMatch(/^[0-9a-f-]{36}$/)
+    expect(url.searchParams.get('connection_id')).not.toBe(connection.id)
+    expect(url.searchParams.get('project_scope')).toBe('all')
+  })
   it('pushes one entry for pointer focus plus mousedown and retains browser Back/Forward', async () => {
     vi.spyOn(repositorySync, 'runs').mockResolvedValue({ items: [], total: 0 })
     window.history.replaceState({}, '', '/repository-syncs?project_scope=all&provider=github&search=service&tab=connection')
@@ -229,7 +257,7 @@ describe('production repository synchronization', () => {
     await screen.findByText(/Синхронизации не найдены/)
     expect(catalog).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Добавить синхронизацию' }))
-    const picker = await screen.findByLabelText('Доступный hosted-репозиторий без подключения')
+    const picker = await screen.findByLabelText('Репозиторий Forge')
     fireEvent.click(picker)
     expect(screen.getAllByRole('option')).toHaveLength(21)
     const query = (index: number) => new URL(catalog.mock.calls[index][0], 'http://fixture.invalid').searchParams
@@ -247,7 +275,7 @@ describe('production repository synchronization', () => {
     expect(query(1).get('offset')).toBe('20')
     expect(query(1).get('group_id')).toBe(all ? null : groupB)
     expect(screen.queryByRole('link', { name: 'Настроить подключение' })).not.toBeInTheDocument()
-    await choose('Доступный hosted-репозиторий без подключения', second.public_name)
+    await choose('Репозиторий Forge', second.public_name)
     const link = new URL(screen.getByRole('link', { name: 'Настроить подключение' }).getAttribute('href')!, 'http://fixture.invalid')
     expect(link.pathname).toBe(`/catalog/repositories/${selected}/sync`)
     expect(link.searchParams.get('registry_instance_id')).toBe(registry)
@@ -329,7 +357,7 @@ describe('production repository synchronization', () => {
     expect(save).toHaveBeenCalledTimes(1)
     expect(save.mock.calls[0]).toEqual(['repo', {
       expected_version: 1, settings: selectedSettings,
-    }, expect.stringMatching(/^[0-9a-f-]{36}$/)])
+    }, expect.stringMatching(/^[0-9a-f-]{36}$/), 'repo'])
     expect(selectedDirection).toBeChecked()
     expect(screen.getByRole('radio', { name: automatic ? /^Автоматически / : /^Вручную / })).toBeChecked()
     expect(check).not.toHaveBeenCalled()
@@ -363,7 +391,7 @@ describe('production repository synchronization', () => {
     fireEvent.change(screen.getByLabelText('Владелец / репозиторий'), { target: { value: 'team/draft' } })
     fireEvent.click(screen.getByText('Проверить доступ'))
     await screen.findByText('Доступ проверен без сохранения.')
-    expect(check.mock.calls[0]).toEqual(['repo', { settings: { ...connection.settings, repository_path: 'team/draft' } }])
+    expect(check.mock.calls[0]).toEqual(['repo', { settings: { ...connection.settings, repository_path: 'team/draft' } }, 'repo'])
     expect(save).not.toHaveBeenCalled()
     expect(start).not.toHaveBeenCalled()
     expect(reload).not.toHaveBeenCalled()
@@ -374,7 +402,7 @@ describe('production repository synchronization', () => {
     const get = vi.spyOn(repositorySync, 'get').mockResolvedValueOnce(connection)
       .mockRejectedValue(new ApiError({ kind: 'network', message: 'Failed to fetch' }))
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={cache}><MemoryRouter initialEntries={['/catalog/repositories/repo/sync']}>
+    render(<QueryClientProvider client={cache}><MemoryRouter initialEntries={['/catalog/repositories/repo/sync?connection_id=repo']}>
       <Routes><Route path="/catalog/repositories/:id/sync" element={<RepositorySyncPage />} /></Routes>
     </MemoryRouter></QueryClientProvider>)
     const input = await screen.findByLabelText('Владелец / репозиторий')
@@ -401,7 +429,7 @@ describe('production repository synchronization', () => {
       const offset = Number(query.get('offset') ?? 0)
       const total = query.get('search') === 'narrow' ? 1 : query.get('state') === 'failed' ? 21 : 41
       return { total, items: Array.from({ length: Math.min(20, total - offset) }, (_, index) => ({
-        ...connection, repository_id: `fixture-list-${offset + index}`,
+        ...connection, id: `fixture-connection-${offset + index}`, repository_id: `fixture-list-${offset + index}`,
         repository_name: `fixture/service-${offset + index}`,
         settings: { ...connection.settings, provider: 'gitlab' as const, instance_url: 'https://fixture-gitlab.invalid' },
       })) }
@@ -454,6 +482,7 @@ describe('production repository synchronization', () => {
   })
   it('pages history and resets the old refs offset only when selecting another run', async () => {
     const allRuns: SyncRun[] = Array.from({ length: 21 }, (_, index) => ({
+      connection_id: 'repo',
       id: `fixture-run-${index}`, repository_id: 'repo', connection_version: index + 1,
       settings: { ...connection.settings, repository_path: `fixture/run-${index}` },
       source: 'manual', state: 'success', message: null, cancel_requested: false,
@@ -505,7 +534,7 @@ describe('production repository synchronization', () => {
   })
   it('refreshes visible history and refs when the parent observes completion first', async () => {
     const running: SyncRun = {
-      id: 'run', repository_id: 'repo', connection_version: 1,
+      connection_id: 'repo', id: 'run', repository_id: 'repo', connection_version: 1,
       settings: connection.settings, state: 'running', source: 'manual',
       created_at: '2026-10-17T00:00:00Z', started_at: '2026-10-17T00:00:00Z',
       finished_at: null, cancel_requested: false, message: null,
@@ -531,14 +560,14 @@ describe('production repository synchronization', () => {
     rendered.rerender(view({ ...connection, active_run: null, last_run: finished }))
     await waitFor(() => expect(runs).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(refs).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(cache.getQueryData<{ items: SyncRun[] }>(['sync-runs', 'repo', 0])?.items[0].state).toBe('success'))
-    await waitFor(() => expect(cache.getQueryData<{ items: { state: string }[] }>(['sync-refs', 'repo', 'run', 0])?.items[0].state).toBe('applied'))
+    await waitFor(() => expect(cache.getQueryData<{ items: SyncRun[] }>(['sync-runs', 'repo', 'repo', 0])?.items[0].state).toBe('success'))
+    await waitFor(() => expect(cache.getQueryData<{ items: { state: string }[] }>(['sync-refs', 'repo', 'repo', 'run', 0])?.items[0].state).toBe('applied'))
     cache.clear()
   })
 
   it('refreshes terminal history and refs after connection polling observes completion', async () => {
     const run: SyncRun = {
-      id: 'run', repository_id: 'repo', connection_version: 1,
+      connection_id: 'repo', id: 'run', repository_id: 'repo', connection_version: 1,
       settings: connection.settings, source: 'manual', state: 'running',
       message: null, cancel_requested: false, created_at: '2026-10-17T10:00:00Z',
       started_at: '2026-10-17T10:00:01Z', finished_at: null,
@@ -571,7 +600,7 @@ describe('production repository synchronization', () => {
   })
   it('explains lost repository admission while preserving reconciling and unknown ref outcomes', async () => {
     const run: SyncRun = {
-      id: 'run', repository_id: 'repo', connection_version: 1,
+      connection_id: 'repo', id: 'run', repository_id: 'repo', connection_version: 1,
       settings: connection.settings, source: 'manual', state: 'reconciling',
       message: 'namespace_admission_lost', cancel_requested: false,
       created_at: '2026-10-18T10:00:00Z', started_at: '2026-10-18T10:00:01Z',
@@ -651,7 +680,7 @@ describe('production repository synchronization', () => {
           element={<RepositorySyncPage />}
         />
       </Routes>,
-      '/catalog/repositories/repo/sync',
+      '/catalog/repositories/repo/sync?connection_id=repo',
     )
     await screen.findByText('Репозиторий принадлежит другому проекту.')
     expect(screen.queryByLabelText('Токен доступа')).not.toBeInTheDocument()
@@ -699,7 +728,7 @@ describe('production repository synchronization', () => {
         new ApiError({ kind: 'network', message: 'Failed to fetch' }),
       )
       .mockResolvedValue({ ...connection, version: 2 })
-    const initialLocation = '/catalog/repositories/repo/sync?provider=github'
+    const initialLocation = '/catalog/repositories/repo/sync?provider=github&connection_id=repo'
     mount(<><RepositorySyncEditor connection={connection} reload={vi.fn()} /><RouterLocation /></>, initialLocation)
     fireEvent.change(screen.getByLabelText('Токен доступа'), {
       target: { value: 'fixture-test-token' },
@@ -738,7 +767,7 @@ describe('production repository synchronization', () => {
   })
   it('retries an unknown manual run with the original operation instead of creating another', async () => {
     const queued: SyncRun = {
-      id: 'queued', repository_id: 'repo', connection_version: 1,
+      connection_id: 'repo', id: 'queued', repository_id: 'repo', connection_version: 1,
       settings: connection.settings, source: 'manual', state: 'queued',
       message: null, cancel_requested: false, created_at: '2026-10-18T10:00:00Z',
       started_at: null, finished_at: null,
@@ -765,7 +794,7 @@ describe('production repository synchronization', () => {
     { state: 'reconciling', cancelRequested: true, label: 'Останавливается · сверка refs', refState: 'unknown' },
   ])('keeps $state cancellation truthful and preserves history while saving only disable', async ({ state, cancelRequested, label, refState }) => {
     const active: SyncRun = {
-      id: 'active', repository_id: 'repo', connection_version: 1,
+      connection_id: 'repo', id: 'active', repository_id: 'repo', connection_version: 1,
       settings: connection.settings, source: 'manual', state,
       message: null, cancel_requested: cancelRequested, created_at: '2026-10-18T10:00:00Z',
       started_at: state === 'queued' ? null : '2026-10-18T10:00:01Z', finished_at: null,
@@ -830,7 +859,7 @@ describe('production repository synchronization', () => {
     { reason: 'storage_pending', explanation: 'хранилище недоступно' },
   ])('preserves saved direction and history during $reason pause without offering mutations', async ({ reason, explanation }) => {
     const previous: SyncRun = {
-      id: 'previous', repository_id: 'repo', connection_version: 1,
+      connection_id: 'repo', id: 'previous', repository_id: 'repo', connection_version: 1,
       settings: { ...connection.settings, repository_path: 'team/previous' },
       source: 'manual', state: 'success', message: null, cancel_requested: false,
       created_at: '2026-10-17T10:00:00Z', started_at: '2026-10-17T10:00:01Z',
@@ -872,7 +901,7 @@ describe('production repository synchronization', () => {
   })
   it.each(['history', 'refs'] as const)('preserves visible snapshots and pagination during a transient %s failure and retries the same selection', async (failed) => {
     const previous: SyncRun = {
-      id: 'previous', repository_id: 'repo', connection_version: 1,
+      connection_id: 'repo', id: 'previous', repository_id: 'repo', connection_version: 1,
       settings: { ...connection.settings, repository_path: 'team/previous' },
       source: 'manual', state: 'success', message: null, cancel_requested: false,
       created_at: '2026-10-17T10:00:00Z', started_at: '2026-10-17T10:00:01Z',
@@ -898,7 +927,7 @@ describe('production repository synchronization', () => {
     await screen.findByRole('row', { name: /refs\/heads\/qa-preserved/ })
     await act(async () => {
       await cache.invalidateQueries({ queryKey: failed === 'history'
-        ? ['sync-runs', 'repo', 20] : ['sync-refs', 'repo', 'previous', 50] })
+        ? ['sync-runs', 'repo', 'repo', 20] : ['sync-refs', 'repo', 'repo', 'previous', 50] })
     })
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(failed === 'history' ? 'История недоступна.' : 'Результаты недоступны.')
@@ -916,7 +945,7 @@ describe('production repository synchronization', () => {
   })
   it.each([403, 409])('does not replay a known HTTP %s run rejection as an unknown operation', async (status) => {
     const queued: SyncRun = {
-      id: 'next-attempt', repository_id: 'repo', connection_version: 1,
+      connection_id: 'repo', id: 'next-attempt', repository_id: 'repo', connection_version: 1,
       settings: connection.settings, source: 'manual', state: 'queued',
       message: null, cancel_requested: false, created_at: '2026-10-18T10:00:00Z',
       started_at: null, finished_at: null,
@@ -954,7 +983,7 @@ describe('production repository synchronization', () => {
     { reason: 'ci_non_commit_tag', state: 'applied', label: 'Передано', explanation: 'Тег без коммита: пайплайн не запускается', transmitted: true },
   ])('explains $reason without confusing Git transfer with a CI refusal', async ({ reason, state, label, explanation, transmitted }) => {
     const run: SyncRun = {
-      id: 'reason-run', repository_id: 'repo', connection_version: 1,
+      connection_id: 'repo', id: 'reason-run', repository_id: 'repo', connection_version: 1,
       settings: connection.settings, source: 'manual',
       state: state === 'applied' ? 'success' : state === 'blocked' ? 'conflict' : 'failed',
       message: null, cancel_requested: false, created_at: '2026-10-18T10:00:00Z',

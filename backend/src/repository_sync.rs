@@ -43,6 +43,8 @@ pub struct SyncQuery {
     pub provider: Option<String>,
     pub state: Option<String>,
     pub group_id: Option<Uuid>,
+    pub repository_id: Option<Uuid>,
+    pub connection_id: Option<Uuid>,
 }
 pub(crate) fn api_error(error: Error) -> ApiError {
     match error {
@@ -139,7 +141,7 @@ pub async fn list(
         return Err(ApiError::bad_request("Некорректный фильтр синхронизаций"));
     }
     let (mut items, total) = store(&state)?
-        .list(
+        .list_at(
             access(&claims),
             query.search.as_deref().unwrap_or(""),
             provider,
@@ -147,6 +149,7 @@ pub async fn list(
             query.group_id,
             query.limit.unwrap_or(20),
             query.offset.unwrap_or(0),
+            query.repository_id,
         )
         .await
         .map_err(api_error)?;
@@ -168,11 +171,12 @@ pub async fn list(
     }
     Ok(Json(ConnectionPage { items, total }))
 }
-#[utoipa::path(get,operation_id="forge_repository_sync_get",path="/api/v1/catalog/repositories/{id}/sync",tag="repository-sync",params(("id"=Uuid,Path)),responses((status=200,body=Connection),(status=403)))]
+#[utoipa::path(get,operation_id="forge_repository_sync_get",path="/api/v1/catalog/repositories/{id}/sync",tag="repository-sync",params(("id"=Uuid,Path),SyncQuery),responses((status=200,body=Connection),(status=403)))]
 pub async fn get_connection(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     Path(id): Path<Uuid>,
+    Query(query): Query<SyncQuery>,
 ) -> Result<Json<Connection>, ApiError> {
     let access = authorize(&state, id, &claims, false).await?;
     let repo = crate::repository_catalog::get_core(&state, id, None)
@@ -180,10 +184,11 @@ pub async fn get_connection(
         .ok_or_else(ApiError::not_found)?;
     let sync_store = store(&state)?;
     let mut connection = sync_store
-        .connection(id, access)
+        .connection_at(id, query.connection_id.unwrap_or(id), access)
         .await
         .map_err(api_error)?
         .unwrap_or(Connection {
+            id: query.connection_id.unwrap_or(id),
             repository_id: id,
             repository_name: repo.public_name,
             namespace: repo.namespace.map(|reference| RepositoryNamespace {
@@ -217,18 +222,20 @@ pub async fn get_connection(
     Ok(Json(connection))
 }
 
-#[utoipa::path(put,operation_id="forge_repository_sync_save",path="/api/v1/catalog/repositories/{id}/sync",tag="repository-sync",params(("id"=Uuid,Path),("Idempotency-Key"=Uuid,Header)),request_body=SaveConnection,responses((status=200,body=Connection),(status=409)))]
+#[utoipa::path(put,operation_id="forge_repository_sync_save",path="/api/v1/catalog/repositories/{id}/sync",tag="repository-sync",params(("id"=Uuid,Path),("Idempotency-Key"=Uuid,Header),SyncQuery),request_body=SaveConnection,responses((status=200,body=Connection),(status=409)))]
 pub async fn save_connection(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     Path(id): Path<Uuid>,
+    Query(query): Query<SyncQuery>,
     headers: HeaderMap,
     Json(input): Json<SaveConnection>,
 ) -> Result<Json<Connection>, ApiError> {
     let access = authorize(&state, id, &claims, true).await?;
     let _lease = writable_lease(&state, id).await?;
+    let sync_store = store(&state)?;
     let result = app::save(
-        &store(&state)?,
+        &sync_store.scoped(query.connection_id.unwrap_or(id)),
         &Secrets(state.config.secrets.key),
         id,
         operation(&headers)?,
@@ -240,11 +247,12 @@ pub async fn save_connection(
     .map_err(api_error)?;
     Ok(Json(result))
 }
-#[utoipa::path(post,operation_id="forge_repository_sync_check",path="/api/v1/catalog/repositories/{id}/sync/check",tag="repository-sync",params(("id"=Uuid,Path)),request_body=CheckConnection,responses((status=200,body=CheckResult),(status=503)))]
+#[utoipa::path(post,operation_id="forge_repository_sync_check",path="/api/v1/catalog/repositories/{id}/sync/check",tag="repository-sync",params(("id"=Uuid,Path),SyncQuery),request_body=CheckConnection,responses((status=200,body=CheckResult),(status=503)))]
 pub async fn check(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     Path(id): Path<Uuid>,
+    Query(query): Query<SyncQuery>,
     Json(mut input): Json<CheckConnection>,
 ) -> Result<Json<CheckResult>, ApiError> {
     authorize(&state, id, &claims, true).await?;
@@ -252,8 +260,9 @@ pub async fn check(
         .settings
         .validate(&state.config.git_sync.allowed_gitlab_origins)
         .map_err(ApiError::bad_request)?;
+    let sync_store = store(&state)?;
     let token = app::credential(
-        &store(&state)?,
+        &sync_store.scoped(query.connection_id.unwrap_or(id)),
         &Secrets(state.config.secrets.key),
         id,
         &input.settings,
@@ -291,11 +300,12 @@ pub async fn check(
     git.guard = Some(guard);
     Ok(Json(git.check(write).await.map_err(api_error)?))
 }
-#[utoipa::path(post,operation_id="forge_repository_sync_start",path="/api/v1/catalog/repositories/{id}/sync/runs",tag="repository-sync",params(("id"=Uuid,Path),("Idempotency-Key"=Uuid,Header)),responses((status=202,body=SyncRun),(status=409),(status=503)))]
+#[utoipa::path(post,operation_id="forge_repository_sync_start",path="/api/v1/catalog/repositories/{id}/sync/runs",tag="repository-sync",params(("id"=Uuid,Path),("Idempotency-Key"=Uuid,Header),SyncQuery),responses((status=202,body=SyncRun),(status=409),(status=503)))]
 pub async fn start(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     Path(id): Path<Uuid>,
+    Query(query): Query<SyncQuery>,
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<SyncRun>), ApiError> {
     let access = authorize(&state, id, &claims, true).await?;
@@ -306,7 +316,12 @@ pub async fn start(
     }
     let _lease = writable_lease(&state, id).await?;
     let run = store(&state)?
-        .enqueue(id, "manual", Some((operation(&headers)?, access)))
+        .enqueue_at(
+            id,
+            query.connection_id.unwrap_or(id),
+            "manual",
+            Some((operation(&headers)?, access)),
+        )
         .await
         .map_err(api_error)?;
     Ok((StatusCode::ACCEPTED, Json(run)))
@@ -320,21 +335,32 @@ pub async fn runs(
 ) -> Result<Json<RunPage>, ApiError> {
     authorize(&state, id, &claims, false).await?;
     let (items, total) = store(&state)?
-        .runs(id, query.limit.unwrap_or(20), query.offset.unwrap_or(0))
+        .runs_at(
+            id,
+            query.connection_id.unwrap_or(id),
+            query.limit.unwrap_or(20),
+            query.offset.unwrap_or(0),
+        )
         .await
         .map_err(api_error)?;
     Ok(Json(RunPage { items, total }))
 }
-#[utoipa::path(get,operation_id="forge_repository_sync_run",path="/api/v1/catalog/repositories/{id}/sync/runs/{run_id}",tag="repository-sync",params(("id"=Uuid,Path),("run_id"=Uuid,Path)),responses((status=200,body=SyncRun),(status=404)))]
+#[utoipa::path(get,operation_id="forge_repository_sync_run",path="/api/v1/catalog/repositories/{id}/sync/runs/{run_id}",tag="repository-sync",params(("id"=Uuid,Path),("run_id"=Uuid,Path),SyncQuery),responses((status=200,body=SyncRun),(status=404)))]
 pub async fn run(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     Path((id, run_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<SyncQuery>,
 ) -> Result<Json<SyncRun>, ApiError> {
     authorize(&state, id, &claims, false).await?;
-    Ok(Json(
-        store(&state)?.run(id, run_id).await.map_err(api_error)?,
-    ))
+    let run = store(&state)?.run(id, run_id).await.map_err(api_error)?;
+    if query
+        .connection_id
+        .is_some_and(|connection| connection != run.connection_id)
+    {
+        return Err(ApiError::not_found());
+    }
+    Ok(Json(run))
 }
 #[utoipa::path(get,operation_id="forge_repository_sync_refs",path="/api/v1/catalog/repositories/{id}/sync/runs/{run_id}/refs",tag="repository-sync",params(("id"=Uuid,Path),("run_id"=Uuid,Path),SyncQuery),responses((status=200,body=RefPage)))]
 pub async fn refs(
@@ -344,7 +370,13 @@ pub async fn refs(
     Query(query): Query<SyncQuery>,
 ) -> Result<Json<RefPage>, ApiError> {
     authorize(&state, id, &claims, false).await?;
-    store(&state)?.run(id, run_id).await.map_err(api_error)?;
+    let run = store(&state)?.run(id, run_id).await.map_err(api_error)?;
+    if query
+        .connection_id
+        .is_some_and(|connection| connection != run.connection_id)
+    {
+        return Err(ApiError::not_found());
+    }
     let (items, total) = store(&state)?
         .refs(run_id, query.limit.unwrap_or(50), query.offset.unwrap_or(0))
         .await

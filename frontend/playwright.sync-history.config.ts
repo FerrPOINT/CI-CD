@@ -8,7 +8,7 @@ if (baseURL.protocol !== 'http:' || baseURL.hostname !== '127.0.0.1'
 }
 
 export default defineConfig({
-  testDir: './e2e', testMatch: ['repository-sync-history.spec.ts', 'repository-sync-refs.spec.ts'], workers: 1,
+  testDir: './e2e', testMatch: ['repository-sync-history.spec.ts', 'repository-sync-refs.spec.ts', 'repository-sync-multiple.spec.ts'], workers: 1,
   timeout: 45_000, expect: { timeout: 10_000 }, reporter: 'list',
   outputDir: 'test-results/sync-history',
   use: { baseURL: baseURL.origin, locale: 'ru-RU', trace: 'retain-on-failure' },

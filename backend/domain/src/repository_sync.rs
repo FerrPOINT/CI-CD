@@ -136,6 +136,7 @@ pub struct CheckResult {
 #[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[schema(as = RepositorySyncSyncRun)]
 pub struct SyncRun {
+    pub connection_id: Uuid,
     pub id: Uuid,
     pub repository_id: Uuid,
     pub connection_version: i64,
@@ -157,6 +158,7 @@ pub struct RepositoryNamespace {
 #[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[schema(as = RepositorySyncConnection)]
 pub struct Connection {
+    pub id: Uuid,
     pub repository_id: Uuid,
     pub repository_name: String,
     pub namespace: Option<RepositoryNamespace>,

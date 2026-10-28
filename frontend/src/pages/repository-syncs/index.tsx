@@ -125,19 +125,21 @@ const offsetOf = (value: string | null) => {
   return Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
 };
 
-export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
+export function RepositorySyncsPage({ groupId, repositoryId }: { groupId?: string; repositoryId?: string }) {
   const [params, setParams] = useSearchParams();
   const { ref, malformed, all } = useNamespaceRef();
   const workspace = useWorkspace(malformed || (!groupId && all) ? null : ref);
   const group = groupId ?? (all ? undefined : workspace.data?.group_id);
   const [adding, setAdding] = useState(false);
   const [selection, setSelection] = useState("");
+  const [newConnection, setNewConnection] = useState(() => crypto.randomUUID());
   const query = new URLSearchParams();
   for (const key of ["search", "provider", "state"])
     if (params.get(key)) query.set(key, params.get(key)!);
   if (params.has("offset"))
     query.set("offset", String(offsetOf(params.get("offset"))));
   query.set("limit", "20");
+  if (repositoryId) query.set("repository_id", repositoryId);
   if (group) query.set("group_id", group);
   const enabled = !malformed && (all || !ref || !!group);
   const list = useQuery({
@@ -174,8 +176,13 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
     id: string,
     history = false,
     namespace?: SyncConnection["namespace"],
+    connectionId?: string,
   ) => {
     const next = new URLSearchParams(params);
+    next.set("connection_id", connectionId ?? newConnection);
+    next.delete("run_id");
+    next.delete("runs_offset");
+    next.delete("refs_offset");
     next.set("tab", history ? "history" : "connection");
     if (all && !groupId) next.set("project_scope", "all");
     else next.delete("project_scope");
@@ -192,14 +199,14 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Синхронизации"
-        context={<>Подключения репозиториев Forge к GitLab и GitHub.com.</>}
+        title={repositoryId ? "Синхронизации репозитория" : "Синхронизации"}
+        context={<>{repositoryId ? list.data?.items[0]?.repository_name : "Подключения репозиториев Forge к GitLab и GitHub.com."}</>}
         actions={
           <>
-            <Button onClick={() => setAdding(!adding)} aria-expanded={adding}>
+            {repositoryId ? <Button asChild><Link to={location(repositoryId)}><Plus aria-hidden size={16} />Добавить синхронизацию</Link></Button> : <Button onClick={() => { setAdding(!adding); setNewConnection(crypto.randomUUID()); }} aria-expanded={adding}>
               <Plus aria-hidden size={16} />
               Добавить синхронизацию
-            </Button>
+            </Button>}
           </>
         }
       />
@@ -237,7 +244,7 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
           {available.data && (
             <>
               <Label htmlFor="new-repository">
-                Доступный hosted-репозиторий без подключения
+                Репозиторий Forge
               </Label>
               <Select
                 id="new-repository"
@@ -351,7 +358,7 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
       {list.isPending && <LoadingState message="Загружаем синхронизации…" />}
       {list.data && (
         <>
-          <Table>
+          <Table className="min-w-[64rem]" tabIndex={0} aria-label="Подключения синхронизации">
             <caption className="sr-only">Список синхронизаций</caption>
             <TableHeader>
               <TableRow>
@@ -370,7 +377,7 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
             </TableHeader>
             <TableBody>
               {list.data.items.map((connection) => (
-                <TableRow key={connection.repository_id}>
+                <TableRow key={connection.id}>
                   <TableCell>
                     <Link
                       className="font-medium text-accent"
@@ -378,6 +385,7 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
                         connection.repository_id,
                         false,
                         connection.namespace,
+                        connection.id,
                       )}
                     >
                       {connection.repository_name}
@@ -433,6 +441,7 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
                         connection.repository_id,
                         true,
                         connection.namespace,
+                        connection.id,
                       )}
                     >
                       История
@@ -463,11 +472,23 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
 
 export function RepositorySyncPage() {
   const { id = "" } = useParams();
+  const [params] = useSearchParams();
+  // Old explicit tab links still target the original connection. The repository
+  // entry itself opens the complete server-paged list, never an arbitrary first row.
+  return params.has("connection_id") || params.has("tab")
+    ? <RepositorySyncDetail />
+    : <RepositorySyncsPage repositoryId={id} />;
+}
+
+function RepositorySyncDetail() {
+  const { id = "" } = useParams();
+  const [params] = useSearchParams();
+  const connectionId = params.get("connection_id") ?? id;
   const { ref, malformed } = useNamespaceRef();
   const connection = useQuery({
-    queryKey: ["repository-sync", id],
+    queryKey: ["repository-sync", id, connectionId],
     enabled: !malformed,
-    queryFn: ({ signal }) => repositorySync.get(id, signal),
+    queryFn: ({ signal }) => repositorySync.get(id, signal, connectionId),
     refetchInterval: 3000,
   });
   if (malformed) return <ErrorState message="Некорректная ссылка на проект." />;
@@ -492,7 +513,7 @@ export function RepositorySyncPage() {
   return (
     <>
       <RepositorySyncEditor
-        key={id}
+        key={`${id}:${connectionId}`}
         connection={connection.data}
         reload={() => connection.refetch()}
       />
@@ -562,13 +583,14 @@ export function RepositorySyncEditor({
         connection.repository_id,
         pending.current.payload,
         pending.current.key,
+        connection.id,
       );
       setVersion(saved.version);
       setDraft(saved.settings);
       setToken("");
       pending.current = null;
       setUncertain(false);
-      cache.setQueryData(["repository-sync", connection.repository_id], saved);
+      cache.setQueryData(["repository-sync", connection.repository_id, connection.id], saved);
       void cache.invalidateQueries({ queryKey: ["repository-syncs"] });
       setFeedback("Подключение сохранено");
     } catch (error) {
@@ -591,7 +613,7 @@ export function RepositorySyncEditor({
       const result = await repositorySync.check(connection.repository_id, {
         settings: draft,
         ...(token ? { token } : {}),
-      });
+      }, connection.id);
       setFeedback(result.message);
     } catch (error) {
       setFeedback(message(error));
@@ -604,7 +626,7 @@ export function RepositorySyncEditor({
     setFeedback("");
     runKey.current ??= crypto.randomUUID();
     try {
-      await repositorySync.start(connection.repository_id, runKey.current);
+      await repositorySync.start(connection.repository_id, runKey.current, connection.id);
       runKey.current = null;
       setRunUncertain(false);
       await reload();
@@ -632,7 +654,7 @@ export function RepositorySyncEditor({
     setParams(next);
   }
   const back = new URLSearchParams(params);
-  for (const key of ["tab", "run_id", "runs_offset", "refs_offset"])
+  for (const key of ["tab", "run_id", "runs_offset", "refs_offset", "connection_id"])
     back.delete(key);
   return (
     <div className="space-y-4">
@@ -912,6 +934,7 @@ export function RepositorySyncEditor({
         <TabsContent value="history">
           <SyncHistory
             repository={connection.repository_id}
+            connectionId={connection.id}
             active={!!connection.active_run}
           />
         </TabsContent>
@@ -964,9 +987,11 @@ export function RepositorySyncEditor({
                 try {
                   const saved = await repositorySync.get(
                     connection.repository_id,
+                    undefined,
+                    connection.id,
                   );
                   cache.setQueryData(
-                    ["repository-sync", connection.repository_id],
+                    ["repository-sync", connection.repository_id, connection.id],
                     saved,
                   );
                   setVersion(saved.version);
@@ -993,9 +1018,11 @@ export function RepositorySyncEditor({
 
 function SyncHistory({
   repository,
+  connectionId,
   active,
 }: {
   repository: string;
+  connectionId: string;
   active: boolean;
 }) {
   const cache = useQueryClient();
@@ -1005,15 +1032,15 @@ function SyncHistory({
   const runId = params.get("run_id") ?? "";
   const refsOffset = offsetOf(params.get("refs_offset"));
   const runs = useQuery({
-    queryKey: ["sync-runs", repository, offset],
-    queryFn: ({ signal }) => repositorySync.runs(repository, offset, signal),
+    queryKey: ["sync-runs", repository, connectionId, offset],
+    queryFn: ({ signal }) => repositorySync.runs(repository, offset, signal, connectionId),
     refetchInterval: active ? 3000 : false,
   });
   const refs = useQuery({
-    queryKey: ["sync-refs", repository, runId, refsOffset],
+    queryKey: ["sync-refs", repository, connectionId, runId, refsOffset],
     enabled: !!runId,
     queryFn: ({ signal }) =>
-      repositorySync.refs(repository, runId, refsOffset, signal),
+      repositorySync.refs(repository, runId, refsOffset, signal, connectionId),
     refetchInterval: active ? 3000 : false,
   });
   useEffect(() => {

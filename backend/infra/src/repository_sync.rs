@@ -23,7 +23,7 @@ fn json<T: serde::Serialize>(value: &T) -> Result<serde_json::Value, Error> {
     serde_json::to_value(value).map_err(|_| Error::Unavailable("Ошибка сериализации синхронизации"))
 }
 const CONNECTION_SELECT: &str = r#"
-SELECT jsonb_build_object('repository_id',r.id,'repository_name',COALESCE(g.slug||'/'||r.slug,r.slug),
+SELECT jsonb_build_object('id',c.id,'repository_id',r.id,'repository_name',COALESCE(g.slug||'/'||r.slug,r.slug),
 'namespace',CASE WHEN b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id) ELSE NULL END,
 'version',c.version,'settings',c.settings,'has_credential',true,
 'writable',($3 AND r.ready AND COALESCE(b.state,'active')='active'),
@@ -31,8 +31,8 @@ SELECT jsonb_build_object('repository_id',r.id,'repository_name',COALESCE(g.slug
 'worker_enabled',$4,'next_check_at',c.next_check_at,'active_run',to_jsonb(a),'last_run',to_jsonb(l))
 FROM repository_sync_connections c JOIN repository_catalog r ON r.id=c.repository_id
 LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id
-LEFT JOIN LATERAL (SELECT * FROM repository_sync_runs WHERE repository_id=r.id AND state IN ('queued','running','stopping','reconciling') ORDER BY created_at DESC LIMIT 1) a ON true
-LEFT JOIN LATERAL (SELECT * FROM repository_sync_runs WHERE repository_id=r.id AND finished_at IS NOT NULL AND settings->>'provider'=c.settings->>'provider' AND settings->>'instance_url'=c.settings->>'instance_url' AND settings->>'repository_path'=c.settings->>'repository_path' ORDER BY created_at DESC,id DESC LIMIT 1) l ON true
+LEFT JOIN LATERAL (SELECT * FROM repository_sync_runs WHERE connection_id=c.id AND state IN ('queued','running','stopping','reconciling') ORDER BY created_at DESC LIMIT 1) a ON true
+LEFT JOIN LATERAL (SELECT * FROM repository_sync_runs WHERE connection_id=c.id AND finished_at IS NOT NULL AND settings->>'provider'=c.settings->>'provider' AND settings->>'instance_url'=c.settings->>'instance_url' AND settings->>'repository_path'=c.settings->>'repository_path' ORDER BY created_at DESC,id DESC LIMIT 1) l ON true
 WHERE ($1::uuid IS NULL OR r.id=$1) AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM projects p WHERE p.id=$2 AND p.repository_id=r.id))
 "#;
 impl PgSyncStore {
@@ -63,14 +63,24 @@ impl PgSyncStore {
         Ok(())
     }
     pub async fn connection(&self, id: Uuid, access: Access) -> Result<Option<Connection>, Error> {
-        let value: Option<serde_json::Value> = sqlx::query_scalar(CONNECTION_SELECT)
-            .bind(Some(id))
-            .bind(access.project_id)
-            .bind(access.writable)
-            .bind(self.worker_enabled)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?;
+        self.connection_at(id, id, access).await
+    }
+    pub async fn connection_at(
+        &self,
+        id: Uuid,
+        connection: Uuid,
+        access: Access,
+    ) -> Result<Option<Connection>, Error> {
+        let value: Option<serde_json::Value> =
+            sqlx::query_scalar(&format!("{CONNECTION_SELECT} AND c.id=$5"))
+                .bind(Some(id))
+                .bind(access.project_id)
+                .bind(access.writable)
+                .bind(self.worker_enabled)
+                .bind(connection)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db)?;
         value.map(decode).transpose()
     }
     #[allow(clippy::too_many_arguments)]
@@ -84,6 +94,21 @@ impl PgSyncStore {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<Connection>, i64), Error> {
+        self.list_at(access, search, provider, state, group, limit, offset, None)
+            .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_at(
+        &self,
+        access: Access,
+        search: &str,
+        provider: &str,
+        state: &str,
+        group: Option<Uuid>,
+        limit: i64,
+        offset: i64,
+        repository: Option<Uuid>,
+    ) -> Result<(Vec<Connection>, i64), Error> {
         if access.machine && access.project_id.is_none() {
             return Err(Error::Forbidden);
         }
@@ -96,7 +121,7 @@ impl PgSyncStore {
         macro_rules! bound {
             ($q:expr) => {
                 sqlx::query_scalar($q)
-                    .bind(None::<Uuid>)
+                    .bind(repository)
                     .bind(access.project_id)
                     .bind(access.writable)
                     .bind(self.worker_enabled)
@@ -115,7 +140,7 @@ impl PgSyncStore {
             .await
             .map_err(db)?;
         let items: Vec<serde_json::Value> = bound!(&format!(
-            "{query} ORDER BY g.slug NULLS LAST,r.slug,r.id LIMIT $13 OFFSET $14"
+            "{query} ORDER BY g.slug NULLS LAST,r.slug,r.id,c.id LIMIT $13 OFFSET $14"
         ))
         .bind(limit.clamp(1, 100))
         .bind(offset.max(0))
@@ -144,13 +169,24 @@ impl PgSyncStore {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<SyncRun>, i64), Error> {
-        let total =
-            sqlx::query_scalar("SELECT count(*) FROM repository_sync_runs WHERE repository_id=$1")
-                .bind(repository)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(db)?;
-        let values:Vec<serde_json::Value>=sqlx::query_scalar("SELECT to_jsonb(r) FROM repository_sync_runs r WHERE repository_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3").bind(repository).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(&self.pool).await.map_err(db)?;
+        self.runs_at(repository, repository, limit, offset).await
+    }
+    pub async fn runs_at(
+        &self,
+        repository: Uuid,
+        connection: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<SyncRun>, i64), Error> {
+        let total = sqlx::query_scalar(
+            "SELECT count(*) FROM repository_sync_runs WHERE repository_id=$1 AND connection_id=$2",
+        )
+        .bind(repository)
+        .bind(connection)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db)?;
+        let values:Vec<serde_json::Value>=sqlx::query_scalar("SELECT to_jsonb(r) FROM repository_sync_runs r WHERE repository_id=$1 AND connection_id=$4 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3").bind(repository).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(connection).fetch_all(&self.pool).await.map_err(db)?;
         Ok((
             values.into_iter().map(decode).collect::<Result<_, _>>()?,
             total,
@@ -179,6 +215,16 @@ impl PgSyncStore {
         source: &str,
         operation: Option<(Uuid, Access)>,
     ) -> Result<SyncRun, Error> {
+        self.enqueue_at(repository, repository, source, operation)
+            .await
+    }
+    pub async fn enqueue_at(
+        &self,
+        repository: Uuid,
+        connection: Uuid,
+        source: &str,
+        operation: Option<(Uuid, Access)>,
+    ) -> Result<SyncRun, Error> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         if let Some((key, access)) = operation {
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,93))")
@@ -186,25 +232,25 @@ impl PgSyncStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
-            if let Some(row)=sqlx::query("SELECT repository_id,actor_id,kind,readback FROM repository_sync_operations WHERE operation_id=$1").bind(key).fetch_optional(&mut *tx).await.map_err(db)? {
-                if row.get::<Uuid,_>("repository_id")!=repository || row.get::<Uuid,_>("actor_id")!=access.actor_id || row.get::<String,_>("kind")!="run" {return Err(Error::Conflict("idempotency_conflict"));}
+            if let Some(row)=sqlx::query("SELECT connection_id,repository_id,actor_id,kind,readback FROM repository_sync_operations WHERE operation_id=$1").bind(key).fetch_optional(&mut *tx).await.map_err(db)? {
+                if row.get::<Uuid,_>("connection_id")!=connection || row.get::<Uuid,_>("repository_id")!=repository || row.get::<Uuid,_>("actor_id")!=access.actor_id || row.get::<String,_>("kind")!="run" {return Err(Error::Conflict("idempotency_conflict"));}
                 return decode(row.get("readback"));
             }
         }
-        let row=sqlx::query("SELECT version,settings FROM repository_sync_connections WHERE repository_id=$1 FOR UPDATE").bind(repository).fetch_optional(&mut *tx).await.map_err(db)?.ok_or(Error::NotFound)?;
+        let row=sqlx::query("SELECT version,settings FROM repository_sync_connections WHERE repository_id=$1 AND id=$2 FOR UPDATE").bind(repository).bind(connection).fetch_optional(&mut *tx).await.map_err(db)?.ok_or(Error::NotFound)?;
         let settings: Settings = decode(row.get("settings"))?;
         if settings.direction == Direction::Disabled {
             return Err(Error::Conflict("sync_disabled"));
         }
-        let old:Option<serde_json::Value>=sqlx::query_scalar("SELECT to_jsonb(r) FROM repository_sync_runs r WHERE repository_id=$1 AND state IN ('queued','running','stopping','reconciling')").bind(repository).fetch_optional(&mut *tx).await.map_err(db)?;
+        let old:Option<serde_json::Value>=sqlx::query_scalar("SELECT to_jsonb(r) FROM repository_sync_runs r WHERE repository_id=$1 AND connection_id=$2 AND state IN ('queued','running','stopping','reconciling')").bind(repository).bind(connection).fetch_optional(&mut *tx).await.map_err(db)?;
         let value = if let Some(old) = old {
             old
         } else {
-            sqlx::query_scalar("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state) VALUES($1,$2,$3,$4,$5,'queued') RETURNING to_jsonb(repository_sync_runs)")
-                .bind(Uuid::new_v4()).bind(repository).bind(row.get::<i64,_>("version")).bind(json(&settings)?).bind(source).fetch_one(&mut *tx).await.map_err(db)?
+            sqlx::query_scalar("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id) VALUES($1,$2,$3,$4,$5,'queued',$6) RETURNING to_jsonb(repository_sync_runs)")
+                .bind(Uuid::new_v4()).bind(repository).bind(row.get::<i64,_>("version")).bind(json(&settings)?).bind(source).bind(connection).fetch_one(&mut *tx).await.map_err(db)?
         };
         if let Some((key, access)) = operation {
-            sqlx::query("INSERT INTO repository_sync_operations(operation_id,repository_id,actor_id,kind,fingerprint,readback) VALUES($1,$2,$3,'run','manual',$4)").bind(key).bind(repository).bind(access.actor_id).bind(&value).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("INSERT INTO repository_sync_operations(operation_id,repository_id,actor_id,kind,fingerprint,readback,connection_id) VALUES($1,$2,$3,'run','manual',$4,$5)").bind(key).bind(repository).bind(access.actor_id).bind(&value).bind(connection).execute(&mut *tx).await.map_err(db)?;
         }
         tx.commit().await.map_err(db)?;
         decode(value)
@@ -215,11 +261,12 @@ impl PgSyncStore {
     }
     pub async fn schedule(&self) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(db)?;
-        let rows=sqlx::query("SELECT c.repository_id,c.settings,c.version,c.dirty FROM repository_sync_connections c JOIN repository_catalog r ON r.id=c.repository_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE (c.settings->>'automatic')::boolean AND c.settings->>'direction'<>'disabled' AND (c.dirty OR c.next_check_at<=now()) AND r.ready AND COALESCE(b.state,'active')='active' AND NOT EXISTS(SELECT 1 FROM repository_sync_runs run WHERE run.repository_id=c.repository_id AND run.state IN ('queued','running','stopping','reconciling')) ORDER BY c.next_check_at NULLS FIRST LIMIT 100 FOR UPDATE OF c SKIP LOCKED").fetch_all(&mut *tx).await.map_err(db)?;
+        let rows=sqlx::query("SELECT c.id,c.repository_id,c.settings,c.version,c.dirty FROM repository_sync_connections c JOIN repository_catalog r ON r.id=c.repository_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE (c.settings->>'automatic')::boolean AND c.settings->>'direction'<>'disabled' AND (c.dirty OR c.next_check_at<=now()) AND r.ready AND COALESCE(b.state,'active')='active' AND NOT EXISTS(SELECT 1 FROM repository_sync_runs run WHERE run.connection_id=c.id AND run.state IN ('queued','running','stopping','reconciling')) ORDER BY c.next_check_at NULLS FIRST LIMIT 100 FOR UPDATE OF c SKIP LOCKED").fetch_all(&mut *tx).await.map_err(db)?;
         for row in rows {
             let id: Uuid = row.get("repository_id");
-            sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state) VALUES($1,$2,$3,$4,$5,'queued')").bind(Uuid::new_v4()).bind(id).bind(row.get::<i64,_>("version")).bind(row.get::<serde_json::Value,_>("settings")).bind(if row.get::<bool,_>("dirty"){"git_change"}else{"schedule"}).execute(&mut *tx).await.map_err(db)?;
-            sqlx::query("UPDATE repository_sync_connections SET dirty=false,next_check_at=now()+make_interval(secs=>$2::double precision) WHERE repository_id=$1").bind(id).bind(self.interval_seconds as f64).execute(&mut *tx).await.map_err(db)?;
+            let connection: Uuid = row.get("id");
+            sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id) VALUES($1,$2,$3,$4,$5,'queued',$6)").bind(Uuid::new_v4()).bind(id).bind(row.get::<i64,_>("version")).bind(row.get::<serde_json::Value,_>("settings")).bind(if row.get::<bool,_>("dirty"){"git_change"}else{"schedule"}).bind(connection).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("UPDATE repository_sync_connections SET dirty=false,next_check_at=now()+make_interval(secs=>$2::double precision) WHERE id=$1").bind(connection).bind(self.interval_seconds as f64).execute(&mut *tx).await.map_err(db)?;
         }
         tx.commit().await.map_err(db)?;
         Ok(())
@@ -228,7 +275,23 @@ impl PgSyncStore {
         sqlx::query_as("SELECT run.id,run.repository_id,r.storage_name FROM repository_sync_runs run JOIN repository_catalog r ON r.id=run.repository_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE ((run.state='queued' AND r.ready AND COALESCE(b.state,'active')='active') OR (run.state IN ('running','stopping','reconciling') AND run.lease_until<now())) ORDER BY run.created_at LIMIT 100").fetch_all(&self.pool).await.map_err(db)
     }
     pub async fn claim(&self, id: Uuid, owner: Uuid) -> Result<Option<(SyncRun, i64)>, Error> {
-        let row=sqlx::query("UPDATE repository_sync_runs SET state=CASE WHEN state='queued' THEN 'running' ELSE 'reconciling' END,owner_id=$2,generation=generation+1,lease_until=now()+interval '60 seconds',started_at=COALESCE(started_at,now()) WHERE id=$1 AND (state='queued' OR (state IN ('running','stopping','reconciling') AND lease_until<now())) RETURNING to_jsonb(repository_sync_runs) AS value,generation").bind(id).bind(owner).fetch_optional(&self.pool).await.map_err(db)?;
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let repository: Option<Uuid> =
+            sqlx::query_scalar("SELECT repository_id FROM repository_sync_runs WHERE id=$1")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?;
+        let Some(repository) = repository else {
+            return Ok(None);
+        };
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,94))")
+            .bind(repository.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let row=sqlx::query("UPDATE repository_sync_runs SET state=CASE WHEN state='queued' THEN 'running' ELSE 'reconciling' END,owner_id=$2,generation=generation+1,lease_until=now()+interval '60 seconds',started_at=COALESCE(started_at,now()) WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM repository_sync_runs other WHERE other.repository_id=repository_sync_runs.repository_id AND other.id<>$1 AND other.state IN ('running','stopping','reconciling')) AND (state='queued' OR (state IN ('running','stopping','reconciling') AND lease_until<now())) RETURNING to_jsonb(repository_sync_runs) AS value,generation").bind(id).bind(owner).fetch_optional(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
         row.map(|row| Ok((decode(row.get("value"))?, row.get("generation"))))
             .transpose()
     }
@@ -242,7 +305,7 @@ impl PgSyncStore {
         owner: Uuid,
         generation: i64,
     ) -> Result<bool, Error> {
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_sync_runs run JOIN repository_sync_connections c ON c.repository_id=run.repository_id JOIN repository_catalog r ON r.id=c.repository_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE run.id=$1 AND run.owner_id=$2 AND run.generation=$3 AND run.lease_until>now() AND NOT run.cancel_requested AND c.version=run.connection_version AND c.settings->>'direction'<>'disabled' AND COALESCE(b.state,'active')='active')").bind(run.id).bind(owner).bind(generation).fetch_one(&self.pool).await.map_err(db)
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_sync_runs run JOIN repository_sync_connections c ON c.id=run.connection_id AND c.repository_id=run.repository_id JOIN repository_catalog r ON r.id=c.repository_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE run.id=$1 AND run.owner_id=$2 AND run.generation=$3 AND run.lease_until>now() AND NOT run.cancel_requested AND c.version=run.connection_version AND c.settings->>'direction'<>'disabled' AND COALESCE(b.state,'active')='active')").bind(run.id).bind(owner).bind(generation).fetch_one(&self.pool).await.map_err(db)
     }
     pub async fn record_plan(&self, run: Uuid, refs: &[RefResult]) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(db)?;
@@ -321,9 +384,45 @@ impl PgSyncStore {
         Ok(())
     }
 }
+pub struct ConnectionStore<'a> {
+    store: &'a PgSyncStore,
+    id: Uuid,
+}
+impl std::ops::Deref for ConnectionStore<'_> {
+    type Target = PgSyncStore;
+    fn deref(&self) -> &Self::Target {
+        self.store
+    }
+}
+impl PgSyncStore {
+    pub fn scoped(&self, connection: Uuid) -> ConnectionStore<'_> {
+        ConnectionStore {
+            store: self,
+            id: connection,
+        }
+    }
+}
 impl Store for PgSyncStore {
     async fn credential(&self, repository: Uuid) -> Result<Option<(Settings, String)>, Error> {
-        let row=sqlx::query("SELECT settings,encrypted_credential FROM repository_sync_connections WHERE repository_id=$1").bind(repository).fetch_optional(&self.pool).await.map_err(db)?;
+        self.scoped(repository).credential(repository).await
+    }
+    async fn save(
+        &self,
+        repository: Uuid,
+        operation: Uuid,
+        access: Access,
+        input: &SaveConnection,
+        encrypted: Option<&str>,
+        fingerprint: &str,
+    ) -> Result<Connection, Error> {
+        self.scoped(repository)
+            .save(repository, operation, access, input, encrypted, fingerprint)
+            .await
+    }
+}
+impl Store for ConnectionStore<'_> {
+    async fn credential(&self, repository: Uuid) -> Result<Option<(Settings, String)>, Error> {
+        let row=sqlx::query("SELECT settings,encrypted_credential FROM repository_sync_connections WHERE repository_id=$1 AND id=$2").bind(repository).bind(self.id).fetch_optional(&self.pool).await.map_err(db)?;
         row.map(|row| {
             Ok((
                 decode(row.get("settings"))?,
@@ -341,14 +440,17 @@ impl Store for PgSyncStore {
         encrypted: Option<&str>,
         fingerprint: &str,
     ) -> Result<Connection, Error> {
+        if self.id.is_nil() {
+            return Err(Error::Invalid("Некорректный UUID подключения".into()));
+        }
         let mut tx = self.pool.begin().await.map_err(db)?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,93))")
             .bind(operation.to_string())
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        if let Some(row)=sqlx::query("SELECT repository_id,actor_id,kind,fingerprint,readback FROM repository_sync_operations WHERE operation_id=$1").bind(operation).fetch_optional(&mut *tx).await.map_err(db)? {
-            if row.get::<Uuid,_>("repository_id")!=repository || row.get::<Uuid,_>("actor_id")!=access.actor_id || row.get::<String,_>("kind")!="save" || row.get::<String,_>("fingerprint")!=fingerprint {return Err(Error::Conflict("idempotency_conflict"));}
+        if let Some(row)=sqlx::query("SELECT connection_id,repository_id,actor_id,kind,fingerprint,readback FROM repository_sync_operations WHERE operation_id=$1").bind(operation).fetch_optional(&mut *tx).await.map_err(db)? {
+            if row.get::<Uuid,_>("connection_id")!=self.id || row.get::<Uuid,_>("repository_id")!=repository || row.get::<Uuid,_>("actor_id")!=access.actor_id || row.get::<String,_>("kind")!="save" || row.get::<String,_>("fingerprint")!=fingerprint {return Err(Error::Conflict("idempotency_conflict"));}
             return decode(row.get("readback"));
         }
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,94))")
@@ -356,7 +458,16 @@ impl Store for PgSyncStore {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let row=sqlx::query("SELECT version,settings,encrypted_credential FROM repository_sync_connections WHERE repository_id=$1 FOR UPDATE").bind(repository).fetch_optional(&mut *tx).await.map_err(db)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,95))")
+            .bind(self.id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let row=sqlx::query("SELECT version,settings,encrypted_credential FROM repository_sync_connections WHERE repository_id=$1 AND id=$2 FOR UPDATE").bind(repository).bind(self.id).fetch_optional(&mut *tx).await.map_err(db)?;
+        let foreign: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_sync_connections WHERE id=$1 AND repository_id<>$2)").bind(self.id).bind(repository).fetch_one(&mut *tx).await.map_err(db)?;
+        if foreign {
+            return Err(Error::NotFound);
+        }
         let version = row
             .as_ref()
             .map(|r| r.get::<i64, _>("version"))
@@ -382,7 +493,7 @@ impl Store for PgSyncStore {
                     .get("encrypted_credential")
             }
         };
-        let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_sync_runs WHERE repository_id=$1 AND state IN ('queued','running','stopping','reconciling'))").bind(repository).fetch_one(&mut *tx).await.map_err(db)?;
+        let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_sync_runs WHERE repository_id=$1 AND connection_id=$2 AND state IN ('queued','running','stopping','reconciling'))").bind(repository).bind(self.id).fetch_one(&mut *tx).await.map_err(db)?;
         if active {
             let mut disabling = old.ok_or(Error::NotFound)?;
             disabling.direction = Direction::Disabled;
@@ -390,20 +501,22 @@ impl Store for PgSyncStore {
                 return Err(Error::Conflict("sync_running"));
             }
         }
-        sqlx::query("INSERT INTO repository_sync_connections(repository_id,version,settings,encrypted_credential,next_check_at) VALUES($1,1,$2,$3,CASE WHEN $4 THEN now()+make_interval(secs=>$5::double precision) ELSE NULL END) ON CONFLICT(repository_id) DO UPDATE SET version=repository_sync_connections.version+1,settings=EXCLUDED.settings,encrypted_credential=EXCLUDED.encrypted_credential,next_check_at=EXCLUDED.next_check_at,dirty=false,updated_at=now()")
-            .bind(repository).bind(json(&input.settings)?).bind(credential).bind(input.settings.automatic && input.settings.direction!=Direction::Disabled).bind(self.interval_seconds as f64).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO repository_sync_connections(repository_id,id,version,settings,encrypted_credential,next_check_at) VALUES($1,$6,1,$2,$3,CASE WHEN $4 THEN now()+make_interval(secs=>$5::double precision) ELSE NULL END) ON CONFLICT(id) DO UPDATE SET version=repository_sync_connections.version+1,settings=EXCLUDED.settings,encrypted_credential=EXCLUDED.encrypted_credential,next_check_at=EXCLUDED.next_check_at,dirty=false,updated_at=now()")
+            .bind(repository).bind(json(&input.settings)?).bind(credential).bind(input.settings.automatic && input.settings.direction!=Direction::Disabled).bind(self.interval_seconds as f64).bind(self.id).execute(&mut *tx).await.map_err(db)?;
         if input.settings.direction == Direction::Disabled {
-            sqlx::query("UPDATE repository_sync_runs SET cancel_requested=true,state=CASE WHEN state='queued' THEN 'canceled' ELSE 'stopping' END,finished_at=CASE WHEN state='queued' THEN now() ELSE finished_at END WHERE repository_id=$1 AND state IN ('queued','running','stopping','reconciling')").bind(repository).execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("UPDATE repository_sync_runs SET cancel_requested=true,state=CASE WHEN state='queued' THEN 'canceled' ELSE 'stopping' END,finished_at=CASE WHEN state='queued' THEN now() ELSE finished_at END WHERE repository_id=$1 AND connection_id=$2 AND state IN ('queued','running','stopping','reconciling')").bind(repository).bind(self.id).execute(&mut *tx).await.map_err(db)?;
         }
-        let value: serde_json::Value = sqlx::query_scalar(CONNECTION_SELECT)
-            .bind(Some(repository))
-            .bind(access.project_id)
-            .bind(access.writable)
-            .bind(self.worker_enabled)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
-        sqlx::query("INSERT INTO repository_sync_operations(operation_id,repository_id,actor_id,kind,fingerprint,readback) VALUES($1,$2,$3,'save',$4,$5)").bind(operation).bind(repository).bind(access.actor_id).bind(fingerprint).bind(&value).execute(&mut *tx).await.map_err(db)?;
+        let value: serde_json::Value =
+            sqlx::query_scalar(&format!("{CONNECTION_SELECT} AND c.id=$5"))
+                .bind(Some(repository))
+                .bind(access.project_id)
+                .bind(access.writable)
+                .bind(self.worker_enabled)
+                .bind(self.id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+        sqlx::query("INSERT INTO repository_sync_operations(operation_id,repository_id,actor_id,kind,fingerprint,readback,connection_id) VALUES($1,$2,$3,'save',$4,$5,$6)").bind(operation).bind(repository).bind(access.actor_id).bind(fingerprint).bind(&value).bind(self.id).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)?;
         decode(value)
     }

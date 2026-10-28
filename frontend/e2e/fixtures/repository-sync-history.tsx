@@ -8,6 +8,7 @@ import type { SyncConnection } from '../../src/api/repository-sync'
 import '../../src/index.css'
 
 const connection: SyncConnection = {
+  id: 'repo',
   repository_id: '00000000-0000-4000-8000-000000000001',
   repository_name: 'fixture/service', namespace: null, version: 1,
   settings: { provider: 'github', instance_url: 'https://github.com',

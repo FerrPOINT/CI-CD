@@ -1,5 +1,7 @@
 # Дата-модель Forge CI/CD
 
+Несколько подключений GitHub/GitLab на hosted-репозиторий: [ADR-0040](adr/0040-multiple-repository-sync-connections.md). Стабильный connection UUID, раздельные настройки/credentials/история и последовательная запись в Git. Query `connection_id` выбирает подключение, `repository_id` фильтрует общий список до пагинации. Миграция 0106 сохраняет существующие данные и original-key readback.
+
 Source migration0105 добавляет identity_legacy_issuer, identity_legacy_aliases,
 identity_deletion_operations, identity_fence_epoch и reference revision sequence.
 У audit/release/approval появляются nullable typed identity_refs; старые DTO

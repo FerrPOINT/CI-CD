@@ -190,6 +190,115 @@ fn settings(direction: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn multiple_sync_http_selects_exact_connection_and_rejects_foreign_history() {
+    let f = HttpFixture::new().await;
+    let repository = f.repositories[0];
+    let connection = Uuid::new_v4();
+    let base = format!("/api/v1/catalog/repositories/{repository}/sync");
+    let command = serde_json::json!({"expected_version":0,"settings":settings("both"),"token":"fictional-provider-contract-multiple"});
+    let mut queued = Vec::new();
+    for id in [repository, connection] {
+        let url = format!("{base}?connection_id={id}");
+        let key = Uuid::new_v4().to_string();
+        let (status, saved) = f
+            .raw(0, "PUT", url.clone(), Some(command.clone()), Some(&key))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(saved["id"], id.to_string());
+        assert_eq!(
+            f.raw(0, "GET", url, None, None).await,
+            (StatusCode::OK, saved)
+        );
+        let (status, run) = f
+            .raw(
+                0,
+                "POST",
+                format!("{base}/runs?connection_id={id}"),
+                None,
+                Some(&Uuid::new_v4().to_string()),
+            )
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(run["connection_id"], id.to_string());
+        queued.push(run);
+    }
+    let (status, list) = f
+        .raw(
+            0,
+            "GET",
+            format!("/api/v1/repository-syncs?repository_id={repository}&limit=1"),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["total"], 2);
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    let run = queued[0]["id"].as_str().unwrap();
+    for suffix in [format!("/runs/{run}"), format!("/runs/{run}/refs")] {
+        assert_eq!(
+            f.raw(
+                0,
+                "GET",
+                format!("{base}{suffix}?connection_id={connection}"),
+                None,
+                None
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    let (status, history) = f
+        .raw(
+            0,
+            "GET",
+            format!("{base}/runs?connection_id={connection}"),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(history["total"], 1);
+    assert_eq!(history["items"][0], queued[1]);
+    let mut update = command;
+    update["expected_version"] = serde_json::json!(1);
+    update["settings"]["direction"] = serde_json::json!("disabled");
+    update.as_object_mut().unwrap().remove("token");
+    assert_eq!(
+        f.raw(
+            0,
+            "PUT",
+            format!("{base}?connection_id={connection}"),
+            Some(update),
+            Some(&Uuid::new_v4().to_string())
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, original) = f
+        .raw(0, "GET", format!("{base}/runs/{run}"), None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(original["state"], "queued");
+    let foreign = f.repositories[1];
+    assert_eq!(
+        f.raw(
+            2,
+            "POST",
+            format!("/api/v1/catalog/repositories/{foreign}/sync/runs?connection_id={connection}"),
+            None,
+            Some(&Uuid::new_v4().to_string())
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    f.pool.close().await;
+}
+
+#[tokio::test]
 async fn operation_keys_reject_other_authorized_actor_and_repository_over_http() {
     let f = HttpFixture::new().await;
     let save_key = Uuid::new_v4().to_string();

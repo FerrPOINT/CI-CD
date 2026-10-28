@@ -48,7 +48,7 @@ pub async fn supervisor(pool: PgPool, config: crate::config::RuntimeConfig) {
                 if tasks.len() >= config.git_sync.concurrency {
                     break;
                 }
-                if inflight.contains(&id) {
+                if inflight.contains(&repository) {
                     continue;
                 }
                 // Probe without holding DB/admission locks or using worker capacity.
@@ -68,14 +68,14 @@ pub async fn supervisor(pool: PgPool, config: crate::config::RuntimeConfig) {
                 let store = store.clone();
                 let config = config.clone();
                 let admission = admission.clone();
-                inflight.insert(id);
+                inflight.insert(repository);
                 tasks.spawn(async move {
                     if let Err(error) =
                         execute(&store, &admission, &config, id, repository, &storage).await
                     {
                         tracing::warn!(%id,%error,"sync run will be reconciled");
                     }
-                    id
+                    repository
                 });
             }
         }
@@ -263,6 +263,7 @@ async fn execute_claimed(
     namespace_writable: bool,
 ) -> Result<(String, Option<String>), Error> {
     let (_, encrypted) = store
+        .scoped(run.connection_id)
         .credential(run.repository_id)
         .await?
         .ok_or(Error::NotFound)?;
@@ -556,6 +557,9 @@ async fn deliver_event(
     repository: Uuid,
     reference: &RefResult,
 ) -> Result<(), Error> {
+    // An accepted inbound update is also a local change for other automatic
+    // connections. Durable dirty flags coalesce retries; equal refs end the loop.
+    store.signal(repository).await?;
     let sha = reference
         .new_sha
         .as_deref()

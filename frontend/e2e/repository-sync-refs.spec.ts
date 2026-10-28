@@ -7,7 +7,7 @@ test.skip(process.env.FORGE_SYNC_HISTORY_FIXTURE !== '1', 'Explicit isolated Vit
 const repository = '00000000-0000-4000-8000-000000000001'
 const runId = '00000000-0000-4000-8000-000000000002'
 const run: SyncRun = {
-  id: runId, repository_id: repository, source: 'manual', state: 'success',
+  connection_id: 'repo', id: runId, repository_id: repository, source: 'manual', state: 'success',
   connection_version: 1, cancel_requested: false, created_at: '2026-10-21T10:00:00Z',
   finished_at: '2026-10-21T10:00:01Z',
   settings: { provider: 'github', instance_url: 'https://github.com',
