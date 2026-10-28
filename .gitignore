@@ -11,3 +11,16 @@ backend/target-cache*/
 
 # Incremental TypeScript compiler metadata.
 *.tsbuildinfo
+
+# Disposable artifacts: enforced by scripts/check_repository_hygiene.py
+node_modules/
+.pnpm-store/
+.venv/
+.local/
+.worktree/
+.worktrees/
+worktree/
+worktrees/
+target/
+target-stage/
+target-stable/

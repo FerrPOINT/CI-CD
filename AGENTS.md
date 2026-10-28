@@ -329,3 +329,10 @@ commit старой страницы; live append не подтверждает 
 completion.cancel() отменяет restore без навигации. Scope — ресурс/фильтр;
 загрузка, порядок, follow/unread и active tab остаются у продукта. Одиночный
 scrollIntoView к предметной записи не требует новой обёртки.
+
+## Проверка Git-гигиены
+
+Перед коммитом: `python3 -B scripts/check_repository_hygiene.py --index`.
+Перед публикацией проверять точный кандидат через `--ref <commit>`. Установка
+hooks и допустимые артефакты: [правила](docs/REPOSITORY_HYGIENE.md).
+Копии проверки принадлежат Base; SDK/UI pins не меняются.
