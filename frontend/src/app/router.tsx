@@ -89,9 +89,7 @@ export const appRoutes = [
   {
     element: (
       <AuthProvider>
-        <CurrentApplicationAccess>
-          <Outlet />
-        </CurrentApplicationAccess>
+        <Outlet />
       </AuthProvider>
     ),
     children: [
@@ -99,7 +97,11 @@ export const appRoutes = [
         element: <ProtectedRoute />,
         children: [
           {
-            element: <AppShell />,
+            element: (
+              <CurrentApplicationAccess>
+                <AppShell />
+              </CurrentApplicationAccess>
+            ),
             children: [
               { path: '/namespace', element: <NamespaceRedirect /> },
               { path: '/workspaces/:registry/:namespace/*', element: withSuspense(<WorkspacePage />) },
