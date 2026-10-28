@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
 # Stages the sibling services-base checkout so the pdlc-auth-core path
 # dependency (../../../services-base/...) resolves.
@@ -28,7 +29,7 @@ RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src 
  && printf 'fn main() {}\n' > migration/src/main.rs \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner \
  && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
-COPY CI-CD/backend/src ./src
+COPY --exclude=**/src/bin/tests/forge_runner.rs --exclude=**/src/bin/tests/forge_delivery.rs CI-CD/backend/src ./src
 COPY CI-CD/backend/domain/src domain/src
 COPY CI-CD/backend/app/src app/src
 COPY CI-CD/backend/infra/src infra/src

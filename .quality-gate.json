@@ -41,13 +41,18 @@
       ".quality-gate.json",
       ".quality-tooling-revision",
       ".github/workflows/**",
-      "justfile"
+      "justfile",
+      "backend/src/bin/forge-runner.rs",
+      "backend/src/bin/tests/forge_runner.rs",
+      "backend/src/bin/forge-delivery.rs",
+      "backend/src/bin/tests/forge_delivery.rs"
     ],
     "cli": [
       "backend/cli/**"
     ],
     "delivery": [
-      "backend/src/bin/forge-delivery.rs"
+      "backend/src/bin/forge-delivery.rs",
+      "backend/src/bin/tests/forge_delivery.rs"
     ],
     "pg-migrate": [
       "backend/src/bin/forge-pg-migrate.rs"
@@ -57,6 +62,41 @@
     ]
   },
   "gates": [
+    {
+      "id": "tooling:bin-test-inputs",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_bin_test_inputs",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_bin_test_inputs.py",
+        "backend/Cargo.toml",
+        "backend/src/bin/forge-runner.rs",
+        "backend/src/bin/tests/forge_runner.rs",
+        "backend/src/bin/forge-delivery.rs",
+        "backend/src/bin/tests/forge_delivery.rs",
+        "backend/Dockerfile",
+        "backend/Dockerfile.umbrella",
+        ".quality-gate.json",
+        "scripts/vendor/base_quality_selection.py"
+      ],
+      "cacheable": true,
+      "execution_slot": "none",
+      "test_tier": "static"
+    },
     {
       "id": "tooling:quality-routes",
       "component": "tooling",
