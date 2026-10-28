@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -267,11 +268,83 @@ def verify(root, artifact, expected_sha256, *, node, pnpm, environment=None):
     return manifest
 
 
+def workflow_jobs(content):
+    sections = re.split(r'\n  ([A-Za-z0-9_-]+):\n', content.split('\njobs:\n', 1)[-1])
+    return dict(zip(sections[1::2], sections[2::2], strict=True))
+
+
+def check_generation_ci(root, producer):
+    """Git cannot prove parity of ignored generated files; retain their drift gate."""
+    root = Path(root)
+    path = checked_path(root / '.quality-gate.json')
+    if path.stat().st_size > METADATA_BYTES:
+        raise ValueError('Product generation metadata exceeds its byte budget')
+    quality = json.loads(path.read_text(encoding='utf-8-sig'))
+    profile = quality.get('frontend_generation')
+    if profile is None:
+        return
+    names = quality.get('frontend_generated')
+    if (not isinstance(profile, dict) or profile.get('schema') != 'base-frontend-generation/v1'
+            or not isinstance(names, list) or not names or len(names) > MAX_FILES):
+        raise ValueError('Explicit generated output policy required')
+    for name in names:
+        if (not isinstance(name, str) or not name or '\\' in name or ':' in name
+                or any(ord(c) < 32 or ord(c) == 127 for c in name)
+                or Path(name).is_absolute() or name != Path(name).as_posix()
+                or any(part in ('.', '..') for part in Path(name).parts)):
+            raise ValueError('Unsafe generated output policy path')
+    full = ['frontend/' + name for name in ('pnpm-lock.yaml', *names)]
+    tracked = set(git(root, '--literal-pathspecs', 'ls-files', '-z', '--', *full).split('\0')) - {''}
+    if full[0] not in tracked:
+        raise ValueError('Frontend lockfile must remain tracked')
+    remaining = [name for name in full[1:] if name not in tracked]
+    ignored = set()
+    if remaining:
+        result = subprocess.run(['git', '-C', str(root), 'check-ignore', '-z', '--stdin'],
+                                input=('\0'.join(remaining) + '\0').encode('utf-8'), capture_output=True)
+        if result.returncode not in (0, 1):
+            raise ValueError('Cannot inspect generated output Git policy')
+        ignored = set(result.stdout.decode('utf-8').split('\0')) - {''}
+        if set(remaining) != ignored:
+            raise ValueError('Generated output must be tracked or explicitly ignored')
+    producers = {'ci.yml': producer}
+    release = root / '.github/workflows/release.yml'
+    if release.is_file():
+        producers['release.yml'] = workflow_jobs(release.read_text(encoding='utf-8')).get('frontend', '')
+    for filename, job in producers.items():
+        commands = set()
+        for line in job.splitlines():
+            line = line.strip().removeprefix('- run: ').removeprefix('run: ')
+            if line.startswith(('git ', 'test ', 'pnpm ')):
+                # A failed non-final command in an && list does not trigger
+                # bash errexit. These mandatory checks must stand alone.
+                commands.add(tuple(shlex.split(line)))
+        required = set().union(*(set(row[3:]) for row in commands
+                                 if row[:3] == ('git', 'ls-files', '--error-unmatch')))
+        compared = set().union(*(set(row[3:]) for row in commands
+                                 if row[:3] == ('git', 'diff', '--exit-code')))
+        if 'pnpm-lock.yaml' not in required & compared:
+            raise ValueError(filename + ': lockfile requires Git drift checks')
+        for name, full_name in zip(names, full[1:], strict=True):
+            if full_name in tracked:
+                if name not in required & compared:
+                    raise ValueError(filename + ': tracked generated output requires Git drift checks')
+                continue
+            if name in required:
+                raise ValueError(filename + ': ignored generated output cannot be required as tracked')
+            if ('pnpm', 'openapi:check') not in commands:
+                raise ValueError(filename + ': ignored generated output needs independent OpenAPI parity')
+            guards = {('test', '-f', name), ('test', '!', '-L', name), ('test', '-s', name)}
+            if not guards <= commands:
+                raise ValueError(filename + ': generated output requires regular nonempty file guards')
+            if ('git', 'check-ignore', '-q', '--', name) not in commands:
+                raise ValueError(filename + ': ignored output requires its explicit Git ignore guard')
+
+
 def check_ci(root):
     """Lint the canonical handoff job shape, not arbitrary YAML semantics."""
     content = (Path(root) / '.github/workflows/ci.yml').read_text(encoding='utf-8')
-    sections = re.split(r'\n  ([A-Za-z0-9_-]+):\n', content.split('\njobs:\n', 1)[-1])
-    jobs = dict(zip(sections[1::2], sections[2::2], strict=True))
+    jobs = workflow_jobs(content)
     if not {'frontend', 'frontend-package'} <= jobs.keys():
         raise ValueError('Frontend CI requires producer and packaging jobs')
     producer, consumer = jobs['frontend'], jobs['frontend-package']
@@ -301,6 +374,7 @@ def check_ci(root):
     for name, value in re.findall(r'^      (' + environment + r'): (.+)$', producer, re.MULTILINE):
         if '\n      ' + name + ': ' + value not in consumer:
             raise ValueError('Frontend packaging must preserve producer build environment')
+    check_generation_ci(root, producer)
     return {'status': 'PASS', 'node_version': node[0], 'application_compile_steps': 1,
             'packaging_installs_or_compiles': False}
 
