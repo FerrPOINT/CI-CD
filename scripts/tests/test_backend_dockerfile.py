@@ -33,6 +33,51 @@ def staged_paths(
 
 
 class BackendDockerfileTests(unittest.TestCase):
+    def test_sdk_copy_matches_production_path_graph_and_preserves_cli_metadata(self):
+        import tomllib
+
+        product = DOCKERFILE.parents[1]
+        backend, base = product / 'backend', product.parent / 'services-base'
+        workspace = tomllib.loads((backend / 'Cargo.toml').read_text(encoding='utf-8'))
+        pending, seen, required = [backend], set(), set()
+        while pending:
+            directory = pending.pop().resolve()
+            if directory in seen:
+                continue
+            seen.add(directory)
+            manifest = tomllib.loads((directory / 'Cargo.toml').read_text(encoding='utf-8'))
+            for table in [manifest, *manifest.get('target', {}).values()]:
+                for kind in ('dependencies', 'build-dependencies'):
+                    for name, dependency in table.get(kind, {}).items():
+                        if not isinstance(dependency, dict):
+                            continue
+                        owner = directory
+                        if dependency.get('workspace'):
+                            dependency = workspace['workspace']['dependencies'][name]
+                            owner = backend
+                        if not isinstance(dependency, dict) or 'path' not in dependency:
+                            continue
+                        path = (owner / dependency['path']).resolve()
+                        if path.is_relative_to(base):
+                            required.add(path.relative_to(base).as_posix())
+                        else:
+                            self.assertTrue(path.is_relative_to(backend), 'Unreviewed local source: ' + str(path))
+                            pending.append(path)
+        self.assertEqual(required, {'base-modules/rust/pdlc-auth-core',
+                                    'base-modules/rust/pdlc-shared',
+                                    'base-modules/rust/pdlc-telemetry'})
+        self.assertNotIn((backend / 'cli').resolve(), seen)
+        cli = tomllib.loads((backend / 'cli/Cargo.toml').read_text(encoding='utf-8'))
+        self.assertEqual(cli['dependencies']['pdlc-cli-core']['path'],
+                         '../../../services-base/base-modules/rust/pdlc-cli-core')
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            with self.subTest(recipe=name):
+                text = (backend / name).read_text(encoding='utf-8')
+                copied = set(re.findall(r'^COPY services-base/(base-modules/rust\S*)\s', text, re.M))
+                self.assertEqual(copied, required | {'base-modules/rust/pdlc-cli-core/Cargo.toml'})
+                self.assertIn('compile_error!("metadata-only pdlc-cli-core must not be compiled");', text)
+                self.assertIn('> /services-base/base-modules/rust/pdlc-cli-core/src/lib.rs', text)
+
     def test_embedded_workspace_validators_are_staged_in_both_recipes(self) -> None:
         root = DOCKERFILE.parents[1]
         source = (root / "backend/src/runner_image_build/workspace_deploy.rs").read_text(encoding="utf-8")

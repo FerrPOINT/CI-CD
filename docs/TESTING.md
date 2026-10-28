@@ -27,3 +27,9 @@ Server image сохраняет `cicd-server` и `forge-runner`; отдельн�
 Existing tooling entrypoint выбирает этот source contract. Native locked/layer/
 guard/CLI qualification остаётся на общей финальной вехе; source checks её
 не заменяют. Full candidate key/export и SDK/UI/tooling pins этим не сужаются.
+
+Modular SDK в server recipes копируется тремя полными production деревьями
+`pdlc-auth-core`, `pdlc-shared`, `pdlc-telemetry`; `pdlc-cli-core` сохраняет только
+manifest и lib guard. Source contract: `python -B -m unittest scripts.tests.test_backend_dockerfile.BackendDockerfileTests.test_sdk_copy_matches_production_path_graph_and_preserves_cli_metadata`.
+Отдельные CLI/messaging consumers и full SDK export сохраняются; actual layer/
+resolver/guard и old-mtime checks относятся к финальной native квалификации.
