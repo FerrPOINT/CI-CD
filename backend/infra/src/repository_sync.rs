@@ -272,7 +272,24 @@ impl PgSyncStore {
         Ok(())
     }
     pub async fn candidates(&self) -> Result<Vec<(Uuid, Uuid, String)>, Error> {
-        sqlx::query_as("SELECT run.id,run.repository_id,r.storage_name FROM repository_sync_runs run JOIN repository_catalog r ON r.id=run.repository_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE ((run.state='queued' AND r.ready AND COALESCE(b.state,'active')='active') OR (run.state IN ('running','stopping','reconciling') AND run.lease_until<now())) ORDER BY run.created_at LIMIT 100").fetch_all(&self.pool).await.map_err(db)
+        // A queued sibling must never hide the repository's unresolved writer:
+        // supervisor deduplicates repositories, while claim correctly refuses it.
+        // Deduplicate before LIMIT so a large connection backlog cannot consume
+        // the whole batch and starve independent repositories.
+        sqlx::query_as(r#"
+            WITH candidates AS (
+                SELECT DISTINCT ON (run.repository_id) run.id,run.repository_id,r.storage_name,run.created_at
+                FROM repository_sync_runs run JOIN repository_catalog r ON r.id=run.repository_id
+                LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id
+                WHERE (run.state='queued' AND r.ready AND COALESCE(b.state,'active')='active'
+                    AND NOT EXISTS(SELECT 1 FROM repository_sync_runs writer
+                        WHERE writer.repository_id=run.repository_id
+                        AND writer.state IN ('running','stopping','reconciling')))
+                    OR (run.state IN ('running','stopping','reconciling') AND run.lease_until<now())
+                ORDER BY run.repository_id,run.created_at,run.id
+            )
+            SELECT id,repository_id,storage_name FROM candidates ORDER BY created_at,id LIMIT 100
+        "#).fetch_all(&self.pool).await.map_err(db)
     }
     pub async fn claim(&self, id: Uuid, owner: Uuid) -> Result<Option<(SyncRun, i64)>, Error> {
         let mut tx = self.pool.begin().await.map_err(db)?;

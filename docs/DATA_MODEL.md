@@ -2,6 +2,12 @@
 
 Несколько подключений GitHub/GitLab на hosted-репозиторий: [ADR-0040](adr/0040-multiple-repository-sync-connections.md). Стабильный connection UUID, раздельные настройки/credentials/история и последовательная запись в Git. Query `connection_id` выбирает подключение, `repository_id` фильтрует общий список до пагинации. Миграция 0106 сохраняет существующие данные и original-key readback.
 
+Worker выбирает один исполнимый запуск каждого репозитория до общего `LIMIT 100`.
+Queued не выбирается при другом running/stopping/reconciling этого репозитория,
+включая истёкший lease: сначала восстанавливается исходная запись. При одинаковом
+времени создания порядок задаёт UUID; существующие индексы истории и единственного
+активного writer сохраняются.
+
 Source migration0105 добавляет identity_legacy_issuer, identity_legacy_aliases,
 identity_deletion_operations, identity_fence_epoch и reference revision sequence.
 У audit/release/approval появляются nullable typed identity_refs; старые DTO

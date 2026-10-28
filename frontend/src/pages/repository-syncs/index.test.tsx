@@ -106,6 +106,41 @@ describe('production repository synchronization', () => {
     expect(url.searchParams.get('connection_id')).not.toBe(connection.id)
     expect(url.searchParams.get('project_scope')).toBe('all')
   })
+  it('does not carry credentials, drafts or an uncertain save operation into another connection', async () => {
+    const second: SyncConnection = {
+      ...connection,
+      id: 'other-connection',
+      settings: { ...connection.settings, repository_path: 'team/other' },
+    }
+    vi.spyOn(repositorySync, 'list').mockResolvedValue({ items: [connection, second], total: 2 })
+    vi.spyOn(repositorySync, 'get').mockImplementation(async (_repository, _signal, id) => id === second.id ? second : connection)
+    const save = vi.spyOn(repositorySync, 'save')
+      .mockRejectedValueOnce(new ApiError({ kind: 'network', message: 'Failed to fetch' }))
+      .mockResolvedValueOnce({ ...second, version: 2 })
+    mount(<Routes>
+      <Route path="/repository-syncs" element={<RepositorySyncsPage />} />
+      <Route path="/catalog/repositories/:id/sync" element={<RepositorySyncPage />} />
+    </Routes>, '/catalog/repositories/repo/sync?project_scope=all&connection_id=repo')
+    fireEvent.change(await screen.findByLabelText('Токен доступа'), { target: { value: 'fixture-first-connection-token' } })
+    fireEvent.change(screen.getByLabelText('Владелец / репозиторий'), { target: { value: 'team/unsaved-first' } })
+    fireEvent.click(screen.getByText('Сохранить подключение'))
+    await screen.findByText('Проверить результат сохранения')
+    fireEvent.click(screen.getByRole('link', { name: 'Все синхронизации' }))
+    const rows = await screen.findAllByRole('link', { name: connection.repository_name })
+    fireEvent.click(rows[1])
+    await screen.findByDisplayValue('team/other')
+    expect(screen.getByLabelText('Токен доступа')).toHaveValue('')
+    expect(screen.getByLabelText('Токен доступа')).toBeEnabled()
+    expect(screen.queryByText('Проверить результат сохранения')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Токен доступа'), { target: { value: 'fixture-second-connection-token' } })
+    fireEvent.click(screen.getByText('Сохранить подключение'))
+    await screen.findByText('Подключение сохранено')
+    expect(save.mock.calls[0][3]).toBe(connection.id)
+    expect(save.mock.calls[1][3]).toBe(second.id)
+    expect(save.mock.calls[1][2]).not.toBe(save.mock.calls[0][2])
+    expect(save.mock.calls[1][1]).toMatchObject({ token: 'fixture-second-connection-token', settings: { repository_path: 'team/other' } })
+    expect(screen.getByLabelText('Токен доступа')).toHaveValue('')
+  })
   it('pushes one entry for pointer focus plus mousedown and retains browser Back/Forward', async () => {
     vi.spyOn(repositorySync, 'runs').mockResolvedValue({ items: [], total: 0 })
     window.history.replaceState({}, '', '/repository-syncs?project_scope=all&provider=github&search=service&tab=connection')
