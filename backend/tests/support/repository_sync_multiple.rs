@@ -419,6 +419,410 @@ async fn multiple_sync_connections_schedule_independently_and_serialize_claims()
 }
 
 #[tokio::test]
+async fn multiple_sync_candidates_do_not_starve_recovery_or_other_repositories() {
+    let (pool, store, repository, access, secrets) = fixture().await;
+    let waiting = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+        .bind(foreign)
+        .bind(format!("candidate-{foreign}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (repo, connection) in [
+        (repository, repository),
+        (repository, waiting),
+        (foreign, foreign),
+    ] {
+        app::save(
+            &store.scoped(connection),
+            &secrets,
+            repo,
+            Uuid::new_v4(),
+            access,
+            command(Provider::Github, false),
+            &[],
+        )
+        .await
+        .unwrap();
+    }
+    let queued = store
+        .enqueue_at(repository, waiting, "manual", None)
+        .await
+        .unwrap();
+    let active = store.enqueue(repository, "manual", None).await.unwrap();
+    let independent = store.enqueue(foreign, "manual", None).await.unwrap();
+    // Transaction timestamps/commit order need not match worker claim order.
+    sqlx::query("UPDATE repository_sync_runs SET created_at=now()-interval '1 day' WHERE id=$1")
+        .bind(queued.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let owner = Uuid::new_v4();
+    let (_, generation) = store.claim(active.id, owner).await.unwrap().unwrap();
+    let candidates = store.candidates().await.unwrap();
+    assert_eq!(
+        candidates.iter().map(|c| c.0).collect::<Vec<_>>(),
+        vec![independent.id]
+    );
+    for state in ["running", "stopping", "reconciling"] {
+        sqlx::query("UPDATE repository_sync_runs SET state=$2,lease_until=now()-interval '1 second' WHERE id=$1")
+            .bind(active.id)
+            .bind(state)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let candidates = store.candidates().await.unwrap();
+        assert!(
+            candidates.iter().any(|c| c.0 == active.id),
+            "{state} recovery missing"
+        );
+        assert!(candidates.iter().any(|c| c.0 == independent.id));
+        assert!(
+            !candidates.iter().any(|c| c.0 == queued.id),
+            "queued connection must wait for {state} recovery"
+        );
+    }
+    store
+        .finish(active.id, owner, generation, "success", None)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .candidates()
+            .await
+            .unwrap()
+            .iter()
+            .any(|c| c.0 == queued.id)
+    );
+    assert!(store.claim(queued.id, owner).await.unwrap().is_some());
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn multiple_sync_candidate_batch_reserves_space_for_independent_repositories() {
+    let (pool, store, repository, access, secrets) = fixture().await;
+    let foreign = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+        .bind(foreign)
+        .bind(format!("batch-{foreign}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    for repo in [repository, foreign] {
+        app::save(
+            &store,
+            &secrets,
+            repo,
+            Uuid::new_v4(),
+            access,
+            command(Provider::Github, false),
+            &[],
+        )
+        .await
+        .unwrap();
+    }
+    // More than one candidate page on a single repository must not hide other
+    // repositories from the supervisor, which can execute only one of them.
+    sqlx::query("WITH added AS (INSERT INTO repository_sync_connections(repository_id,id,version,settings,encrypted_credential) SELECT c.repository_id,gen_random_uuid(),1,c.settings,c.encrypted_credential FROM repository_sync_connections c CROSS JOIN generate_series(1,101) WHERE c.id=$1 RETURNING id,repository_id,settings) INSERT INTO repository_sync_runs(id,repository_id,connection_id,connection_version,settings,source,state,created_at) SELECT gen_random_uuid(),repository_id,id,1,settings,'manual','queued',now()-interval '1 day' FROM added")
+        .bind(repository).execute(&pool).await.unwrap();
+    let independent = store.enqueue(foreign, "manual", None).await.unwrap();
+    let candidates = store.candidates().await.unwrap();
+    assert_eq!(
+        candidates.len(),
+        2,
+        "one runnable candidate per repository per batch"
+    );
+    assert_eq!(candidates.iter().filter(|c| c.1 == repository).count(), 1);
+    assert!(candidates.iter().any(|c| c.0 == independent.id));
+    assert_eq!(
+        store.candidates().await.unwrap(),
+        candidates,
+        "ties must have stable ordering"
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn multiple_sync_concurrent_cas_and_original_save_receipt_remain_isolated() {
+    let (pool, store, repository, access, secrets) = fixture().await;
+    let connection = Uuid::new_v4();
+    let scoped = store.scoped(connection);
+    let first = command(Provider::Github, false);
+    let mut second = first.clone();
+    second.token = Some("synthetic-concurrent-other-token".into());
+    let keys = [Uuid::new_v4(), Uuid::new_v4()];
+    let (a, b) = tokio::join!(
+        app::save(
+            &scoped,
+            &secrets,
+            repository,
+            keys[0],
+            access,
+            first.clone(),
+            &[]
+        ),
+        app::save(
+            &scoped,
+            &secrets,
+            repository,
+            keys[1],
+            access,
+            second.clone(),
+            &[]
+        )
+    );
+    let (key, original) = match (a, b) {
+        (Ok(saved), Err(app::Error::Conflict("sync_version_conflict"))) => {
+            assert_eq!(saved.version, 1);
+            (keys[0], first)
+        }
+        (Err(app::Error::Conflict("sync_version_conflict")), Ok(saved)) => {
+            assert_eq!(saved.version, 1);
+            (keys[1], second)
+        }
+        _ => panic!("one concurrent creation must win and the other must report CAS conflict"),
+    };
+    let mut update = original.clone();
+    assert!(
+        store
+            .connection(repository, access)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        store.enqueue(repository, "manual", None).await,
+        Err(app::Error::NotFound)
+    ));
+    update.expected_version = 1;
+    update.token = Some("synthetic-rotated-multiple-sync-token".into());
+    app::save(
+        &scoped,
+        &secrets,
+        repository,
+        Uuid::new_v4(),
+        access,
+        update,
+        &[],
+    )
+    .await
+    .unwrap();
+    let receipt = app::save(&scoped, &secrets, repository, key, access, original, &[])
+        .await
+        .unwrap();
+    assert_eq!(receipt.id, connection);
+    assert_eq!(
+        receipt.version, 1,
+        "replay must return the original receipt"
+    );
+    assert_eq!(
+        store
+            .connection_at(repository, connection, access)
+            .await
+            .unwrap()
+            .unwrap()
+            .version,
+        2
+    );
+    let (_, encrypted) = scoped.credential(repository).await.unwrap().unwrap();
+    assert_eq!(
+        secrets.open(&encrypted).unwrap(),
+        "synthetic-rotated-multiple-sync-token"
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn multiple_sync_concurrent_creation_cannot_capture_another_repository_connection() {
+    let (pool, store, repository, access, secrets) = fixture().await;
+    let foreign = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+        .bind(foreign)
+        .bind(format!("collision-{foreign}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let connection = Uuid::new_v4();
+    let scoped = store.scoped(connection);
+    let (a, b) = tokio::join!(
+        app::save(
+            &scoped,
+            &secrets,
+            repository,
+            Uuid::new_v4(),
+            access,
+            command(Provider::Github, false),
+            &[]
+        ),
+        app::save(
+            &scoped,
+            &secrets,
+            foreign,
+            Uuid::new_v4(),
+            access,
+            command(Provider::Github, false),
+            &[]
+        )
+    );
+    let (winner, loser) = match (a, b) {
+        (Ok(saved), Err(app::Error::NotFound)) => (saved.repository_id, foreign),
+        (Err(app::Error::NotFound), Ok(saved)) => (saved.repository_id, repository),
+        _ => panic!("a connection UUID must belong to exactly one repository"),
+    };
+    assert!(scoped.credential(winner).await.unwrap().is_some());
+    assert!(scoped.credential(loser).await.unwrap().is_none());
+    assert!(
+        store
+            .runs_at(loser, connection, 20, 0)
+            .await
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    assert!(matches!(
+        store.enqueue_at(loser, connection, "manual", None).await,
+        Err(app::Error::NotFound)
+    ));
+    let stored: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM repository_sync_connections WHERE id=$1")
+            .bind(connection)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, 1);
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn multiple_sync_stopping_one_connection_preserves_the_other_queue_and_intent() {
+    let (pool, store, repository, access, secrets) = fixture().await;
+    let other = Uuid::new_v4();
+    for connection in [repository, other] {
+        app::save(
+            &store.scoped(connection),
+            &secrets,
+            repository,
+            Uuid::new_v4(),
+            access,
+            command(Provider::Github, true),
+            &[],
+        )
+        .await
+        .unwrap();
+    }
+    let run = store.enqueue(repository, "manual", None).await.unwrap();
+    let waiting = store
+        .enqueue_at(repository, other, "manual", None)
+        .await
+        .unwrap();
+    let owner = Uuid::new_v4();
+    let (claimed, generation) = store.claim(run.id, owner).await.unwrap().unwrap();
+    let planned = cicd_domain::repository_sync::RefResult {
+        ref_name: "refs/heads/stopping-fixture".into(),
+        direction: "push".into(),
+        old_sha: Some("a".repeat(40)),
+        new_sha: Some("b".repeat(40)),
+        state: "unknown".into(),
+        reason: Some("outcome_unknown".into()),
+        event_delivered: true,
+    };
+    store
+        .record_plan(run.id, std::slice::from_ref(&planned))
+        .await
+        .unwrap();
+    let mut disable = command(Provider::Github, true);
+    disable.expected_version = 1;
+    disable.token = None;
+    disable.settings.direction = Direction::Disabled;
+    app::save(
+        &store,
+        &secrets,
+        repository,
+        Uuid::new_v4(),
+        access,
+        disable,
+        &[],
+    )
+    .await
+    .unwrap();
+    let stopping = store.run(repository, run.id).await.unwrap();
+    assert_eq!(stopping.state, "stopping");
+    assert!(stopping.cancel_requested);
+    assert!(
+        stopping.finished_at.is_none(),
+        "unknown Git effect must not be declared canceled"
+    );
+    assert!(
+        !store
+            .allowed_to_apply(&claimed, owner, generation)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .claim(waiting.id, Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store.run(repository, waiting.id).await.unwrap().state,
+        "queued"
+    );
+    assert!(
+        !store
+            .run(repository, waiting.id)
+            .await
+            .unwrap()
+            .cancel_requested
+    );
+    let refs = store.refs(run.id, 20, 0).await.unwrap().0;
+    assert_eq!(refs[0].old_sha, planned.old_sha);
+    assert_eq!(refs[0].new_sha, planned.new_sha);
+    assert_eq!(refs[0].state, "unknown");
+    sqlx::query(
+        "UPDATE repository_sync_runs SET lease_until=now()-interval '1 second' WHERE id=$1",
+    )
+    .bind(run.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let recovered_owner = Uuid::new_v4();
+    let (recovered, recovered_generation) =
+        store.claim(run.id, recovered_owner).await.unwrap().unwrap();
+    assert_eq!(recovered.state, "reconciling");
+    assert!(
+        !store
+            .allowed_to_apply(&recovered, recovered_owner, recovered_generation)
+            .await
+            .unwrap()
+    );
+    // Only an observed terminal receipt releases the next connection.
+    store
+        .finish(
+            run.id,
+            recovered_owner,
+            recovered_generation,
+            "canceled",
+            None,
+        )
+        .await
+        .unwrap();
+    let (next, next_generation) = store.claim(waiting.id, owner).await.unwrap().unwrap();
+    assert!(
+        store
+            .allowed_to_apply(&next, owner, next_generation)
+            .await
+            .unwrap()
+    );
+    store.signal(repository).await.unwrap();
+    store.schedule().await.unwrap();
+    assert_eq!(store.runs(repository, 20, 0).await.unwrap().1, 1);
+    pool.close().await;
+}
+
+#[tokio::test]
 async fn multiple_sync_connections_cannot_cross_repository_boundaries() {
     let (pool, store, repository, access, secrets) = fixture().await;
     let foreign = Uuid::new_v4();

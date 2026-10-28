@@ -724,6 +724,67 @@ async fn multiple_sync_real_https_workers_relay_between_independent_connections(
     assert_eq!(total, 2);
     assert_eq!(history[0].source, "git_change");
     assert_eq!(history[0].connection_id, second);
+    assert_eq!(f.completed(history[0].id).await.state, "success");
+    // Wait for the coalesced no-op on the inbound connection as well. Observing
+    // a remote SHA alone does not prove that its execution journal is terminal.
+    tokio::time::timeout(Duration::from_secs(90), async {
+        loop {
+            let idle: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repository_sync_runs WHERE repository_id=$1 AND finished_at IS NULL) AND NOT EXISTS(SELECT 1 FROM repository_sync_connections WHERE repository_id=$1 AND dirty)")
+                .bind(f.repository).fetch_one(&f.pool).await.unwrap();
+            if idle { break; }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }).await.expect("automatic fan-out must settle instead of looping indefinitely");
+    for (id, path) in [
+        (f.repository, "fixture/repository"),
+        (second, "fixture/other"),
+    ] {
+        let mut settings = f.settings.clone();
+        settings.repository_path = path.into();
+        settings.automatic = false;
+        let (status, _) = f
+            .request(
+                "PUT",
+                &format!("?connection_id={id}"),
+                Some(serde_json::json!({"expected_version":1,"settings":settings})),
+                Some(Uuid::new_v4()),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let c = f
+        .commit(Some(&b), "First external repository advances")
+        .await;
+    let d = f
+        .commit(Some(&b), "Second external repository diverges")
+        .await;
+    for (remote, sha) in [(tls.remote(), &c), (other.clone(), &d)] {
+        git(
+            &f.actor,
+            &[
+                "push",
+                remote.to_str().unwrap(),
+                &format!("{sha}:{reference}"),
+            ],
+        )
+        .await;
+    }
+    let inbound = f.store.enqueue(f.repository, "manual", None).await.unwrap();
+    assert_eq!(f.completed(inbound.id).await.state, "success");
+    let divergent = f
+        .store
+        .enqueue_at(f.repository, second, "manual", None)
+        .await
+        .unwrap();
+    assert_eq!(f.completed(divergent.id).await.state, "conflict");
+    assert_eq!(git(&f.local, &["rev-parse", &reference]).await, c);
+    assert_eq!(git(&tls.remote(), &["rev-parse", &reference]).await, c);
+    assert_eq!(git(&other, &["rev-parse", &reference]).await, d);
+    let refs = f.store.refs(divergent.id, 20, 0).await.unwrap().0;
+    assert!(
+        refs.iter()
+            .any(|result| result.ref_name == reference && result.state == "conflict")
+    );
     assert!(
         tls.events()
             .iter()
