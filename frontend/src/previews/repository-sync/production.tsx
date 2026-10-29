@@ -6,8 +6,9 @@ import { RepositorySyncEditor } from "@/pages/repository-syncs";
 import { repositorySync, type SyncConnection } from "@/api/repository-sync";
 const cache = new QueryClient();
 const initial: SyncConnection = {
-  repository_id: "visual-qa",
-  repository_name: "platform/service-api",
+  id: 'repo',
+  repository_id: 'visual-qa',
+  repository_name: 'platform/service-api',
   namespace: null,
   version: 1,
   settings: {

@@ -1,8 +1,48 @@
 # Руководство по разработке Forge CI/CD
 
+## Несколько подключений синхронизации
+
+[ADR-0040](adr/0040-multiple-repository-sync-connections.md) сохраняет старые UUID
+и добавляет независимые подключения. Регрессии `multiple_sync` в `integration_db`
+проверяют populated migration 0105→0106, сохранение ciphertext и original-key
+readback, архивные/frozen записи и восстановление guards, CAS, отдельные credentials,
+раздельную историю, отказ чужого repository UUID, конкурентные scheduler/claim,
+отключение одного подключения и приоритет recovery над следующим подключением.
+Дополнительные регрессии проверяют более старое queued-подключение при running/
+stopping/reconciling соседе, очередь из 101 подключения без вытеснения другого
+репозитория, одновременный CAS создания, original-key replay после ротации токена,
+конкурентную коллизию UUID между репозиториями и остановку с unknown Git intent.
+
+В собственном временном Compose-проекте с disposable `CICD_TEST_DATABASE_URL`:
+
+```bash
+cargo test --release --locked --features integration --test integration_db multiple_sync -- --test-threads=1
+```
+
+`multiple_sync_real_https_workers_relay_between_independent_connections` запускается
+отдельно с `--ignored` и `FORGE_SYNC_PRIVATE_TLS_QA=1`, только внутри disposable
+root QA-контейнера. Два настоящих worker-процесса передают Git refs двум HTTPS
+репозиториям с разными credentials и проверяют последующую автоматическую передачу
+входящего fast-forward через Forge. Проверяются терминальные receipts, завершение
+цепочки автоматических no-op и конфликт разошедшихся внешних веток: успешный
+входящий fast-forward первого подключения сохраняется, второе получает конфликт
+без перезаписи refs. Локальный CA удаляется вместе с fixture.
+Это настоящий Git HTTPS и имитация провайдера; проверкой GitHub.com/GitLab сервера
+внешнего оператора такой тест не является.
+
+Frontend: `repository-sync.test.ts`, `pages/repository-syncs/index.test.tsx`,
+`repository-sync-multiple.spec.ts`. Изолированный Playwright entrypoint проверяет
+два подключения одного репозитория, сохранение connection_id в URL/контроллерах,
+раздельную историю и доступность таблицы при 375/768/1440/1920/2560 px. Fixtures
+не входят в production bundle и не обращаются к установленным API. React-регрессия
+проверяет отсутствие переноса токена, черновика и неизвестной операции сохранения
+между подключениями одного репозитория.
+
 Этот документ описывает воспроизводимый локальный цикл разработки и проверки. Он не заменяет нормативные контракты: порядок источников и статус утверждений определены в [DOCUMENTATION GOVERNANCE](DOCUMENTATION_GOVERNANCE.md). Фактически работающие возможности перечислены в [CURRENT STATE](CURRENT_STATE.md); код, committed migrations и OpenAPI после их появления имеют приоритет над этим guide.
 
 ## Статусы
+
+Перед коммитом и публикацией используйте [проверку Git-гигиены](REPOSITORY_HYGIENE.md).
 
 ### Scoped Runner Recovery Source Gate
 

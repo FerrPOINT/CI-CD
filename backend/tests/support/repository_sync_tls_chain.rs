@@ -18,9 +18,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self): self.exchange()
     def exchange(self):
         url = urllib.parse.urlsplit(self.path)
-        if not url.path.startswith('/fixture/repository.git/'):
+        if not url.path.startswith(('/fixture/repository.git/', '/fixture/other.git/')):
             self.send_error(404); return
-        authenticated = self.headers.get('Authorization') == expected
+        required = ('Basic ' + base64.b64encode(b'oauth2:fictional-other-connection-token').decode()) if url.path.startswith('/fixture/other.git/') else expected
+        authenticated = self.headers.get('Authorization') == required
         service = urllib.parse.parse_qs(url.query).get('service', [url.path.rsplit('/', 1)[-1]])[0]
         with (root / 'http-events.jsonl').open('a', encoding='utf-8') as log:
             log.write(json.dumps({'method': self.command, 'service': service, 'authenticated': authenticated}) + '\n')
@@ -634,4 +635,166 @@ async fn api_and_os_worker_enforce_system_ca_and_hostname_for_real_git_exchange(
         "TLS_CHAIN_API_WORKER_OK repository={} untrusted={} trusted={} wrong_hostname={} expired={} incoming_sha={} outgoing_sha={} authenticated_git_http=true system_trust=true",
         f.repository, untrusted.id, trusted.id, rejected_runs[0], rejected_runs[1], a, b
     );
+}
+
+#[tokio::test]
+#[ignore = "Requires an owned disposable Linux QA container with root, real Git HTTPS and CA tools; no external provider"]
+async fn multiple_sync_real_https_workers_relay_between_independent_connections() {
+    let mut tls = TlsSandbox::new().await;
+    let other = tls.root.join("http-root/fixture/other.git");
+    std::fs::create_dir_all(&other).unwrap();
+    git(&other, &["init", "--bare", "--initial-branch=main"]).await;
+    git(&other, &["config", "http.receivepack", "true"]).await;
+    tls.start("valid.crt").await;
+    tls.trust().await;
+    let f = tls_live(&tls.origin()).await;
+    let second = Uuid::new_v4();
+    let reference = f.head("relay");
+    let a = f.commit(None, "Multiple HTTPS connections root").await;
+    let b = f
+        .commit(Some(&a), "External fast-forward relayed through Forge")
+        .await;
+    f.local(&reference, &a).await;
+    for (id, path, token) in [
+        (f.repository, "fixture/repository", PROVIDER_TOKEN),
+        (second, "fixture/other", "fictional-other-connection-token"),
+    ] {
+        let mut settings = f.settings.clone();
+        settings.repository_path = path.into();
+        settings.automatic = true;
+        let (status, body) = f
+            .request(
+                "PUT",
+                &format!("?connection_id={id}"),
+                Some(serde_json::json!({"expected_version":0,"settings":settings,"token":token})),
+                Some(Uuid::new_v4()),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["id"], id.to_string());
+    }
+    let mut cleanup = RuntimeCleanup {
+        root: f.root.clone(),
+        api: tokio::spawn(async {}),
+        worker: Some(f.process(Path::new("/usr/bin")).await),
+    };
+    let mut second_worker = f.process(Path::new("/usr/bin")).await;
+    let first_run = f
+        .store
+        .enqueue_at(f.repository, f.repository, "manual", None)
+        .await
+        .unwrap();
+    let second_run = f
+        .store
+        .enqueue_at(f.repository, second, "manual", None)
+        .await
+        .unwrap();
+    assert_eq!(f.completed(first_run.id).await.state, "success");
+    assert_eq!(f.completed(second_run.id).await.state, "success");
+    assert_eq!(git(&tls.remote(), &["rev-parse", &reference]).await, a);
+    assert_eq!(git(&other, &["rev-parse", &reference]).await, a);
+    // An actual external advance is pulled by the scheduled connection and must
+    // wake the other automatic connection even when CI auto-trigger is disabled.
+    git(
+        &f.actor,
+        &[
+            "push",
+            tls.remote().to_str().unwrap(),
+            &format!("{b}:{reference}"),
+        ],
+    )
+    .await;
+    sqlx::query("UPDATE repository_sync_connections SET next_check_at=now() WHERE id=$1")
+        .bind(f.repository)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(90), async {
+        loop {
+            if git(&other, &["rev-parse", &reference]).await == b {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await
+    .expect("incoming HTTPS update must fan out through Forge to the second HTTPS connection");
+    assert_eq!(git(&f.local, &["rev-parse", &reference]).await, b);
+    let (history, total) = f.store.runs_at(f.repository, second, 20, 0).await.unwrap();
+    assert_eq!(total, 2);
+    assert_eq!(history[0].source, "git_change");
+    assert_eq!(history[0].connection_id, second);
+    assert_eq!(f.completed(history[0].id).await.state, "success");
+    // Wait for the coalesced no-op on the inbound connection as well. Observing
+    // a remote SHA alone does not prove that its execution journal is terminal.
+    tokio::time::timeout(Duration::from_secs(90), async {
+        loop {
+            let idle: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repository_sync_runs WHERE repository_id=$1 AND finished_at IS NULL) AND NOT EXISTS(SELECT 1 FROM repository_sync_connections WHERE repository_id=$1 AND dirty)")
+                .bind(f.repository).fetch_one(&f.pool).await.unwrap();
+            if idle { break; }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }).await.expect("automatic fan-out must settle instead of looping indefinitely");
+    for (id, path) in [
+        (f.repository, "fixture/repository"),
+        (second, "fixture/other"),
+    ] {
+        let mut settings = f.settings.clone();
+        settings.repository_path = path.into();
+        settings.automatic = false;
+        let (status, _) = f
+            .request(
+                "PUT",
+                &format!("?connection_id={id}"),
+                Some(serde_json::json!({"expected_version":1,"settings":settings})),
+                Some(Uuid::new_v4()),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let c = f
+        .commit(Some(&b), "First external repository advances")
+        .await;
+    let d = f
+        .commit(Some(&b), "Second external repository diverges")
+        .await;
+    for (remote, sha) in [(tls.remote(), &c), (other.clone(), &d)] {
+        git(
+            &f.actor,
+            &[
+                "push",
+                remote.to_str().unwrap(),
+                &format!("{sha}:{reference}"),
+            ],
+        )
+        .await;
+    }
+    let inbound = f.store.enqueue(f.repository, "manual", None).await.unwrap();
+    assert_eq!(f.completed(inbound.id).await.state, "success");
+    let divergent = f
+        .store
+        .enqueue_at(f.repository, second, "manual", None)
+        .await
+        .unwrap();
+    assert_eq!(f.completed(divergent.id).await.state, "conflict");
+    assert_eq!(git(&f.local, &["rev-parse", &reference]).await, c);
+    assert_eq!(git(&tls.remote(), &["rev-parse", &reference]).await, c);
+    assert_eq!(git(&other, &["rev-parse", &reference]).await, d);
+    let refs = f.store.refs(divergent.id, 20, 0).await.unwrap().0;
+    assert!(
+        refs.iter()
+            .any(|result| result.ref_name == reference && result.state == "conflict")
+    );
+    assert!(
+        tls.events()
+            .iter()
+            .any(|event| event["authenticated"] == true)
+    );
+    second_worker.kill().await.unwrap();
+    second_worker.wait().await.unwrap();
+    if let Some(mut worker) = cleanup.worker.take() {
+        worker.kill().await.unwrap();
+        worker.wait().await.unwrap();
+    }
+    f.pool.close().await;
 }

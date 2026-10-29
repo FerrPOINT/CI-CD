@@ -18,13 +18,14 @@ const settings: SyncSettings = {
   repository_path: 'fixture-team/service', direction: 'both', automatic: true,
 }
 const connection: SyncConnection = {
+  id: 'repo',
   repository_id: '40000000-0000-4000-8000-000000000001',
   repository_name: 'fixture-platform/service', version: 7, settings,
   has_credential: true, writable: true, worker_enabled: true,
   active_run: null, last_run: null, paused_reason: null, next_check_at: null,
 }
 const run: SyncRun = {
-  id: '50000000-0000-4000-8000-000000000001',
+  connection_id: 'repo', id: '50000000-0000-4000-8000-000000000001',
   repository_id: connection.repository_id, connection_version: 7, settings,
   source: 'manual', state: 'queued', cancel_requested: false,
   created_at: '2026-10-18T10:00:00Z', started_at: null, finished_at: null, message: null,
@@ -48,6 +49,31 @@ afterEach(() => {
 })
 
 describe('repository synchronization HTTP boundary', () => {
+  it('does not turn an explicitly empty connection selector into the legacy connection', async () => {
+    const fetchMock=vi.fn<Fetch>().mockResolvedValue(json({message:'invalid selector'},422))
+    vi.stubGlobal('fetch',fetchMock)
+    await expect(repositorySync.get(connection.repository_id,undefined,'')).rejects.toMatchObject({status:422})
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\?connection_id=$/)
+  })
+  it('keeps the chosen connection on settings, credentials, manual runs and paged history', async () => {
+    const fetchMock=vi.fn<Fetch>().mockImplementation(async () => json(connection))
+    vi.stubGlobal('fetch',fetchMock)
+    const selected='60000000-0000-4000-8000-000000000001'
+    const payload:SaveSync={expected_version:7,settings}
+    await repositorySync.get(connection.repository_id,undefined,selected)
+    await repositorySync.save(connection.repository_id,payload,'operation',selected)
+    await repositorySync.check(connection.repository_id,{settings},selected)
+    await repositorySync.start(connection.repository_id,'run-operation',selected)
+    await repositorySync.runs(connection.repository_id,20,undefined,selected)
+    await repositorySync.refs(connection.repository_id,run.id,50,undefined,selected)
+    expect(fetchMock).toHaveBeenCalledTimes(6)
+    for(const [input] of fetchMock.mock.calls) {
+      const url=new URL(String(input),'https://fixture.invalid')
+      expect(url.searchParams.get('connection_id')).toBe(selected)
+      expect(url.pathname).toContain(connection.repository_id)
+    }
+    expect(new URL(String(fetchMock.mock.calls[4][0]),'https://fixture.invalid').searchParams.get('offset')).toBe('20')
+  })
   it('preserves server filters, page totals and cancellation through the authenticated list request', async () => {
     const page: Page<SyncConnection> = { items: [connection], total: 41 }
     const fetchMock = vi.fn<Fetch>().mockResolvedValueOnce(json(page))

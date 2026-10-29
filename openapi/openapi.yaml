@@ -1168,6 +1168,67 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: provider
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: connection_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
       responses:
         '200':
           description: ''
@@ -1193,6 +1254,67 @@ paths:
         required: true
         schema:
           type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: provider
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: connection_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
           format: uuid
       requestBody:
         content:
@@ -1220,6 +1342,67 @@ paths:
         required: true
         schema:
           type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: provider
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: connection_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
           format: uuid
       requestBody:
         content:
@@ -1293,6 +1476,22 @@ paths:
           - string
           - 'null'
           format: uuid
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: connection_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
       responses:
         '200':
           description: ''
@@ -1316,6 +1515,67 @@ paths:
         required: true
         schema:
           type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: provider
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: connection_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
           format: uuid
       responses:
         '202':
@@ -1345,6 +1605,67 @@ paths:
         required: true
         schema:
           type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: provider
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: connection_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
           format: uuid
       responses:
         '200':
@@ -1411,6 +1732,22 @@ paths:
           - string
           - 'null'
       - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: connection_id
         in: query
         required: false
         schema:
@@ -4765,6 +5102,22 @@ paths:
           - string
           - 'null'
       - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: connection_id
         in: query
         required: false
         schema:
@@ -9110,6 +9463,7 @@ components:
     RepositorySyncConnection:
       type: object
       required:
+      - id
       - repository_id
       - repository_name
       - version
@@ -9124,6 +9478,9 @@ components:
           - $ref: '#/components/schemas/RepositorySyncSyncRun'
         has_credential:
           type: boolean
+        id:
+          type: string
+          format: uuid
         last_run:
           oneOf:
           - type: 'null'
@@ -9248,6 +9605,7 @@ components:
     RepositorySyncSyncRun:
       type: object
       required:
+      - connection_id
       - id
       - repository_id
       - connection_version
@@ -9259,6 +9617,9 @@ components:
       properties:
         cancel_requested:
           type: boolean
+        connection_id:
+          type: string
+          format: uuid
         connection_version:
           type: integer
           format: int64

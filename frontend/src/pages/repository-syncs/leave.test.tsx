@@ -22,6 +22,7 @@ import { RepositorySyncPage, RepositorySyncEditor } from './index'
 import '@/shared/i18n/config'
 
 const original: SyncConnection = {
+  id: 'guard-connection',
   repository_id: 'guard-repository',
   repository_name: 'workspace/tooling',
   namespace: null,
@@ -45,6 +46,11 @@ const registry = 'aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee'
 const namespace = 'bbbb2222-cccc-4ddd-8eee-ffffffffffff'
 const otherNamespace = 'cccc3333-dddd-4eee-8fff-aaaaaaaaaaaa'
 const path = '/catalog/repositories/guard-repository/sync'
+function withConnection(location: string) {
+  const url = new URL(location, 'http://fixture.invalid')
+  url.searchParams.set('connection_id', original.id)
+  return url.pathname + url.search
+}
 const routers: ReturnType<typeof createMemoryRouter>[] = []
 const clients: QueryClient[] = []
 
@@ -86,7 +92,7 @@ function mount(
     },
   })
   clients.push(client)
-  client.setQueryData(['repository-sync', persisted.repository_id], persisted)
+  client.setQueryData(['repository-sync', persisted.repository_id, persisted.id], persisted)
   const get = vi
     .spyOn(repositorySync, 'get')
     .mockImplementation(async () => persisted)
@@ -129,7 +135,7 @@ function mount(
     ],
     {
       initialEntries: [
-        options.location ?? path + '?project_scope=all&provider=github',
+        withConnection(options.location ?? path + '?project_scope=all&provider=github'),
       ],
     },
   )
@@ -148,7 +154,7 @@ function mount(
     updateServer(next: SyncConnection) {
       persisted = next
       act(() =>
-        client.setQueryData(['repository-sync', next.repository_id], next),
+        client.setQueryData(['repository-sync', next.repository_id, next.id], next),
       )
     },
   }
@@ -165,6 +171,7 @@ function back() {
   return link
 }
 const queued: SyncRun = {
+  connection_id: original.id,
   id: 'queued-guard-run',
   repository_id: original.repository_id,
   connection_version: 4,
@@ -231,19 +238,19 @@ describe('repository synchronization leave safety', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await act(() =>
       fixture.router.navigate(
-        `${path}?namespace_id=${namespace.toUpperCase()}&registry_instance_id=${registry.toUpperCase()}&tab=history&run_id=selected&runs_offset=20&refs_offset=50`,
+        withConnection(`${path}?namespace_id=${namespace.toUpperCase()}&registry_instance_id=${registry.toUpperCase()}&tab=history&run_id=selected&runs_offset=20&refs_offset=50`),
       ),
     )
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await act(() =>
       fixture.router.navigate(
-        `${path}?project_scope=all&namespace_id=${namespace}&registry_instance_id=${registry}&tab=history`,
+        withConnection(`${path}?project_scope=all&namespace_id=${namespace}&registry_instance_id=${registry}&tab=history`),
       ),
     )
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await act(() =>
       fixture.router.navigate(
-        `${path}?namespace_id=${otherNamespace}&registry_instance_id=${registry}`,
+        withConnection(`${path}?namespace_id=${otherNamespace}&registry_instance_id=${registry}`),
       ),
     )
     const dialog = await screen.findByRole('alertdialog')
@@ -441,7 +448,7 @@ describe('repository synchronization leave safety', () => {
     await act(() => fixture.router.navigate(path + '?production=0'))
     const dialog = await screen.findByRole('alertdialog')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Остаться' }))
-    expect(fixture.router.state.location.search).toBe('?production=1')
+    expect(fixture.router.state.location.search).toBe(new URL(withConnection(path + '?production=1'), 'http://fixture.invalid').search)
   })
 
   it.each([403, 409])(

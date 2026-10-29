@@ -3643,6 +3643,8 @@ export interface components {
         RepositorySyncConnection: {
             active_run?: null | components["schemas"]["RepositorySyncSyncRun"];
             has_credential: boolean;
+            /** Format: uuid */
+            id: string;
             last_run?: null | components["schemas"]["RepositorySyncSyncRun"];
             namespace?: null | components["schemas"]["RepositorySyncNamespace"];
             /** Format: date-time */
@@ -3692,6 +3694,8 @@ export interface components {
         };
         RepositorySyncSyncRun: {
             cancel_requested: boolean;
+            /** Format: uuid */
+            connection_id: string;
             /** Format: int64 */
             connection_version: number;
             /** Format: date-time */
@@ -5427,7 +5431,16 @@ export interface operations {
     };
     forge_repository_sync_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                provider?: string | null;
+                state?: string | null;
+                group_id?: string | null;
+                repository_id?: string | null;
+                connection_id?: string | null;
+            };
             header?: never;
             path: {
                 id: string;
@@ -5454,7 +5467,16 @@ export interface operations {
     };
     forge_repository_sync_save: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                provider?: string | null;
+                state?: string | null;
+                group_id?: string | null;
+                repository_id?: string | null;
+                connection_id?: string | null;
+            };
             header: {
                 "Idempotency-Key": string;
             };
@@ -5487,7 +5509,16 @@ export interface operations {
     };
     forge_repository_sync_check: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                provider?: string | null;
+                state?: string | null;
+                group_id?: string | null;
+                repository_id?: string | null;
+                connection_id?: string | null;
+            };
             header?: never;
             path: {
                 id: string;
@@ -5525,6 +5556,8 @@ export interface operations {
                 provider?: string | null;
                 state?: string | null;
                 group_id?: string | null;
+                repository_id?: string | null;
+                connection_id?: string | null;
             };
             header?: never;
             path: {
@@ -5546,7 +5579,16 @@ export interface operations {
     };
     forge_repository_sync_start: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                provider?: string | null;
+                state?: string | null;
+                group_id?: string | null;
+                repository_id?: string | null;
+                connection_id?: string | null;
+            };
             header: {
                 "Idempotency-Key": string;
             };
@@ -5581,7 +5623,16 @@ export interface operations {
     };
     forge_repository_sync_run: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                provider?: string | null;
+                state?: string | null;
+                group_id?: string | null;
+                repository_id?: string | null;
+                connection_id?: string | null;
+            };
             header?: never;
             path: {
                 id: string;
@@ -5616,6 +5667,8 @@ export interface operations {
                 provider?: string | null;
                 state?: string | null;
                 group_id?: string | null;
+                repository_id?: string | null;
+                connection_id?: string | null;
             };
             header?: never;
             path: {
@@ -9078,6 +9131,8 @@ export interface operations {
                 provider?: string | null;
                 state?: string | null;
                 group_id?: string | null;
+                repository_id?: string | null;
+                connection_id?: string | null;
             };
             header?: never;
             path?: never;
