@@ -51,7 +51,8 @@
       "backend/*/Cargo.toml",
       "backend/Dockerfile",
       "backend/Dockerfile.umbrella",
-      "backend/src/task_delivery/postgres.rs"
+      "backend/src/task_delivery/postgres.rs",
+      "scripts/select_build.py"
     ],
     "cli": [
       "backend/cli/**"
@@ -127,6 +128,7 @@
         "scripts.tests.test_backend_dockerfile",
         "scripts.tests.test_frontend_toolchain",
         "scripts.tests.test_verify_docs",
+        "scripts.tests.test_build_scope",
         "-q"
       ],
       "inputs": [
@@ -1053,9 +1055,26 @@
     "backend": [
       "backend/Dockerfile*"
     ],
+    "runner": [
+      "backend/Dockerfile*"
+    ],
     "frontend": [
       "frontend/Dockerfile*",
       "frontend/nginx.conf"
+    ]
+  },
+  "affected_checks": {
+    "tooling": [
+      {
+        "paths": [
+          "scripts/build.py",
+          "scripts/select_build.py",
+          "scripts/tests/test_build_scope.py"
+        ],
+        "gates": [
+          "tooling:quality-routes"
+        ]
+      }
     ]
   }
 }

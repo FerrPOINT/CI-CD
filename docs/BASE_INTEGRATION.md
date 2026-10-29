@@ -23,7 +23,7 @@ SDK и skills pins независимы и этим обновлением не 
 pin=.base-revision
 if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
 python3 ../services-base/scripts/verify_base_revision.py --base ../services-base --revision "$pin"
-python3 scripts/build.py
+python3 scripts/build.py backend
 ```
 
 Docker standalone и umbrella используют соседние checkout как build context.

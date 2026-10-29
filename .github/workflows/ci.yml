@@ -127,7 +127,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: documentation regression tests
-        run: python3 -B -m unittest scripts.tests.test_quality_routes scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks scripts.tests.test_postgres_rejection scripts.tests.test_backend_dockerfile scripts.tests.test_frontend_toolchain scripts.tests.test_build_pin
+        run: python3 -B -m unittest scripts.tests.test_quality_routes scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks scripts.tests.test_postgres_rejection scripts.tests.test_backend_dockerfile scripts.tests.test_frontend_toolchain scripts.tests.test_build_pin scripts.tests.test_build_scope
       - name: documentation checks
         run: python3 -B scripts/verify_docs.py --links --anchors --canonical --frontend-contracts
       - name: dependency inventory drift

@@ -7,6 +7,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.vendor import base_quality_selection as selector
+from scripts import select_build
 
 RUST_COMPONENTS = {'backend', 'cli', 'delivery', 'pg-migrate', 'migration'}
 
@@ -29,14 +30,11 @@ def describe(plan):
 
 
 def build_services(plan):
-    values = describe(plan)
-    inputs = selector.load(ROOT).get('container_inputs', {})
-    return [name for name in ('backend', 'frontend') if values[name + '_build'] or any(
-        selector.matches(path, inputs.get(name, [])) for path in plan['changed'])]
+    return select_build.build_services(plan, selector.load(ROOT))
 
 
 def auto_services(root=ROOT):
-    return build_services(selector.plan(root, profile='build', base='HEAD'))
+    return select_build.auto_services(root)
 
 
 def outputs(root, event, base, head):
