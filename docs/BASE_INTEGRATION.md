@@ -2,14 +2,34 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA: `2de0f72b2c28f3d0930808a1c58a941f9c6be31e` ([pin](../.base-ui-revision)),
-пакет 0.3.26, reference `0bb6a3074c8188354c79a5b4bdea9654d3c31a60a6b1eec3033c20ebc0f1488f`.
+Точный UI SHA указан в [pin](../.base-ui-revision),
+пакет 0.3.27, reference `4c66399fdf85d5a17026292fd9fa8934415644cefc8137d867f63d9a23958499`.
 Producer объединяет Base #384 и независимый expiry #386 без повторного включения #381.
 Компоненты и reference берутся из этой версии Base; открытый справочник другой
 версии не подтверждает доступность контракта в продукте. SDK/skills pins
 независимы. Это исходники собственного checkout; установка и authenticated
 приёмка runtime этим значением не подтверждаются. Датированные разделы ниже
 описывают прежние квалификации и не заменяют проверку итогового кандидата.
+
+### UI0.3.27: независимые радиусы контейнеров
+
+Текущий pin включает общий card-radius для Card, framed ResourceList,
+Disclosure, preview frame и toast. Вложенные controls, меню и диалоги
+сохраняют отдельные control/menu/dialog. Расчёт и skin принадлежат Base;
+локальные копии оформления не добавлены.
+
+Frozen offline install, CLI integrity, exact installed snapshot, TypeScript,
+shared-shell contract и production build PASS на этом UI pin. SDK/skills pins
+и внешние dependency resolutions сохранены. Consumer TS/JS и конфигурации
+не изменились относительно собственного UI0.3.26 gate (с учётом исправления
+Fleet prepend); прежние unit results переиспользованы по входам, а не объявлены
+новым полным прогоном. В Base заново прошли8 native branding и9 native CSS
+cases, в том числе три темы/оба порядка CSS и разные card/control значения.
+Private evidence: ui027-card-radius-20261029/gate и unit-input-deltas.json.
+Установка, hosted CI и полная authenticated browser matrix этим не подтверждены.
+
+## Предыдущие source-квалификации
+
 
 Финальный checkpoint 2de0f72b включает bounded fetch/body wait. Frozen offline
 refresh, exact snapshot, types, production build и shell contract PASS.
