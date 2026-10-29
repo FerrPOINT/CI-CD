@@ -23,7 +23,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, options?: { defaultValue?: string }) =>
+      options?.defaultValue ?? key,
+  }),
 }));
 vi.mock("@/shared/auth/auth-provider", () => ({
   useAuth: () => ({ session: { username: "QA" }, logout: vi.fn() }),

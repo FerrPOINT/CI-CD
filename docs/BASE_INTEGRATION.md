@@ -2,12 +2,21 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA: `cf88f7094044a403e6bb7105cfa88b12c4208c96` ([pin](../.base-ui-revision)).
+Точный UI SHA: `cdfac2bbcf61f82ff126df529d5759d425e872ea` ([pin](../.base-ui-revision)),
+пакет 0.3.25, reference `dee0677b0616c0caf8d5df8276cd43c1e7bbc1dfa7d9b6ac3776c57fb7ae1b7d`.
+Producer объединяет Base #384 и независимый expiry #386 без повторного включения #381.
 Компоненты и reference берутся из этой версии Base; открытый справочник другой
 версии не подтверждает доступность контракта в продукте. SDK/skills pins
 независимы. Это исходники собственного checkout; установка и authenticated
 приёмка runtime этим значением не подтверждаются. Датированные разделы ниже
 описывают прежние квалификации и не заменяют проверку итогового кандидата.
+
+Квалификация source UI cohort: frozen install, точный installed snapshot,
+TypeScript/build, lint/shell guard и OpenAPI check PASS. В scoped unit run
+54 cases /4 файла PASS; два catalog cases сначала выявили test stub, который
+терял translation defaultValue. После согласования stub с соседним shell test
+оба cases PASS с прежними assertions. Production TS не менялся; API и lockfile
+сохранены. Live E2E требует реальных Auth/CI-CD и намеренно не запускался.
 
 Audit, sync и webhook ячейки используют TableCell technical/size=sm Base; resource ID использует ResourceListDescription technical. Формат, retry, записи и ошибки остаются Forge.
 
