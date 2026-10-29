@@ -1,6 +1,6 @@
 /// <reference types="vitest/config" />
 import {
-  createUiDevCacheDir,
+  createUiDevCachePlugin,
   createUiProviderDedupe,
   createUiFontAssetsPlugin,
 } from "@pdlc/ui/build";
@@ -10,9 +10,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
-  cacheDir: createUiDevCacheDir(),
   base: process.env.VITE_APP_BASE_PATH ?? "/",
-  plugins: [createUiFontAssetsPlugin(), react(), tailwindcss()],
+  plugins: [createUiDevCachePlugin(), createUiFontAssetsPlugin(), react(), tailwindcss()],
   test: {
     environment: "jsdom",
     maxWorkers: 4,
