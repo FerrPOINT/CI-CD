@@ -122,7 +122,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: documentation regression tests
-        run: python3 -m unittest scripts.tests.test_verify_docs scripts.tests.test_ci_contract_checks scripts.tests.test_quality_routes scripts.tests.test_backend_dependency_layers
+        run: python3 -m unittest scripts.tests.test_verify_docs scripts.tests.test_ci_contract_checks scripts.tests.test_quality_routes scripts.tests.test_backend_dependency_layers scripts.tests.test_build_scope
       - name: documentation checks
         run: python3 scripts/verify_docs.py --all
       - name: script checks

@@ -6,7 +6,7 @@ Base SHA закреплён в [`.base-revision`](../.base-revision); `main` Bas
 
 ```sh
 python3 ../services-base/scripts/verify_base_revision.py --base ../services-base --revision .base-revision
-python3 scripts/build.py
+python3 scripts/build.py backend
 ```
 
 Docker standalone и umbrella используют соседние checkout как build context.

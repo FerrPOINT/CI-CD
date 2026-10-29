@@ -41,7 +41,10 @@
       "backend/*/Cargo.toml",
       "scripts/tests/test_bin_test_inputs.py",
       "backend/src/bin/forge-runner.rs",
-      "backend/src/bin/tests/forge_runner.rs"
+      "backend/src/bin/tests/forge_runner.rs",
+      "scripts/build.py",
+      "scripts/select_build.py",
+      "scripts/tests/test_build_scope.py"
     ]
   },
   "gates": [
@@ -100,6 +103,7 @@
         "scripts.tests.test_ci_contract_checks",
         "scripts.tests.test_backend_dependency_layers",
         "scripts.tests.test_verify_docs",
+        "scripts.tests.test_build_scope",
         "-q"
       ],
       "inputs": [
@@ -122,7 +126,10 @@
         "backend/Dockerfile.dockerignore",
         "backend/Dockerfile.umbrella.dockerignore",
         "backend/Cargo.toml",
-        "backend/*/Cargo.toml"
+        "backend/*/Cargo.toml",
+        "scripts/build.py",
+        "scripts/select_build.py",
+        "scripts/tests/test_build_scope.py"
       ]
     },
     {
@@ -553,7 +560,29 @@
         "gates": [
           "tooling:bin-test-inputs"
         ]
+      },
+      {
+        "paths": [
+          "scripts/build.py",
+          "scripts/select_build.py",
+          "scripts/tests/test_build_scope.py"
+        ],
+        "gates": [
+          "tooling:quality-routes"
+        ]
       }
+    ]
+  },
+  "container_inputs": {
+    "backend": [
+      "backend/Dockerfile*"
+    ],
+    "runner": [
+      "backend/Dockerfile*"
+    ],
+    "frontend": [
+      "frontend/Dockerfile*",
+      "frontend/nginx.conf"
     ]
   }
 }
