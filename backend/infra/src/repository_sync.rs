@@ -3,7 +3,7 @@ use cicd_app::repository_sync::{Access, Error, Store};
 use cicd_domain::repository_sync::{
     Connection, Direction, RefResult, SaveConnection, Settings, SyncRun,
 };
-use sqlx::{PgPool, Row};
+use sqlx::{Acquire, PgPool, Row};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -26,8 +26,8 @@ const CONNECTION_SELECT: &str = r#"
 SELECT jsonb_build_object('id',c.id,'repository_id',r.id,'repository_name',COALESCE(g.slug||'/'||r.slug,r.slug),
 'namespace',CASE WHEN b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id) ELSE NULL END,
 'version',c.version,'settings',c.settings,'has_credential',true,
-'writable',($3 AND r.ready AND COALESCE(b.state,'active')='active'),
-'paused_reason',CASE WHEN NOT r.ready THEN 'storage_pending' WHEN b.state IS NOT NULL AND b.state<>'active' THEN 'namespace_read_only' ELSE NULL END,
+'writable',($3 AND r.ready AND COALESCE(forge_effective_group_state(r.group_id),'active')='active'),
+'paused_reason',CASE WHEN NOT r.ready THEN 'storage_pending' WHEN COALESCE(forge_effective_group_state(r.group_id),'active')<>'active' THEN 'namespace_read_only' ELSE NULL END,
 'worker_enabled',$4,'next_check_at',c.next_check_at,'active_run',to_jsonb(a),'last_run',to_jsonb(l))
 FROM repository_sync_connections c JOIN repository_catalog r ON r.id=c.repository_id
 LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id
@@ -109,12 +109,31 @@ impl PgSyncStore {
         offset: i64,
         repository: Option<Uuid>,
     ) -> Result<(Vec<Connection>, i64), Error> {
+        self.list_admitted_at(
+            access, search, provider, state, group, limit, offset, repository, None,
+        )
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_admitted_at(
+        &self,
+        access: Access,
+        search: &str,
+        provider: &str,
+        state: &str,
+        group: Option<Uuid>,
+        limit: i64,
+        offset: i64,
+        repository: Option<Uuid>,
+        admitted_groups: Option<&[Uuid]>,
+    ) -> Result<(Vec<Connection>, i64), Error> {
         if access.machine && access.project_id.is_none() {
             return Err(Error::Forbidden);
         }
         let predicate = r#" AND ($5='' OR position(lower($5) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)||' '||(c.settings->>'instance_url')||'/'||(c.settings->>'repository_path')))>0)
             AND ($6='' OR c.settings->>'provider'=$6) AND ($7::uuid IS NULL OR r.group_id=$7)
-            AND ($8 OR $9 OR (NOT $10 AND b.resource_id IS NOT NULL) OR EXISTS(SELECT 1 FROM projects p JOIN project_memberships m ON m.project_id=p.id WHERE p.repository_id=r.id AND m.user_id=$11))
+            AND ($13::uuid[] IS NULL OR r.group_id=ANY($13))
+            AND ($13::uuid[] IS NOT NULL OR $8 OR $9 OR (NOT $10 AND b.resource_id IS NOT NULL) OR EXISTS(SELECT 1 FROM projects p JOIN project_memberships m ON m.project_id=p.id WHERE p.repository_id=r.id AND m.user_id=$11))
             AND ($12='' OR ($12='disabled' AND c.settings->>'direction'='disabled') OR ($12='enabled' AND c.settings->>'direction'<>'disabled') OR COALESCE(a.state,l.state)=$12) "#;
         let query = format!("{CONNECTION_SELECT}{predicate}");
         let count_query = format!("SELECT count(*) FROM ({query}) counted");
@@ -133,6 +152,7 @@ impl PgSyncStore {
                     .bind(access.machine)
                     .bind(access.actor_id)
                     .bind(state)
+                    .bind(admitted_groups)
             };
         }
         let total: i64 = bound!(&count_query)
@@ -140,7 +160,7 @@ impl PgSyncStore {
             .await
             .map_err(db)?;
         let items: Vec<serde_json::Value> = bound!(&format!(
-            "{query} ORDER BY g.slug NULLS LAST,r.slug,r.id,c.id LIMIT $13 OFFSET $14"
+            "{query} ORDER BY g.slug NULLS LAST,r.slug,r.id,c.id LIMIT $14 OFFSET $15"
         ))
         .bind(limit.clamp(1, 100))
         .bind(offset.max(0))
@@ -237,7 +257,7 @@ impl PgSyncStore {
                 return decode(row.get("readback"));
             }
         }
-        let row=sqlx::query("SELECT version,settings FROM repository_sync_connections WHERE repository_id=$1 AND id=$2 FOR UPDATE").bind(repository).bind(connection).fetch_optional(&mut *tx).await.map_err(db)?.ok_or(Error::NotFound)?;
+        let row=sqlx::query("SELECT version,settings,owner_subject FROM repository_sync_connections WHERE repository_id=$1 AND id=$2 FOR UPDATE").bind(repository).bind(connection).fetch_optional(&mut *tx).await.map_err(db)?.ok_or(Error::NotFound)?;
         let settings: Settings = decode(row.get("settings"))?;
         if settings.direction == Direction::Disabled {
             return Err(Error::Conflict("sync_disabled"));
@@ -246,8 +266,8 @@ impl PgSyncStore {
         let value = if let Some(old) = old {
             old
         } else {
-            sqlx::query_scalar("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id) VALUES($1,$2,$3,$4,$5,'queued',$6) RETURNING to_jsonb(repository_sync_runs)")
-                .bind(Uuid::new_v4()).bind(repository).bind(row.get::<i64,_>("version")).bind(json(&settings)?).bind(source).bind(connection).fetch_one(&mut *tx).await.map_err(db)?
+            sqlx::query_scalar("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id,owner_subject) VALUES($1,$2,$3,$4,$5,'queued',$6,$7) RETURNING to_jsonb(repository_sync_runs)")
+                .bind(Uuid::new_v4()).bind(repository).bind(row.get::<i64,_>("version")).bind(json(&settings)?).bind(source).bind(connection).bind(row.get::<Option<Uuid>,_>("owner_subject")).fetch_one(&mut *tx).await.map_err(db)?
         };
         if let Some((key, access)) = operation {
             sqlx::query("INSERT INTO repository_sync_operations(operation_id,repository_id,actor_id,kind,fingerprint,readback,connection_id) VALUES($1,$2,$3,'run','manual',$4,$5)").bind(key).bind(repository).bind(access.actor_id).bind(&value).bind(connection).execute(&mut *tx).await.map_err(db)?;
@@ -261,12 +281,49 @@ impl PgSyncStore {
     }
     pub async fn schedule(&self) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(db)?;
-        let rows=sqlx::query("SELECT c.id,c.repository_id,c.settings,c.version,c.dirty FROM repository_sync_connections c JOIN repository_catalog r ON r.id=c.repository_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE (c.settings->>'automatic')::boolean AND c.settings->>'direction'<>'disabled' AND (c.dirty OR c.next_check_at<=now()) AND r.ready AND COALESCE(b.state,'active')='active' AND NOT EXISTS(SELECT 1 FROM repository_sync_runs run WHERE run.connection_id=c.id AND run.state IN ('queued','running','stopping','reconciling')) ORDER BY c.next_check_at NULLS FIRST LIMIT 100 FOR UPDATE OF c SKIP LOCKED").fetch_all(&mut *tx).await.map_err(db)?;
+        let rows=sqlx::query(r#"
+            SELECT c.id,c.repository_id,c.settings,c.version,c.dirty,c.owner_subject
+            FROM repository_sync_connections c JOIN repository_catalog r ON r.id=c.repository_id
+            WHERE (c.settings->>'automatic')::boolean AND c.settings->>'direction'<>'disabled'
+                AND (c.dirty OR c.next_check_at<=now()) AND r.ready
+                AND COALESCE(forge_effective_group_state(r.group_id),'active')='active'
+                AND NOT EXISTS(SELECT 1 FROM repository_sync_runs run WHERE run.connection_id=c.id
+                    AND run.state IN ('queued','running','stopping','reconciling'))
+                AND NOT EXISTS(
+                    SELECT 1 FROM forge_identity_row_refs('repository_sync_connections',to_jsonb(c)) ref
+                    WHERE (ref.unresolved AND EXISTS(SELECT 1 FROM identity_deletion_operations WHERE state='frozen'))
+                        OR EXISTS(SELECT 1 FROM identity_deletion_operations f WHERE f.state='frozen'
+                            AND f.issuer=ref.issuer AND f.subject=ref.subject))
+            ORDER BY c.next_check_at NULLS FIRST,c.id LIMIT 100 FOR UPDATE OF c SKIP LOCKED
+        "#).fetch_all(&mut *tx).await.map_err(db)?;
         for row in rows {
             let id: Uuid = row.get("repository_id");
             let connection: Uuid = row.get("id");
-            sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id) VALUES($1,$2,$3,$4,$5,'queued',$6)").bind(Uuid::new_v4()).bind(id).bind(row.get::<i64,_>("version")).bind(row.get::<serde_json::Value,_>("settings")).bind(if row.get::<bool,_>("dirty"){"git_change"}else{"schedule"}).bind(connection).execute(&mut *tx).await.map_err(db)?;
-            sqlx::query("UPDATE repository_sync_connections SET dirty=false,next_check_at=now()+make_interval(secs=>$2::double precision) WHERE id=$1").bind(connection).bind(self.interval_seconds as f64).execute(&mut *tx).await.map_err(db)?;
+            // Admission can reject one durable automation (e.g. an owner frozen
+            // for deletion). Keep its signal and let independent work proceed.
+            let mut item = tx.begin().await.map_err(db)?;
+            let inserted = sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id,owner_subject) VALUES($1,$2,$3,$4,$5,'queued',$6,$7)").bind(Uuid::new_v4()).bind(id).bind(row.get::<i64,_>("version")).bind(row.get::<serde_json::Value,_>("settings")).bind(if row.get::<bool,_>("dirty"){"git_change"}else{"schedule"}).bind(connection).bind(row.get::<Option<Uuid>,_>("owner_subject")).execute(&mut *item).await;
+            if let Err(error) = inserted {
+                let admission_denied = error.as_database_error().is_some_and(|error| {
+                    matches!(
+                        (error.code().as_deref(), error.message()),
+                        (
+                            Some("42501"),
+                            "namespace_resource_read_only" | "namespace_projection_missing"
+                        ) | (
+                            Some("23514"),
+                            "identity_deletion_fenced" | "identity_legacy_reference_unresolved"
+                        )
+                    )
+                });
+                if !admission_denied {
+                    return Err(db(error));
+                }
+                item.rollback().await.map_err(db)?;
+                continue;
+            }
+            sqlx::query("UPDATE repository_sync_connections SET dirty=false,next_check_at=now()+make_interval(secs=>$2::double precision) WHERE id=$1").bind(connection).bind(self.interval_seconds as f64).execute(&mut *item).await.map_err(db)?;
+            item.commit().await.map_err(db)?;
         }
         tx.commit().await.map_err(db)?;
         Ok(())
@@ -281,7 +338,7 @@ impl PgSyncStore {
                 SELECT DISTINCT ON (run.repository_id) run.id,run.repository_id,r.storage_name,run.created_at
                 FROM repository_sync_runs run JOIN repository_catalog r ON r.id=run.repository_id
                 LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id
-                WHERE (run.state='queued' AND r.ready AND COALESCE(b.state,'active')='active'
+                WHERE (run.state='queued' AND r.ready AND COALESCE(forge_effective_group_state(r.group_id),'active')='active'
                     AND NOT EXISTS(SELECT 1 FROM repository_sync_runs writer
                         WHERE writer.repository_id=run.repository_id
                         AND writer.state IN ('running','stopping','reconciling')))
@@ -322,7 +379,7 @@ impl PgSyncStore {
         owner: Uuid,
         generation: i64,
     ) -> Result<bool, Error> {
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_sync_runs run JOIN repository_sync_connections c ON c.id=run.connection_id AND c.repository_id=run.repository_id JOIN repository_catalog r ON r.id=c.repository_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE run.id=$1 AND run.owner_id=$2 AND run.generation=$3 AND run.lease_until>now() AND NOT run.cancel_requested AND c.version=run.connection_version AND c.settings->>'direction'<>'disabled' AND COALESCE(b.state,'active')='active')").bind(run.id).bind(owner).bind(generation).fetch_one(&self.pool).await.map_err(db)
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_sync_runs run JOIN repository_sync_connections c ON c.id=run.connection_id AND c.repository_id=run.repository_id JOIN repository_catalog r ON r.id=c.repository_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE run.id=$1 AND run.owner_id=$2 AND run.generation=$3 AND run.lease_until>now() AND NOT run.cancel_requested AND c.version=run.connection_version AND c.settings->>'direction'<>'disabled' AND COALESCE(forge_effective_group_state(r.group_id),'active')='active')").bind(run.id).bind(owner).bind(generation).fetch_one(&self.pool).await.map_err(db)
     }
     pub async fn record_plan(&self, run: Uuid, refs: &[RefResult]) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(db)?;
@@ -369,8 +426,15 @@ impl PgSyncStore {
         .await
         .map_err(db)
     }
+    pub async fn event_owner(&self, run: Uuid) -> Result<Option<Uuid>, Error> {
+        sqlx::query_scalar("SELECT owner_subject FROM repository_sync_runs WHERE id=$1")
+            .bind(run)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db)
+    }
     pub async fn pending_events(&self) -> Result<Vec<(Uuid, Uuid, RefResult)>, Error> {
-        let rows=sqlx::query("SELECT r.run_id,run.repository_id,to_jsonb(r) AS value FROM repository_sync_refs r JOIN repository_sync_runs run ON run.id=r.run_id WHERE r.direction='pull' AND r.state='applied' AND NOT r.event_delivered AND r.event_next_attempt_at<=now() ORDER BY run.created_at LIMIT 100").fetch_all(&self.pool).await.map_err(db)?;
+        let rows=sqlx::query("SELECT r.run_id,run.repository_id,to_jsonb(r) AS value FROM repository_sync_refs r JOIN repository_sync_runs run ON run.id=r.run_id WHERE r.direction='pull' AND r.state='applied' AND NOT r.event_delivered AND r.event_next_attempt_at<=now() ORDER BY r.event_next_attempt_at,run.created_at,r.run_id,r.ref_name LIMIT 100").fetch_all(&self.pool).await.map_err(db)?;
         rows.into_iter()
             .map(|row| {
                 Ok((
@@ -404,6 +468,13 @@ impl PgSyncStore {
 pub struct ConnectionStore<'a> {
     store: &'a PgSyncStore,
     id: Uuid,
+    owner_subject: Option<Uuid>,
+}
+impl ConnectionStore<'_> {
+    pub fn with_owner(mut self, subject: Option<Uuid>) -> Self {
+        self.owner_subject = subject;
+        self
+    }
 }
 impl std::ops::Deref for ConnectionStore<'_> {
     type Target = PgSyncStore;
@@ -416,6 +487,7 @@ impl PgSyncStore {
         ConnectionStore {
             store: self,
             id: connection,
+            owner_subject: None,
         }
     }
 }
@@ -512,14 +584,19 @@ impl Store for ConnectionStore<'_> {
         };
         let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_sync_runs WHERE repository_id=$1 AND connection_id=$2 AND state IN ('queued','running','stopping','reconciling'))").bind(repository).bind(self.id).fetch_one(&mut *tx).await.map_err(db)?;
         if active {
-            let mut disabling = old.ok_or(Error::NotFound)?;
+            let previous = old.ok_or(Error::NotFound)?;
+            let recovering = previous.direction == Direction::Disabled;
+            let mut disabling = previous;
             disabling.direction = Direction::Disabled;
-            if input.settings != disabling || encrypted.is_some() {
+            // Reauthentication of an already stopped connection only enables
+            // observation of its original intent; version/cancel fences still
+            // prohibit any new Git write, including by a surviving old worker.
+            if input.settings != disabling || (encrypted.is_some() && !recovering) {
                 return Err(Error::Conflict("sync_running"));
             }
         }
-        sqlx::query("INSERT INTO repository_sync_connections(repository_id,id,version,settings,encrypted_credential,next_check_at) VALUES($1,$6,1,$2,$3,CASE WHEN $4 THEN now()+make_interval(secs=>$5::double precision) ELSE NULL END) ON CONFLICT(id) DO UPDATE SET version=repository_sync_connections.version+1,settings=EXCLUDED.settings,encrypted_credential=EXCLUDED.encrypted_credential,next_check_at=EXCLUDED.next_check_at,dirty=false,updated_at=now()")
-            .bind(repository).bind(json(&input.settings)?).bind(credential).bind(input.settings.automatic && input.settings.direction!=Direction::Disabled).bind(self.interval_seconds as f64).bind(self.id).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO repository_sync_connections(repository_id,id,version,settings,encrypted_credential,next_check_at,owner_subject) VALUES($1,$6,1,$2,$3,CASE WHEN $4 THEN now()+make_interval(secs=>$5::double precision) ELSE NULL END,$7) ON CONFLICT(id) DO UPDATE SET version=repository_sync_connections.version+1,settings=EXCLUDED.settings,encrypted_credential=EXCLUDED.encrypted_credential,next_check_at=EXCLUDED.next_check_at,owner_subject=CASE WHEN $8 THEN repository_sync_connections.owner_subject ELSE EXCLUDED.owner_subject END,dirty=false,updated_at=now()")
+            .bind(repository).bind(json(&input.settings)?).bind(credential).bind(input.settings.automatic && input.settings.direction!=Direction::Disabled).bind(self.interval_seconds as f64).bind(self.id).bind(self.owner_subject).bind(active).execute(&mut *tx).await.map_err(db)?;
         if input.settings.direction == Direction::Disabled {
             sqlx::query("UPDATE repository_sync_runs SET cancel_requested=true,state=CASE WHEN state='queued' THEN 'canceled' ELSE 'stopping' END,finished_at=CASE WHEN state='queued' THEN now() ELSE finished_at END WHERE repository_id=$1 AND connection_id=$2 AND state IN ('queued','running','stopping','reconciling')").bind(repository).bind(self.id).execute(&mut *tx).await.map_err(db)?;
         }

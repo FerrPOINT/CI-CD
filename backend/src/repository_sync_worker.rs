@@ -608,14 +608,18 @@ async fn deliver_event(
             .strip_prefix("refs/heads/")
             .or_else(|| reference.ref_name.strip_prefix("refs/tags/"))
             .ok_or(Error::Unavailable("Некорректный ref события"))?;
-        crate::api::pipelines_routes::create_pipeline_at_commit(
-            &store.pool,
-            project,
-            short.into(),
-            "git-push",
-            &key,
-            &config.git.root,
-            sha,
+        crate::pipeline_authority::with_saved(
+            store.event_owner(run).await?,
+            false,
+            crate::api::pipelines_routes::create_pipeline_at_commit(
+                &store.pool,
+                project,
+                short.into(),
+                "git-push",
+                &key,
+                &config.git.root,
+                sha,
+            ),
         )
         .await
         .map_err(|_| Error::Unavailable("CI-событие сохранено, доставка ожидает повтора"))?;

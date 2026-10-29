@@ -1,5 +1,9 @@
 # Git Hosting — Forge CI/CD
 
+Допуск синхронизаций, effective Space lifecycle, восстановление credentials и
+сохранённый владелец CI: [ADR-0041](adr/0041-sync-admission-and-automation-owner.md).
+Аддитивная 0107; HTTP DTO не меняются. Runtime отдельно от source-поставки.
+
 Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
 сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
 transaction и original proof до native publication. GET связанных задач PR

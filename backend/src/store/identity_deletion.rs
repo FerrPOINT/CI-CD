@@ -22,6 +22,8 @@ const SOURCES: &[&str] = &[
     "repository_attach_operations",
     "delivery_configuration_operations",
     "repository_sync_operations",
+    "repository_sync_connections",
+    "repository_sync_runs",
     "pull_requests",
     "audit_log",
     "releases",
