@@ -21,7 +21,7 @@ Source command: `python -B -m unittest scripts.tests.test_bin_test_inputs -q`.
 
 Оба frontend Docker recipes устанавливают зависимости по manifest без root scripts,
 сохраняя dependency hooks. OpenAPI и generator копируются после install; затем один
-`pnpm run postinstall` готовит schema. Unit/build команды и runtime tail сохранены.
+`pnpm run postinstall` готовит schema. Public package commands и runtime tail сохранены.
 Source checks не доказывают реальные BuildKit cache hits или ускорение.
 Общие правила: Base `docs/BUILD_PERFORMANCE.md`, раздел «Frontend, Python и Java».
 
@@ -29,9 +29,9 @@ Docker install использует зарегистрированный Node22/
 Base в `/pnpm/store`; integrity check включён, side-effects cache выключен.
 `node_modules` остаётся локальным; реальные cache hits и ускорение пока не измерены.
 
-`deployment-path.test.ts` входит в общий `test:unit`, который `pnpm build`
-выполняет перед typecheck/compile. Отдельного Vitest-вызова этого же файла в
-umbrella recipe нет; публичные test/build commands и сам тест сохранены.
+`deployment-path.test.ts` входит в общий `test:unit`: manual `pnpm build`
+и Docker unit stage выполняют его перед typecheck/compile. Отдельного Vitest-вызова
+этого же файла в umbrella recipe нет; public commands и сам тест сохранены.
 
 ## CLI metadata в server Docker recipes
 
@@ -60,3 +60,7 @@ Source contract: `python -B -m unittest scripts.tests.test_backend_dockerfile -q
 Он проверяет состав, пути и выбор static owner без application producer.
 Actual layer hit, бинарник и ресурсы проверяются на финальной вехе;
 правила и evidence — в Base `docs/plans/forge-delivery-witness-layer-20261029.md`.
+
+Docker разделяет полный unit/typecheck context и production COPY по `frontend:build.exclude_inputs`.
+Один `pnpm run postinstall` обслуживает оба consumers; `pnpm run build:compile`
+зависит от успешного unit-маркера. Native cache-hit/time qualification пока не выполнена.
