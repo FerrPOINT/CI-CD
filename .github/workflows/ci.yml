@@ -50,15 +50,60 @@ jobs:
       - name: Verify packaged Base selector
         run: |
           python3 - <<'PY'
-          import hashlib,json,re
+          # Generated from Base package_quality_selector.ci_packet_source.
+          import hashlib,json,os,re,stat
           from pathlib import Path
           root=Path('CI-CD')
-          pin=(root/'.quality-tooling-revision').read_text().strip()
-          receipt=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
-          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v1' or receipt['revision']!=pin:
+          def chunks(path,budget):
+              for entry in (path,*path.parents):
+                  if entry.is_symlink() or getattr(entry,'is_junction',lambda:False)():
+                      raise SystemExit('Packaged Base inputs must not contain links')
+              if not stat.S_ISREG(path.lstat().st_mode):
+                  raise SystemExit('Packaged Base input must be a regular file')
+              with path.open('rb') as stream:
+                  if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                      raise SystemExit('Packaged Base input must be a regular file')
+                  size=0
+                  while block:=stream.read(min(65536,budget-size+1)):
+                      size+=len(block)
+                      if size>budget:
+                          raise SystemExit('Packaged Base input exceeds its byte budget')
+                      yield block
+          def read(path,budget):
+              return b''.join(chunks(path,budget))
+          def checksum(path,budget):
+              value=hashlib.sha256()
+              for block in chunks(path,budget):
+                  value.update(block)
+              return value.hexdigest()
+          def unique(pairs):
+              value=dict(pairs)
+              if len(value)!=len(pairs):
+                  raise SystemExit('Duplicate packaged Base metadata key')
+              return value
+          pin=read(root/'.quality-tooling-revision',1024).decode('ascii').strip()
+          receipt=json.loads(read(root/'scripts/vendor/base-quality-tooling.json',65536),object_pairs_hook=unique)
+          if (not isinstance(receipt,dict) or not re.fullmatch(r'[0-9a-f]{40}',pin)
+                  or receipt.get('schema') not in ('base-quality-tooling/v1','base-quality-tooling/v2')
+                  or receipt.get('revision')!=pin
+                  or receipt.get('repository')!='https://github.com/FerrPOINT/services-base'
+                  or receipt.get('source')!='scripts/quality_selection.py'
+                  or not isinstance(receipt.get('sha256'),str) or not re.fullmatch(r'[0-9a-f]{64}',receipt['sha256'])):
               raise SystemExit('Packaged Base revision mismatch')
-          if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
+          if checksum(root/'scripts/vendor/base_quality_selection.py',1048576)!=receipt['sha256']:
               raise SystemExit('Packaged Base selector checksum mismatch')
+          if receipt['schema']=='base-quality-tooling/v2':
+              generator=receipt.get('frontend_generator')
+              if (not isinstance(generator,dict) or set(generator)!={'source','file','contract','sha256'}
+                      or generator['source']!='scripts/generate_openapi.mjs'
+                      or generator['file']!='frontend/scripts/base-generate-openapi.mjs'
+                      or generator['contract']!='base-openapi-generation/v1'
+                      or not isinstance(generator['sha256'],str) or not re.fullmatch(r'[0-9a-f]{64}',generator['sha256'])):
+                  raise SystemExit('Packaged Base generator registration mismatch')
+              if checksum(root/generator['file'],65536)!=generator['sha256']:
+                  raise SystemExit('Packaged Base generator checksum mismatch')
+          elif 'frontend_generator' in receipt:
+              raise SystemExit('Packaged Base generator registration requires packet v2')
           PY
       - id: classify
         env:
