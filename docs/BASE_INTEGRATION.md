@@ -2,8 +2,8 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA: `d7c1d8c3bd92cf888abf1546243fa31878c80269` ([pin](../.base-ui-revision)),
-пакет 0.3.26, reference `0027de894be13a69a735145a83366fd1d4cc72fba2d360994520b6cd6dcb0d20`.
+Точный UI SHA: `2de0f72b2c28f3d0930808a1c58a941f9c6be31e` ([pin](../.base-ui-revision)),
+пакет 0.3.26, reference `0bb6a3074c8188354c79a5b4bdea9654d3c31a60a6b1eec3033c20ebc0f1488f`.
 Producer объединяет Base #384 и независимый expiry #386 без повторного включения #381.
 Компоненты и reference берутся из этой версии Base; открытый справочник другой
 версии не подтверждает доступность контракта в продукте. SDK/skills pins
@@ -11,7 +11,13 @@ Producer объединяет Base #384 и независимый expiry #386 б
 приёмка runtime этим значением не подтверждаются. Датированные разделы ниже
 описывают прежние квалификации и не заменяют проверку итогового кандидата.
 
-P1 clock-skew исправлен в Base: независимый JWT deadline использует owner clock
+Финальный checkpoint 2de0f72b включает bounded fetch/body wait. Frozen offline
+refresh, exact snapshot, types, production build и shell contract PASS.
+Provider/продуктовые композиции относительно d7c1d8c3 неизменны; нижние auth cases
+переиспользованы, не объявляются новым прогоном. Changed transport покрыт 96 Base
+auth cases; исходный Admin integration file прошёл 18 cases на final pin.
+
+Первый checkpoint d7c1d8c3: P1 clock-skew исправлен в Base, независимый JWT deadline использует owner clock
 и monotonic time, не Date.now до owner readback. Frozen offline install,
 exact installed snapshot, TypeScript/production build PASS; affected auth-provider
 suite: 9 PASS. Production TS, API, SDK/skills, grants и runtime не менялись.
