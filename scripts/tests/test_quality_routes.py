@@ -153,6 +153,30 @@ class QualityRouteTests(unittest.TestCase):
         self.assertTrue(describe(plan)['openapi_check'])
 
 
+    def test_docker_install_consumes_registered_store_without_shared_node_modules(self):
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            source = (ROOT / 'frontend' / name).read_text(encoding='utf-8')
+            self.assertEqual(source.splitlines()[0],
+                             '# syntax=docker/dockerfile:1.27.1@sha256:'
+                             '4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e')
+            toolchain = source.split('FROM toolchain AS install-manifest', 1)[0]
+            self.assertIn('ARG TARGETARCH', toolchain)
+            self.assertIn('ARG PNPM_CACHE_ID=pdlc-operator-downloads-v1-pnpm10-node22', toolchain)
+            installs = [line for line in source.splitlines()
+                        if line.startswith('RUN ') and 'pnpm install --frozen-lockfile' in line]
+            self.assertEqual(len(installs), 1)
+            install = installs[0]
+            self.assertIn('--mount=type=cache,id=${PNPM_CACHE_ID}-${TARGETARCH},target=/pnpm/store,sharing=locked', install)
+            for flag in ('--store-dir=/pnpm/store', '--side-effects-cache=false',
+                         '--verify-store-integrity=true'):
+                self.assertIn(flag, install)
+            self.assertNotIn('--ignore-scripts', install)
+            mounts = [token for line in source.splitlines() for token in line.split()
+                      if token.startswith('--mount=')]
+            self.assertEqual([token for token in mounts if ',target=/pnpm/store,' in token],
+                             ['--mount=type=cache,id=${PNPM_CACHE_ID}-${TARGETARCH},target=/pnpm/store,sharing=locked'])
+            self.assertFalse([token for token in mounts if '/node_modules' in token])
+
     def test_schema_and_generator_changes_keep_the_dependency_install_layer(self):
         scripts = json.loads((ROOT / 'frontend/package.json').read_bytes())['scripts']
         hooks = {'preinstall', 'install', 'postinstall', 'prepublish', 'prepare',

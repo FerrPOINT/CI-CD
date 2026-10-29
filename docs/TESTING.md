@@ -25,6 +25,10 @@ Source command: `python -B -m unittest scripts.tests.test_bin_test_inputs -q`.
 Source checks не доказывают реальные BuildKit cache hits или ускорение.
 Общие правила: Base `docs/BUILD_PERFORMANCE.md`, раздел «Frontend, Python и Java».
 
+Docker install использует зарегистрированный Node22/architecture download store
+Base в `/pnpm/store`; integrity check включён, side-effects cache выключен.
+`node_modules` остаётся локальным; реальные cache hits и ускорение пока не измерены.
+
 `deployment-path.test.ts` входит в общий `test:unit`, который `pnpm build`
 выполняет перед typecheck/compile. Отдельного Vitest-вызова этого же файла в
 umbrella recipe нет; публичные test/build commands и сам тест сохранены.
