@@ -2,8 +2,8 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA: `cdfac2bbcf61f82ff126df529d5759d425e872ea` ([pin](../.base-ui-revision)),
-пакет 0.3.25, reference `dee0677b0616c0caf8d5df8276cd43c1e7bbc1dfa7d9b6ac3776c57fb7ae1b7d`.
+Точный UI SHA: `d7c1d8c3bd92cf888abf1546243fa31878c80269` ([pin](../.base-ui-revision)),
+пакет 0.3.26, reference `0027de894be13a69a735145a83366fd1d4cc72fba2d360994520b6cd6dcb0d20`.
 Producer объединяет Base #384 и независимый expiry #386 без повторного включения #381.
 Компоненты и reference берутся из этой версии Base; открытый справочник другой
 версии не подтверждает доступность контракта в продукте. SDK/skills pins
@@ -11,7 +11,14 @@ Producer объединяет Base #384 и независимый expiry #386 б
 приёмка runtime этим значением не подтверждаются. Датированные разделы ниже
 описывают прежние квалификации и не заменяют проверку итогового кандидата.
 
-Квалификация source UI cohort: frozen install, точный installed snapshot,
+P1 clock-skew исправлен в Base: независимый JWT deadline использует owner clock
+и monotonic time, не Date.now до owner readback. Frozen offline install,
+exact installed snapshot, TypeScript/production build PASS; affected auth-provider
+suite: 9 PASS. Production TS, API, SDK/skills, grants и runtime не менялись.
+Независимое review через Main требуется до ready/merge; stand и PM03 pin не
+затронуты. Остальная theme/browser matrix остаётся follow-up.
+
+Предыдущая квалификация 0.3.25: frozen install, точный installed snapshot,
 TypeScript/build, lint/shell guard и OpenAPI check PASS. В scoped unit run
 54 cases /4 файла PASS; два catalog cases сначала выявили test stub, который
 терял translation defaultValue. После согласования stub с соседним shell test
