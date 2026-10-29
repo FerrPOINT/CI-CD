@@ -40,7 +40,10 @@
       "backend/src/bin/forge-runner.rs",
       "backend/src/bin/tests/forge_runner.rs",
       "backend/src/bin/forge-delivery.rs",
-      "backend/src/bin/tests/forge_delivery.rs"
+      "backend/src/bin/tests/forge_delivery.rs",
+      "scripts/build.py",
+      "scripts/select_build.py",
+      "scripts/tests/test_build_scope.py"
     ],
     "docs": [
       "scripts/verify_docs.py",
@@ -196,6 +199,7 @@
         "scripts.tests.test_umbrella_operations_docs",
         "scripts.tests.test_verify_docs",
         "scripts.tests.test_tooling_ownership",
+        "scripts.tests.test_build_scope",
         "-q"
       ],
       "cwd": ".",
@@ -234,7 +238,9 @@
         "scripts/vendor/base_quality_selection.py",
         ".quality-gate.json",
         ".github/workflows/ci.yml",
-        "backend/src/bin/tests/forge_delivery.rs"
+        "backend/src/bin/tests/forge_delivery.rs",
+        "scripts/select_build.py",
+        "scripts/tests/test_build_scope.py"
       ],
       "cacheable": true,
       "execution_slot": "none",
@@ -825,6 +831,16 @@
         "gates": [
           "tooling:bin-test-inputs"
         ]
+      },
+      {
+        "paths": [
+          "scripts/build.py",
+          "scripts/select_build.py",
+          "scripts/tests/test_build_scope.py"
+        ],
+        "gates": [
+          "tooling:python-helpers"
+        ]
       }
     ]
   },
@@ -881,5 +897,17 @@
     ],
     "commands_sha256": "433bc9eab482331989253c430535c2ca929494ad6d2a3dadaea5817739e32f2d",
     "environment_input_contract": "frontend-agent-presence-v1"
+  },
+  "container_inputs": {
+    "backend": [
+      "backend/Dockerfile*"
+    ],
+    "runner": [
+      "backend/Dockerfile*"
+    ],
+    "frontend": [
+      "frontend/Dockerfile*",
+      "frontend/nginx.conf"
+    ]
   }
 }

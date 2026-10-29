@@ -6,7 +6,7 @@ from pathlib import Path
 from scripts.vendor import base_quality_selection as selection
 
 ROOT = Path(__file__).resolve().parents[2]
-TEST_GATES = {'test_build_pin': 'tooling:python-helpers', 'test_forge_backup_umbrella': 'tooling:python-helpers', 'test_frontend_toolchain': 'tooling:python-helpers', 'test_observability_contract': 'tooling:python-helpers', 'test_oci_offline_fixture': 'tooling:python-helpers', 'test_postgres_delivery': 'tooling:python-helpers', 'test_postgres_rejection': 'tooling:python-helpers', 'test_tls_profile': 'tooling:python-helpers', 'test_umbrella_operations_docs': 'tooling:python-helpers', 'test_verify_docs': 'tooling:python-helpers', 'test_tooling_ownership': 'tooling:python-helpers'}
+TEST_GATES = {'test_build_pin': 'tooling:python-helpers', 'test_forge_backup_umbrella': 'tooling:python-helpers', 'test_frontend_toolchain': 'tooling:python-helpers', 'test_observability_contract': 'tooling:python-helpers', 'test_oci_offline_fixture': 'tooling:python-helpers', 'test_postgres_delivery': 'tooling:python-helpers', 'test_postgres_rejection': 'tooling:python-helpers', 'test_tls_profile': 'tooling:python-helpers', 'test_umbrella_operations_docs': 'tooling:python-helpers', 'test_verify_docs': 'tooling:python-helpers', 'test_tooling_ownership': 'tooling:python-helpers', 'test_build_scope': 'tooling:python-helpers'}
 
 
 class PythonToolingOwnershipTests(unittest.TestCase):
@@ -111,7 +111,7 @@ class PythonToolingOwnershipTests(unittest.TestCase):
 
     def test_unknown_scripts_and_application_sources_keep_consumers(self):
         manifest = selection.load(ROOT)
-        for path in ('scripts/new_generator.py', 'scripts/build.py'):
+        for path in ('scripts/new_generator.py',):
             with self.subTest(path=path):
                 candidate = selection.plan(ROOT, profile='build', changed=[path], manifest=manifest)
                 self.assertTrue(set(manifest['components']) <= set(candidate['components']))
