@@ -15,20 +15,23 @@ FROM toolchain AS install-manifest
 COPY CI-CD/frontend/package.json ./
 RUN node -e 'const fs = require("node:fs"); const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); delete pkg.scripts; fs.writeFileSync("package.json", JSON.stringify(pkg) + "\n");'
 
-FROM toolchain AS build
+FROM toolchain AS dependencies
 COPY --from=install-manifest /app/package.json ./
 COPY CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
 COPY services-base/base-modules/ui /services-base/base-modules/ui
 # Keep dependency lifecycle scripts (including native tooling) enabled.
 RUN --mount=type=cache,id=${PNPM_CACHE_ID}-${TARGETARCH},target=/pnpm/store,sharing=locked pnpm install --frozen-lockfile --store-dir=/pnpm/store --side-effects-cache=false --verify-store-integrity=true
 
-# Generation inputs enter only after dependencies have been installed.
+FROM dependencies AS generated
 COPY CI-CD/frontend/package.json ./
 COPY CI-CD/openapi/openapi.yaml /openapi/openapi.yaml
 COPY CI-CD/frontend/scripts/base-generate-openapi.mjs scripts/base-generate-openapi.mjs
 RUN pnpm run postinstall && test -s src/api/schema.d.ts
 
+FROM dependencies AS unit
 COPY CI-CD/frontend/ ./
+COPY CI-CD/openapi/openapi.yaml /openapi/openapi.yaml
+COPY --from=generated /app/src/api/schema.d.ts ./src/api/schema.d.ts
 ARG VITE_NAMESPACE_ENABLED="false"
 ENV VITE_NAMESPACE_ENABLED=${VITE_NAMESPACE_ENABLED}
 ARG VITE_PLATFORM_BRANDING_URL=""
@@ -43,7 +46,28 @@ ARG VITE_AUTH_NAMESPACE="sdlc"
 ENV VITE_AUTH_NAMESPACE=${VITE_AUTH_NAMESPACE}
 ARG VITE_PLATFORM_ORIGIN=""
 ENV VITE_PLATFORM_ORIGIN=${VITE_PLATFORM_ORIGIN}
-RUN pnpm build
+RUN pnpm run test:unit && pnpm run typecheck && printf 'passed\n' > /tmp/frontend-unit-check
+
+FROM dependencies AS build
+COPY --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --exclude=src/**/*.spec.ts --exclude=src/**/*.spec.tsx --exclude=src/**/*.test.mjs --exclude=src/**/*.test.cjs --exclude=src/*.test.ts --exclude=src/*.test.tsx --exclude=src/*.spec.ts --exclude=src/*.spec.tsx --exclude=src/*.test.mjs --exclude=src/*.test.cjs --exclude=src/test/** --exclude=vitest.config.ts --exclude=e2e/** --exclude=scripts/tailwind-source-inputs.test.mjs --exclude=Dockerfile* --exclude=nginx.conf --exclude=src/test-setup.ts CI-CD/frontend/ ./
+COPY CI-CD/openapi/openapi.yaml /openapi/openapi.yaml
+COPY --from=generated /app/src/api/schema.d.ts ./src/api/schema.d.ts
+ARG VITE_NAMESPACE_ENABLED="false"
+ENV VITE_NAMESPACE_ENABLED=${VITE_NAMESPACE_ENABLED}
+ARG VITE_PLATFORM_BRANDING_URL=""
+ENV VITE_PLATFORM_BRANDING_URL=${VITE_PLATFORM_BRANDING_URL}
+ARG VITE_PLATFORM_SERVICES_URL=""
+ENV VITE_PLATFORM_SERVICES_URL=${VITE_PLATFORM_SERVICES_URL}
+ARG VITE_APP_BASE_PATH="/"
+ENV VITE_APP_BASE_PATH=${VITE_APP_BASE_PATH}
+ARG VITE_AUTH_ISSUER="http://localhost:7701"
+ENV VITE_AUTH_ISSUER=${VITE_AUTH_ISSUER}
+ARG VITE_AUTH_NAMESPACE="sdlc"
+ENV VITE_AUTH_NAMESPACE=${VITE_AUTH_NAMESPACE}
+ARG VITE_PLATFORM_ORIGIN=""
+ENV VITE_PLATFORM_ORIGIN=${VITE_PLATFORM_ORIGIN}
+RUN --mount=type=bind,from=unit,source=/tmp/frontend-unit-check,target=/tmp/frontend-unit-check test "$(cat /tmp/frontend-unit-check)" = passed
+RUN pnpm run build:compile
 
 FROM nginx:1.31.4-alpine
 ARG VITE_NAMESPACE_ENABLED="false"
