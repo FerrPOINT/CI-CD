@@ -153,6 +153,28 @@ class QualityRouteTests(unittest.TestCase):
         self.assertTrue(describe(plan)['openapi_check'])
 
 
+    def test_automatic_generator_adapter_preserves_the_public_manual_route(self):
+        package = json.loads((ROOT / 'frontend/package.json').read_bytes())
+        receipt = json.loads((ROOT / 'scripts/vendor/base-quality-tooling.json').read_bytes())
+        self.assertEqual(receipt['schema'], 'base-quality-tooling/v2')
+        generator = receipt['frontend_generator']
+        self.assertEqual(set(generator), {'source', 'file', 'contract', 'sha256'})
+        self.assertEqual(generator['source'], 'scripts/generate_openapi.mjs')
+        self.assertEqual(generator['file'], 'frontend/scripts/base-generate-openapi.mjs')
+        self.assertEqual(generator['contract'], 'base-openapi-generation/v1')
+        self.assertEqual(hashlib.sha256((ROOT / generator['file']).read_bytes()).hexdigest(), generator['sha256'])
+        self.assertEqual(package['scripts']['postinstall'], 'node scripts/base-generate-openapi.mjs --schema ../openapi/openapi.yaml --output src/api/schema.d.ts --spec-env SPEC')
+        self.assertEqual(package['scripts']['openapi:generate'], 'node scripts/generate-openapi.mjs')
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            path = ROOT / 'frontend' / name
+            if not path.is_file(): continue
+            source = path.read_text()
+            generation = next(i for i, line in enumerate(source.splitlines()) if line.startswith('RUN ')
+                              and ('pnpm run postinstall' in line or 'pnpm install' in line and '--ignore-scripts' not in line))
+            self.assertIn('base-generate-openapi.mjs', '\n'.join(source.splitlines()[:generation]))
+
+
+
 class RawContainerScopeTests(unittest.TestCase):
     def invoke(self, targets, selected, pins):
         with tempfile.TemporaryDirectory() as directory:

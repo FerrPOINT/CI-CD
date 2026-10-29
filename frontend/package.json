@@ -17,7 +17,7 @@
     "openapi:generate": "node scripts/generate-openapi.mjs",
     "openapi:check": "node node_modules/@pdlc/ui/scripts/pdlc-openapi-check.mjs",
     "openapi:compat": "node scripts/base-openapi-compat.mjs",
-    "postinstall": "pnpm run openapi:generate",
+    "postinstall": "node scripts/base-generate-openapi.mjs --schema ../openapi/openapi.yaml --output src/api/schema.d.ts --spec-env SPEC",
     "theme:check": "node ../../services-base/base-modules/ui/scripts/pdlc-effective-theme-check.mjs",
     "shell:check": "node ../../services-base/base-modules/ui/scripts/check-ui-contract.mjs --repo .. --shell-only --shell frontend/src/widgets/app-shell.tsx --tooling-from package.json",
     "test:unit": "node --test scripts/tailwind-source-inputs.test.mjs && vitest run --exclude \"**/*.integration.test.*\" --exclude \"**/*.slow.test.*\" --exclude \"**/*.e2e.test.*\"",

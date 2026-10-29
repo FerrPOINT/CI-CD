@@ -24,3 +24,5 @@ scripts/postgres-delivery.py text eol=lf
 /openapi/openapi.yaml text eol=lf
 
 scripts/vendor/base_quality_selection.py text eol=lf
+
+frontend/scripts/base-generate-openapi.mjs text eol=lf

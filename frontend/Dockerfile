@@ -3,12 +3,12 @@
 # (../../services-base/base-modules/ui) resolves.
 FROM node:22.22.2-bookworm-slim AS build
 WORKDIR /app
-COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
+COPY CI-CD/openapi/openapi.yaml /openapi/openapi.yaml
 COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
-COPY CI-CD/frontend/scripts/generate-openapi.mjs scripts/generate-openapi.mjs
+COPY CI-CD/frontend/scripts/base-generate-openapi.mjs scripts/base-generate-openapi.mjs
 COPY services-base/base-modules/ui /services-base/base-modules/ui
 ENV CI=true
-ENV SPEC=/workspace/openapi/openapi.yaml
+ENV SPEC=/openapi/openapi.yaml
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate && pnpm install --frozen-lockfile
 COPY CI-CD/frontend/ ./
 ARG VITE_NAMESPACE_ENABLED="false"
