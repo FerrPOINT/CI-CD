@@ -129,6 +129,7 @@
         "-q"
       ],
       "inputs": [
+        "frontend/scripts/base-generate-openapi.mjs",
         "scripts/**",
         ".quality-gate.json",
         ".quality-tooling-revision",
