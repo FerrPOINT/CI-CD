@@ -1,6 +1,14 @@
 # Интеграция CI-CD с Base
 
-## Текущий source-кандидат UI
+## Текущий source-кандидат UI0.3.29
+
+Producer `b26cb497e4bdf797875301d5a2aa58f156cdd571`, reference `81c68bc7c8b473216b02de86731a786fe2ee5b8b0354aa70949aa514e6bffcc4`.
+Исправлен общий runtime favicon: PNG получает правильный MIME, cleanup возвращает
+исходные href/type. Для внешнего legacy URL тип определяет ответ. Публичные API,
+SDK/skills pins и продуктовые обработчики сохранены. Source selection, frozen
+preparation, artifact checks и IAB — отдельные доказательства; установка исключена.
+
+## Предшествующий source-кандидат UI0.3.28
 
 Точный UI SHA указан в [pin](../.base-ui-revision):
 `7ad53fbee14c9c8df38d5aa17acd553288ef19d9`, `@pdlc/ui`0.3.28,
