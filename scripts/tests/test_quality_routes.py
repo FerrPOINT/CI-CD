@@ -181,6 +181,24 @@ class QualityRouteTests(unittest.TestCase):
             self.assertEqual(source.count('pnpm install --frozen-lockfile'), 1)
             self.assertEqual(source.count('RUN pnpm run postinstall'), 1)
 
+    def test_container_runs_deployment_path_unit_once_through_the_build_owner(self):
+        scripts = json.loads((ROOT / 'frontend/package.json').read_bytes())['scripts']
+        self.assertEqual(scripts['build'],
+                         'pnpm run test:unit && pnpm run typecheck && pnpm run build:compile')
+        self.assertEqual(scripts['test:unit'],
+                         'node --test scripts/tailwind-source-inputs.test.mjs && vitest run '
+                         '--exclude "**/*.integration.test.*" --exclude "**/*.slow.test.*" '
+                         '--exclude "**/*.e2e.test.*"')
+        config = (ROOT / 'frontend/vitest.config.ts').read_text(encoding='utf-8')
+        self.assertIn("include: ['src/**/*.{test,spec}.{ts,tsx}']", config)
+        self.assertTrue((ROOT / 'frontend/src/api/deployment-path.test.ts').is_file())
+        # build owns the complete unit selection, including deployment-path.test.ts.
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            source = (ROOT / 'frontend' / name).read_text(encoding='utf-8')
+            self.assertEqual(source.splitlines().count('RUN pnpm build'), 1)
+            self.assertFalse([line for line in source.splitlines()
+                              if line.startswith('RUN pnpm exec vitest ')])
+
     def test_automatic_generator_adapter_preserves_the_public_manual_route(self):
         package = json.loads((ROOT / 'frontend/package.json').read_bytes())
         receipt = json.loads((ROOT / 'scripts/vendor/base-quality-tooling.json').read_bytes())
