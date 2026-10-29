@@ -35,3 +35,9 @@ Server image сохраняет `cicd-server` и `forge-runner`; отдельн�
 Existing tooling entrypoint выбирает этот source contract. Native locked/layer/
 guard/CLI qualification остаётся на общей финальной вехе; source checks её
 не заменяют. Full candidate key/export и SDK/UI/tooling pins этим не сужаются.
+
+SDK CLI также представлен manifest и lib guard; полные `sdlc-auth-core`,
+`sdlc-shared`, `sdlc-telemetry` сохранены. Source contract выполняется тем же
+`ServerCliMetadataTests`; SDK ignore inventory из четырёх крейтов остаётся
+полным. Native resolver/guard/layer/old-mtime и отдельный CLI проверяются на
+финальной вехе, source assertions не заменяют эту квалификацию.

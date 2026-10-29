@@ -43,7 +43,10 @@ class ServerCliMetadataTests(unittest.TestCase):
         workspace = tomllib.loads((backend / 'Cargo.toml').read_text(encoding='utf-8'))
         cli = tomllib.loads((backend / 'cli/Cargo.toml').read_text(encoding='utf-8'))
         self.assertEqual(cli['bin'], [{'name': 'cicd-cli', 'path': 'src/main.rs'}])
-        pending, seen = [backend], set()
+        self.assertEqual(cli['dependencies']['sdlc-cli-core']['path'],
+                         '../../../services-base/crates/sdlc-cli-core')
+        pending, seen, sdk = [backend], set(), set()
+        base = product.parent / 'services-base'
         while pending:
             directory = pending.pop().resolve()
             if directory in seen:
@@ -63,8 +66,12 @@ class ServerCliMetadataTests(unittest.TestCase):
                             path = (owner / dependency['path']).resolve()
                             if path.is_relative_to(backend):
                                 pending.append(path)
+                            else:
+                                self.assertTrue(path.is_relative_to(base), 'Unreviewed local dependency: ' + str(path))
+                                sdk.add(path.relative_to(base).as_posix())
         self.assertNotIn((backend / 'cli').resolve(), seen,
                          'A production CLI dependency requires a new source closure')
+        self.assertEqual(sdk, {'crates/sdlc-auth-core', 'crates/sdlc-shared', 'crates/sdlc-telemetry'})
         self.assertTrue((backend / 'cli/src/main.rs').is_file(), 'Real CLI remains available separately')
         for name in ('Dockerfile', 'Dockerfile.umbrella'):
             with self.subTest(recipe=name):
@@ -72,6 +79,10 @@ class ServerCliMetadataTests(unittest.TestCase):
                 copied = [item for line in text.splitlines() if line.startswith('COPY ')
                           for item in shlex.split(line)[1:-1] if item.startswith('CI-CD/backend/cli')]
                 self.assertEqual(copied, ['CI-CD/backend/cli/Cargo.toml'])
+                sdk_copied = set(re.findall(r'^COPY services-base/(crates/\S*)\s', text, re.M))
+                self.assertEqual(sdk_copied, sdk | {'crates/sdlc-cli-core/Cargo.toml'})
+                self.assertIn('compile_error!("metadata-only sdlc-cli-core must not be compiled");', text)
+                self.assertIn('> /services-base/crates/sdlc-cli-core/src/lib.rs', text)
                 self.assertIn('compile_error!("metadata-only cicd-cli must not be compiled");', text)
                 self.assertNotRegex(text, r'rm -rf --[^\n]*\bcli/src\b')
                 self.assertNotIn('> cli/src/lib.rs', text, 'Do not introduce an empty auto-library')

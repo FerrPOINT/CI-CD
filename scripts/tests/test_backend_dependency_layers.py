@@ -77,7 +77,11 @@ class BackendDependencyLayerTests(unittest.TestCase):
                     self.assertIn(target,('/usr/local/cargo/registry','/.__pdlc_build_slot__'))
                 for line in text.splitlines():
                     if line.startswith('RUN ') and 'cargo ' in line:self.assertIn('target=/.__pdlc_build_slot__',line)
-                for crate in SDK:self.assertIn('COPY services-base/crates/'+crate+' /services-base/crates/'+crate,text)
+                for crate in SDK:
+                    if crate != 'sdlc-cli-core':
+                        self.assertIn('COPY services-base/crates/'+crate+' /services-base/crates/'+crate,text)
+                self.assertIn('COPY services-base/crates/sdlc-cli-core/Cargo.toml /services-base/crates/sdlc-cli-core/Cargo.toml',text)
+                self.assertIn('compile_error!("metadata-only sdlc-cli-core must not be compiled");',text)
 
     def test_context_policy_preserves_required_roots_and_live_private_exclusions(self):
         for recipe in RECIPES:

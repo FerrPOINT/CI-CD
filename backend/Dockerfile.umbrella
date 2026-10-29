@@ -11,7 +11,8 @@ WORKDIR /app
 COPY services-base/Cargo.toml /services-base/Cargo.toml
 COPY services-base/crates/sdlc-shared /services-base/crates/sdlc-shared
 COPY services-base/crates/sdlc-auth-core /services-base/crates/sdlc-auth-core
-COPY services-base/crates/sdlc-cli-core /services-base/crates/sdlc-cli-core
+# Unselected CLI dependency: preserve its manifest and reject accidental compilation.
+COPY services-base/crates/sdlc-cli-core/Cargo.toml /services-base/crates/sdlc-cli-core/Cargo.toml
 COPY services-base/crates/sdlc-telemetry /services-base/crates/sdlc-telemetry
 COPY CI-CD/backend/Cargo.toml CI-CD/backend/Cargo.lock* ./
 COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
@@ -22,7 +23,9 @@ COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
 COPY CI-CD/backend/infra/Cargo.toml infra/Cargo.toml
 COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} \
-    mkdir -p src \
+    mkdir -p /services-base/crates/sdlc-cli-core/src \
+    && printf '%s\n' 'compile_error!("metadata-only sdlc-cli-core must not be compiled");' > /services-base/crates/sdlc-cli-core/src/lib.rs \
+    && mkdir -p src \
     && printf '%s\n' '' > src/lib.rs \
     && mkdir -p src \
     && printf '%s\n' 'fn main() {}' > src/main.rs \
