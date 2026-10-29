@@ -93,6 +93,9 @@ pub(crate) struct CatalogRead {
     proof: ConfirmedSpaceRead,
     pub(crate) groups: Vec<uuid::Uuid>,
 }
+/// Middleware-only marker: read membership has been replaced by common policy.
+#[derive(Clone)]
+pub(crate) struct RepositoryRead;
 pub(crate) async fn catalog_read(
     pool: &PgPool,
     identity: Option<crate::api::authz_mw::VerifiedRequestIdentity>,
@@ -159,19 +162,26 @@ pub(crate) fn repository_read_route(method: &axum::http::Method, route: &str) ->
                 | "/api/v1/catalog/repositories/{id}/pulls"
                 | "/api/v1/catalog/repositories/{id}/pulls/{number}"
                 | "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks"
+                | "/api/v1/catalog/repositories/{id}/sync"
+                | "/api/v1/catalog/repositories/{id}/sync/runs"
+                | "/api/v1/catalog/repositories/{id}/sync/runs/{run_id}"
+                | "/api/v1/catalog/repositories/{id}/sync/runs/{run_id}/refs"
         )
 }
 
 pub(crate) fn repository_write_route(method: &axum::http::Method, route: &str) -> bool {
-    *method == axum::http::Method::POST
-        && matches!(
-            route,
-            "/api/v1/repos/{repo}/pulls"
-                | "/api/v1/repos/{repo}/pulls/{number}/action"
-                | "/api/v1/catalog/repositories/{id}/pulls"
-                | "/api/v1/catalog/repositories/{id}/pulls/{number}/action"
-                | "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks"
-        )
+    (*method == axum::http::Method::PUT && route == "/api/v1/catalog/repositories/{id}/sync")
+        || (*method == axum::http::Method::POST
+            && matches!(
+                route,
+                "/api/v1/repos/{repo}/pulls"
+                    | "/api/v1/repos/{repo}/pulls/{number}/action"
+                    | "/api/v1/catalog/repositories/{id}/pulls"
+                    | "/api/v1/catalog/repositories/{id}/pulls/{number}/action"
+                    | "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks"
+                    | "/api/v1/catalog/repositories/{id}/sync/check"
+                    | "/api/v1/catalog/repositories/{id}/sync/runs"
+            ))
 }
 
 /// Opaque request-owned permit. Only verified middleware may construct it;
@@ -273,7 +283,7 @@ impl RepositoryWrite {
                 return Err(ApiError::forbidden());
             }
             return Err(ApiError::service_unavailable(
-                "Результат операции PR не подтверждён; перечитайте состояние перед повтором",
+                "Результат операции не подтверждён; перечитайте состояние перед повтором",
             ));
         }
         // Keep the same proof across response handoff without cloning/minting it.

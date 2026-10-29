@@ -4,6 +4,7 @@ use axum::{
     Extension, Json, Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use cicd_app::repository_sync::{self as app, Access, Error};
@@ -77,12 +78,15 @@ async fn authorize(
     repository: Uuid,
     claims: &crate::auth::AccessClaims,
     write: bool,
+    common_read: bool,
 ) -> Result<Access, ApiError> {
     let access = access(claims);
-    store(state)?
-        .authorize(repository, access, write)
-        .await
-        .map_err(api_error)?;
+    if write || !common_read {
+        store(state)?
+            .authorize(repository, access, write)
+            .await
+            .map_err(api_error)?;
+    }
     let repo = crate::repository_catalog::get_core(state, repository, None)
         .await?
         .ok_or_else(ApiError::not_found)?;
@@ -109,16 +113,30 @@ fn operation(headers: &HeaderMap) -> Result<Uuid, ApiError> {
 async fn writable_lease<'a>(
     state: &'a AppState,
     repository: Uuid,
+    permit: Option<&crate::space_admission::RepositoryWrite>,
 ) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, ApiError> {
-    crate::repository_catalog::catalog_write_lease(state, repository).await
+    let mut lease = crate::repository_catalog::catalog_write_lease(state, repository).await?;
+    if let Some(permit) = permit {
+        permit.lock(&mut lease).await?;
+    }
+    Ok(lease)
 }
 
 #[utoipa::path(get,operation_id="forge_repository_sync_list",path="/api/v1/repository-syncs",tag="repository-sync",params(SyncQuery),responses((status=200,body=ConnectionPage),(status=403)))]
-pub async fn list(
+pub(crate) async fn list(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     Query(query): Query<SyncQuery>,
-) -> Result<Json<ConnectionPage>, ApiError> {
+    identity: Option<Extension<crate::api::authz_mw::VerifiedRequestIdentity>>,
+) -> Result<Response, ApiError> {
+    let sync_store = store(&state)?;
+    let admission = if claims.role == "service_account" {
+        None
+    } else {
+        crate::space_admission::catalog_read(&sync_store.pool, identity.map(|value| value.0))
+            .await?
+    };
+    let groups = admission.as_ref().map(|scope| scope.groups.as_slice());
     let provider = query.provider.as_deref().unwrap_or("");
     let status = query.state.as_deref().unwrap_or("");
     if !["", "gitlab", "github"].contains(&provider)
@@ -141,7 +159,7 @@ pub async fn list(
         return Err(ApiError::bad_request("Некорректный фильтр синхронизаций"));
     }
     let (mut items, total) = store(&state)?
-        .list_at(
+        .list_admitted_at(
             access(&claims),
             query.search.as_deref().unwrap_or(""),
             provider,
@@ -150,14 +168,19 @@ pub async fn list(
             query.limit.unwrap_or(20),
             query.offset.unwrap_or(0),
             query.repository_id,
+            groups,
         )
         .await
         .map_err(api_error)?;
     // Apply the owner's signed namespace projection validation, not just display data.
     for item in &mut items {
-        let repo = crate::repository_catalog::get_core(&state, item.repository_id, None)
-            .await?
-            .ok_or_else(ApiError::not_found)?;
+        let repo = crate::repository_catalog::get_core(
+            &state,
+            item.repository_id,
+            groups.map(|value| value.to_vec()),
+        )
+        .await?
+        .ok_or_else(ApiError::not_found)?;
         item.writable = item.writable
             && repo.availability.is_none()
             && store(&state)?
@@ -169,16 +192,22 @@ pub async fn list(
             item.paused_reason = Some("storage_unavailable".into());
         }
     }
-    Ok(Json(ConnectionPage { items, total }))
+    let response = Json(ConnectionPage { items, total }).into_response();
+    if let Some(admission) = admission {
+        admission.response(response)
+    } else {
+        Ok(response)
+    }
 }
 #[utoipa::path(get,operation_id="forge_repository_sync_get",path="/api/v1/catalog/repositories/{id}/sync",tag="repository-sync",params(("id"=Uuid,Path),SyncQuery),responses((status=200,body=Connection),(status=403)))]
-pub async fn get_connection(
+pub(crate) async fn get_connection(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
+    common: Option<Extension<crate::space_admission::RepositoryRead>>,
     Path(id): Path<Uuid>,
     Query(query): Query<SyncQuery>,
 ) -> Result<Json<Connection>, ApiError> {
-    let access = authorize(&state, id, &claims, false).await?;
+    let access = authorize(&state, id, &claims, false, common.is_some()).await?;
     let repo = crate::repository_catalog::get_core(&state, id, None)
         .await?
         .ok_or_else(ApiError::not_found)?;
@@ -223,19 +252,22 @@ pub async fn get_connection(
 }
 
 #[utoipa::path(put,operation_id="forge_repository_sync_save",path="/api/v1/catalog/repositories/{id}/sync",tag="repository-sync",params(("id"=Uuid,Path),("Idempotency-Key"=Uuid,Header),SyncQuery),request_body=SaveConnection,responses((status=200,body=Connection),(status=409)))]
-pub async fn save_connection(
+pub(crate) async fn save_connection(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
+    permit: Option<Extension<crate::space_admission::RepositoryWrite>>,
     Path(id): Path<Uuid>,
     Query(query): Query<SyncQuery>,
     headers: HeaderMap,
     Json(input): Json<SaveConnection>,
 ) -> Result<Json<Connection>, ApiError> {
-    let access = authorize(&state, id, &claims, true).await?;
-    let _lease = writable_lease(&state, id).await?;
+    let access = authorize(&state, id, &claims, true, false).await?;
+    let _lease = writable_lease(&state, id, permit.as_ref().map(|value| &value.0)).await?;
     let sync_store = store(&state)?;
     let result = app::save(
-        &sync_store.scoped(query.connection_id.unwrap_or(id)),
+        &sync_store
+            .scoped(query.connection_id.unwrap_or(id))
+            .with_owner(crate::pipeline_authority::current()?.map(|origin| origin.subject())),
         &Secrets(state.config.secrets.key),
         id,
         operation(&headers)?,
@@ -248,14 +280,15 @@ pub async fn save_connection(
     Ok(Json(result))
 }
 #[utoipa::path(post,operation_id="forge_repository_sync_check",path="/api/v1/catalog/repositories/{id}/sync/check",tag="repository-sync",params(("id"=Uuid,Path),SyncQuery),request_body=CheckConnection,responses((status=200,body=CheckResult),(status=503)))]
-pub async fn check(
+pub(crate) async fn check(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
+    permit: Option<Extension<crate::space_admission::RepositoryWrite>>,
     Path(id): Path<Uuid>,
     Query(query): Query<SyncQuery>,
     Json(mut input): Json<CheckConnection>,
 ) -> Result<Json<CheckResult>, ApiError> {
-    authorize(&state, id, &claims, true).await?;
+    authorize(&state, id, &claims, true, false).await?;
     input
         .settings
         .validate(&state.config.git_sync.allowed_gitlab_origins)
@@ -275,17 +308,19 @@ pub async fn check(
         id,
     )
     .await?;
-    let _lease = writable_lease(&state, id).await?;
+    let _lease = writable_lease(&state, id, permit.as_ref().map(|value| &value.0)).await?;
     let guard = Arc::new(
         MutationGuard::acquire(&state.git.root, id)
             .await
             .map_err(api_error)?,
     );
+    crate::space_admission::require_write(permit.as_ref().map(|value| &value.0))?;
     let write = matches!(input.settings.direction, Direction::Push | Direction::Both);
     // Checks have no durable run UUID. Scope their scratch to the repository so
     // the next check can recover it after an API crash, under the same OS guard.
     let check_root = state.git.root.join(".forge-sync-checks");
     GitSession::clean_recovered_scratch(&check_root, id).map_err(api_error)?;
+    let canceled = Arc::new(AtomicBool::new(false));
     let mut git = GitSession::new(
         &check_root,
         state.git.root.join(format!("{storage}.git")),
@@ -293,28 +328,44 @@ pub async fn check(
         token,
         id,
         0,
-        Arc::new(AtomicBool::new(false)),
+        canceled.clone(),
     )
     .await
     .map_err(api_error)?;
     git.guard = Some(guard);
-    Ok(Json(git.check(write).await.map_err(api_error)?))
+    let action = git.check(write);
+    tokio::pin!(action);
+    let result = if let Some(permit) = permit.as_ref() {
+        tokio::select! {
+            result = &mut action => result.map_err(api_error)?,
+            _ = tokio::time::sleep_until(permit.proof().monotonic_deadline().into()) => {
+                canceled.store(true, std::sync::atomic::Ordering::SeqCst);
+                // Drain the owned Git process before releasing its guard/lease.
+                let _ = action.await;
+                return Err(ApiError::forbidden());
+            }
+        }
+    } else {
+        action.await.map_err(api_error)?
+    };
+    Ok(Json(result))
 }
 #[utoipa::path(post,operation_id="forge_repository_sync_start",path="/api/v1/catalog/repositories/{id}/sync/runs",tag="repository-sync",params(("id"=Uuid,Path),("Idempotency-Key"=Uuid,Header),SyncQuery),responses((status=202,body=SyncRun),(status=409),(status=503)))]
-pub async fn start(
+pub(crate) async fn start(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
+    permit: Option<Extension<crate::space_admission::RepositoryWrite>>,
     Path(id): Path<Uuid>,
     Query(query): Query<SyncQuery>,
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<SyncRun>), ApiError> {
-    let access = authorize(&state, id, &claims, true).await?;
+    let access = authorize(&state, id, &claims, true, false).await?;
     if !state.config.git_sync.enabled {
         return Err(ApiError::service_unavailable(
             "Исполнитель синхронизации отключён оператором",
         ));
     }
-    let _lease = writable_lease(&state, id).await?;
+    let _lease = writable_lease(&state, id, permit.as_ref().map(|value| &value.0)).await?;
     let run = store(&state)?
         .enqueue_at(
             id,
@@ -327,13 +378,14 @@ pub async fn start(
     Ok((StatusCode::ACCEPTED, Json(run)))
 }
 #[utoipa::path(get,operation_id="forge_repository_sync_runs",path="/api/v1/catalog/repositories/{id}/sync/runs",tag="repository-sync",params(("id"=Uuid,Path),SyncQuery),responses((status=200,body=RunPage)))]
-pub async fn runs(
+pub(crate) async fn runs(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
+    common: Option<Extension<crate::space_admission::RepositoryRead>>,
     Path(id): Path<Uuid>,
     Query(query): Query<SyncQuery>,
 ) -> Result<Json<RunPage>, ApiError> {
-    authorize(&state, id, &claims, false).await?;
+    authorize(&state, id, &claims, false, common.is_some()).await?;
     let (items, total) = store(&state)?
         .runs_at(
             id,
@@ -346,13 +398,14 @@ pub async fn runs(
     Ok(Json(RunPage { items, total }))
 }
 #[utoipa::path(get,operation_id="forge_repository_sync_run",path="/api/v1/catalog/repositories/{id}/sync/runs/{run_id}",tag="repository-sync",params(("id"=Uuid,Path),("run_id"=Uuid,Path),SyncQuery),responses((status=200,body=SyncRun),(status=404)))]
-pub async fn run(
+pub(crate) async fn run(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
+    common: Option<Extension<crate::space_admission::RepositoryRead>>,
     Path((id, run_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<SyncQuery>,
 ) -> Result<Json<SyncRun>, ApiError> {
-    authorize(&state, id, &claims, false).await?;
+    authorize(&state, id, &claims, false, common.is_some()).await?;
     let run = store(&state)?.run(id, run_id).await.map_err(api_error)?;
     if query
         .connection_id
@@ -363,13 +416,14 @@ pub async fn run(
     Ok(Json(run))
 }
 #[utoipa::path(get,operation_id="forge_repository_sync_refs",path="/api/v1/catalog/repositories/{id}/sync/runs/{run_id}/refs",tag="repository-sync",params(("id"=Uuid,Path),("run_id"=Uuid,Path),SyncQuery),responses((status=200,body=RefPage)))]
-pub async fn refs(
+pub(crate) async fn refs(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
+    common: Option<Extension<crate::space_admission::RepositoryRead>>,
     Path((id, run_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<SyncQuery>,
 ) -> Result<Json<RefPage>, ApiError> {
-    authorize(&state, id, &claims, false).await?;
+    authorize(&state, id, &claims, false, common.is_some()).await?;
     let run = store(&state)?.run(id, run_id).await.map_err(api_error)?;
     if query
         .connection_id

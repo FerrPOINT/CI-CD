@@ -131,7 +131,13 @@ const offsetOf = (value: string | null) => {
   return Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
 };
 
-export function RepositorySyncsPage({ groupId, repositoryId }: { groupId?: string; repositoryId?: string }) {
+export function RepositorySyncsPage({
+  groupId,
+  repositoryId,
+}: {
+  groupId?: string;
+  repositoryId?: string;
+}) {
   const [params, setParams] = useSearchParams();
   const { ref, malformed, all } = useNamespaceRef();
   const workspace = useWorkspace(malformed || (!groupId && all) ? null : ref);
@@ -206,89 +212,112 @@ export function RepositorySyncsPage({ groupId, repositoryId }: { groupId?: strin
     <div className="space-y-5">
       <PageHeader
         title={repositoryId ? "Синхронизации репозитория" : "Синхронизации"}
-        context={<>{repositoryId ? list.data?.items[0]?.repository_name : "Подключения репозиториев Forge к GitLab и GitHub.com."}</>}
+        context={
+          <>
+            {repositoryId
+              ? list.data?.items[0]?.repository_name
+              : "Подключения репозиториев Forge к GitLab и GitHub.com."}
+          </>
+        }
         actions={
           <>
-            {repositoryId ? <Button asChild><Link to={location(repositoryId)}><Plus aria-hidden size={16} />Добавить синхронизацию</Link></Button> : <Button onClick={() => { setAdding(!adding); setNewConnection(crypto.randomUUID()); }} aria-expanded={adding}>
-              <Plus aria-hidden size={16} />
-              Добавить синхронизацию
-            </Button>}
+            {repositoryId ? (
+              <Button asChild>
+                <Link to={location(repositoryId)}>
+                  <Plus aria-hidden size={16} />
+                  Добавить синхронизацию
+                </Link>
+              </Button>
+            ) : (
+              <Button
+                onClick={() => {
+                  setAdding(!adding);
+                  setNewConnection(crypto.randomUUID());
+                }}
+                aria-expanded={adding}
+              >
+                <Plus aria-hidden size={16} />
+                Добавить синхронизацию
+              </Button>
+            )}
           </>
         }
       />
       {adding && (
         <ContentSection asChild dividers="both">
-        <section className="space-y-3" aria-label="Выбор репозитория">
-          <Label htmlFor="select-search">Поиск репозитория Forge</Label>
-          <Input
-            id="select-search"
-            value={params.get("select_search") ?? ""}
-            onChange={(event) => update("select_search", event.target.value)}
-          />
-          {available.isError && (
-            <Notice
-              role="alert"
-              tone="danger"
-              appearance="panel"
-              actions={
-                <Button
-                  variant="outline"
-                  onClick={() => void available.refetch()}
-                >
-                  Повторить
-                </Button>
-              }
-            >
-              Не удалось загрузить репозитории.{" "}
-            </Notice>
-          )}
-          {available.isPending && (
-            <LoadingState message="Загружаем репозитории…" />
-          )}
-          {available.data && (
-            <>
-              <Label htmlFor="new-repository">
-                Репозиторий Forge
-              </Label>
-              <Select
-                id="new-repository"
-                className="w-full"
-                value={selection}
-                onValueChange={(nextValue) => setSelection(nextValue)}
-                options={[
-                  { value: "", label: "Выберите репозиторий" },
-                  ...(available.data.items.map((repo) => ({
-                    value: String(repo.id),
-                    label: String(repo.public_name),
-                  })) ?? []),
-                ]}
-              />
-              {selection &&
-                available.data.items.some((repo) => repo.id === selection) && (
-                  <Button asChild>
-                    <Link
-                      to={location(
-                        selection,
-                        false,
-                        available.data.items.find(
-                          (repo) => repo.id === selection,
-                        )?.namespace,
-                      )}
-                    >
-                      Настроить подключение
-                    </Link>
+          <section className="space-y-3" aria-label="Выбор репозитория">
+            <Label htmlFor="select-search">Поиск репозитория Forge</Label>
+            <Input
+              id="select-search"
+              value={params.get("select_search") ?? ""}
+              onChange={(event) => update("select_search", event.target.value)}
+            />
+            {available.isError && (
+              <Notice
+                role="alert"
+                tone="danger"
+                appearance="panel"
+                actions={
+                  <Button
+                    variant="outline"
+                    onClick={() => void available.refetch()}
+                  >
+                    Повторить
                   </Button>
-                )}
-              <OffsetPageNavigation
-                label="Доступные репозитории"
-                offset={offsetOf(params.get("select_offset"))}
-                total={available.data.total}
-                limit={20}
-                onOffsetChange={(next) => update("select_offset", String(next))}
-              />
-            </>
-          )}
-        </section>
+                }
+              >
+                Не удалось загрузить репозитории.{" "}
+              </Notice>
+            )}
+            {available.isPending && (
+              <LoadingState message="Загружаем репозитории…" />
+            )}
+            {available.data && (
+              <>
+                <Label htmlFor="new-repository">Репозиторий Forge</Label>
+                <Select
+                  id="new-repository"
+                  className="w-full"
+                  value={selection}
+                  onValueChange={(nextValue) => setSelection(nextValue)}
+                  options={[
+                    { value: "", label: "Выберите репозиторий" },
+                    ...(available.data.items.map((repo) => ({
+                      value: String(repo.id),
+                      label: String(repo.public_name),
+                    })) ?? []),
+                  ]}
+                />
+                {selection &&
+                  available.data.items.some(
+                    (repo) => repo.id === selection,
+                  ) && (
+                    <Button asChild>
+                      <Link
+                        to={location(
+                          selection,
+                          false,
+                          available.data.items.find(
+                            (repo) => repo.id === selection,
+                          )?.namespace,
+                        )}
+                      >
+                        Настроить подключение
+                      </Link>
+                    </Button>
+                  )}
+                <OffsetPageNavigation
+                  label="Доступные репозитории"
+                  offset={offsetOf(params.get("select_offset"))}
+                  total={available.data.total}
+                  limit={20}
+                  onOffsetChange={(next) =>
+                    update("select_offset", String(next))
+                  }
+                />
+              </>
+            )}
+          </section>
         </ContentSection>
       )}
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
@@ -363,7 +392,11 @@ export function RepositorySyncsPage({ groupId, repositoryId }: { groupId?: strin
       {list.isPending && <LoadingState message="Загружаем синхронизации…" />}
       {list.data && (
         <>
-          <Table className="min-w-[64rem]" tabIndex={0} aria-label="Подключения синхронизации">
+          <Table
+            className="min-w-[64rem]"
+            tabIndex={0}
+            aria-label="Подключения синхронизации"
+          >
             <caption className="sr-only">Список синхронизаций</caption>
             <TableHeader>
               <TableRow>
@@ -484,9 +517,11 @@ export function RepositorySyncPage() {
   const [params] = useSearchParams();
   // Old explicit tab links still target the original connection. The repository
   // entry itself opens the complete server-paged list, never an arbitrary first row.
-  return params.has("connection_id") || params.has("tab")
-    ? <RepositorySyncDetail />
-    : <RepositorySyncsPage repositoryId={id} />;
+  return params.has("connection_id") || params.has("tab") ? (
+    <RepositorySyncDetail />
+  ) : (
+    <RepositorySyncsPage repositoryId={id} />
+  );
 }
 
 function RepositorySyncDetail() {
@@ -608,7 +643,10 @@ export function RepositorySyncEditor({
       setToken("");
       pending.current = null;
       setUncertain(false);
-      cache.setQueryData(["repository-sync", connection.repository_id, connection.id], saved);
+      cache.setQueryData(
+        ["repository-sync", connection.repository_id, connection.id],
+        saved,
+      );
       void cache.invalidateQueries({ queryKey: ["repository-syncs"] });
       setFeedback("Подключение сохранено");
     } catch (error) {
@@ -628,10 +666,14 @@ export function RepositorySyncEditor({
     setOperation("check");
     setFeedback("");
     try {
-      const result = await repositorySync.check(connection.repository_id, {
-        settings: draft,
-        ...(token ? { token } : {}),
-      }, connection.id);
+      const result = await repositorySync.check(
+        connection.repository_id,
+        {
+          settings: draft,
+          ...(token ? { token } : {}),
+        },
+        connection.id,
+      );
       setFeedback(result.message);
     } catch (error) {
       setFeedback(message(error));
@@ -644,7 +686,11 @@ export function RepositorySyncEditor({
     setFeedback("");
     runKey.current ??= crypto.randomUUID();
     try {
-      await repositorySync.start(connection.repository_id, runKey.current, connection.id);
+      await repositorySync.start(
+        connection.repository_id,
+        runKey.current,
+        connection.id,
+      );
       runKey.current = null;
       setRunUncertain(false);
       await reload();
@@ -672,7 +718,13 @@ export function RepositorySyncEditor({
     setParams(next);
   }
   const back = new URLSearchParams(params);
-  for (const key of ["tab", "run_id", "runs_offset", "refs_offset", "connection_id"])
+  for (const key of [
+    "tab",
+    "run_id",
+    "runs_offset",
+    "refs_offset",
+    "connection_id",
+  ])
     back.delete(key);
   return (
     <div className="space-y-4">
@@ -798,13 +850,14 @@ export function RepositorySyncEditor({
         <TabsContent value="connection">
           <form onSubmit={(event) => void save(event)} className="space-y-4">
             <Fieldset
-              disabled={!writable || !!connection.active_run}
+              disabled={!writable}
               className="grid gap-4 sm:grid-cols-2"
             >
               <FormField id="provider" label={"Провайдер"}>
                 {(baseFieldAttrs) => (
                   <Select
                     {...baseFieldAttrs}
+                    disabled={!!connection.active_run}
                     className="w-full"
                     value={draft.provider}
                     onValueChange={(nextValue) =>
@@ -832,6 +885,7 @@ export function RepositorySyncEditor({
                 {(baseFieldAttrs) => (
                   <Input
                     {...baseFieldAttrs}
+                    disabled={!!connection.active_run}
                     type="url"
                     required
                     value={draft.instance_url}
@@ -851,6 +905,7 @@ export function RepositorySyncEditor({
                 </Label>
                 <Input
                   id="repository-path"
+                  disabled={!!connection.active_run}
                   required
                   value={draft.repository_path}
                   onChange={(event) =>
@@ -866,6 +921,10 @@ export function RepositorySyncEditor({
                 <Label htmlFor="sync-token">Токен доступа</Label>
                 <Input
                   id="sync-token"
+                  disabled={
+                    !!connection.active_run &&
+                    connection.settings.direction !== "disabled"
+                  }
                   type="password"
                   autoComplete="new-password"
                   required={!connection.has_credential || endpointChanged}
@@ -887,6 +946,14 @@ export function RepositorySyncEditor({
                 </p>
               </div>
             </Fieldset>
+            {connection.active_run &&
+              connection.settings.direction === "disabled" && (
+                <Notice role="status" appearance="inline">
+                  Можно заменить токен для сверки незавершённого запуска.
+                  Синхронизация останется отключённой; новые изменения
+                  отправляться не будут.
+                </Notice>
+              )}
             <Fieldset
               disabled={!writable}
               className="space-y-2"
@@ -1042,7 +1109,11 @@ export function RepositorySyncEditor({
                     connection.id,
                   );
                   cache.setQueryData(
-                    ["repository-sync", connection.repository_id, connection.id],
+                    [
+                      "repository-sync",
+                      connection.repository_id,
+                      connection.id,
+                    ],
                     saved,
                   );
                   setVersion(saved.version);
@@ -1084,7 +1155,8 @@ function SyncHistory({
   const refsOffset = offsetOf(params.get("refs_offset"));
   const runs = useQuery({
     queryKey: ["sync-runs", repository, connectionId, offset],
-    queryFn: ({ signal }) => repositorySync.runs(repository, offset, signal, connectionId),
+    queryFn: ({ signal }) =>
+      repositorySync.runs(repository, offset, signal, connectionId),
     refetchInterval: active ? 3000 : false,
   });
   const refs = useQuery({

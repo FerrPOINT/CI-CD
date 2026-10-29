@@ -79,6 +79,25 @@ async function choose(label: string, option: string) {
   fireEvent.click(screen.getByRole('combobox', { name: label }))
   fireEvent.click(await screen.findByRole('option', { name: option }))
 }
+
+it.each(['running', 'reconciling', 'stopping'])('allows only credential recovery after disabling a %s run', async (state) => {
+  const disabled = { ...connection.settings, direction: 'disabled' as const }
+  const run: SyncRun = {
+    connection_id: 'repo', id: 'recover', repository_id: 'repo', connection_version: 1,
+    settings: connection.settings, source: 'manual', state, cancel_requested: true,
+    created_at: '2026-10-29T10:00:00Z', started_at: null, finished_at: null, message: null,
+  }
+  const saved = { ...connection, version: 2, settings: disabled, active_run: run }
+  const save = vi.spyOn(repositorySync, 'save').mockResolvedValue({ ...saved, version: 3 })
+  mount(<RepositorySyncEditor connection={saved} reload={vi.fn()} />)
+  expect(screen.getByLabelText('Токен доступа')).toBeEnabled()
+  expect(screen.getByLabelText('Владелец / репозиторий')).toBeDisabled()
+  expect(screen.getByText(/Можно заменить токен для сверки/)).toBeVisible()
+  fireEvent.change(screen.getByLabelText('Токен доступа'), { target: { value: 'fixture-recovery-credential' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить подключение' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][1]).toEqual({ expected_version: 2, settings: disabled, token: 'fixture-recovery-credential' })
+})
 function mount(component: React.ReactNode, location = '/') {
   const cache = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
