@@ -20,3 +20,5 @@ backend/tests/fixtures/historical_platform_messaging.sql text eol=crlf
 
 # Canonical bytes for the exact Base selector.
 scripts/vendor/base_quality_selection.py text eol=lf
+
+frontend/scripts/base-generate-openapi.mjs text eol=lf

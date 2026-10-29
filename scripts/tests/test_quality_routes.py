@@ -101,11 +101,11 @@ class QualityRouteTests(unittest.TestCase):
             self.assertIn(field, vitest)
         self.assertIn("import viteConfig from './vite.config'", vitest)
 
-    def test_packaged_selector_has_exact_pin_and_no_optional_features(self):
+    def test_packaged_selector_has_exact_pin_and_registered_generator(self):
         receipt = json.loads((ROOT/'scripts/vendor/base-quality-tooling.json').read_text(encoding='utf-8'))
         self.assertEqual(receipt['revision'], (ROOT/'.quality-tooling-revision').read_text().strip())
         self.assertEqual(receipt['sha256'], hashlib.sha256((ROOT/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest())
-        self.assertEqual(set(receipt), {'schema','repository','revision','source','sha256'})
+        self.assertEqual(set(receipt), {'sha256', 'frontend_generator', 'schema', 'source', 'repository', 'revision'})
         changes = job((ROOT/'.github/workflows/ci.yml').read_text(encoding='utf-8'), 'changes')
         # Execute the actual in-workflow metadata verifier against this product.
         code = re.search(r"          python3 - <<'PY'\n(.*?)^          PY$", changes, re.M | re.S)[1]
@@ -145,6 +145,28 @@ class QualityRouteTests(unittest.TestCase):
         self.assertIn('run: pnpm exec tsc --noEmit && pnpm exec vite build', release)
         self.assertIn('python ../../services-base/scripts/check_ui_consumer.py', release)
         self.assertIn('pnpm theme:check http://127.0.0.1:4173', release)
+
+
+    def test_automatic_generator_adapter_preserves_the_public_manual_route(self):
+        package = json.loads((ROOT / 'frontend/package.json').read_bytes())
+        receipt = json.loads((ROOT / 'scripts/vendor/base-quality-tooling.json').read_bytes())
+        self.assertEqual(receipt['schema'], 'base-quality-tooling/v2')
+        generator = receipt['frontend_generator']
+        self.assertEqual(set(generator), {'source', 'file', 'contract', 'sha256'})
+        self.assertEqual(generator['source'], 'scripts/generate_openapi.mjs')
+        self.assertEqual(generator['file'], 'frontend/scripts/base-generate-openapi.mjs')
+        self.assertEqual(generator['contract'], 'base-openapi-generation/v1')
+        self.assertEqual(hashlib.sha256((ROOT / generator['file']).read_bytes()).hexdigest(), generator['sha256'])
+        self.assertEqual(package['scripts']['postinstall'], 'node scripts/base-generate-openapi.mjs --schema ../openapi/openapi.yaml --output src/api/schema.d.ts --spec-env SPEC')
+        self.assertEqual(package['scripts']['openapi:generate'], 'node scripts/generate-openapi.mjs')
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            path = ROOT / 'frontend' / name
+            if not path.is_file(): continue
+            source = path.read_text()
+            generation = next(i for i, line in enumerate(source.splitlines()) if line.startswith('RUN ')
+                              and ('pnpm run postinstall' in line or 'pnpm install' in line and '--ignore-scripts' not in line))
+            self.assertIn('base-generate-openapi.mjs', '\n'.join(source.splitlines()[:generation]))
+
 
 
 class CssInputOwnershipTests(unittest.TestCase):

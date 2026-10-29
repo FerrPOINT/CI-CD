@@ -17,7 +17,7 @@
     "openapi:generate": "node scripts/generate-openapi.mjs",
     "openapi:check": "node node_modules/@sdlc/ui/scripts/sdlc-openapi-check.mjs",
     "openapi:compat": "node scripts/base-openapi-compat.mjs",
-    "postinstall": "pnpm run openapi:generate",
+    "postinstall": "node scripts/base-generate-openapi.mjs --schema ../openapi/openapi.yaml --output src/api/schema.d.ts --spec-env SPEC",
     "theme:check": "node ../../services-base/frontend/scripts/sdlc-effective-theme-check.mjs",
     "test:unit": "node --test scripts/tailwind-source-inputs.test.mjs && vitest run --exclude \"**/*.integration.test.*\" --exclude \"**/*.slow.test.*\" --exclude \"**/*.e2e.test.*\" --exclude \"**/*.integration.spec.*\" --exclude \"**/*.slow.spec.*\" --exclude \"**/*.e2e.spec.*\"",
     "test:all": "node --test scripts/tailwind-source-inputs.test.mjs && vitest run"

@@ -103,6 +103,7 @@
         "-q"
       ],
       "inputs": [
+        "frontend/scripts/base-generate-openapi.mjs",
         "scripts/verify_docs.py",
         "scripts/tests/test_verify_docs.py",
         "scripts/tests/test_quality_routes.py",
