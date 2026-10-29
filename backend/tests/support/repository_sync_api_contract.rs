@@ -9,6 +9,47 @@ struct HttpFixture {
     tokens: Vec<String>,
 }
 
+#[tokio::test]
+async fn sync_machine_project_boundary_remains_independent_of_human_common_policy() {
+    let f = HttpFixture::new().await;
+    sqlx::query("UPDATE forge_space_admission_state SET active=true WHERE singleton")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let key = Uuid::new_v4().to_string();
+    let (status,_)=f.call(0,0,"PUT","",Some(serde_json::json!({"expected_version":0,"settings":settings("pull"),"token":"fictional-sat-common-policy-fixture"})),Some(&key)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(f.call(0, 0, "GET", "", None, None).await.0, StatusCode::OK);
+    assert_eq!(
+        f.call(2, 0, "GET", "", None, None).await.0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, list) = f
+        .raw(0, "GET", "/api/v1/repository-syncs".into(), None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["total"], 1);
+    let (status, list) = f
+        .raw(2, "GET", "/api/v1/repository-syncs".into(), None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["total"], 0);
+    assert_eq!(
+        f.call(
+            0,
+            0,
+            "POST",
+            "/runs",
+            None,
+            Some(&Uuid::new_v4().to_string())
+        )
+        .await
+        .0,
+        StatusCode::ACCEPTED
+    );
+    f.pool.close().await;
+}
+
 impl Drop for HttpFixture {
     fn drop(&mut self) {
         // No supervisors or Git effects are started by this HTTP-only fixture.

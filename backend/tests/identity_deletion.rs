@@ -85,13 +85,23 @@ async fn verify_canonical_human_owner_sources(pool: &PgPool, store: &IdentityDel
         .bind(schedule).bind(project).bind(subject).execute(pool).await.unwrap();
     sqlx::query("INSERT INTO schedule_fires(id,schedule_id,project_id,scheduled_for,owner_subject) VALUES($1,$2,$3,clock_timestamp(),$4)")
         .bind(Uuid::new_v4()).bind(schedule).bind(project).bind(subject).execute(pool).await.unwrap();
+    let repository = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+        .bind(repository)
+        .bind(format!("sync-owner-fixture-{repository}"))
+        .execute(pool)
+        .await
+        .unwrap();
+    let settings = serde_json::json!({"provider":"github","instance_url":"https://github.com","repository_path":"fixture/owner","direction":"pull","automatic":false});
+    sqlx::query("INSERT INTO repository_sync_connections(repository_id,settings,version,encrypted_credential,owner_subject) VALUES($1,$2,1,'synthetic-ciphertext',$3)").bind(repository).bind(&settings).bind(subject).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,owner_subject) VALUES($1,$2,1,$3,'manual','queued',$4)").bind(Uuid::new_v4()).bind(repository).bind(settings).bind(subject).execute(pool).await.unwrap();
     assert_eq!(
         store
             .check(&target, &window())
             .await
             .unwrap()
             .reference_count,
-        4
+        6
     );
     assert_eq!(
         store
@@ -99,13 +109,15 @@ async fn verify_canonical_human_owner_sources(pool: &PgPool, store: &IdentityDel
             .await
             .unwrap()
             .reference_count,
-        4
+        6
     );
     for table in [
         "pipeline_human_owners",
         "execution_attempt_human_owners",
         "schedules",
         "schedule_fires",
+        "repository_sync_connections",
+        "repository_sync_runs",
     ] {
         let error = sqlx::query(&format!(
             "UPDATE {table} SET owner_subject=owner_subject WHERE owner_subject=$1"
@@ -139,6 +151,8 @@ async fn verify_canonical_human_owner_sources(pool: &PgPool, store: &IdentityDel
         "execution_attempt_human_owners",
         "schedules",
         "schedule_fires",
+        "repository_sync_connections",
+        "repository_sync_runs",
     ] {
         let updated = sqlx::query(&format!(
             "UPDATE {table} SET owner_subject=owner_subject WHERE owner_subject=$1"
@@ -156,7 +170,7 @@ async fn verify_canonical_human_owner_sources(pool: &PgPool, store: &IdentityDel
             .await
             .unwrap()
             .reference_count,
-        4
+        6
     );
 }
 

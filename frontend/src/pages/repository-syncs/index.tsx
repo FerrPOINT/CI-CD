@@ -747,13 +747,14 @@ export function RepositorySyncEditor({
         <TabsContent value="connection">
           <form onSubmit={(event) => void save(event)} className="space-y-4">
             <Fieldset
-              disabled={!writable || !!connection.active_run}
+              disabled={!writable}
               className="grid gap-4 sm:grid-cols-2"
             >
               <div className="space-y-1">
                 <Label htmlFor="provider">Провайдер</Label>
                 <Select
                   id="provider"
+                  disabled={!!connection.active_run}
                   className="w-full"
                   value={draft.provider}
                   onValueChange={(nextValue) =>
@@ -777,6 +778,7 @@ export function RepositorySyncEditor({
                 </Label>
                 <Input
                   id="instance"
+                  disabled={!!connection.active_run}
                   type="url"
                   required
                   value={draft.instance_url}
@@ -795,6 +797,7 @@ export function RepositorySyncEditor({
                 </Label>
                 <Input
                   id="repository-path"
+                  disabled={!!connection.active_run}
                   required
                   value={draft.repository_path}
                   onChange={(event) =>
@@ -810,6 +813,7 @@ export function RepositorySyncEditor({
                 <Label htmlFor="sync-token">Токен доступа</Label>
                 <Input
                   id="sync-token"
+                  disabled={!!connection.active_run && connection.settings.direction !== "disabled"}
                   type="password"
                   autoComplete="new-password"
                   required={!connection.has_credential || endpointChanged}
@@ -831,6 +835,11 @@ export function RepositorySyncEditor({
                 </p>
               </div>
             </Fieldset>
+            {connection.active_run && connection.settings.direction === "disabled" && (
+              <p className="text-sm text-text-secondary">
+                Можно заменить токен для сверки незавершённого запуска. Синхронизация останется отключённой; новые изменения отправляться не будут.
+              </p>
+            )}
             <Fieldset
               disabled={!writable}
               className="space-y-2"

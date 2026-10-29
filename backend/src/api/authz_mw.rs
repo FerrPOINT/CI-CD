@@ -260,7 +260,14 @@ pub(crate) async fn require_auth(
         return Err(ApiError::forbidden());
     }
     let (mut parts, body) = req.into_parts();
-    let read_storage = crate::space_admission::repository_request_storage(pool, &mut parts).await?;
+    // Sync SATs retain their own project/scopes boundary. Human sync requests
+    // consume the same common admission as the repository browser and PRs.
+    let read_storage = if claims.role == "service_account" && repository_sync_route(&method, &path)
+    {
+        None
+    } else {
+        crate::space_admission::repository_request_storage(pool, &mut parts).await?
+    };
     let write_route = parts
         .extensions
         .get::<axum::extract::MatchedPath>()
@@ -344,7 +351,16 @@ pub(crate) async fn require_auth(
     if let Some(permit) = write_permit.as_ref() {
         parts.extensions.insert(permit.clone());
     }
-    let pipeline_origin = crate::pipeline_authority::Origin::from_identity(&identity)?;
+    if read_proof.is_some() {
+        parts
+            .extensions
+            .insert(crate::space_admission::RepositoryRead);
+    }
+    let mut pipeline_origin = crate::pipeline_authority::Origin::from_identity(&identity)?;
+    if let Some(permit) = write_permit.as_ref() {
+        pipeline_origin = pipeline_origin
+            .map(|origin| origin.restrict(crate::git_host::GitDeadline::admission(permit.proof())));
+    }
     let local_user = claims.sub;
     let central_authority = identity.central.clone();
     let product_authority = identity.product_personal.clone();
