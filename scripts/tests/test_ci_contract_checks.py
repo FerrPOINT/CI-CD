@@ -104,7 +104,7 @@ class ServerCliMetadataTests(unittest.TestCase):
         for name in ('Dockerfile', 'Dockerfile.umbrella'):
             with self.subTest(recipe=name):
                 text = (backend / name).read_text(encoding='utf-8')
-                copied = [item for line in text.splitlines() if line.startswith('COPY ')
+                copied = [item for line in text.replace("\\\n", " ").splitlines() if line.startswith('COPY ')
                           for item in shlex.split(line)[1:-1] if item.startswith('CI-CD/backend/cli')]
                 self.assertEqual(copied, ['CI-CD/backend/cli/Cargo.toml'])
                 self.assertIn('compile_error!("metadata-only cicd-cli must not be compiled");', text)

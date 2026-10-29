@@ -45,8 +45,80 @@ COPY CI-CD/backend/migrations ./migrations
 # Compile-time delivery witnesses must come from the same pinned source set.
 COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
 COPY CI-CD/scripts/workspace_deploy_admission.py CI-CD/scripts/workspace_deploy_adapter.py CI-CD/scripts/workspace_deploy_bridge.py /scripts/
-COPY services-base/scripts /services-base/scripts
-COPY services-base/base-operator/src /services-base/base-operator/src
+# Embed only the helpers declared by BASE_PG_HELPERS in postgres.rs.
+COPY services-base/base-operator/src/pdlc_operator/__init__.py \
+     services-base/base-operator/src/pdlc_operator/cli.py \
+     services-base/base-operator/src/pdlc_operator/config.py \
+     services-base/base-operator/src/pdlc_operator/errors.py \
+     services-base/base-operator/src/pdlc_operator/namespace.py \
+     services-base/base-operator/src/pdlc_operator/paths.py \
+     /services-base/base-operator/src/pdlc_operator/
+COPY services-base/base-operator/src/pdlc_operator/adapters/__init__.py \
+     services-base/base-operator/src/pdlc_operator/adapters/cli_cohort.py \
+     services-base/base-operator/src/pdlc_operator/adapters/docker_policy.py \
+     services-base/base-operator/src/pdlc_operator/adapters/messaging.py \
+     services-base/base-operator/src/pdlc_operator/adapters/runner_relay.py \
+     services-base/base-operator/src/pdlc_operator/adapters/source_context.py \
+     services-base/base-operator/src/pdlc_operator/adapters/workflow_probe.py \
+     /services-base/base-operator/src/pdlc_operator/adapters/
+COPY services-base/base-operator/src/pdlc_operator/backup/__init__.py \
+     services-base/base-operator/src/pdlc_operator/backup/ai_state.py \
+     services-base/base-operator/src/pdlc_operator/backup/cli.py \
+     services-base/base-operator/src/pdlc_operator/backup/context.py \
+     services-base/base-operator/src/pdlc_operator/backup/jetstream.py \
+     services-base/base-operator/src/pdlc_operator/backup/migration.py \
+     services-base/base-operator/src/pdlc_operator/backup/platform.py \
+     services-base/base-operator/src/pdlc_operator/backup/postgres.py \
+     services-base/base-operator/src/pdlc_operator/backup/primitives.py \
+     services-base/base-operator/src/pdlc_operator/backup/storage.py \
+     services-base/base-operator/src/pdlc_operator/backup/workspace.py \
+     /services-base/base-operator/src/pdlc_operator/backup/
+COPY services-base/base-operator/src/pdlc_operator/runtime/__init__.py \
+     services-base/base-operator/src/pdlc_operator/runtime/bootstrap.py \
+     services-base/base-operator/src/pdlc_operator/runtime/boundary.py \
+     services-base/base-operator/src/pdlc_operator/runtime/control.py \
+     services-base/base-operator/src/pdlc_operator/runtime/replacement.py \
+     services-base/base-operator/src/pdlc_operator/runtime/snapshot.py \
+     services-base/base-operator/src/pdlc_operator/runtime/worker.py \
+     /services-base/base-operator/src/pdlc_operator/runtime/
+COPY services-base/base-operator/src/pdlc_operator/workspace/__init__.py \
+     services-base/base-operator/src/pdlc_operator/workspace/assets.py \
+     services-base/base-operator/src/pdlc_operator/workspace/control.py \
+     services-base/base-operator/src/pdlc_operator/workspace/extended.py \
+     services-base/base-operator/src/pdlc_operator/workspace/install.py \
+     services-base/base-operator/src/pdlc_operator/workspace/prepare.py \
+     services-base/base-operator/src/pdlc_operator/workspace/projects.py \
+     services-base/base-operator/src/pdlc_operator/workspace/qualification.py \
+     services-base/base-operator/src/pdlc_operator/workspace/scope.py \
+     services-base/base-operator/src/pdlc_operator/workspace/services.py \
+     services-base/base-operator/src/pdlc_operator/workspace/workflow.py \
+     /services-base/base-operator/src/pdlc_operator/workspace/
+COPY services-base/scripts/_operator_compat.py \
+     services-base/scripts/_platform_namespace_contract.py \
+     services-base/scripts/ai_backup_state.py \
+     services-base/scripts/check_docker_invocations.py \
+     services-base/scripts/compose_helpers.py \
+     services-base/scripts/native_jetstream.py \
+     services-base/scripts/platform_backup.py \
+     services-base/scripts/platform_messaging.py \
+     services-base/scripts/platform_namespace.py \
+     services-base/scripts/platform_postgres.py \
+     services-base/scripts/platform_runtime.py \
+     services-base/scripts/runner_relay.py \
+     services-base/scripts/runtime_bootstrap.py \
+     services-base/scripts/runtime_boundary.py \
+     services-base/scripts/runtime_control.py \
+     services-base/scripts/runtime_replacement.py \
+     services-base/scripts/service_names.py \
+     services-base/scripts/workflow_image_probe.py \
+     services-base/scripts/workspace_backup.py \
+     services-base/scripts/workspace_control.py \
+     services-base/scripts/workspace_extended.py \
+     services-base/scripts/workspace_install.py \
+     services-base/scripts/workspace_prepare.py \
+     services-base/scripts/workspace_qualification.py \
+     services-base/scripts/workspace_workflow.py \
+     /services-base/scripts/
 RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner

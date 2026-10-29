@@ -33,6 +33,19 @@ def staged_paths(
 
 
 class BackendDockerfileTests(unittest.TestCase):
+    def test_embedded_helper_source_selects_its_static_contract(self) -> None:
+        from scripts.vendor import base_quality_selection as selection
+
+        root = DOCKERFILE.parents[1]
+        for path in ("backend/src/task_delivery/postgres.rs", "backend/Dockerfile", "backend/Dockerfile.umbrella"):
+            with self.subTest(path=path):
+                plan = selection.plan(root, profile="fast", changed=[path])
+                gates = {gate["id"]: gate for gate in plan["gates"]}
+                self.assertIn("tooling:quality-routes", gates)
+                self.assertEqual(gates["tooling:quality-routes"]["execution_slot"], "none")
+                self.assertFalse(any(gate.get("kind") == "artifact" for gate in gates.values()))
+                self.assertFalse(any(gate["component"] == "frontend" for gate in gates.values()))
+
     def test_sdk_copy_matches_production_path_graph_and_preserves_cli_metadata(self):
         import tomllib
 
@@ -110,6 +123,17 @@ class BackendDockerfileTests(unittest.TestCase):
                 self.assertFalse(
                     required - staged_paths(dockerfile, required),
                     "Docker build must stage every embedded Base helper at its include path",
+                )
+                copied = []
+                for line in dockerfile.replace("\\\n", " ").splitlines():
+                    if line.startswith("COPY "):
+                        copied.extend(
+                            path for path in shlex.split(line)[1:-1]
+                            if path.startswith(("services-base/scripts", "services-base/base-operator/src"))
+                        )
+                self.assertEqual(
+                    set(copied), required,
+                    "Only the declared embedded helpers belong in the compiler stage",
                 )
 
     def test_missing_transitive_copy_or_wrong_destination_is_detected(self) -> None:
