@@ -42,7 +42,7 @@ class BinTestInputContracts(unittest.TestCase):
     def test_production_copy_excludes_only_known_test_modules(self):
         for filename in ("Dockerfile", "Dockerfile.umbrella"):
             recipe = (ROOT / "backend" / filename).read_text(encoding="utf-8")
-            copies = [shlex.split(line) for line in recipe.splitlines() if line.startswith("COPY ")]
+            copies = [shlex.split(line) for line in recipe.replace("\\\n", " ").splitlines() if line.startswith("COPY ")]
             source = [row for row in copies if row[-2:] == ["CI-CD/backend/src", "./src"]]
             self.assertEqual(len(source), 1)
             expected = {"--exclude=**/src/bin/" + child for _parent, child in self.pairs()}

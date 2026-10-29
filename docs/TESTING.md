@@ -33,3 +33,14 @@ Modular SDK в server recipes копируется тремя полными pro
 manifest и lib guard. Source contract: `python -B -m unittest scripts.tests.test_backend_dockerfile.BackendDockerfileTests.test_sdk_copy_matches_production_path_graph_and_preserves_cli_metadata`.
 Отдельные CLI/messaging consumers и full SDK export сохраняются; actual layer/
 resolver/guard и old-mtime checks относятся к финальной native квалификации.
+
+## Python-входы compiler stage
+
+Оба backend recipes копируют только 67 файлов, объявленных в `BASE_PG_HELPERS`
+в `backend/src/task_delivery/postgres.rs`, с прежними путями назначения.
+При изменении списка обновить COPY в обоих recipes. Полные SDK export/key,
+продуктовые validators, runtime Python и проверки embedded bytes сохраняются.
+Source contract: `python -B -m unittest scripts.tests.test_backend_dockerfile -q`.
+Он проверяет состав, пути и выбор static owner без application producer.
+Actual layer hit, бинарник и ресурсы проверяются на финальной вехе;
+правила и evidence — в Base `docs/plans/forge-delivery-witness-layer-20261029.md`.
