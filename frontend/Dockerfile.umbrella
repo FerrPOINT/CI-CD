@@ -1,15 +1,30 @@
 # Umbrella build for PDLC root Compose (context = the parent source workspace).
 # Stages the sibling services-base frontend so the `@pdlc/ui` file dependency
 # (../../services-base/base-modules/ui) resolves.
-FROM node:22.22.2-bookworm-slim AS build
+FROM node:22.22.2-bookworm-slim AS toolchain
 WORKDIR /app
-COPY CI-CD/openapi/openapi.yaml /openapi/openapi.yaml
-COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
-COPY CI-CD/frontend/scripts/base-generate-openapi.mjs scripts/base-generate-openapi.mjs
-COPY services-base/base-modules/ui /services-base/base-modules/ui
 ENV CI=true
 ENV SPEC=/openapi/openapi.yaml
-RUN corepack enable && corepack prepare pnpm@10.28.1 --activate && pnpm install --frozen-lockfile
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
+
+# Product scripts are generation inputs, not dependency installation inputs.
+FROM toolchain AS install-manifest
+COPY CI-CD/frontend/package.json ./
+RUN node -e 'const fs = require("node:fs"); const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); delete pkg.scripts; fs.writeFileSync("package.json", JSON.stringify(pkg) + "\n");'
+
+FROM toolchain AS build
+COPY --from=install-manifest /app/package.json ./
+COPY CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
+COPY services-base/base-modules/ui /services-base/base-modules/ui
+# Keep dependency lifecycle scripts (including native tooling) enabled.
+RUN pnpm install --frozen-lockfile
+
+# Generation inputs enter only after dependencies have been installed.
+COPY CI-CD/frontend/package.json ./
+COPY CI-CD/openapi/openapi.yaml /openapi/openapi.yaml
+COPY CI-CD/frontend/scripts/base-generate-openapi.mjs scripts/base-generate-openapi.mjs
+RUN pnpm run postinstall && test -s src/api/schema.d.ts
+
 COPY CI-CD/frontend/ ./
 ARG VITE_NAMESPACE_ENABLED="false"
 ENV VITE_NAMESPACE_ENABLED=${VITE_NAMESPACE_ENABLED}

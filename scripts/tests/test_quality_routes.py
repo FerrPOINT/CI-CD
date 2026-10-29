@@ -153,6 +153,34 @@ class QualityRouteTests(unittest.TestCase):
         self.assertTrue(describe(plan)['openapi_check'])
 
 
+    def test_schema_and_generator_changes_keep_the_dependency_install_layer(self):
+        scripts = json.loads((ROOT / 'frontend/package.json').read_bytes())['scripts']
+        hooks = {'preinstall', 'install', 'postinstall', 'prepublish', 'prepare',
+                 'preprepare', 'postprepare'}
+        self.assertEqual(set(scripts) & hooks, {'postinstall'})
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            plan = self.plan('frontend/' + name)
+            self.assertIn('tooling:quality-routes', [gate['id'] for gate in plan['gates']])
+            self.assertFalse([gate for gate in plan['gates'] if gate.get('kind') == 'artifact'])
+            source = (ROOT / 'frontend' / name).read_text(encoding='utf-8')
+            manifest, dependency = source.split('FROM toolchain AS build\n', 1)
+            self.assertIn('delete pkg.scripts;', manifest)
+            before_install, after_install = dependency.split('pnpm install --frozen-lockfile', 1)
+            self.assertIn('COPY --from=install-manifest /app/package.json', before_install)
+            self.assertIn('pnpm-lock.yaml', before_install)
+            self.assertIn('pnpm-workspace.yaml', before_install)
+            self.assertIn('base-modules/ui', before_install)
+            self.assertNotIn('--ignore-scripts', source)
+            for input_path in ('openapi/', 'scripts/'):
+                self.assertNotIn(input_path, before_install)
+                self.assertIn(input_path, after_install)
+            self.assertLess(after_install.index('frontend/package.json'),
+                            after_install.index('RUN pnpm run postinstall'))
+            self.assertLess(after_install.index('RUN pnpm run postinstall'),
+                            after_install.index('frontend/ ./'))
+            self.assertEqual(source.count('pnpm install --frozen-lockfile'), 1)
+            self.assertEqual(source.count('RUN pnpm run postinstall'), 1)
+
     def test_automatic_generator_adapter_preserves_the_public_manual_route(self):
         package = json.loads((ROOT / 'frontend/package.json').read_bytes())
         receipt = json.loads((ROOT / 'scripts/vendor/base-quality-tooling.json').read_bytes())
@@ -170,7 +198,7 @@ class QualityRouteTests(unittest.TestCase):
             if not path.is_file(): continue
             source = path.read_text()
             generation = next(i for i, line in enumerate(source.splitlines()) if line.startswith('RUN ')
-                              and ('pnpm run postinstall' in line or 'pnpm install' in line and '--ignore-scripts' not in line))
+                              and 'pnpm run postinstall' in line)
             self.assertIn('base-generate-openapi.mjs', '\n'.join(source.splitlines()[:generation]))
 
 

@@ -17,6 +17,14 @@ Domain/cache unit не объявляются исполнением bin process
 Source command: `python -B -m unittest scripts.tests.test_bin_test_inputs -q`.
 Перенос, ограничения и финальные проверки: [план](plans/bin-test-source-boundary-20261029.md).
 
+## Frontend dependency layer
+
+Оба frontend Docker recipes устанавливают зависимости по manifest без root scripts,
+сохраняя dependency hooks. OpenAPI и generator копируются после install; затем один
+`pnpm run postinstall` готовит schema. Unit/build команды и runtime tail сохранены.
+Source checks не доказывают реальные BuildKit cache hits или ускорение.
+Общие правила: Base `docs/BUILD_PERFORMANCE.md`, раздел «Frontend, Python и Java».
+
 ## CLI metadata в server Docker recipes
 
 Server image сохраняет `cicd-server` и `forge-runner`; отдельный `cicd-cli`
