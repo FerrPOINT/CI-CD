@@ -89,7 +89,7 @@ class QualityRouteTests(unittest.TestCase):
                               ('backend/Dockerfile.umbrella.dockerignore','backend'),
                               ('frontend/Dockerfile','frontend'), ('frontend/nginx.conf','frontend')]:
             self.assertEqual(self.artifacts(path), [])
-            self.assertEqual(build_services(self.plan(path)), [service])
+            self.assertEqual(build_services(self.plan(path)), ['backend', 'runner'] if service == 'backend' else ['frontend'])
 
     def test_cli_and_delivery_do_not_invent_a_container(self):
         for path in ['backend/cli/src/main.rs', 'backend/src/bin/forge-delivery.rs',

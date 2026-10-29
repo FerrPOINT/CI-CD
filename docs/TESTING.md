@@ -23,7 +23,7 @@ Source command: `python -B -m unittest scripts.tests.test_bin_test_inputs -q`.
 сохраняя dependency hooks. OpenAPI и generator копируются после install; затем один
 `pnpm run postinstall` готовит schema. Public package commands и runtime tail сохранены.
 Source checks не доказывают реальные BuildKit cache hits или ускорение.
-Общие правила: Base `docs/BUILD_PERFORMANCE.md`, раздел «Frontend, Python и Java».
+Общие правила: [стандарт Base](https://github.com/FerrPOINT/services-base/blob/2cccaa411d899f7489dfc54a9e3e86e5fcc5c3b9/docs/BUILD_PERFORMANCE.md), раздел «Frontend, Python и Java».
 
 Docker install использует зарегистрированный Node22/architecture download store
 Base в `/pnpm/store`; integrity check включён, side-effects cache выключен.
@@ -59,8 +59,25 @@ resolver/guard и old-mtime checks относятся к финальной nati
 Source contract: `python -B -m unittest scripts.tests.test_backend_dockerfile -q`.
 Он проверяет состав, пути и выбор static owner без application producer.
 Actual layer hit, бинарник и ресурсы проверяются на финальной вехе;
-правила и evidence — в Base `docs/plans/forge-delivery-witness-layer-20261029.md`.
+правила и evidence — в [Source evidence Base](https://github.com/FerrPOINT/services-base/blob/2cccaa411d899f7489dfc54a9e3e86e5fcc5c3b9/docs/plans/forge-delivery-witness-layer-20261029.md).
 
 Docker разделяет полный unit/typecheck context и production COPY по `frontend:build.exclude_inputs`.
 Один `pnpm run postinstall` обслуживает оба consumers; `pnpm run build:compile`
 зависит от успешного unit-маркера. Native cache-hit/time qualification пока не выполнена.
+
+## Scoped standalone container helper
+
+`python scripts/build.py` использует existing Base plan относительно HEAD.
+Явный service задаёт один scope; `--all` выбирает все buildable services.
+Пустой clean/docs/test-only выбор не вызывает verifier/Docker и не является
+readiness/artifact proof. Cold bootstrap выбирает service явно. Packaging
+recipes/nginx имеют отдельную карту; unknown paths сохраняют product fallback.
+Invalid ref или unsupported map отказывают до подготовки. SDK/UI pins независимы;
+несовместимый single-context mixed build требует qualified multi-pin route.
+Raw heavy остаётся под общим host slot, Root owner вторым slot не оборачивать.
+Source команда: `python -B -m unittest scripts.tests.test_build_scope -q`.
+Контракт/границы: [план](plans/container-selection-20261030.md).
+
+Forge backend producer выбирает backend и runner: у них один recipe, но разные
+automatic image tags. `--all` включает также frontend; CLI/delivery/migrations
+сохраняют отдельные producers и не выдумывают container build.
