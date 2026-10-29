@@ -2,16 +2,23 @@
 
 ## Текущий source-кандидат UI
 
-Точный UI SHA указан в [pin](../.base-ui-revision),
-пакет 0.3.27, reference `4c66399fdf85d5a17026292fd9fa8934415644cefc8137d867f63d9a23958499`.
-Producer объединяет Base #384 и независимый expiry #386 без повторного включения #381.
-Компоненты и reference берутся из этой версии Base; открытый справочник другой
-версии не подтверждает доступность контракта в продукте. SDK/skills pins
-независимы. Это исходники собственного checkout; установка и authenticated
-приёмка runtime этим значением не подтверждаются. Датированные разделы ниже
-описывают прежние квалификации и не заменяют проверку итогового кандидата.
+Точный UI SHA указан в [pin](../.base-ui-revision):
+`7ad53fbee14c9c8df38d5aa17acd553288ef19d9`, `@pdlc/ui`0.3.28,
+reference `2a78538e33c78db0d713ff81d4f4ff0c143a0783ea831c2b44238894ac36efe3`.
+Base #384 содержит общий React/native SSR Toaster offset над fixed actions и
+сохраняет независимые card/control/menu/dialog радиусы. Расчёт, skin и механизм
+принадлежат Base; продуктовые данные, права, записи и callbacks остаются здесь.
 
-### UI0.3.27: независимые радиусы контейнеров
+Объявленный source pin, frozen preparation, build и браузерная приёмка — разные
+этапы. Frozen offline install и CLI integrity нового snapshot PASS: версия0.3.28
+и reference совпали с producer, внешние dependency resolutions сохранены.
+Build и product browser gates нового комплекта ещё открыты; исторический
+PASS0.3.27 ниже не переносится на него автоматически.
+SDK/skills pins независимы. Установка и authenticated runtime этим документом
+не подтверждаются; полная field/app матрица остаётся открытой.
+
+## Квалификация прежнего UI0.3.27: независимые радиусы контейнеров
+
 
 Текущий pin включает общий card-radius для Card, framed ResourceList,
 Disclosure, preview frame и toast. Вложенные controls, меню и диалоги
