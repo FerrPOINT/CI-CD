@@ -33,6 +33,7 @@
       "backend/tests/**"
     ],
     "tooling": [
+      "frontend/Dockerfile*",
       "scripts/tests/**",
       "scripts/vendor/**",
       "scripts/verify_docs.py",
