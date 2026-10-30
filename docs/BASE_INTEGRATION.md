@@ -1,6 +1,32 @@
 # Интеграция CI-CD с Base
 
-## Текущий source-кандидат UI0.3.29
+## Текущий source-кандидат UI0.3.32
+
+Producer `6f3c557698a8224c5a19e56bdc37b199ba076694`, reference
+`3d36261c8fa88dcb116b0efbd03596237702f265aa479bbb5758bc2a5d4ba701`.
+Frozen/offline preparation подтвердила реальный пакет0.3.32 и CLI integrity;
+внешние resolutions и независимые SDK/skills pins сохранены. Base Textarea
+получил общий пересчёт autoSize при настоящем увеличении текста браузера.
+Native browser регрессия autoSize, полный Base unit и source/package checks
+прошли. Product frontend build/unit и IAB остаются отдельными gates;
+новый pin сам по себе их не подтверждает. Установленный runtime не обновлялся.
+
+## Предшествующий source-кандидат UI0.3.30
+
+Producer `d12f12e811282cadf881b01e2acd210b3561e88e`, reference
+`0127aeb8c91ade94906908a0d0f7b66dea77e5129b360ebfbaf6617826b70bca`.
+Общий resolver шрифта используется tokens, React/SSR знаком и Canvas favicon.
+Образец вне BrandingScope получает шрифт своего документа; favicon ждёт загрузки
+нужных символов выбранного встроенного семейства. Публичные API сохранены.
+
+Frozen offline preparation и CLI integrity подтвердили фактический пакет0.3.30.
+Внешние dependency resolutions, SDK/skills pins и продуктовые обработчики не
+менялись. Base проверен из настоящего UI-архива вне workspace без Storybook.
+Новые production frontend builds, hosted CI и продуктовая браузерная приёмка
+учитываются отдельно; установка исключена. Доказательства другого приложения
+или предыдущего UI pin не объявляются приёмкой этого продукта.
+
+## Предшествующий source-кандидат UI0.3.29
 
 Producer `b26cb497e4bdf797875301d5a2aa58f156cdd571`, reference `81c68bc7c8b473216b02de86731a786fe2ee5b8b0354aa70949aa514e6bffcc4`.
 Исправлен общий runtime favicon: PNG получает правильный MIME, cleanup возвращает
