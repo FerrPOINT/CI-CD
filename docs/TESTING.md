@@ -1,5 +1,11 @@
 # Стратегия тестирования Forge CI/CD — Moved
 
+Frontend manifest/importer больше не объявляет неиспользуемый
+`i18next-http-backend`: product и Base переводы уже bundled JSON. Configs,
+locales, scripts, locked versions и pins сохранены. Новый lock требует отдельной
+frozen qualification; старый environment не считается проверенным этим Source audit.
+[Общий consumer contract и результаты](../../services-base/docs/plans/fleet-frontend-dependency-closure-20261030.md).
+
 > **Redirect.** Этот документ объединён в [DEVELOPMENT_GUIDE.md ](DEVELOPMENT_GUIDE.md) и больше не поддерживается здесь.
 > Историческая версия доступна в git history. Полная карта консолидации — `docs/DOCUMENTATION_GOVERNANCE.md`; удаление stub-ов запланировано в следующем release-цикле (см. `CHANGELOG.md`).
 

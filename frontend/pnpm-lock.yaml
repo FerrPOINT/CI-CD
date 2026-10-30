@@ -44,9 +44,6 @@ importers:
       i18next:
         specifier: ^26.4.0
         version: 26.4.0(typescript@5.9.3)
-      i18next-http-backend:
-        specifier: ^3.0.2
-        version: 3.0.6
       lucide-react:
         specifier: ^0.487.0
         version: 0.487.0(react@19.2.8)
