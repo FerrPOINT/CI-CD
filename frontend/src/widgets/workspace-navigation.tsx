@@ -9,7 +9,9 @@ import {
   Rocket,
 } from 'lucide-react'
 import {
+  SidebarList,
   ProjectNavigationGroup,
+  SidebarItemLabel,
   SidebarItem,
   Notice,
   LoadingState,
@@ -61,63 +63,53 @@ export function WorkspaceNavigation({
     (project) => all || (ref && workspaceKey(project) === workspaceKey(ref)),
   )
   return (
-    <nav
-      className="mt-4 space-y-1 border-t border-border pt-3"
-      aria-label="Проекты"
-    >
-      {projects.map((project) => (
-        <ProjectNavigationGroup
-          key={disclosureKey(project)}
-          name={project.name}
-          projectKey={project.project_key}
-          compact={compact}
-          open={!collapsed.includes(disclosureKey(project))}
-          status={
-            !project.group_id
-              ? "Git не подключён"
-              : project.state === "archived"
-                ? "В архиве"
-                : project.stale
-                  ? "Метаданные устарели"
-                  : undefined
-          }
-          active={!!ref && workspaceKey(ref) === workspaceKey(project)}
-          onToggle={() => toggle(disclosureKey(project))}
-        >
-          {sections.map(([section, label, Icon]) => {
-            const path = workspacePath(project, section);
-            const to = withNamespaceLocation(
-              path + (all ? "?project_scope=all" : ""),
-              project,
-            );
-            return (
-              <SidebarItem
-                key={section}
-                asChild
-                compact={compact}
-                active={location.pathname === path}
-              >
-                <NavLink
-                  to={to}
-                  end
-                  onClick={onNavigate}
-                  title={label}
-                  aria-label={label}
+    <SidebarList asChild separated className="mt-4">
+      <nav aria-label="Проекты">
+        {projects.map((project) => (
+          <ProjectNavigationGroup
+            key={disclosureKey(project)}
+            name={project.name}
+            projectKey={project.project_key}
+            compact={compact}
+            open={!collapsed.includes(disclosureKey(project))}
+            status={
+              !project.group_id
+                ? 'Git не подключён'
+                : project.state === 'archived'
+                  ? 'В архиве'
+                  : project.stale
+                    ? 'Метаданные устарели'
+                    : undefined
+            }
+            active={!!ref && workspaceKey(ref) === workspaceKey(project)}
+            onToggle={() => toggle(disclosureKey(project))}
+          >
+            {sections.map(([section, label, Icon]) => {
+              const path = workspacePath(project, section)
+              const to = withNamespaceLocation(path + (all ? '?project_scope=all' : ''), project)
+              return (
+                <SidebarItem
+                  key={section}
+                  asChild
+                  compact={compact}
+                  active={location.pathname === path}
                 >
-                  <Icon aria-hidden />
-                  <span className="base-sidebar-item-label">{label}</span>
-                </NavLink>
-              </SidebarItem>
-            );
-          })}
-        </ProjectNavigationGroup>
-      ))}
-      {!projects.length && (
-        <span className="flex gap-2 p-3 text-sm text-text-muted">
-          <FolderGit2 size={16} />
-          Нет подключённых проектов
-        </span>
-      )}
-    </nav>
+                  <NavLink to={to} end onClick={onNavigate} title={label} aria-label={label}>
+                    <Icon aria-hidden />
+                    <SidebarItemLabel>{label}</SidebarItemLabel>
+                  </NavLink>
+                </SidebarItem>
+              )
+            })}
+          </ProjectNavigationGroup>
+        ))}
+        {!projects.length && (
+          <span className="flex gap-2 p-3 text-sm text-text-muted">
+            <FolderGit2 size={16} />
+            Нет подключённых проектов
+          </span>
+        )}
+      </nav>
+    </SidebarList>
   )
 }

@@ -1,13 +1,15 @@
 import { useState } from "react";
 import {
+  ResourceListDescription,
+  PageNavigation,
   PageHeader,
-  Button,
   Input,
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
   LoadingState,
   ErrorState,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useConfigurations } from "@/api/workspaces";
 export function DeliveryConfigurationsPage() {
@@ -41,15 +43,16 @@ export function DeliveryConfigurationsPage() {
             {configs.data.items.map((config) => (
               <ResourceListRow asChild key={config.id}>
                 <li>
-                  <Link
-                    className="text-accent"
-                    to={`/delivery-configs/${config.id}/pipelines`}
-                  >
-                    {config.name}
-                  </Link>
-                  <p className="break-all text-sm text-text-muted">
+                  <TextLink asChild>
+                    <Link to={`/delivery-configs/${config.id}/pipelines`}>
+                      {config.name}
+                    </Link>
+                  </TextLink>
+                  <ResourceListDescription asChild technical>
+                    <p className="break-all">
                     {config.repository_url}
                   </p>
+                  </ResourceListDescription>
                 </li>
               </ResourceListRow>
             ))}
@@ -63,22 +66,20 @@ export function DeliveryConfigurationsPage() {
           </ul>
         </ResourceList>
       )}
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          disabled={!offset}
-          onClick={() => setOffset(Math.max(0, offset - 50))}
-        >
-          Назад
-        </Button>
-        <Button
-          variant="outline"
-          disabled={!configs.data || offset + 50 >= configs.data.total}
-          onClick={() => setOffset(offset + 50)}
-        >
-          Далее
-        </Button>
-      </div>
+      <PageNavigation
+        page={Math.ceil(offset / 50) + 1}
+        hasNext={!!configs.data && offset + 50 < configs.data.total}
+        onPageChange={(nextPage) =>
+          setOffset(
+            nextPage < Math.ceil(offset / 50) + 1
+              ? Math.max(0, offset - 50)
+              : offset + 50,
+          )
+        }
+        label="Страницы конфигураций поставки"
+        previousLabel="Назад"
+        nextLabel="Далее"
+      />
     </div>
   );
 }

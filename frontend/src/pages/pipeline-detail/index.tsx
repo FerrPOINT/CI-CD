@@ -1,4 +1,8 @@
 import {
+  InlineCode,
+  ActionGroup,
+  ResourceListTitle,
+  ResourceListDescription,
   Notice,
   Badge,
   PageHeader,
@@ -8,6 +12,7 @@ import {
   SearchInput,
   LoadingState,
   EmptyState,
+  TextLink,
 } from "@pdlc/ui/ui";
 import {
   DescriptionItem,
@@ -37,6 +42,7 @@ import {
 
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
+import { useDebouncedValue, useScrollViewport } from "@pdlc/ui/lib";
 import { ApiError } from "@/api/client";
 import { ConfigurationContext } from "@/widgets/configuration-context";
 import { ForbiddenPage } from "@/pages/forbidden";
@@ -162,12 +168,14 @@ export function PipelineDetailPage() {
       <div className="min-w-0 space-y-6">
         <div>
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
-            <Link
-              to={`/delivery-configs/${pipeline.project_id}/pipelines`}
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              {t("navigation.pipelines")}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to={`/delivery-configs/${pipeline.project_id}/pipelines`}
+                className="inline-flex min-h-10 items-center"
+              >
+                {t("navigation.pipelines")}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
             <span>#{pipeline.id.slice(0, 8)}</span>
           </div>
@@ -345,29 +353,26 @@ function JobCard({
     <ResourceListRow>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="break-words text-sm font-medium">{job.name}</span>
+          <ResourceListTitle asChild className="break-words">
+            <span>{job.name}</span>
+          </ResourceListTitle>
         </div>
         <Badge appearance="dot" tone={statusTones[job.status]}>
           {t(`pipelines.${job.status}`)}
         </Badge>
       </div>
-      <p className="mt-2 min-w-0 break-words text-xs text-text-muted">
-        <code className="rounded bg-surface-raised px-1 py-0.5">
-          {job.image}
-        </code>
-        <span className="mx-1">·</span>
-        <code className="break-all">{job.command}</code>
-      </p>
+      <ResourceListDescription asChild className="mt-2 min-w-0 break-words">
+        <p>
+          <InlineCode>{job.image}</InlineCode>
+          <span className="mx-1">·</span>
+          <code className="break-all">{job.command}</code>
+        </p>
+      </ResourceListDescription>
       {job.required_tags.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
           <span>{t("jobs.runnerTags")}:</span>
           {job.required_tags.map((tag) => (
-            <code
-              key={tag}
-              className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary"
-            >
-              {tag}
-            </code>
+            <InlineCode key={tag}>{tag}</InlineCode>
           ))}
         </div>
       )}
@@ -375,12 +380,7 @@ function JobCard({
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
           <span>{t("jobs.secrets")}:</span>
           {job.required_secrets.map((secret) => (
-            <code
-              key={secret}
-              className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary"
-            >
-              {secret}
-            </code>
+            <InlineCode key={secret}>{secret}</InlineCode>
           ))}
         </div>
       )}
@@ -388,12 +388,7 @@ function JobCard({
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
           <span>{t("jobs.artifacts")}:</span>
           {job.artifact_paths.map((path) => (
-            <code
-              key={path}
-              className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary"
-            >
-              {path}
-            </code>
+            <InlineCode key={path}>{path}</InlineCode>
           ))}
         </div>
       )}
@@ -402,7 +397,7 @@ function JobCard({
           {latestDiagnostic}
         </Notice>
       )}
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+      <ActionGroup align="start" className="mt-3">
         <Button
           size="sm"
           variant="outline"
@@ -416,55 +411,58 @@ function JobCard({
             <Package className="h-3 w-3" /> {t("artifacts.title")}
           </Link>
         </Button>
-      </div>
+      </ActionGroup>
       {(job.status === "queued" || job.status === "running") && (
         <Disclosure
-          className="group mt-2 text-sm text-text-muted"
+          className="group mt-2"
+          tone="muted"
           summary={<>{t("jobs.manualStatus")}</>}
         >
-          <div className="flex flex-wrap gap-2 pb-1">
-            {job.status === "queued" && (
-              <Button
-                size="sm"
-                variant="outline"
-
-                disabled={pending}
-                onClick={() => onStatus(job.id, "running")}
-              >
-                <Play className="h-3 w-3" /> {t("jobs.start")}
-              </Button>
-            )}
-            {job.status === "running" && (
-              <>
+          <div className="pb-1">
+            <ActionGroup align="start">
+              {job.status === "queued" && (
                 <Button
                   size="sm"
                   variant="outline"
 
                   disabled={pending}
-                  onClick={() => onStatus(job.id, "success")}
+                  onClick={() => onStatus(job.id, "running")}
                 >
-                  <CheckCircle2 className="h-3 w-3" /> {t("jobs.pass")}
+                  <Play className="h-3 w-3" /> {t("jobs.start")}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
+              )}
+              {job.status === "running" && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
 
-                  disabled={pending}
-                  onClick={() => onStatus(job.id, "failed")}
-                >
-                  <XCircle className="h-3 w-3" /> {t("jobs.fail")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
+                    disabled={pending}
+                    onClick={() => onStatus(job.id, "success")}
+                  >
+                    <CheckCircle2 className="h-3 w-3" /> {t("jobs.pass")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
 
-                  disabled={pending}
-                  onClick={() => onStatus(job.id, "canceled")}
-                >
-                  <Square className="h-3 w-3" /> {t("jobs.cancel")}
-                </Button>
-              </>
-            )}
+                    disabled={pending}
+                    onClick={() => onStatus(job.id, "failed")}
+                  >
+                    <XCircle className="h-3 w-3" /> {t("jobs.fail")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+
+                    disabled={pending}
+                    onClick={() => onStatus(job.id, "canceled")}
+                  >
+                    <Square className="h-3 w-3" /> {t("jobs.cancel")}
+                  </Button>
+                </>
+              )}
+            </ActionGroup>
           </div>
         </Disclosure>
       )}
@@ -539,7 +537,8 @@ function JobLogPanel({
     null,
   );
   const [logSearch, setLogSearch] = useState("");
-  const [appliedLogSearch, setAppliedLogSearch] = useState("");
+  const debouncedLogSearch = useDebouncedValue(logSearch, 300);
+  const appliedLogSearch = debouncedLogSearch.trim();
   const selectedAttempt =
     attempts.find((a) => a.id === selectedAttemptId) ?? attempts[0];
   const logPages = useJobLogPages(
@@ -555,8 +554,16 @@ function JobLogPanel({
     return orderedPages.flatMap((page) => page.items);
   }, [logPages.data, tailMode]);
   const logViewportRef = useRef<HTMLPreElement>(null);
+  const viewport = useScrollViewport(
+    logViewportRef,
+    JSON.stringify([jobId, selectedAttempt?.id, appliedLogSearch]),
+  );
+  const logPageCount = logPages.data?.pages.length ?? 0;
   const followTailRef = useRef(true);
-  const preserveScrollHeightRef = useRef<number | null>(null);
+  const prependRestoreRef = useRef<{
+    pages: number;
+    finish: ReturnType<typeof viewport.preservePrepend>;
+  } | null>(null);
   const previousLastSequenceRef = useRef<number | null>(null);
   const [showLatestLogs, setShowLatestLogs] = useState(false);
   const initialLogsError = logPages.isError && logPages.data == null;
@@ -565,14 +572,6 @@ function JobLogPanel({
   const appendLog = useAppendLog();
   const activeAttemptId = attempts[0]?.id;
   const canAppend = !!selectedAttempt && selectedAttempt.id === activeAttemptId;
-
-  useEffect(() => {
-    const timeout = window.setTimeout(
-      () => setAppliedLogSearch(logSearch.trim()),
-      300,
-    );
-    return () => window.clearTimeout(timeout);
-  }, [logSearch]);
 
   useEffect(() => {
     if (attempts.length === 0) {
@@ -589,10 +588,11 @@ function JobLogPanel({
 
   useEffect(() => {
     followTailRef.current = tailMode;
-    preserveScrollHeightRef.current = null;
+    prependRestoreRef.current?.finish.cancel();
+    prependRestoreRef.current = null;
     previousLastSequenceRef.current = null;
     setShowLatestLogs(false);
-  }, [appliedLogSearch, selectedAttempt?.id, tailMode]);
+  }, [jobId, appliedLogSearch, selectedAttempt?.id, tailMode]);
 
   useEffect(() => {
     const lastSequence = logs[logs.length - 1]?.sequence ?? null;
@@ -601,18 +601,18 @@ function JobLogPanel({
       return;
     }
 
-    const viewport = logViewportRef.current;
-    const preservedHeight = preserveScrollHeightRef.current;
-    if (viewport && preservedHeight != null) {
-      viewport.scrollTop += viewport.scrollHeight - preservedHeight;
-      preserveScrollHeightRef.current = null;
+    const pending = prependRestoreRef.current;
+    // Live appends do not confirm that the requested older page committed.
+    if (pending && logPageCount > pending.pages) {
+      prependRestoreRef.current = null;
+      pending.finish({ defer: false });
       previousLastSequenceRef.current = lastSequence;
       return;
     }
 
     const previousLastSequence = previousLastSequenceRef.current;
-    if (viewport && followTailRef.current && logs.length > 0) {
-      viewport.scrollTop = viewport.scrollHeight;
+    if (followTailRef.current && logs.length > 0) {
+      viewport.scrollToEnd();
     } else if (
       previousLastSequence != null &&
       lastSequence != null &&
@@ -621,21 +621,35 @@ function JobLogPanel({
       setShowLatestLogs(true);
     }
     previousLastSequenceRef.current = lastSequence;
-  }, [logs, tailMode]);
+  }, [logs, tailMode, logPageCount, viewport]);
 
   function loadNextLogPage() {
+    if (prependRestoreRef.current) return;
     if (tailMode) {
-      preserveScrollHeightRef.current =
-        logViewportRef.current?.scrollHeight ?? null;
+      const pending = {
+        pages: logPageCount,
+        finish: viewport.preservePrepend(),
+      };
+      prependRestoreRef.current = pending;
       followTailRef.current = false;
       setShowLatestLogs(true);
+      const cancel = () => {
+        if (prependRestoreRef.current !== pending) return;
+        pending.finish.cancel();
+        prependRestoreRef.current = null;
+      };
+      void logPages.fetchNextPage().then((result) => {
+        if (result.isError || (result.data?.pages.length ?? 0) <= pending.pages)
+          cancel();
+      }, cancel);
+      return;
     }
     void logPages.fetchNextPage();
   }
 
   function scrollToLatestLog() {
-    const viewport = logViewportRef.current;
-    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    prependRestoreRef.current = null;
+    viewport.scrollToEnd();
     followTailRef.current = true;
     setShowLatestLogs(false);
   }
@@ -819,16 +833,12 @@ function JobLogPanel({
               role="log"
               aria-label={t("jobs.logs")}
               tabIndex={0}
-              onScroll={(event) => {
+              onScroll={() => {
                 if (!tailMode) return;
-                const viewport = event.currentTarget;
-                const nearBottom =
-                  viewport.scrollHeight -
-                    viewport.scrollTop -
-                    viewport.clientHeight <=
-                  24;
-                followTailRef.current = nearBottom;
-                setShowLatestLogs(!nearBottom);
+                const position = viewport.observe(24, true);
+                if (!position) return;
+                followTailRef.current = position.atEnd;
+                setShowLatestLogs(!position.atEnd);
               }}
               className="max-h-80"
               wrap={false}
@@ -837,12 +847,11 @@ function JobLogPanel({
                 ? t("common.loading")
                 : logs.length === 0
                   ? t("jobs.noLogs")
-                  : logs
-                      .map(
-                        (l) =>
-                          `${String(l.sequence).padStart(3, "0")}  ${l.message}`,
-                      )
-                      .join("\n")}
+                  : logs.map((line, index) => (
+                      <span key={line.sequence} data-scroll-anchor="">
+                        {`${String(line.sequence).padStart(3, "0")}  ${line.message}${index < logs.length - 1 ? "\n" : ""}`}
+                      </span>
+                    ))}
             </CodeBlock>
           )}
           {tailMode &&
@@ -881,12 +890,11 @@ function JobLogPanel({
       )}
       {!selectedAttempt &&
         !attemptsQuery.isLoading &&
-        !attemptsQuery.isError && (
-          <p className="text-sm text-text-muted">{t("jobs.noLogs")}</p>
-        )}
+        !attemptsQuery.isError && <EmptyState message={t("jobs.noLogs")} />}
       {canAppend && (
         <Disclosure
-          className="group text-sm text-text-muted"
+          className="group"
+          tone="muted"
           summary={<>{t("jobs.manualLog")}</>}
         >
           <form
@@ -990,12 +998,16 @@ function JobTestReportPanel({ jobId }: { jobId: string }) {
             {reports.map((r: TestReport) => (
               <ResourceListRow asChild key={r.id}>
                 <div className="text-sm">
-                  <p className="font-medium">{r.suite_name}</p>
-                  <p className="mt-1 text-xs text-text-muted">
-                    ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} /{" "}
-                    {r.tests_total}
-                    {r.duration_ms != null && ` · ${r.duration_ms}ms`}
-                  </p>
+                  <ResourceListTitle asChild>
+                    <p>{r.suite_name}</p>
+                  </ResourceListTitle>
+                  <ResourceListDescription asChild className="mt-1">
+                    <p>
+                      ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} /{" "}
+                      {r.tests_total}
+                      {r.duration_ms != null && ` · ${r.duration_ms}ms`}
+                    </p>
+                  </ResourceListDescription>
                 </div>
               </ResourceListRow>
             ))}

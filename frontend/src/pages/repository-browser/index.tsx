@@ -1,4 +1,13 @@
 import {
+  ActionGroup,
+  Prose,
+  ResourceStateView,
+  AutocompleteInput,
+  Breadcrumbs,
+  BreadcrumbItem,
+  ResourceListButton,
+  ResourceListTitle,
+  ResourceListDescription,
   CardContent,
   CardHeader,
   Card,
@@ -27,6 +36,8 @@ import {
   TabsTrigger,
   SearchInput,
   Notice,
+  TextLink,
+  FormField,
 } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 
@@ -35,7 +46,6 @@ import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   Check,
-  ChevronLeft,
   ChevronRight,
   FileText,
   Folder,
@@ -132,7 +142,14 @@ export function RepositoryBrowserPage({
 
   if (!repo)
     return (
-      <p className="text-sm text-text-muted">{t("repositories.notFound")}</p>
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("repositories.notFound"),
+          headingLevel: embedded ? 2 : 1,
+        }}
+      />
     );
 
   function updateParams(
@@ -153,12 +170,14 @@ export function RepositoryBrowserPage({
       {!embedded && (
         <>
           <div className="flex items-center gap-2 text-sm text-text-muted">
-            <Link
-              to="/repositories"
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              {t("navigation.repositories")}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to="/repositories"
+                className="inline-flex min-h-10 items-center"
+              >
+                {t("navigation.repositories")}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
             <span className="min-w-0 break-all">{repo}</span>
           </div>
@@ -171,7 +190,7 @@ export function RepositoryBrowserPage({
             }
             actions={
               <>
-                <div className="flex flex-wrap gap-2">
+                <ActionGroup align="start">
                   <Button asChild variant="outline" size="sm">
                     <Link
                       to={`/repositories/${encodeURIComponent(repo)}/compare`}
@@ -188,7 +207,7 @@ export function RepositoryBrowserPage({
                       {t("repositoryBrowser.createPullRequest")}
                     </Link>
                   </Button>
-                </div>
+                </ActionGroup>
               </>
             }
           />
@@ -367,15 +386,21 @@ function CommitsList({
               {result.items.map((commit) => (
                 <ResourceListRow asChild key={commit.sha}>
                   <li className="flex min-w-0 flex-col gap-1 text-sm sm:flex-row sm:items-center sm:gap-4">
-                    <code className="shrink-0 text-xs text-accent">
-                      {commit.short_sha}
-                    </code>
-                    <span className="min-w-0 flex-1 break-words font-medium">
-                      {commit.message}
-                    </span>
-                    <span className="min-w-0 break-words text-xs text-text-secondary">
-                      {commit.author}
-                    </span>
+                    <ResourceListDescription asChild technical tone="accent">
+                      <code className="shrink-0">{commit.short_sha}</code>
+                    </ResourceListDescription>
+                    <ResourceListTitle
+                      asChild
+                      className="min-w-0 flex-1 break-words"
+                    >
+                      <span>{commit.message}</span>
+                    </ResourceListTitle>
+                    <ResourceListDescription
+                      asChild
+                      className="min-w-0 break-words"
+                    >
+                      <span>{commit.author}</span>
+                    </ResourceListDescription>
                     <time
                       className="shrink-0 text-xs text-text-muted"
                       dateTime={commit.date}
@@ -388,37 +413,16 @@ function CommitsList({
             </ul>
           </ResourceList>
           {(page > 1 || result.hasMore) && (
-            <nav
-              aria-label={t("repositoryBrowser.commitPages")}
-              className="grid grid-cols-2 items-center gap-2 sm:flex sm:justify-end"
-            >
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="w-full sm:w-auto"
-                disabled={page === 1 || query.isFetching}
-                onClick={() => onPageChange(page - 1)}
-              >
-                {t("repositoryBrowser.previousCommits")}
-              </Button>
-              <span
-                className="col-span-2 row-start-1 text-center text-sm text-text-muted sm:col-auto sm:row-auto"
-                aria-live="polite"
-              >
-                {t("repositoryBrowser.commitPage", { page })}
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="w-full sm:w-auto"
-                disabled={!result.hasMore || query.isFetching}
-                onClick={() => onPageChange(page + 1)}
-              >
-                {t("repositoryBrowser.nextCommits")}
-              </Button>
-            </nav>
+            <PageNavigation
+              page={page}
+              hasNext={result.hasMore && !query.isFetching}
+              onPageChange={onPageChange}
+              label={t("repositoryBrowser.commitPages")}
+              previousLabel={t("repositoryBrowser.previousCommits")}
+              nextLabel={t("repositoryBrowser.nextCommits")}
+              pending={query.isFetching}
+              summary={t("repositoryBrowser.commitPage", { page })}
+            />
           )}
         </section>
       )}
@@ -540,7 +544,7 @@ function BranchesList({
                     <Button
                       variant="ghost"
                       type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
+                      className="min-w-0 flex-1 text-left"
                       onClick={() => onSelect(ref)}
                     >
                       <GitBranch
@@ -549,13 +553,16 @@ function BranchesList({
                       />
                       <span className="break-all">{ref.name}</span>
                     </Button>
-                    <code className="text-xs text-text-muted">
-                      {ref.sha.slice(0, 7)}
-                    </code>
+                    <ResourceListDescription asChild technical>
+                      <code>{ref.sha.slice(0, 7)}</code>
+                    </ResourceListDescription>
                     {ref.target && (
-                      <span className="w-full break-words text-xs text-text-muted sm:w-auto sm:max-w-[40%] sm:truncate">
-                        {ref.target}
-                      </span>
+                      <ResourceListDescription
+                        asChild
+                        className="w-full break-words sm:w-auto sm:max-w-[40%] sm:truncate"
+                      >
+                        <span>{ref.target}</span>
+                      </ResourceListDescription>
                     )}
                   </li>
                 </ResourceListRow>
@@ -575,7 +582,8 @@ function BranchesList({
         label={t("repositoryBrowser.refPagination")}
         previousLabel={t("repositoryBrowser.previousRefPage")}
         nextLabel={t("repositoryBrowser.nextRefPage")}
-        className="justify-center border-t border-border pt-2"
+        separated
+        className="justify-center"
       />
     </div>
   );
@@ -639,28 +647,24 @@ function CodeBrowser({
         onSubmit={applyRef}
       >
         <div className="min-w-0 flex-1 space-y-1.5 sm:max-w-md">
-          <label htmlFor="repository-ref" className="text-sm font-medium">
+          <Label htmlFor="repository-ref">
             {t("repositoryBrowser.gitRef")}
-          </label>
-          <Input
+          </Label>
+          <AutocompleteInput
             id="repository-ref"
             type="search"
-            list="repository-ref-options"
+            options={[
+              { value: "HEAD", label: t("repositoryBrowser.defaultRef") },
+              ...(refOptions.map((option) => ({
+                value: option.value,
+                label: option.label,
+              })) ?? []),
+            ]}
             className="font-mono"
             placeholder={t("repositoryBrowser.defaultRef")}
             value={draftRef}
-            onChange={(event) => setDraftRef(event.target.value)}
+            onValueChange={(nextValue) => setDraftRef(nextValue)}
           />
-          <datalist id="repository-ref-options">
-            <option value="HEAD">{t("repositoryBrowser.defaultRef")}</option>
-            {refOptions.map((option) => (
-              <option
-                key={option.value}
-                value={option.value}
-                label={option.label}
-              />
-            ))}
-          </datalist>
         </div>
         <Button
           type="submit"
@@ -744,8 +748,7 @@ function FilePreview({
         <Button
           type="button"
           variant="ghost"
-          size="sm"
-          className="min-w-10"
+          size="icon"
           aria-label={t("repositoryBrowser.backToTree")}
           title={t("repositoryBrowser.backToTree")}
           onClick={onBack}
@@ -753,12 +756,16 @@ function FilePreview({
           <ArrowLeft className="h-4 w-4" aria-hidden />
         </Button>
         <FileText className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-        <span className="min-w-0 flex-1 break-all font-medium">{filePath}</span>
+        <ResourceListTitle asChild className="min-w-0 flex-1 break-all">
+          <span>{filePath}</span>
+        </ResourceListTitle>
         {query.data && (
-          <span className="text-xs text-text-muted">
-            {formatBytes(query.data.size, i18n.language)} ·{" "}
-            {query.data.sha.slice(0, 7)}
-          </span>
+          <ResourceListDescription asChild>
+            <span>
+              {formatBytes(query.data.size, i18n.language)} ·{" "}
+              {query.data.sha.slice(0, 7)}
+            </span>
+          </ResourceListDescription>
         )}
       </CardHeader>
       <CardContent>
@@ -771,13 +778,13 @@ function FilePreview({
         >
           {(blob) =>
             blob.binary ? (
-              <p className="text-sm text-text-muted">
-                {t("repositoryBrowser.binaryFile")}
-              </p>
+              <Prose asChild>
+                <p>{t("repositoryBrowser.binaryFile")}</p>
+              </Prose>
             ) : blob.content.length === 0 ? (
-              <p className="text-sm text-text-muted">
-                {t("repositoryBrowser.emptyFile")}
-              </p>
+              <Prose asChild>
+                <p>{t("repositoryBrowser.emptyFile")}</p>
+              </Prose>
             ) : (
               <div>
                 {blob.truncated && (
@@ -851,15 +858,9 @@ function TreeView({
   return (
     <Card>
       <CardHeader>
-        <nav
-          aria-label={t("repositoryBrowser.code")}
-          className="flex min-w-0 flex-wrap items-center gap-1 text-sm"
-        >
-          <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-          <Button
-            variant="ghost"
-            type="button"
-            className="min-w-10 px-2 hover:text-accent"
+        <Breadcrumbs aria-label={t("repositoryBrowser.code")}>
+          <BreadcrumbItem
+            current={crumbs.length === 0}
             onClick={() =>
               onNavigate({
                 dir: null,
@@ -869,32 +870,26 @@ function TreeView({
               })
             }
           >
-            /
-          </Button>
+            <Folder aria-hidden />
+            {t("repositoryBrowser.rootDirectory")}
+          </BreadcrumbItem>
           {crumbs.map((part, index) => (
-            <span
+            <BreadcrumbItem
               key={`${index}-${part}`}
-              className="flex min-w-0 items-center gap-1"
+              current={index === crumbs.length - 1}
+              onClick={() =>
+                onNavigate({
+                  dir: crumbs.slice(0, index + 1).join("/"),
+                  file: null,
+                  treePage: null,
+                  treeSearch: null,
+                })
+              }
             >
-              <span className="text-text-muted">/</span>
-              <Button
-                variant="ghost"
-                type="button"
-                className="min-w-0 break-all px-2 text-left hover:text-accent"
-                onClick={() =>
-                  onNavigate({
-                    dir: crumbs.slice(0, index + 1).join("/"),
-                    file: null,
-                    treePage: null,
-                    treeSearch: null,
-                  })
-                }
-              >
-                {part}
-              </Button>
-            </span>
+              {part}
+            </BreadcrumbItem>
           ))}
-        </nav>
+        </Breadcrumbs>
       </CardHeader>
       <CardContent className="space-y-2">
         <form
@@ -948,90 +943,75 @@ function TreeView({
           }}
         >
           {(items) => (
-            <ul className="divide-y divide-border">
-              {items.map((entry) => (
-                <li
-                  key={entry.path}
-                  className="flex min-w-0 items-center gap-2 text-sm hover:bg-surface-raised"
-                >
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    className="flex min-w-0 flex-1 items-center gap-3 px-2 text-left"
-                    onClick={() =>
-                      onNavigate(
-                        entry.kind === "tree"
-                          ? {
-                              dir: entry.path,
-                              file: null,
-                              treePage: null,
-                              treeSearch: null,
-                            }
-                          : { file: entry.path },
-                      )
-                    }
+            <ResourceList asChild>
+              <ul>
+                {items.map((entry) => (
+                  <li
+                    key={entry.path}
+                    className="flex min-w-0 items-center gap-2"
                   >
-                    {entry.kind === "tree" ? (
-                      <Folder
-                        className="h-4 w-4 shrink-0 text-accent"
-                        aria-hidden
-                      />
-                    ) : (
-                      <FileText
-                        className="h-4 w-4 shrink-0 text-text-muted"
-                        aria-hidden
-                      />
+                    <ResourceListButton
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      onClick={() =>
+                        onNavigate(
+                          entry.kind === "tree"
+                            ? {
+                                dir: entry.path,
+                                file: null,
+                                treePage: null,
+                                treeSearch: null,
+                              }
+                            : { file: entry.path },
+                        )
+                      }
+                    >
+                      {entry.kind === "tree" ? (
+                        <Folder
+                          className="h-4 w-4 shrink-0 text-accent"
+                          aria-hidden
+                        />
+                      ) : (
+                        <FileText
+                          className="h-4 w-4 shrink-0 text-text-muted"
+                          aria-hidden
+                        />
+                      )}
+                      <ResourceListTitle asChild>
+                        <span className="min-w-0 break-all">{entry.name}</span>
+                      </ResourceListTitle>
+                    </ResourceListButton>
+                    <ResourceListDescription asChild technical>
+                      <code className="hidden shrink-0 pr-2 sm:inline">
+                        {entry.sha.slice(0, 7)}
+                      </code>
+                    </ResourceListDescription>
+                    {entry.size != null && (
+                      <ResourceListDescription asChild>
+                        <span className="hidden w-20 shrink-0 pr-2 text-right md:inline">
+                          {entry.size} B
+                        </span>
+                      </ResourceListDescription>
                     )}
-                    <span className="min-w-0 break-all">{entry.name}</span>
-                  </Button>
-                  <code className="hidden shrink-0 pr-2 text-xs text-text-muted sm:inline">
-                    {entry.sha.slice(0, 7)}
-                  </code>
-                  {entry.size != null && (
-                    <span className="hidden w-20 shrink-0 pr-2 text-right text-xs text-text-muted md:inline">
-                      {entry.size} B
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
+                  </li>
+                ))}
+              </ul>
+            </ResourceList>
           )}
         </QueryState>
         {(page > 1 || hasNext) && (
-          <nav
-            aria-label={t("repositoryBrowser.treePagination")}
-            className="flex items-center justify-center gap-3 border-t border-border pt-2"
-          >
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-
-              disabled={page <= 1}
-              aria-label={t("repositoryBrowser.previousTreePage")}
-              title={t("repositoryBrowser.previousTreePage")}
-              onClick={() =>
-                onNavigate({ treePage: page > 2 ? String(page - 1) : null })
-              }
-            >
-              <ChevronLeft className="h-4 w-4" aria-hidden />
-            </Button>
-            <span className="text-sm text-text-secondary">
-              {t("repositoryBrowser.treePage", { page })}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-
-              disabled={!hasNext}
-              aria-label={t("repositoryBrowser.nextTreePage")}
-              title={t("repositoryBrowser.nextTreePage")}
-              onClick={() => onNavigate({ treePage: String(page + 1) })}
-            >
-              <ChevronRight className="h-4 w-4" aria-hidden />
-            </Button>
-          </nav>
+          <PageNavigation
+            page={page}
+            hasNext={hasNext}
+            onPageChange={(nextPage) =>
+              onNavigate({ treePage: nextPage === 1 ? null : String(nextPage) })
+            }
+            label={t("repositoryBrowser.treePagination")}
+            previousLabel={t("repositoryBrowser.previousTreePage")}
+            nextLabel={t("repositoryBrowser.nextTreePage")}
+            compact
+            summary={t("repositoryBrowser.treePage", { page })}
+            separated
+          />
         )}
       </CardContent>
     </Card>
@@ -1089,7 +1069,7 @@ function TagsList({
                     <Button
                       variant="ghost"
                       type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent"
+                      className="min-w-0 flex-1 text-left"
                       onClick={() => onSelect(tag)}
                     >
                       <Tag
@@ -1098,13 +1078,16 @@ function TagsList({
                       />
                       <span className="break-all">{tag.name}</span>
                     </Button>
-                    <code className="text-xs text-text-muted">
-                      {tag.sha.slice(0, 7)}
-                    </code>
+                    <ResourceListDescription asChild technical>
+                      <code>{tag.sha.slice(0, 7)}</code>
+                    </ResourceListDescription>
                     {tag.message && (
-                      <span className="w-full min-w-0 break-words text-xs text-text-muted sm:w-auto sm:max-w-[40%] sm:truncate">
-                        {tag.message}
-                      </span>
+                      <ResourceListDescription
+                        asChild
+                        className="w-full min-w-0 break-words sm:w-auto sm:max-w-[40%] sm:truncate"
+                      >
+                        <span>{tag.message}</span>
+                      </ResourceListDescription>
                     )}
                   </li>
                 </ResourceListRow>
@@ -1124,7 +1107,8 @@ function TagsList({
         label={t("repositoryBrowser.refPagination")}
         previousLabel={t("repositoryBrowser.previousRefPage")}
         nextLabel={t("repositoryBrowser.nextRefPage")}
-        className="justify-center border-t border-border pt-2"
+        separated
+        className="justify-center"
       />
     </div>
   );
@@ -1242,9 +1226,12 @@ function ReleasesList({ repo }: { repo: string }) {
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="min-w-0 break-words font-medium">
-                          {rel.name}
-                        </span>
+                        <ResourceListTitle
+                          asChild
+                          className="min-w-0 break-words"
+                        >
+                          <span>{rel.name}</span>
+                        </ResourceListTitle>
                         {rel.prerelease && (
                           <Badge tone="warning">
                             {t("releases.prerelease")}
@@ -1261,12 +1248,17 @@ function ReleasesList({ repo }: { repo: string }) {
                         </time>
                       </div>
                       {rel.description && (
-                        <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
-                          {rel.description}
-                        </p>
+                        <Prose asChild>
+                          <p className="mt-2 whitespace-pre-wrap break-words">
+                            {rel.description}
+                          </p>
+                        </Prose>
                       )}
                     </div>
-                    <div className="flex w-full shrink-0 items-center justify-end gap-1 sm:w-auto">
+                    <ActionGroup
+                      align="end"
+                      className="w-full shrink-0 sm:w-auto"
+                    >
                       <Button
                         variant="ghost"
                         type="button"
@@ -1289,7 +1281,7 @@ function ReleasesList({ repo }: { repo: string }) {
                       >
                         <Trash2 className="h-4 w-4" aria-hidden />
                       </Button>
-                    </div>
+                    </ActionGroup>
                   </li>
                 </ResourceListRow>
               ))}
@@ -1317,25 +1309,25 @@ function ReleasesList({ repo }: { repo: string }) {
           >
             <div className="space-y-1.5">
               <Label htmlFor="rel-tag">{t("releases.tag")}</Label>
-              <Input
+              <AutocompleteInput
                 id="rel-tag"
                 value={form.tag_name}
-                onChange={(e) => {
-                  setForm({ ...form, tag_name: e.target.value });
+                onValueChange={(nextValue) => {
+                  setForm({ ...form, tag_name: nextValue });
                   setTagError(null);
                 }}
-                list={editingTag ? undefined : "release-tags"}
+                options={
+                  tagsQuery.data
+                    ?.slice(0, refSuggestionLimit - 1)
+                    .map((tag) => ({ value: tag.name, label: tag.name })) ?? []
+                }
                 readOnly={!!editingTag}
                 aria-invalid={!!tagError}
                 aria-describedby={tagError ? "rel-tag-error" : undefined}
                 placeholder="v1.0.0"
                 required
               />
-              <datalist id="release-tags">
-                {tagsQuery.data?.slice(0, refSuggestionLimit - 1).map((tag) => (
-                  <option key={tag.name} value={tag.name} />
-                ))}
-              </datalist>
+
               {tagError && (
                 <Notice
                   id="rel-tag-error"
@@ -1379,25 +1371,27 @@ function ReleasesList({ repo }: { repo: string }) {
                 </Notice>
               )}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="rel-name">{t("releases.name")}</Label>
-              <Input
-                id="rel-name"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="rel-desc">{t("releases.description")}</Label>
-              <Textarea
-                id="rel-desc"
-                rows={4}
-                value={form.description}
-                onChange={(e) =>
-                  setForm({ ...form, description: e.target.value })
-                }
-              />
-            </div>
+            <FormField id="rel-name" label={t("releases.name")}>
+              {(baseFieldAttrs) => (
+                <Input
+                  {...baseFieldAttrs}
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              )}
+            </FormField>
+            <FormField id="rel-desc" label={t("releases.description")}>
+              {(baseFieldAttrs) => (
+                <Textarea
+                  {...baseFieldAttrs}
+                  rows={4}
+                  value={form.description}
+                  onChange={(e) =>
+                    setForm({ ...form, description: e.target.value })
+                  }
+                />
+              )}
+            </FormField>
             <div className="flex items-center gap-2">
               <Checkbox
                 id="rel-pre"

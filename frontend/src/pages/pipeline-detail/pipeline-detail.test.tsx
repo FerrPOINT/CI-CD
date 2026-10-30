@@ -1,6 +1,7 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, type InfiniteData } from "@tanstack/react-query";
 import {
   fireEvent,
+  act,
   render,
   screen,
   waitFor,
@@ -39,6 +40,7 @@ function renderPipelineDetail(
     failFirstLogs?: boolean;
     failFirstOlderLogs?: boolean;
     newLogOnRefresh?: boolean;
+    olderLogsResponse?: () => Promise<Response>;
     cancelResponse?: () => Promise<Response>;
   } = {},
 ) {
@@ -160,6 +162,7 @@ function renderPipelineDetail(
           });
         }
         if (params.get("before") === "201") {
+          if (options.olderLogsResponse) return options.olderLogsResponse();
           if (options.failFirstOlderLogs && olderLogCalls++ === 0) {
             return Promise.resolve(
               new Response("unavailable", { status: 503 }),
@@ -223,6 +226,7 @@ function renderPipelineDetail(
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return client;
 }
 
 function logRow(sequence: number, message: string) {
@@ -356,6 +360,55 @@ describe("PipelineDetailPage logs", () => {
     expect(
       screen.queryByRole("button", { name: "jobs.latestLogs" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("waits for an older page commit before restoring the reader after a live append", async () => {
+    let resolveOlder!: (response: Response) => void;
+    const older = new Promise<Response>((resolve) => { resolveOlder = resolve; });
+    const requests: string[] = [];
+    const client = renderPipelineDetail(requests, { olderLogsResponse: () => older });
+    fireEvent.click(await screen.findByRole("button", { name: /jobs\.logs/ }));
+    const output = await screen.findByRole("log");
+    await waitFor(() => expect(output.textContent).toContain("202  deploy complete"));
+    Object.defineProperties(output, {
+      scrollHeight: {
+        configurable: true,
+        get: () => 1_000 + (output.textContent?.includes("199  compile") ? 200 : 0)
+          + (output.textContent?.includes("203  cleanup") ? 150 : 0),
+      },
+      clientHeight: { configurable: true, value: 300 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+    const anchor = output.querySelector<HTMLElement>("[data-scroll-anchor]") ?? output;
+    vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(() => {
+      const top = 200 + (output.textContent?.includes("199  compile") ? 200 : 0) - output.scrollTop;
+      return { top, bottom: top + 20, left: 0, right: 100, width: 100, height: 20, x: 0, y: top, toJSON() {} };
+    });
+    fireEvent.scroll(output);
+    fireEvent.click(screen.getByRole("button", { name: "jobs.loadEarlierLogs" }));
+    await waitFor(() => expect(requests.some((url) => url.includes("before=201"))).toBe(true));
+
+    // The live transport updates the same cache while the older request is unresolved.
+    type Page = { items: ReturnType<typeof logRow>[]; next_after: number | null; total: number; has_more_before: boolean };
+    act(() => client.setQueryData<InfiniteData<Page>>(
+      ["logs", jobId, attemptId, "page", ""],
+      (current) => current && {
+        ...current,
+        pages: current.pages.map((page, index) => index === 0
+          ? { ...page, items: [...page.items, logRow(203, "cleanup complete")] }
+          : page),
+      },
+    ));
+    await waitFor(() => expect(output.textContent).toContain("203  cleanup complete"));
+    expect(output.scrollTop).toBe(100);
+
+    await act(async () => resolveOlder(await json({
+      items: [logRow(199, "compile sources"), logRow(200, "run tests")],
+      next_after: null, total: 200, has_more_before: false,
+    })));
+    await waitFor(() => expect(output.textContent).toContain("199  compile sources"));
+    await waitFor(() => expect(output.scrollTop).toBe(300));
+    expect(anchor.getBoundingClientRect().top).toBe(100);
   });
 
   it("keeps loaded logs visible and retries a failed older page", async () => {

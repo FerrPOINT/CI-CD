@@ -1,7 +1,12 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Server, Trash2 } from "lucide-react";
 import {
+  ActionGroup,
+  ResourceListTitle,
+  ResourceListDescription,
+  PageNavigation,
   Badge,
   PageHeader,
   toast,
@@ -14,6 +19,7 @@ import {
   ConfirmDialog,
   SearchInput,
   EmptyState,
+  FormField,
 } from "@pdlc/ui/ui";
 import { useDeleteRunner, useRegisterRunner, useRunners } from "@/api/hooks";
 import type { Runner, RunnerStatus } from "@/api/types";
@@ -109,61 +115,63 @@ export function RunnersPage() {
       />
 
       {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          aria-label={t("runners.register")}
-          className="grid gap-3 border-y border-border py-4 sm:grid-cols-2"
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="runner-name">{t("runners.name")}</Label>
-            <Input
-              id="runner-name"
+        <ContentSection asChild dividers="both">
+          <form
+            onSubmit={handleSubmit}
+            aria-label={t("runners.register")}
+            className="grid gap-3 sm:grid-cols-2"
+          >
+            <FormField id="runner-name" label={t("runners.name")}>
+              {(baseFieldAttrs) => (
+                <Input
+                  {...baseFieldAttrs}
+                  required
+                  autoFocus
+                  value={form.name}
+                  onChange={(event) =>
+                    setForm({ ...form, name: event.target.value })
+                  }
+                />
+              )}
+            </FormField>
+            <FormField id="runner-tags" label={t("runners.tags")}>
+              {(baseFieldAttrs) => (
+                <Input
+                  {...baseFieldAttrs}
+                  placeholder="linux, docker"
+                  value={form.tags}
+                  onChange={(event) =>
+                    setForm({ ...form, tags: event.target.value })
+                  }
+                />
+              )}
+            </FormField>
+            <p className="text-xs text-text-secondary sm:col-span-2">
+              {t("runners.manualNotice")}
+            </p>
+            <ActionGroup align="end" className="sm:col-span-2">
+              <Button
+                type="button"
+                variant="outline"
 
-              required
-              autoFocus
-              value={form.name}
-              onChange={(event) =>
-                setForm({ ...form, name: event.target.value })
-              }
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="runner-tags">{t("runners.tags")}</Label>
-            <Input
-              id="runner-tags"
+                disabled={registerRunner.isPending}
+                onClick={() => {
+                  setShowForm(false);
+                  setForm({ name: "", tags: "" });
+                }}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="submit"
 
-              placeholder="linux, docker"
-              value={form.tags}
-              onChange={(event) =>
-                setForm({ ...form, tags: event.target.value })
-              }
-            />
-          </div>
-          <p className="text-xs text-text-secondary sm:col-span-2">
-            {t("runners.manualNotice")}
-          </p>
-          <div className="flex justify-end gap-2 sm:col-span-2">
-            <Button
-              type="button"
-              variant="outline"
-
-              disabled={registerRunner.isPending}
-              onClick={() => {
-                setShowForm(false);
-                setForm({ name: "", tags: "" });
-              }}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button
-              type="submit"
-
-              disabled={registerRunner.isPending || !form.name.trim()}
-            >
-              {t("runners.register")}
-            </Button>
-          </div>
-        </form>
+                disabled={registerRunner.isPending || !form.name.trim()}
+              >
+                {t("runners.register")}
+              </Button>
+            </ActionGroup>
+          </form>
+        </ContentSection>
       )}
 
       <QueryState
@@ -242,27 +250,33 @@ export function RunnersPage() {
                             aria-hidden
                           />
                           <div className="min-w-0 flex-1">
-                            <p
-                              className="truncate text-sm font-medium"
-                              title={runner.name}
+                            <ResourceListTitle asChild className="truncate">
+                              <p title={runner.name}>{runner.name}</p>
+                            </ResourceListTitle>
+                            <ResourceListDescription
+                              asChild
+                              className="truncate"
                             >
-                              {runner.name}
-                            </p>
-                            <p
-                              className="truncate text-xs text-text-muted"
-                              title={tags || undefined}
+                              <p title={tags || undefined}>
+                                {tags || t("runners.noTags")}
+                              </p>
+                            </ResourceListDescription>
+                            <ResourceListDescription
+                              asChild
+                              className="truncate"
                             >
-                              {tags || t("runners.noTags")}
-                            </p>
-                            <p className="truncate text-xs text-text-muted">
-                              {t("runners.lastSeen")}:{" "}
-                              {runner.last_seen_at
-                                ? new Date(runner.last_seen_at).toLocaleString(
-                                    undefined,
-                                    { dateStyle: "short", timeStyle: "short" },
-                                  )
-                                : t("runners.neverSeen")}
-                            </p>
+                              <p>
+                                {t("runners.lastSeen")}:{" "}
+                                {runner.last_seen_at
+                                  ? new Date(
+                                      runner.last_seen_at,
+                                    ).toLocaleString(undefined, {
+                                      dateStyle: "short",
+                                      timeStyle: "short",
+                                    })
+                                  : t("runners.neverSeen")}
+                              </p>
+                            </ResourceListDescription>
                           </div>
                           <Badge
                             appearance="dot"
@@ -295,34 +309,14 @@ export function RunnersPage() {
               </ResourceList>
             )}
             {filteredRunners.length > pageSize && (
-              <nav
-                aria-label={t("runners.pages")}
-                className="flex items-center justify-end gap-2"
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(currentPage - 1)}
-                >
-                  {t("runners.previous")}
-                </Button>
-                <span className="text-sm text-text-muted">
-                  {currentPage} / {totalPages}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage(currentPage + 1)}
-                >
-                  {t("runners.next")}
-                </Button>
-              </nav>
+              <PageNavigation
+                page={currentPage}
+                pageCount={totalPages}
+                onPageChange={setPage}
+                label={t("runners.pages")}
+                previousLabel={t("runners.previous")}
+                nextLabel={t("runners.next")}
+              />
             )}
           </section>
         )}

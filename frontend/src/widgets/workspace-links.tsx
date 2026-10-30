@@ -1,5 +1,5 @@
 import { useApplicationAccess } from "@pdlc/ui/auth";
-import { usePlatformServices } from "@pdlc/ui/ui";
+import { usePlatformServices, TextLink } from "@pdlc/ui/ui";
 import { withNamespaceLocation, type NamespaceLocation } from "@pdlc/ui/lib";
 import { useLocation } from "react-router";
 export function WorkspaceLinks({
@@ -30,16 +30,16 @@ export function WorkspaceLinks({
             (service) => service.key === key,
           )?.ui_url;
           return origin ? (
-            <a
+            <TextLink
               key={key}
-              className="text-accent"
+
               href={withNamespaceLocation(
                 origin + path + (all ? "?project_scope=all" : ""),
                 namespace ?? null,
               )}
             >
               {label}
-            </a>
+            </TextLink>
           ) : (
             <span key={key} className="text-text-muted">
               {label}: недоступно

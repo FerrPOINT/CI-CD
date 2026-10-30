@@ -2,8 +2,11 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ResourceListDescription,
+  EmptyState,
+  ResourceListTitle,
+  PageNavigation,
   PageHeader,
-  Button,
   Input,
   ProjectAvatar,
   NamespaceLink as Link,
@@ -23,7 +26,10 @@ export function ProjectsPage() {
   const [offset, setOffset] = useState(0);
   const catalog = useQuery({
     queryKey: ["workspace-projects", search, offset],
-    select: (page: components["schemas"]["WorkspacePage"]) => ({ ...page, items: page.items.filter(isUnarchivedWorkspace) }),
+    select: (page: components["schemas"]["WorkspacePage"]) => ({
+      ...page,
+      items: page.items.filter(isUnarchivedWorkspace),
+    }),
     queryFn: ({ signal }) =>
       api<components["schemas"]["WorkspacePage"]>(
         `/workspace-projects?limit=50&offset=${offset}&search=${encodeURIComponent(search)}`,
@@ -77,27 +83,33 @@ export function ProjectsPage() {
                         size="md"
                       />
                       <div className="min-w-0 flex-1">
-                        <span className="font-semibold">{project.name}</span>
-                        <p className="text-sm text-text-muted">
+                        <ResourceListTitle asChild><span >{project.name}</span></ResourceListTitle>
+                        <ResourceListDescription asChild>
+                          <p>
                           {project.project_key} ·{" "}
                           {project.state === "archived"
                             ? "В архиве"
                             : "Активен"}
                           {project.stale ? " · Метаданные устарели" : ""}
                         </p>
+                        </ResourceListDescription>
                       </div>
-                      <span className="text-sm text-text-muted">
+                      <ResourceListDescription asChild>
+                        <span>
                         {project.group_id
                           ? `Репозитории: ${project.repositories} · Git-группа ${project.group_slug}`
                           : "Git не подключён"}
                       </span>
-                      <span className="text-sm">
+                      </ResourceListDescription>
+                      <ResourceListDescription asChild>
+                        <span>
                         {project.latest_status
                           ? t(`pipelines.${project.latest_status}`, {
                               defaultValue: project.latest_status,
                             })
                           : "Нет запусков"}
                       </span>
+                      </ResourceListDescription>
                     </Link>
                   </ResourceListRow>
                 </li>
@@ -105,30 +117,27 @@ export function ProjectsPage() {
             </ul>
           </ResourceList>
           {!catalog.data.total && (
-            <p className="text-text-muted">
-              Подключённых проектов пока нет. Создайте проект или подключите
-              существующий через Admin.
-            </p>
+            <EmptyState message="Подключённых проектов пока нет. Создайте проект или подключите существующий через Admin." />
           )}
-          <p className="text-sm text-text-muted">Показано: {catalog.data.items.length}</p>
+          <p className="text-sm text-text-muted">
+            Показано: {catalog.data.items.length}
+          </p>
         </>
       )}
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          disabled={!offset}
-          onClick={() => setOffset(Math.max(0, offset - 50))}
-        >
-          Назад
-        </Button>
-        <Button
-          variant="outline"
-          disabled={!catalog.data || offset + 50 >= catalog.data.total}
-          onClick={() => setOffset(offset + 50)}
-        >
-          Далее
-        </Button>
-      </div>
+      <PageNavigation
+        page={Math.ceil(offset / 50) + 1}
+        hasNext={!!catalog.data && offset + 50 < catalog.data.total}
+        onPageChange={(nextPage) =>
+          setOffset(
+            nextPage < Math.ceil(offset / 50) + 1
+              ? Math.max(0, offset - 50)
+              : offset + 50,
+          )
+        }
+        label="Страницы проектов"
+        previousLabel="Назад"
+        nextLabel="Далее"
+      />
     </div>
   );
 }

@@ -1,4 +1,12 @@
-import { TextLink, FormField } from "@pdlc/ui/ui";
+import { ContentSection } from "@pdlc/ui/ui";
+import {
+  Badge,
+  ActionGroup,
+  ResourceListTitle,
+  ResourceListDescription,
+  TextLink,
+  FormField,
+} from "@pdlc/ui/ui";
 import {
   Notice,
   PageNavigation,
@@ -159,86 +167,88 @@ export function EnvironmentsPage() {
       />
 
       {showForm && (
-        <form
-          onSubmit={createEnvironment}
-          className="grid gap-3 border-y border-border py-4 sm:grid-cols-2"
-        >
-          <FormField id="env-name" label={t("environments.name")} required>
-            {(attrs) => (
-              <Input
-                {...attrs}
-                value={form.name}
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
-              />
-            )}
-          </FormField>
-          <FormField id="env-url" label={t("environments.url")}>
-            {(attrs) => (
-              <Input
-                {...attrs}
-                type="url"
-                placeholder="https://app.example.com"
-                value={form.url}
-                onChange={(event) =>
-                  setForm({ ...form, url: event.target.value })
-                }
-              />
-            )}
-          </FormField>
-          <Checkbox
-            checked={form.protected}
-            onCheckedChange={(checked) =>
-              setForm({ ...form, protected: checked === true })
-            }
+        <ContentSection asChild dividers="both">
+          <form
+            onSubmit={createEnvironment}
+            className="grid gap-3 sm:grid-cols-2"
           >
-            {t("environments.protected")}
-          </Checkbox>
-          {form.protected && (
-            <FormField
-              id="env-required-approvals"
-              label={t("environments.requiredApprovals")}
-              required
-            >
+            <FormField id="env-name" label={t("environments.name")} required>
               {(attrs) => (
                 <Input
                   {...attrs}
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={form.required_approvals}
+                  value={form.name}
                   onChange={(event) =>
-                    setForm({
-                      ...form,
-                      required_approvals: Number(event.target.value) || 1,
-                    })
+                    setForm({ ...form, name: event.target.value })
                   }
                 />
               )}
             </FormField>
-          )}
-          {formError && (
-            <Notice role="alert" tone="danger" appearance="inline">
-              {formError}
-            </Notice>
-          )}
-          <div className="flex flex-wrap gap-2 sm:col-span-2">
-            <Button type="submit" disabled={createEnv.isPending}>
-              {t("environments.create")}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setShowForm(false);
-                setFormError(null);
-              }}
+            <FormField id="env-url" label={t("environments.url")}>
+              {(attrs) => (
+                <Input
+                  {...attrs}
+                  type="url"
+                  placeholder="https://app.example.com"
+                  value={form.url}
+                  onChange={(event) =>
+                    setForm({ ...form, url: event.target.value })
+                  }
+                />
+              )}
+            </FormField>
+            <Checkbox
+              checked={form.protected}
+              onCheckedChange={(checked) =>
+                setForm({ ...form, protected: checked === true })
+              }
             >
-              {t("common.cancel")}
-            </Button>
-          </div>
-        </form>
+              {t("environments.protected")}
+            </Checkbox>
+            {form.protected && (
+              <FormField
+                id="env-required-approvals"
+                label={t("environments.requiredApprovals")}
+                required
+              >
+                {(attrs) => (
+                  <Input
+                    {...attrs}
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={form.required_approvals}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        required_approvals: Number(event.target.value) || 1,
+                      })
+                    }
+                  />
+                )}
+              </FormField>
+            )}
+            {formError && (
+              <Notice role="alert" tone="danger" appearance="inline">
+                {formError}
+              </Notice>
+            )}
+            <ActionGroup align="start" className="sm:col-span-2">
+              <Button type="submit" disabled={createEnv.isPending}>
+                {t("environments.create")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setShowForm(false);
+                  setFormError(null);
+                }}
+              >
+                {t("common.cancel")}
+              </Button>
+            </ActionGroup>
+          </form>
+        </ContentSection>
       )}
 
       <QueryState
@@ -314,20 +324,25 @@ export function EnvironmentsPage() {
                               aria-hidden
                             />
                             <div className="min-w-0 flex-1">
-                              <p className="break-all text-sm font-medium">
-                                {env.name}
-                              </p>
+                              <ResourceListTitle asChild className="break-all">
+                                <p>{env.name}</p>
+                              </ResourceListTitle>
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
-                                <span className="inline-flex items-center gap-1">
-                                  <span
-                                    aria-hidden
-                                    className={`h-2 w-2 rounded-full ${env.status === "available" ? "bg-success" : env.status === "degraded" ? "bg-warning" : "bg-text-muted"}`}
-                                  />
+                                <Badge
+                                  appearance="dot"
+                                  tone={
+                                    env.status === "available"
+                                      ? "success"
+                                      : env.status === "degraded"
+                                        ? "warning"
+                                        : "muted"
+                                  }
+                                >
                                   {t(
                                     "environments.status" +
                                       capitalize(env.status),
                                   )}
-                                </span>
+                                </Badge>
                                 {env.protected && (
                                   <span>
                                     {t("environments.protected")} ·{" "}
@@ -347,12 +362,12 @@ export function EnvironmentsPage() {
                                     {env.url}
                                   </TextLink>
                                 ) : (
-                                  <span
-                                    className="block max-w-full truncate text-xs text-text-muted"
-                                    title={env.url}
+                                  <ResourceListDescription
+                                    asChild
+                                    className="block max-w-full truncate"
                                   >
-                                    {env.url}
-                                  </span>
+                                    <span title={env.url}>{env.url}</span>
+                                  </ResourceListDescription>
                                 ))}
                             </div>
                             <Button
@@ -366,7 +381,8 @@ export function EnvironmentsPage() {
                               })}
                               aria-expanded={expanded}
                               aria-controls={`deployments-${env.id}`}
-                              size="icon" className="shrink-0"
+                              size="icon"
+                              className="shrink-0"
                               onClick={() =>
                                 setSelectedEnvId(expanded ? null : env.id)
                               }
@@ -396,12 +412,18 @@ export function EnvironmentsPage() {
                             </Button>
                           </div>
                           {expanded && (
-                            <div
-                              id={`deployments-${env.id}`}
-                              className="ml-6 mt-3 border-t border-border pt-3"
+                            <ContentSection
+                              asChild
+                              dividers="start"
+                              density="compact"
                             >
-                              <DeploymentsSection environmentId={env.id} />
-                            </div>
+                              <div
+                                id={`deployments-${env.id}`}
+                                className="ml-6 mt-3"
+                              >
+                                <DeploymentsSection environmentId={env.id} />
+                              </div>
+                            </ContentSection>
                           )}
                         </li>
                       </ResourceListRow>
@@ -619,7 +641,11 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
               <ResourceList asChild>
                 <ul>
                   {visible.map((deployment) => (
-                    <ResourceListRow asChild key={deployment.id}>
+                    <ResourceListRow
+                      asChild
+                      key={deployment.id}
+                      highlighted={deployment.id === selectedId}
+                    >
                       <li
                         ref={
                           deployment.id === selectedId
@@ -630,45 +656,51 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                         aria-current={
                           deployment.id === selectedId ? "true" : undefined
                         }
-                        className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1  text-xs ${deployment.id === selectedId ? "rounded-md bg-surface-raised  outline-2 outline-accent" : ""}`}
+                        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs"
                       >
                         <div className="min-w-0 flex-1 basis-40">
-                          <p className="font-semibold">
-                            Деплой #{deployment.id.slice(0, 8)}
-                            {deployment.id === selectedId ? " · Выбран" : ""}
-                          </p>
-                          <p className="break-all font-mono text-sm font-medium text-text-primary">
-                            {deployment.git_ref}
-                          </p>
-                          <p className="text-text-secondary">
-                            {t(
-                              "deployments.status" +
-                                capitalize(deployment.status),
-                            )}{" "}
-                            · {approvalLabel(deployment, t)}
-                          </p>
-                          <p className="text-text-muted">
-                            <time
-                              dateTime={deployment.created_at}
-                              title={new Date(
-                                deployment.created_at,
-                              ).toLocaleString()}
-                            >
-                              {formatDate(deployment.created_at)}
-                            </time>{" "}
-                            ·{" "}
-                            <span
-                              title={
-                                deployment.rollback_of_id ??
-                                deployment.pipeline_id ??
-                                undefined
-                              }
-                            >
-                              {traceLabel(deployment, t)}
-                            </span>
-                          </p>
+                          <ResourceListTitle asChild>
+                            <p>
+                              Деплой #{deployment.id.slice(0, 8)}
+                              {deployment.id === selectedId ? " · Выбран" : ""}
+                            </p>
+                          </ResourceListTitle>
+                          <ResourceListTitle asChild technical>
+                            <p className="break-all">{deployment.git_ref}</p>
+                          </ResourceListTitle>
+                          <ResourceListDescription asChild>
+                            <p>
+                              {t(
+                                "deployments.status" +
+                                  capitalize(deployment.status),
+                              )}{" "}
+                              · {approvalLabel(deployment, t)}
+                            </p>
+                          </ResourceListDescription>
+                          <ResourceListDescription asChild>
+                            <p>
+                              <time
+                                dateTime={deployment.created_at}
+                                title={new Date(
+                                  deployment.created_at,
+                                ).toLocaleString()}
+                              >
+                                {formatDate(deployment.created_at)}
+                              </time>{" "}
+                              ·{" "}
+                              <span
+                                title={
+                                  deployment.rollback_of_id ??
+                                  deployment.pipeline_id ??
+                                  undefined
+                                }
+                              >
+                                {traceLabel(deployment, t)}
+                              </span>
+                            </p>
+                          </ResourceListDescription>
                         </div>
-                        <div className="flex flex-wrap gap-1">
+                        <ActionGroup align="start">
                           {deployment.approval_required &&
                             deployment.approval_state === "pending" && (
                               <>
@@ -722,7 +754,7 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
                               {t("deployments.rollback")}
                             </Button>
                           )}
-                        </div>
+                        </ActionGroup>
                       </li>
                     </ResourceListRow>
                   ))}

@@ -102,12 +102,8 @@ const UsersPage = lazy(() =>
   import("@/pages/users").then((m) => ({ default: m.UsersPage })),
 );
 
-function PageLoader() {
-  return <LoadingState />;
-}
-
 const withSuspense = (el: ReactElement) => (
-  <Suspense fallback={<PageLoader />}>
+  <Suspense fallback={<LoadingState />}>
     <PlatformRoute>{el}</PlatformRoute>
   </Suspense>
 );
