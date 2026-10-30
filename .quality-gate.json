@@ -265,6 +265,7 @@
         "scripts.tests.test_backend_dockerfile",
         "scripts.tests.test_ci_contract_checks.CliIntegrationGateTests",
         "scripts.tests.test_ci_contract_checks.ServerCliMetadataTests",
+        "scripts.tests.test_ci_contract_checks.RustCiJobReuseTests",
         "scripts.tests.test_backend_release_ownership",
         "-q"
       ],

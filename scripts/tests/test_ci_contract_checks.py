@@ -267,5 +267,69 @@ class ServerCliMetadataTests(unittest.TestCase):
                     self.assertIn('--release', args)
 
 
+
+class RustCiJobReuseTests(unittest.TestCase):
+    @staticmethod
+    def job(name):
+        import re
+        source = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+        match = re.search(r'^  ' + re.escape(name) + r':\n(.*?)(?=^  [a-zA-Z][\w-]*:|\Z)',
+                          source, re.M | re.S)
+        if match is None:
+            raise AssertionError('Missing CI job: ' + name)
+        return match.group(1)
+
+    def test_one_workspace_owns_rust_preparation_and_all_original_checks(self):
+        backend = self.job('backend')
+        summary = self.job('minimum-rust')
+        self.assertIn("needs: changes", backend)
+        self.assertIn("if: needs.changes.outputs.backend == 'true'", backend)
+        self.assertEqual(backend.count('uses: dtolnay/rust-toolchain@stable'), 1)
+        self.assertEqual(backend.count('toolchain: 1.88.0'), 1)
+        self.assertEqual(backend.count('uses: Swatinem/rust-cache@v2'), 1)
+        self.assertEqual(backend.count('run: python3 ../scripts/vendor/base_rust_target_cache.py'), 1)
+        self.assertEqual(backend.count('uses: actions/checkout@'), 2)
+        self.assertNotIn('uses:', summary)
+        self.assertNotIn('cargo ', summary)
+        self.assertIn('needs: [changes, backend]', summary)
+        self.assertIn("if: always() && needs.changes.outputs.backend == 'true'", summary)
+
+    def test_minimum_check_keeps_scope_environment_and_unit_failure_order(self):
+        backend = self.job('backend')
+        source = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+        minimum = 'env -u SQLX_OFFLINE cargo check --locked --workspace --all-targets'
+        self.assertEqual(source.count('cargo check --locked --workspace --all-targets'), 1)
+        self.assertIn(minimum, backend)
+        self.assertLess(backend.index('cargo test --locked'), backend.index(minimum))
+        self.assertLess(backend.index(minimum), backend.index('run: cargo build --locked'))
+        self.assertIn("if: needs.changes.outputs.backend_build == 'true'", backend)
+        self.assertIn('SQLX_OFFLINE: "true"', backend)
+        self.assertNotIn('continue-on-error:', backend)
+
+    def test_legacy_status_rejects_failure_cancellation_skip_and_missing_result(self):
+        import os
+        import shutil
+        import subprocess
+        if os.name == 'nt':
+            # Use Git Bash explicitly; never launch the Windows WSL bash shim.
+            bash = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Git/bin/bash.exe'
+            if not bash.is_file():
+                self.skipTest('Git Bash is unavailable; run this shell contract on Linux')
+        else:
+            bash = shutil.which('bash')
+            if not bash:
+                self.skipTest('Bash is unavailable')
+        summary = self.job('minimum-rust')
+        self.assertIn('shell: bash', summary)
+        self.assertIn('BACKEND_RESULT: ${{ needs.backend.result }}', summary)
+        commands = [line.strip()[5:] for line in summary.splitlines()
+                    if line.strip().startswith('run: ')]
+        self.assertEqual(len(commands), 1)
+        for result in ('success', 'failure', 'cancelled', 'skipped', '', 'unknown'):
+            with self.subTest(result=result):
+                process = subprocess.run([str(bash), '--noprofile', '--norc', '-c', commands[0]],
+                    env={**os.environ, 'BACKEND_RESULT': result}, capture_output=True, timeout=10)
+                self.assertEqual(process.returncode == 0, result == 'success')
+
 if __name__ == "__main__":
     unittest.main()

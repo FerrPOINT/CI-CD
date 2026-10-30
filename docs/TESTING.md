@@ -1,5 +1,11 @@
 # Стратегия тестирования Forge CI/CD — Moved
 
+В automatic CI совместимые Rust 1.88.0 minimum и backend проверки используют
+одну подготовку в job `backend`. Прежний `minimum-rust` проверяет его успешный
+результат без второго compiler; unit failure останавливает дальнейшую работу.
+Команды, environment exception и открытая проверка времени:
+[контракт Base](../../services-base/docs/plans/rust-ci-shared-preparation-20261030.md).
+
 ## Python helper unit
 
 Известные pure helper test paths перечислены в `tooling:python-helpers`:
