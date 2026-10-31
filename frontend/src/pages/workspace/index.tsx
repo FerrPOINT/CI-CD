@@ -23,6 +23,7 @@ import { useNamespaceRef } from "@/widgets/namespace-context";
 import { WorkspaceLinks } from "@/widgets/workspace-links";
 import { ExecutionList } from "@/widgets/execution-list";
 import { RepositorySyncsPage } from "@/pages/repository-syncs";
+import { DevelopmentWorkspacesPage } from "@/pages/development-workspaces";
 import { NamespacePage } from "@/pages/namespace";
 export function NamespaceRedirect() {
   const { ref, malformed, all } = useNamespaceRef();
@@ -92,6 +93,7 @@ export function WorkspacePage() {
     ["syncs", "Синхронизации"],
     ["pipelines", "Пайплайны"],
     ["deployments", "Деплои"],
+    ["development-workspaces", "Рабочие окружения"],
   ];
   return (
     <div className="space-y-5">
@@ -146,6 +148,8 @@ export function WorkspacePage() {
         <NamespacePage embedded />
       ) : section === "syncs" ? (
         <RepositorySyncsPage groupId={data.group_id} />
+      ) : section === "development-workspaces" ? (
+        <DevelopmentWorkspacesPage key={workspaceKey(ref)} />
       ) : section === "pipelines" ? (
         <ExecutionList key={workspaceKey(ref) + section} namespace={ref} />
       ) : section === "deployments" ? (
