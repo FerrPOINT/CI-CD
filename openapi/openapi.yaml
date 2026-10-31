@@ -1952,6 +1952,136 @@ paths:
                 $ref: '#/components/schemas/DestinationAlert'
         '404':
           description: ''
+  /api/v1/development-workspaces/{workspace_id}:
+    get:
+      tags:
+      - development-workspaces
+      operationId: detail
+      parameters:
+      - name: workspace_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentWorkspaceDetail'
+  /api/v1/development-workspaces/{workspace_id}/operations:
+    get:
+      tags:
+      - development-workspaces
+      operationId: operations
+      parameters:
+      - name: workspace_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DevelopmentWorkspaceOperation'
+    post:
+      tags:
+      - development-workspaces
+      operationId: submit
+      parameters:
+      - name: workspace_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentWorkspaceOperation'
+  /api/v1/development-workspaces/{workspace_id}/operations/{operation_id}:
+    get:
+      tags:
+      - development-workspaces
+      operationId: operation
+      parameters:
+      - name: workspace_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: operation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentWorkspaceOperation'
+  /api/v1/development-workspaces/{workspace_id}/operations/{operation_id}/reconcile:
+    post:
+      tags:
+      - development-workspaces
+      operationId: reconcile
+      parameters:
+      - name: workspace_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: operation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentWorkspaceOperation'
   /api/v1/environments/{environment_id}:
     delete:
       tags:
@@ -3367,6 +3497,84 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/DestinationAlert'
+  /api/v1/projects/{project_id}/development-workspace-profiles:
+    get:
+      tags:
+      - development-workspaces
+      operationId: profiles
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentWorkspaceTargets'
+  /api/v1/projects/{project_id}/development-workspaces:
+    get:
+      tags:
+      - development-workspaces
+      operationId: list
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentWorkspacePage'
+    post:
+      tags:
+      - development-workspaces
+      operationId: register
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterWorkspace'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentWorkspaceOperation'
   /api/v1/projects/{project_id}/environments:
     get:
       tags:
@@ -6568,6 +6776,20 @@ paths:
           description: Prometheus text exposition
 components:
   schemas:
+    ActionAvailability:
+      type: object
+      required:
+      - action
+      - allowed
+      properties:
+        action:
+          type: string
+        allowed:
+          type: boolean
+        reason:
+          type:
+          - string
+          - 'null'
     ApiToken:
       type: object
       required:
@@ -7906,6 +8128,299 @@ components:
         updated_at:
           type: string
           format: date-time
+    DevelopmentWorkspace:
+      type: object
+      required:
+      - id
+      - project_id
+      - tracker_instance_id
+      - tracker_project_id
+      - repository_id
+      - environment_id
+      - environment_hash
+      - name
+      - profile_id
+      - target_id
+      - catalog_target_id
+      - profile_hash
+      - catalog_hash
+      - profile
+      - sources
+      - local_preparation
+      - preparation
+      - runtime
+      - desired_runtime
+      - observation
+      - version
+      - created_by
+      - created_at
+      properties:
+        catalog_hash:
+          type: string
+        catalog_target_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+        desired_runtime:
+          type: string
+        environment_hash:
+          type: string
+        environment_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        local_preparation: {}
+        name:
+          type: string
+        observation: {}
+        observed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        owner_name:
+          type:
+          - string
+          - 'null'
+        preparation:
+          type: string
+        profile: {}
+        profile_hash:
+          type: string
+        profile_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        public_origin:
+          type:
+          - string
+          - 'null'
+        repository_id:
+          type: string
+          format: uuid
+        runtime:
+          type: string
+        sources: {}
+        target_id:
+          type: string
+          format: uuid
+        tracker_instance_id:
+          type: string
+          format: uuid
+        tracker_project_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          format: int64
+    DevelopmentWorkspaceDetail:
+      type: object
+      required:
+      - workspace
+      - actor_id
+      - actions
+      properties:
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionAvailability'
+        actor_id:
+          type: string
+          format: uuid
+        latest_operation:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DevelopmentWorkspaceOperation'
+        session:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DevelopmentWorkspaceSession'
+        workspace:
+          $ref: '#/components/schemas/DevelopmentWorkspace'
+    DevelopmentWorkspaceOperation:
+      type: object
+      required:
+      - id
+      - workspace_id
+      - actor_id
+      - request
+      - expected_version
+      - state
+      - created_at
+      properties:
+        actor_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        expected_version:
+          type: integer
+          format: int64
+        finished_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        pipeline_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        recovery_actor_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        recovery_requested_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        request: {}
+        result: {}
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        state:
+          type: string
+        workspace_id:
+          type: string
+          format: uuid
+    DevelopmentWorkspacePage:
+      type: object
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DevelopmentWorkspace'
+        total:
+          type: integer
+          format: int64
+    DevelopmentWorkspaceSession:
+      type: object
+      required:
+      - id
+      - owner_subject
+      - workspace_id
+      - actor_id
+      - task_id
+      - task_ref
+      - sources
+      - started_at
+      properties:
+        actor_id:
+          type: string
+          format: uuid
+        actor_name:
+          type:
+          - string
+          - 'null'
+        ended_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        owner_subject:
+          type: string
+          format: uuid
+        sources: {}
+        started_at:
+          type: string
+          format: date-time
+        task_id:
+          type: string
+          format: uuid
+        task_ref:
+          type: string
+        workspace_id:
+          type: string
+          format: uuid
+    DevelopmentWorkspaceTargetChoice:
+      type: object
+      required:
+      - id
+      - repository_id
+      - profile_id
+      - environment_id
+      - environment_hash
+      - name
+      - kind
+      - profile_hash
+      - profile
+      - repositories
+      properties:
+        configuration_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        environment_hash:
+          type: string
+        environment_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        name:
+          type: string
+        profile: {}
+        profile_hash:
+          type: string
+        profile_id:
+          type: string
+          format: uuid
+        public_origin:
+          type:
+          - string
+          - 'null'
+        repositories:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceRepository'
+        repository_id:
+          type: string
+          format: uuid
+      additionalProperties: false
+    DevelopmentWorkspaceTargets:
+      type: object
+      required:
+      - items
+      - can_register
+      properties:
+        can_register:
+          type: boolean
+        denied_reason:
+          type:
+          - string
+          - 'null'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DevelopmentWorkspaceTargetChoice'
     DevopsEvidence:
       type: object
       required:
@@ -8465,6 +8980,56 @@ components:
         workspaceClaimUid:
           type: string
       additionalProperties: false
+    LocalPreparation:
+      type: object
+      required:
+      - machine_id
+      - profile_hash
+      - repositories
+      - tools
+      properties:
+        machine_id:
+          type: string
+          format: uuid
+        profile_hash:
+          type: string
+        repositories:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocalRepository'
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocalTool'
+      additionalProperties: false
+    LocalRepository:
+      type: object
+      required:
+      - key
+      - commit
+      - dirty
+      properties:
+        commit:
+          type: string
+        dirty:
+          type: boolean
+        key:
+          type: string
+      additionalProperties: false
+    LocalTool:
+      type: object
+      required:
+      - name
+      - version
+      - requirement
+      properties:
+        name:
+          type: string
+        requirement:
+          type: string
+        version:
+          type: string
+      additionalProperties: false
     LoginRequest:
       type: object
       required:
@@ -8962,6 +9527,22 @@ components:
           oneOf:
           - type: 'null'
           - $ref: '#/components/schemas/DeliveryProbe'
+      additionalProperties: false
+    OperationRequest:
+      type: object
+      required:
+      - operation_id
+      - expected_version
+      - command
+      properties:
+        command:
+          $ref: '#/components/schemas/WorkspaceAction'
+        expected_version:
+          type: integer
+          format: int64
+        operation_id:
+          type: string
+          format: uuid
       additionalProperties: false
     OutboxDelivery:
       type: object
@@ -9566,6 +10147,29 @@ components:
           type: array
           items:
             type: string
+    RegisterWorkspace:
+      type: object
+      required:
+      - id
+      - operation_id
+      - catalog_target_id
+      - name
+      - create
+      properties:
+        catalog_target_id:
+          type: string
+          format: uuid
+        create:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        operation_id:
+          type: string
+          format: uuid
+      additionalProperties: false
     Release:
       type: object
       required:
@@ -10674,6 +11278,21 @@ components:
         updated_at:
           type: string
           format: date-time
+    SelectedSource:
+      type: object
+      required:
+      - key
+      - repository_id
+      - commit
+      properties:
+        commit:
+          type: string
+        key:
+          type: string
+        repository_id:
+          type: string
+          format: uuid
+      additionalProperties: false
     ServiceAccount:
       type: object
       required:
@@ -10776,6 +11395,21 @@ components:
           format: uuid
         tracker_instance_id:
           type: string
+      additionalProperties: false
+    SourceRepository:
+      type: object
+      required:
+      - key
+      - repository_id
+      - clone_url
+      properties:
+        clone_url:
+          type: string
+        key:
+          type: string
+        repository_id:
+          type: string
+          format: uuid
       additionalProperties: false
     SpaceMetadata:
       type: object
@@ -11488,6 +12122,124 @@ components:
       enum:
       - read_only
       - read_write
+    WorkspaceAction:
+      oneOf:
+      - type: object
+        required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - register
+      - type: object
+        required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - create
+      - type: object
+        required:
+        - sources
+        - local
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - prepare
+          local:
+            $ref: '#/components/schemas/LocalPreparation'
+          sources:
+            type: array
+            items:
+              $ref: '#/components/schemas/SelectedSource'
+      - type: object
+        required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - observe
+      - type: object
+        required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - start
+      - type: object
+        required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - stop
+      - type: object
+        required:
+        - task
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - begin_session
+          task:
+            type: string
+      - type: object
+        required:
+        - session_id
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - end_session
+          session_id:
+            type: string
+            format: uuid
+      - type: object
+        required:
+        - session_id
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - recover_session
+          session_id:
+            type: string
+            format: uuid
+      - type: object
+        required:
+        - recipe
+        - source_commit
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - check
+          recipe:
+            type: string
+          source_commit:
+            type: string
+      - type: object
+        required:
+        - source_commit
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - build
+          source_commit:
+            type: string
     WorkspaceOperationBlocker:
       type: string
       enum:

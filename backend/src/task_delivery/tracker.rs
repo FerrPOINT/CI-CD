@@ -249,6 +249,48 @@ async fn read_task(
     task: uuid::Uuid,
     resource: &str,
 ) -> Result<(Instant, Value), ApiError> {
+    read_resource(config, &format!("/api/v1/issues/{task}/sdlc/{resource}")).await
+}
+
+/// Manual development sessions use ordinary issues; no SDLC execution/lease is required.
+pub(crate) async fn read_workspace_issue(
+    config: &crate::config::SdlcWorkspaceConfig,
+    identifier: &str,
+    project_key: &str,
+    project_id: uuid::Uuid,
+) -> Result<(uuid::Uuid, String), ApiError> {
+    if identifier.is_empty()
+        || !identifier
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-_.:".contains(&c))
+        || project_key.is_empty()
+        || !project_key
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+    {
+        return Err(ApiError::bad_request("workspace_task_reference_invalid"));
+    }
+    let (_, project) = read_resource(config, &format!("/api/v1/projects/{project_key}")).await?;
+    let (_, issue) = read_resource(config, &format!("/api/v1/issues/{identifier}")).await?;
+    if project["id"] != project_id.to_string() || issue["project_key"] != project_key {
+        return Err(ApiError::conflict("workspace_task_project_mismatch"));
+    }
+    let id = issue["id"]
+        .as_str()
+        .and_then(|value| uuid::Uuid::parse_str(value).ok())
+        .filter(|id| !id.is_nil())
+        .ok_or_else(|| ApiError::conflict("workspace_task_identity_invalid"))?;
+    let key = issue["key"]
+        .as_str()
+        .filter(|key| key.len() <= 128)
+        .ok_or_else(|| ApiError::conflict("workspace_task_identity_invalid"))?;
+    Ok((id, key.to_owned()))
+}
+
+async fn read_resource(
+    config: &crate::config::SdlcWorkspaceConfig,
+    path: &str,
+) -> Result<(Instant, Value), ApiError> {
     let unavailable = || ApiError::service_unavailable("Tracker lifecycle недоступен");
     let mut url = reqwest::Url::parse(config.tracker_read_url.as_deref().ok_or_else(unavailable)?)
         .map_err(|_| unavailable())?;
@@ -267,7 +309,7 @@ async fn read_task(
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(unavailable)?;
-    url.set_path(&format!("/api/v1/issues/{task}/sdlc/{resource}"));
+    url.set_path(path);
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())

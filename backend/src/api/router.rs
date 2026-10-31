@@ -148,6 +148,7 @@ pub(crate) fn build_router_with_cors(
         )
         .merge(crate::platform::routes())
         .merge(crate::repository_sync::routes())
+        .merge(crate::development_workspaces::routes())
         .merge(crate::runner_protocol::routes())
         .merge(super::sdlc_workspace::routes())
         .route(
