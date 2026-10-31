@@ -44,6 +44,13 @@ v0.20.6 упакован с committed official archive checksums. Его registr
 credentials остаются controller-only; operator может задать `DOCKER_CONFIG`.
 Credentials процесса controller не копируются в job environment.
 
+Обычный job получает исходные `CICD_PIPELINE_ID`, `CICD_JOB_ID`, имя job,
+commit/ref и пути artifacts из выданной lease. Secrets проекта не могут
+заменить эти reserved identity fields. Автоматическая регистрация runner
+держит выданный credential в памяти процесса и не печатает его в stdout/stderr.
+Для постоянной регистрации operator заранее передаёт credential через штатный
+Secret/`CICD_RUNNER_CREDENTIAL`; restart не восстанавливает его из логов.
+
 Controller читает стандартные in-cluster token/CA; redirects и HTTP отключены,
 CA bytes сверяются с pin. Перед effects проверяются Namespace UID и Bound PVC UID.
 Service accounts и scoped Role принадлежат deployment adapter. Job не получает

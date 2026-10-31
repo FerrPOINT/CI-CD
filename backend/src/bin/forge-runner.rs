@@ -83,6 +83,8 @@ struct LeaseOffer {
 struct AttemptSpec {
     id: Uuid,
     #[serde(default)]
+    pipeline_id: Uuid,
+    #[serde(default)]
     job_id: Uuid,
     #[serde(default = "shell_executor")]
     executor: String,
@@ -581,10 +583,9 @@ async fn ensure_credential(
         .context("register runner request failed")?;
     let registered: RegisterResponse = response_json(response).await?;
     eprintln!(
-        "registered runner {}. Persist CICD_RUNNER_CREDENTIAL for the next start.",
+        "registered runner {}. Auto-registration credential remains process-local; configure CICD_RUNNER_CREDENTIAL for persistent registration.",
         registered.runner_id
     );
-    eprintln!("runner credential: {}", registered.credential);
     Ok(registered.credential)
 }
 
@@ -2083,6 +2084,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn kubernetes_wire_identity_reaches_job_environment_and_secrets_cannot_replace_it() {
+        for _ in 0..2 {
+            let pipeline = Uuid::new_v4();
+            let job = Uuid::new_v4();
+            let attempt: AttemptSpec = serde_json::from_value(serde_json::json!({
+                "id": Uuid::new_v4(), "pipelineId": pipeline, "jobId": job,
+                "jobKey": "readiness", "gitRef": "feature/workspace", "commitSha": "a".repeat(40),
+                "commands": ["python scripts/pdlc/workspace_checks.py backend-readiness"],
+                "executor": "kubernetes", "image": "fixture@sha256:example", "timeoutSeconds": 10,
+                "workspace": {"checkout": true, "checkoutUrl": "https://forge.invalid/git/project.git"}
+            })).unwrap();
+            let environment: std::collections::BTreeMap<_, _> = kubernetes_job_environment(
+                &attempt,
+                &[("PRODUCT_TOKEN".into(), "fixture-secret".into())],
+            )
+            .unwrap()
+            .into_iter()
+            .collect();
+            assert_eq!(environment["CICD_PIPELINE_ID"], pipeline.to_string());
+            assert_eq!(environment["CICD_JOB_ID"], job.to_string());
+            assert_eq!(environment["CICD_COMMIT_SHA"], "a".repeat(40));
+            assert_eq!(environment["PRODUCT_TOKEN"], "fixture-secret");
+            assert!(
+                kubernetes_job_environment(
+                    &attempt,
+                    &[("CICD_JOB_ID".into(), Uuid::new_v4().to_string())]
+                )
+                .is_err()
+            );
+            let missing = AttemptSpec {
+                pipeline_id: Uuid::nil(),
+                ..attempt
+            };
+            assert!(kubernetes_job_environment(&missing, &[]).is_err());
+        }
+    }
+
     fn test_offer(command: &str, timeout_seconds: i32) -> LeaseOffer {
         LeaseOffer {
             lease_id: Uuid::new_v4(),
@@ -2092,6 +2131,7 @@ mod tests {
                 image_publish: None,
                 helm_deploy: None,
                 id: Uuid::new_v4(),
+                pipeline_id: Uuid::new_v4(),
                 job_id: Uuid::new_v4(),
                 executor: "shell".into(),
                 image: "test".into(),
@@ -2785,6 +2825,41 @@ mod tests {
     }
 }
 
+fn kubernetes_job_environment(
+    attempt: &AttemptSpec,
+    secrets: &[(String, String)],
+) -> anyhow::Result<Vec<(String, String)>> {
+    anyhow::ensure!(
+        !attempt.pipeline_id.is_nil() && !attempt.job_id.is_nil(),
+        "Kubernetes job requires its original pipeline and job identity"
+    );
+    let identity: Vec<(String, String)> = vec![
+        ("CICD_PIPELINE_ID".into(), attempt.pipeline_id.to_string()),
+        ("CICD_JOB_ID".into(), attempt.job_id.to_string()),
+        ("CICD_JOB_NAME".into(), attempt.job_key.clone()),
+        ("CICD_COMMIT_REF".into(), attempt.git_ref.clone()),
+        (
+            "CICD_COMMIT_SHA".into(),
+            attempt.commit_sha.clone().unwrap_or_default(),
+        ),
+        ("CICD_ARTIFACTS_DIR".into(), "/workspace/artifacts".into()),
+        (
+            "CICD_PIPELINE_ARTIFACTS_DIR".into(),
+            "/workspace/pipeline-artifacts".into(),
+        ),
+    ];
+    anyhow::ensure!(
+        !secrets
+            .iter()
+            .any(|(name, _)| identity.iter().any(|(reserved, _)| reserved == name)),
+        "Project secrets cannot replace runner job identity"
+    );
+    Ok(identity
+        .into_iter()
+        .chain(secrets.iter().cloned())
+        .collect())
+}
+
 async fn execute_kubernetes(
     cli: &Cli,
     offer: &LeaseOffer,
@@ -2850,6 +2925,7 @@ async fn execute_kubernetes(
             kubernetes_command_vector(&offer.attempt.commands),
         )
     };
+    let environment = kubernetes_job_environment(&offer.attempt, secrets)?;
     let mut execution = Execution::prepare(
         config,
         &workspace_root(cli),
@@ -2857,7 +2933,7 @@ async fn execute_kubernetes(
         workspace.checkout(),
         &image,
         &command,
-        secrets,
+        &environment,
         offer.attempt.timeout_seconds as u64,
     )?;
     if let Some(spec) = &offer.attempt.image_publish {
@@ -3118,6 +3194,9 @@ async fn recover_kubernetes(
             image_publish: None,
             helm_deploy: None,
             id: record.attempt_id,
+            // Recovery reads the saved original Pod/receipt; it never launches
+            // a replacement command from this completion-only offer.
+            pipeline_id: Uuid::nil(),
             job_id: scope.job_id,
             job_key: "recovery".into(),
             executor: "kubernetes".into(),
