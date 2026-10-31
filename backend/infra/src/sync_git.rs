@@ -666,6 +666,7 @@ mod tests {
         let release = root.join("release");
         let release_on_exit = Release(release.clone());
         let mut command = Command::new("git");
+        command.current_dir(&root);
         command
             .env("CAPACITY_READY", &ready)
             .env("CAPACITY_RELEASE", &release)
@@ -710,6 +711,7 @@ mod tests {
         let repository = Uuid::new_v4();
         let guard = MutationGuard::acquire(&root, repository).await.unwrap();
         let mut command = Command::new("git");
+        command.current_dir(&root);
         command.args(["-c", "alias.custody=!sleep 1", "custody"]);
         guard.inherit(&mut command).unwrap();
         let mut child = command.spawn().unwrap();
@@ -734,6 +736,7 @@ mod tests {
         let guard = MutationGuard::acquire(&root, repository).await.unwrap();
         let ready = root.join("ready");
         let mut command = Command::new("git");
+        command.current_dir(&root);
         command.env("CUSTODY_READY", &ready).args([
             "-c",
             "alias.custody=!f() { printf ready >\"$CUSTODY_READY\"; sleep 1; }; f",

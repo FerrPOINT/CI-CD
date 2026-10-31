@@ -2684,7 +2684,9 @@ mod tests {
         let app = axum::Router::new().route(
             "/{*path}",
             axum::routing::get(|| async { axum::Json(json!({"cancelRequested": true})) })
-                .post(|| async { axum::http::StatusCode::OK }),
+                .post(|axum::Json(body):axum::Json<serde_json::Value>| async move {
+                    axum::Json(json!({"protocolVersion":1,"accepted":body["lines"].as_array().unwrap().len(),"nextAfter":0}))
+                }),
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let context = LogContext {
