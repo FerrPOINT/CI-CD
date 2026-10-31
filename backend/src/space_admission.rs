@@ -43,6 +43,26 @@ pub(crate) async fn repository(
     actor: &crate::api::authz_mw::VerifiedRequestIdentity,
     write: bool,
 ) -> Result<ConfirmedSpaceRead, ApiError> {
+    let (space, revision, state) = repository_projection(pool, storage).await?;
+    let proof = actor
+        .confirm_spaces(client().await?, std::slice::from_ref(&space))
+        .await?;
+    validate_repository_proof(
+        &proof,
+        &actor.space_identity()?,
+        actor.claims.exp,
+        &space,
+        revision,
+        &state,
+        write,
+    )?;
+    Ok(proof)
+}
+
+async fn repository_projection(
+    pool: &PgPool,
+    storage: &str,
+) -> Result<(SpaceRef, i64, String), ApiError> {
     let row: Option<(uuid::Uuid, uuid::Uuid, i64, String)> = sqlx::query_as(
         "SELECT c.registry_instance_id,c.space_id,c.revision,c.state \
          FROM repository_catalog r JOIN forge_space_catalog c ON c.group_id=r.group_id \
@@ -57,19 +77,27 @@ pub(crate) async fn repository(
         registry_instance_id,
         space_id,
     };
-    let proof = actor
-        .confirm_spaces(client().await?, std::slice::from_ref(&space))
-        .await?;
+    Ok((space, revision, state))
+}
+
+fn validate_repository_proof(
+    proof: &ConfirmedSpaceRead,
+    identity: &pdlc_shared::space_access::CentralIdentity,
+    expires_at: i64,
+    space: &SpaceRef,
+    revision: i64,
+    state: &str,
+    write: bool,
+) -> Result<(), ApiError> {
     let admission = proof.admission().map_err(owner_error)?;
     let now = chrono::Utc::now().timestamp();
-    let identity = actor.space_identity()?;
-    if !admission.can_read_space(&identity, &space, now, actor.claims.exp) {
+    if !admission.can_read_space(identity, space, now, expires_at) {
         return Err(ApiError::forbidden());
     }
     let confirmed = admission
         .spaces
         .iter()
-        .find(|item| item.space == space)
+        .find(|item| item.space == *space)
         .ok_or_else(ApiError::forbidden)?;
     if write && confirmed.revision != revision {
         return Err(ApiError::service_unavailable(
@@ -79,12 +107,56 @@ pub(crate) async fn repository(
     if write && (state != "active" || confirmed.state != SpaceState::Active) {
         return Err(ApiError::conflict("space_resource_read_only"));
     }
-    if !matches!(state.as_str(), "active" | "archiving" | "archived") {
+    if !matches!(state, "active" | "archiving" | "archived") {
         return Err(ApiError::service_unavailable(
             "space_projection_state_invalid",
         ));
     }
-    Ok(proof)
+    Ok(())
+}
+
+/// A saved operation re-confirms its exact owner and Space, never a replacement principal.
+pub(crate) async fn saved_repository(
+    pool: &PgPool,
+    storage: &str,
+    actor: uuid::Uuid,
+    owner: Option<&pdlc_auth_core::application_access::VerifiedApplicationAccess>,
+    min_role: crate::authz::Role,
+) -> Result<Option<RepositoryWrite>, ApiError> {
+    if !active(pool).await? {
+        return Ok(None);
+    }
+    let owner = owner.ok_or_else(ApiError::forbidden)?;
+    let (space, revision, state) = repository_projection(pool, storage).await?;
+    let proof = client()
+        .await?
+        .confirm_owner_many_read(
+            &crate::central_auth::BRIDGE,
+            owner,
+            "ci-cd",
+            std::slice::from_ref(&space),
+        )
+        .await
+        .map_err(owner_error)?;
+    let identity = pdlc_shared::space_access::CentralIdentity {
+        issuer: owner.decision.issuer.clone(),
+        subject: owner.decision.subject.clone(),
+    };
+    validate_repository_proof(
+        &proof,
+        &identity,
+        owner.decision.expires_at.timestamp(),
+        &space,
+        revision,
+        &state,
+        true,
+    )?;
+    Ok(Some(RepositoryWrite::confirmed(
+        proof,
+        storage.to_owned(),
+        actor,
+        min_role,
+    )))
 }
 
 /// Private proof used only by catalog reads. Empty selected policy is an empty
@@ -150,7 +222,12 @@ pub(crate) fn repository_read_route(method: &axum::http::Method, route: &str) ->
     matches!(*method, axum::http::Method::GET | axum::http::Method::HEAD)
         && matches!(
             route,
-            "/api/v1/repos/{repo}/refs"
+            "/api/v1/projects/{project_id}/development-workspaces"
+                | "/api/v1/projects/{project_id}/development-workspace-profiles"
+                | "/api/v1/development-workspaces/{workspace_id}"
+                | "/api/v1/development-workspaces/{workspace_id}/operations"
+                | "/api/v1/development-workspaces/{workspace_id}/operations/{operation_id}"
+                | "/api/v1/repos/{repo}/refs"
                 | "/api/v1/repos/{repo}/tree"
                 | "/api/v1/repos/{repo}/blob"
                 | "/api/v1/repos/{repo}/tags"
@@ -174,7 +251,10 @@ pub(crate) fn repository_write_route(method: &axum::http::Method, route: &str) -
         || (*method == axum::http::Method::POST
             && matches!(
                 route,
-                "/api/v1/repos/{repo}/pulls"
+                "/api/v1/projects/{project_id}/development-workspaces"
+                    | "/api/v1/development-workspaces/{workspace_id}/operations"
+                    | "/api/v1/development-workspaces/{workspace_id}/operations/{operation_id}/reconcile"
+                    | "/api/v1/repos/{repo}/pulls"
                     | "/api/v1/repos/{repo}/pulls/{number}/action"
                     | "/api/v1/catalog/repositories/{id}/pulls"
                     | "/api/v1/catalog/repositories/{id}/pulls/{number}/action"
@@ -341,6 +421,18 @@ pub(crate) async fn repository_request_storage(
         sqlx::query_scalar::<_, Option<String>>(
             "SELECT r.storage_name FROM repository_aliases a JOIN repository_catalog r ON r.id=a.repository_id WHERE a.alias=$1",
         ).bind(repo.trim_end_matches(".git")).fetch_optional(pool).await.map_err(ApiError::internal)?.flatten()
+    } else if let Some((_, project)) = params.iter().find(|(key, _)| *key == "project_id") {
+        let project = uuid::Uuid::parse_str(project)
+            .map_err(|_| ApiError::bad_request("invalid_configuration_id"))?;
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT r.storage_name FROM projects p JOIN repository_catalog r ON r.id=p.repository_id WHERE p.id=$1",
+        ).bind(project).fetch_optional(pool).await.map_err(ApiError::internal)?.flatten()
+    } else if let Some((_, workspace)) = params.iter().find(|(key, _)| *key == "workspace_id") {
+        let workspace = uuid::Uuid::parse_str(workspace)
+            .map_err(|_| ApiError::bad_request("invalid_workspace_id"))?;
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT r.storage_name FROM development_workspaces w JOIN repository_catalog r ON r.id=w.repository_id WHERE w.id=$1",
+        ).bind(workspace).fetch_optional(pool).await.map_err(ApiError::internal)?.flatten()
     } else {
         let id = params
             .iter()

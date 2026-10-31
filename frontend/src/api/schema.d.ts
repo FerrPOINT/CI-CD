@@ -644,6 +644,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/development-workspaces/{workspace_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/development-workspaces/{workspace_id}/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["operations"];
+        put?: never;
+        post: operations["submit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/development-workspaces/{workspace_id}/operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["operation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/development-workspaces/{workspace_id}/operations/{operation_id}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reconcile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/environments/{environment_id}": {
         parameters: {
             query?: never;
@@ -1255,6 +1319,38 @@ export interface paths {
         get: operations["list_destination_alerts"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/development-workspace-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["profiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/development-workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list"];
+        put?: never;
+        post: operations["register"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2483,6 +2579,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ActionAvailability: {
+            action: string;
+            allowed: boolean;
+            reason?: string | null;
+        };
         ApiToken: {
             /** Format: date-time */
             created_at: string;
@@ -3020,6 +3121,128 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        DevelopmentWorkspace: {
+            catalog_hash: string;
+            /** Format: uuid */
+            catalog_target_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            created_by: string;
+            desired_runtime: string;
+            environment_hash: string;
+            /** Format: uuid */
+            environment_id: string;
+            /** Format: uuid */
+            id: string;
+            local_preparation: unknown;
+            name: string;
+            observation: unknown;
+            /** Format: date-time */
+            observed_at?: string | null;
+            owner_name?: string | null;
+            preparation: string;
+            profile: unknown;
+            profile_hash: string;
+            /** Format: uuid */
+            profile_id: string;
+            /** Format: uuid */
+            project_id: string;
+            public_origin?: string | null;
+            /** Format: uuid */
+            repository_id: string;
+            runtime: string;
+            sources: unknown;
+            /** Format: uuid */
+            target_id: string;
+            /** Format: uuid */
+            tracker_instance_id: string;
+            /** Format: uuid */
+            tracker_project_id: string;
+            /** Format: int64 */
+            version: number;
+        };
+        DevelopmentWorkspaceDetail: {
+            actions: components["schemas"]["ActionAvailability"][];
+            /** Format: uuid */
+            actor_id: string;
+            latest_operation?: null | components["schemas"]["DevelopmentWorkspaceOperation"];
+            session?: null | components["schemas"]["DevelopmentWorkspaceSession"];
+            workspace: components["schemas"]["DevelopmentWorkspace"];
+        };
+        DevelopmentWorkspaceOperation: {
+            /** Format: uuid */
+            actor_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            expected_version: number;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            pipeline_id?: string | null;
+            /** Format: uuid */
+            recovery_actor_id?: string | null;
+            /** Format: date-time */
+            recovery_requested_at?: string | null;
+            request: unknown;
+            result?: unknown;
+            /** Format: date-time */
+            started_at?: string | null;
+            state: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        DevelopmentWorkspacePage: {
+            items: components["schemas"]["DevelopmentWorkspace"][];
+            /** Format: int64 */
+            total: number;
+        };
+        DevelopmentWorkspaceSession: {
+            /** Format: uuid */
+            actor_id: string;
+            actor_name?: string | null;
+            /** Format: date-time */
+            ended_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            owner_subject: string;
+            sources: unknown;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: uuid */
+            task_id: string;
+            task_ref: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        DevelopmentWorkspaceTargetChoice: {
+            /** Format: uuid */
+            configuration_id?: string | null;
+            environment_hash: string;
+            /** Format: uuid */
+            environment_id: string;
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            name: string;
+            profile: unknown;
+            profile_hash: string;
+            /** Format: uuid */
+            profile_id: string;
+            public_origin?: string | null;
+            repositories: components["schemas"]["SourceRepository"][];
+            /** Format: uuid */
+            repository_id: string;
+        };
+        DevelopmentWorkspaceTargets: {
+            can_register: boolean;
+            denied_reason?: string | null;
+            items: components["schemas"]["DevelopmentWorkspaceTargetChoice"][];
+        };
         DevopsEvidence: {
             candidate: components["schemas"]["CandidateEvidenceReadback"];
             /** @description R proves observations, not Tracker acceptance, a current task lease or execution authority. */
@@ -3238,6 +3461,23 @@ export interface components {
             podUid: string;
             workspaceClaimUid: string;
         };
+        LocalPreparation: {
+            /** Format: uuid */
+            machine_id: string;
+            profile_hash: string;
+            repositories: components["schemas"]["LocalRepository"][];
+            tools: components["schemas"]["LocalTool"][];
+        };
+        LocalRepository: {
+            commit: string;
+            dirty: boolean;
+            key: string;
+        };
+        LocalTool: {
+            name: string;
+            requirement: string;
+            version: string;
+        };
         LoginRequest: {
             password: string;
             username: string;
@@ -3433,6 +3673,13 @@ export interface components {
             sdlcAcceptanceVerified: boolean;
             status: components["schemas"]["DeliveryStatus"];
             version?: null | components["schemas"]["DeliveryProbe"];
+        };
+        OperationRequest: {
+            command: components["schemas"]["WorkspaceAction"];
+            /** Format: int64 */
+            expected_version: number;
+            /** Format: uuid */
+            operation_id: string;
         };
         OutboxDelivery: {
             /** Format: uuid */
@@ -3678,6 +3925,16 @@ export interface components {
         RegisterRunner: {
             name: string;
             tags?: string[];
+        };
+        RegisterWorkspace: {
+            /** Format: uuid */
+            catalog_target_id: string;
+            create: boolean;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            operation_id: string;
         };
         Release: {
             /** Format: date-time */
@@ -4134,6 +4391,12 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        SelectedSource: {
+            commit: string;
+            key: string;
+            /** Format: uuid */
+            repository_id: string;
+        };
         ServiceAccount: {
             /** Format: date-time */
             created_at: string;
@@ -4177,6 +4440,12 @@ export interface components {
             /** Format: uuid */
             task_id: string;
             tracker_instance_id: string;
+        };
+        SourceRepository: {
+            clone_url: string;
+            key: string;
+            /** Format: uuid */
+            repository_id: string;
         };
         SpaceMetadata: {
             description: string;
@@ -4473,6 +4742,50 @@ export interface components {
         };
         /** @enum {string} */
         WorkspaceAccess: "read_only" | "read_write";
+        WorkspaceAction: {
+            /** @enum {string} */
+            action: "register";
+        } | {
+            /** @enum {string} */
+            action: "create";
+        } | {
+            /** @enum {string} */
+            action: "prepare";
+            local: components["schemas"]["LocalPreparation"];
+            sources: components["schemas"]["SelectedSource"][];
+        } | {
+            /** @enum {string} */
+            action: "observe";
+        } | {
+            /** @enum {string} */
+            action: "start";
+        } | {
+            /** @enum {string} */
+            action: "stop";
+        } | {
+            /** @enum {string} */
+            action: "begin_session";
+            task: string;
+        } | {
+            /** @enum {string} */
+            action: "end_session";
+            /** Format: uuid */
+            session_id: string;
+        } | {
+            /** @enum {string} */
+            action: "recover_session";
+            /** Format: uuid */
+            session_id: string;
+        } | {
+            /** @enum {string} */
+            action: "check";
+            recipe: string;
+            source_commit: string;
+        } | {
+            /** @enum {string} */
+            action: "build";
+            source_commit: string;
+        };
         /** @enum {string} */
         WorkspaceOperationBlocker: "tracker_admission_unavailable" | "tracker_workspace_binding_unavailable" | "physical_workspace_observation_unavailable";
         WorkspaceOperationLookup: {
@@ -6026,6 +6339,120 @@ export interface operations {
             };
         };
     };
+    detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevelopmentWorkspaceDetail"];
+                };
+            };
+        };
+    };
+    operations: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevelopmentWorkspaceOperation"][];
+                };
+            };
+        };
+    };
+    submit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevelopmentWorkspaceOperation"];
+                };
+            };
+        };
+    };
+    operation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevelopmentWorkspaceOperation"];
+                };
+            };
+        };
+    };
+    reconcile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevelopmentWorkspaceOperation"];
+                };
+            };
+        };
+    };
     delete_environment: {
         parameters: {
             query?: never;
@@ -7486,6 +7913,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DestinationAlert"][];
+                };
+            };
+        };
+    };
+    profiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevelopmentWorkspaceTargets"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevelopmentWorkspacePage"];
+                };
+            };
+        };
+    };
+    register: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterWorkspace"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevelopmentWorkspaceOperation"];
                 };
             };
         };

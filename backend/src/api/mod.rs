@@ -93,6 +93,14 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         )
     ),
     paths(
+        crate::development_workspaces::list,
+        crate::development_workspaces::profiles,
+        crate::development_workspaces::detail,
+        crate::development_workspaces::register,
+        crate::development_workspaces::submit,
+        crate::development_workspaces::operations,
+        crate::development_workspaces::operation,
+        crate::development_workspaces::reconcile,
         crate::repository_sync::list, crate::repository_sync::get_connection,
         crate::repository_sync::save_connection, crate::repository_sync::check,
         crate::repository_sync::start, crate::repository_sync::runs,

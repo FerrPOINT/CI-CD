@@ -1,5 +1,9 @@
 # API v1 Specification — Forge CI/CD
 
+Отдельное семейство `/development-workspaces`: реестр, сессии, именованные
+проверки и original-key async lifecycle. [Контракт и recovery](DEVELOPMENT_WORKSPACES.md).
+Существующие project/task workspace routes и identifiers сохраняются.
+
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и
 сохранённый владелец CI: [ADR-0041](adr/0041-sync-admission-and-automation-owner.md).
 Аддитивная 0107; HTTP DTO не меняются. Runtime отдельно от source-поставки.
@@ -632,8 +636,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 112,
-    "latest_required_version": 112,
+    "latest_applied_version": 113,
+    "latest_required_version": 113,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],

@@ -29,6 +29,70 @@ pub struct Lease {
     record: Option<PathBuf>,
     tracked: bool,
 }
+impl Lease {
+    pub(crate) fn workspace_effect_id(&self) -> Option<Uuid> {
+        self.record.as_ref()?.file_stem()?.to_str()?.parse().ok()
+    }
+    /// The private workspace operator and every native descendant retain the
+    /// same kernel effect lease if their backend waiter disappears.
+    pub fn inherit_workspace_operator(
+        &self,
+        command: &mut std::process::Command,
+    ) -> anyhow::Result<()> {
+        #[cfg(unix)]
+        if let Some(file) = &self._file {
+            use std::os::{
+                fd::{AsRawFd, FromRawFd, OwnedFd},
+                unix::process::CommandExt,
+            };
+            let duplicate = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 200) };
+            ensure!(duplicate >= 0, "effect descriptor duplication unavailable");
+            let descriptor = unsafe { OwnedFd::from_raw_fd(duplicate) };
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::dup2(descriptor.as_raw_fd(), 196) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            command.env("PDLC_FORGE_EFFECT_FD", "196");
+            if let Some(record) = &self.record {
+                command.env(
+                    "PDLC_FORGE_EFFECT_ID",
+                    record.file_stem().context("effect identity missing")?,
+                );
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = command;
+            anyhow::bail!("workspace operator requires Linux custody");
+        }
+        Ok(())
+    }
+}
+
+/// Called only after the matching private operation journal's inherited kernel
+/// lock is acquired. This retires that original effect record, never its lock.
+pub(crate) fn retire_workspace_effect(id: Uuid) -> anyhow::Result<()> {
+    let Some(gate) = Gate::from_env()? else {
+        return Ok(());
+    };
+    ensure!(!id.is_nil(), "effect identity required");
+    let path = gate.root.join("effects").join(format!("{id}.json"));
+    if !path.try_exists()? {
+        return Ok(());
+    }
+    private(&path, false)?;
+    let record: serde_json::Value = read(&path)?;
+    ensure!(
+        record["effectId"] == id.to_string(),
+        "original effect identity mismatch"
+    );
+    fs::remove_file(path)?;
+    Ok(())
+}
 impl Drop for Lease {
     fn drop(&mut self) {
         if !std::thread::panicking() {

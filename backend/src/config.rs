@@ -73,6 +73,14 @@ pub struct RuntimeConfig {
     pub git_sync: GitSyncConfig,
     pub smtp: SmtpConfig,
     pub sdlc_workspace: SdlcWorkspaceConfig,
+    pub development_workspaces: DevelopmentWorkspacesConfig,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DevelopmentWorkspacesConfig {
+    pub catalog_root: Option<PathBuf>,
+    pub operator_program: Option<PathBuf>,
+    pub creator_program: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -448,6 +456,14 @@ impl RuntimeConfig {
             secrets,
             git_sync: GitSyncConfig::from_source(&mut get)?,
             smtp,
+            development_workspaces: DevelopmentWorkspacesConfig {
+                catalog_root: optional_trimmed(get("CICD_DEVELOPMENT_WORKSPACE_CATALOG_ROOT"))
+                    .map(PathBuf::from),
+                operator_program: optional_trimmed(get("CICD_DEVELOPMENT_WORKSPACE_OPERATOR"))
+                    .map(PathBuf::from),
+                creator_program: optional_trimmed(get("CICD_DEVELOPMENT_WORKSPACE_CREATOR"))
+                    .map(PathBuf::from),
+            },
             sdlc_workspace: SdlcWorkspaceConfig {
                 delegated_subject: optional_trimmed(get("CICD_SDLC_DELEGATED_SUBJECT"))
                     .map(|value| {
@@ -535,6 +551,7 @@ impl RuntimeConfig {
             git_sync: GitSyncConfig::default(),
             smtp: SmtpConfig::default(),
             sdlc_workspace: SdlcWorkspaceConfig::default(),
+            development_workspaces: DevelopmentWorkspacesConfig::default(),
         }
     }
 

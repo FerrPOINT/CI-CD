@@ -103,6 +103,7 @@ pub(crate) async fn trigger_pipeline(
         &state.config.git.root,
         submission.as_ref(),
         None,
+        None,
     )
     .await?;
     let mut response_headers = HeaderMap::new();
@@ -140,6 +141,7 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
         git_root,
         None,
         None,
+        None,
     )
     .await
 }
@@ -163,6 +165,35 @@ pub(crate) async fn create_pipeline_at_commit(
         git_root,
         None,
         Some(sha),
+        None,
+    )
+    .await
+}
+
+/// Private published-recipe adapter. Existing parsing, owner confirmation,
+/// immutable plan, admission, queue and original-key receipts remain canonical.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn create_development_pipeline(
+    pool: &PgPool,
+    configuration: Uuid,
+    commit: &str,
+    recipe: &str,
+    mut variables: serde_json::Value,
+    key: &str,
+    git_root: &FsPath,
+) -> Result<PipelineTriggerOutcome, ApiError> {
+    variables["workspace_recipe_hash"] = serde_json::json!(sha256_hex(recipe.as_bytes()));
+    create_pipeline_bound(
+        pool,
+        configuration,
+        commit.to_owned(),
+        variables,
+        "development-workspace",
+        Some(key),
+        git_root,
+        None,
+        Some(commit),
+        Some(recipe),
     )
     .await
 }
@@ -178,6 +209,7 @@ async fn create_pipeline_bound(
     git_root: &FsPath,
     task: Option<&super::sdlc_workspace::task_pipeline::Submission>,
     expected_commit: Option<&str>,
+    workspace_recipe: Option<&str>,
 ) -> Result<PipelineTriggerOutcome, ApiError> {
     let human_origin = crate::pipeline_authority::require_creation(task.is_some())?;
     crate::repository_catalog::require_project_writable(pool, project_id).await?;
@@ -202,10 +234,13 @@ async fn create_pipeline_bound(
         resolve_commit_sha(storage_name.as_deref(), &git_ref, git_root).await
     };
     let config_ref = commit_sha.as_deref().unwrap_or(&git_ref);
-    let config = read_local_forge_ci_config(storage_name.as_deref(), config_ref, git_root).await;
-    let (config_source, raw_config) = match config {
-        Some(raw_config) => ("repository", raw_config),
-        None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
+    let (config_source, raw_config) = if let Some(recipe) = workspace_recipe {
+        ("development_workspace", recipe.to_owned())
+    } else {
+        match read_local_forge_ci_config(storage_name.as_deref(), config_ref, git_root).await {
+            Some(raw_config) => ("repository", raw_config),
+            None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
+        }
     };
     let mut parsed_config =
         parse_pipeline_config(Some(&raw_config)).map_err(ApiError::bad_request)?;

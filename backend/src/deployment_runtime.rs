@@ -30,6 +30,34 @@ pub(crate) async fn prepare(
 ) -> Result<Option<DeploymentOffer>, ApiError> {
     use crate::domain::helm_deploy::{DeploymentObservation, ReleaseMetadata, RollbackRelease};
     spec.validate().map_err(ApiError::conflict)?;
+    // The instance row is the common delivery/lifecycle fence. Admission is
+    // checked before Helm can apply replicas from an ordinary manifest.
+    let workspace: Option<(Uuid,String,String,String)> = sqlx::query_as(
+        "SELECT id,desired_runtime,runtime,environment_hash FROM development_workspaces WHERE environment_id=$1 FOR UPDATE",
+    ).bind(spec.environment_id).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
+    let bound_environment_hash = workspace.as_ref().map(|row| row.3.clone());
+    if let Some((workspace, desired, observed, _)) = workspace {
+        if desired != "running" || observed != "running" {
+            return Err(ApiError::conflict("workspace_must_be_running_for_delivery"));
+        }
+        let blocked: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM development_workspace_operations WHERE workspace_id=$1
+             AND state IN ('queued','running','unknown') AND (pipeline_id IS NULL OR pipeline_id<>$2))",
+        ).bind(workspace).bind(pipeline_id).fetch_one(&mut **tx).await.map_err(ApiError::internal)?;
+        if blocked {
+            return Err(ApiError::conflict("workspace_operation_blocks_delivery"));
+        }
+        let owner_matches: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM development_workspace_sessions s JOIN pipeline_human_owners p
+             ON p.owner_subject=s.owner_subject WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND p.pipeline_id=$2)",
+        ).bind(workspace).bind(pipeline_id).fetch_one(&mut **tx).await.map_err(ApiError::internal)?;
+        if !owner_matches {
+            return Err(ApiError::conflict(
+                "workspace_delivery_requires_session_owner",
+            ));
+        }
+    }
+
     let (target, project_id, protected, approvals): (Option<Value>, Uuid, bool, i32) =
         sqlx::query_as(
             "SELECT e.kubernetes_target,e.project_id,e.protected,e.required_approvals
@@ -42,6 +70,17 @@ pub(crate) async fn prepare(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::conflict("Environment belongs to another CI project"))?;
+    if let Some(expected) = bound_environment_hash {
+        let observed = cicd_infra::development_workspace::request_hash(
+            target
+                .as_ref()
+                .ok_or_else(|| ApiError::conflict("workspace_environment_target_required"))?,
+        )
+        .map_err(crate::development_workspaces::error)?;
+        if expected != observed {
+            return Err(ApiError::conflict("workspace_environment_target_drift"));
+        }
+    }
     let target: KubernetesTarget = serde_json::from_value(
         target.ok_or_else(|| ApiError::conflict("Environment has no Kubernetes target"))?,
     )

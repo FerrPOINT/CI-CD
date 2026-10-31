@@ -20,3 +20,5 @@ sha2.workspace = true
 tokio.workspace = true
 libc = "0.2"
 serde.workspace = true
+thiserror.workspace = true
+utoipa.workspace = true
