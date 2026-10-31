@@ -244,7 +244,10 @@ pub(crate) async fn require_auth(
     let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
     let path = req.uri().path().to_string();
     if claims.role == "service_account"
-        && (path.starts_with("/api/v1/git-groups/")
+        && (path.starts_with("/api/v1/development-workspaces/")
+            || path.contains("/development-workspaces")
+            || path.contains("/development-workspace-profiles")
+            || path.starts_with("/api/v1/git-groups/")
             || (path.starts_with("/api/v1/catalog/repositories")
                 && !repository_sync_route(&method, &path))
             || path.starts_with("/api/v1/namespace-contexts")
@@ -434,6 +437,7 @@ pub(crate) enum ProjectScopeRef {
     Schedule(Uuid),
     Webhook(Uuid),
     OutboxDelivery(Uuid),
+    DevelopmentWorkspace(Uuid),
     Repository(String),
     CatalogRepository(Uuid),
 }
@@ -583,13 +587,14 @@ pub(crate) fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
                 "schedules" => Some(ProjectScopeRef::Schedule(id)),
                 "webhooks" => Some(ProjectScopeRef::Webhook(id)),
                 "outbox-deliveries" => Some(ProjectScopeRef::OutboxDelivery(id)),
+                "development-workspaces" => Some(ProjectScopeRef::DevelopmentWorkspace(id)),
                 _ => None,
             }
         }
     }
 }
 
-async fn repository_scope_allows(
+pub(crate) async fn repository_scope_allows(
     pool: &PgPool,
     repo: &str,
     user_id: Uuid,
@@ -789,6 +794,9 @@ async fn project_id_for_scope_ref(
                 .await
                 .map_err(ApiError::internal)
         }
+        ProjectScopeRef::DevelopmentWorkspace(id) => sqlx::query_scalar(
+            "SELECT project_id FROM development_workspaces WHERE id=$1",
+        ).bind(id).fetch_optional(pool).await.map_err(ApiError::internal),
         ProjectScopeRef::OutboxDelivery(id) => sqlx::query_scalar(
             "SELECT COALESCE( \
                 m.project_id, \

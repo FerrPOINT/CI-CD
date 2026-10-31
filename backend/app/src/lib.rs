@@ -160,6 +160,54 @@ const fn administration(
 
 /// Exhaustive policy registry for the current OpenAPI/router surface.
 pub const ROUTE_POLICIES: &[RoutePolicy] = &[
+    work(
+        GET,
+        "/api/v1/projects/{project_id}/development-workspaces",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(
+        GET,
+        "/api/v1/projects/{project_id}/development-workspace-profiles",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(
+        POST,
+        "/api/v1/projects/{project_id}/development-workspaces",
+        Action::Write,
+        Role::Maintainer,
+    ),
+    work(
+        GET,
+        "/api/v1/development-workspaces/{workspace_id}",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(
+        GET,
+        "/api/v1/development-workspaces/{workspace_id}/operations",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(
+        POST,
+        "/api/v1/development-workspaces/{workspace_id}/operations",
+        Action::Write,
+        Role::Developer,
+    ),
+    work(
+        GET,
+        "/api/v1/development-workspaces/{workspace_id}/operations/{operation_id}",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(
+        POST,
+        "/api/v1/development-workspaces/{workspace_id}/operations/{operation_id}/reconcile",
+        Action::Write,
+        Role::Maintainer,
+    ),
     work(GET, "/api/v1/space-admission", Action::Read, Role::Viewer),
     administration(GET, "/api/v1/repository-syncs", Action::Read, Role::Viewer),
     administration(

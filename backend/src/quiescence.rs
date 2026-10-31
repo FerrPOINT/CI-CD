@@ -881,6 +881,11 @@ pub async fn verify_idle(
     verify_roots(pool, expected, None, &[]).await
 }
 async fn verify_database_idle(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    let workspace_busy:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM development_workspace_operations WHERE state IN ('running','unknown'))").fetch_one(pool).await?;
+    ensure!(
+        !workspace_busy,
+        "development workspace native outcome remains unconfirmed"
+    );
     let (jobs,attempts,leases,leased_queue,unacked,sync_runs,unknown_refs,uploads):(i64,i64,i64,i64,i64,i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM jobs WHERE status='running'),(SELECT count(*) FROM execution_attempts WHERE status='running'),(SELECT count(*) FROM job_leases WHERE lease_status='active'),(SELECT count(*) FROM job_queue WHERE state='leased'),(SELECT count(*) FROM job_leases WHERE runner_id IS NOT NULL AND completion_received_at IS NULL),(SELECT count(*) FROM repository_sync_runs WHERE state IN ('running','stopping','reconciling')),(SELECT count(*) FROM repository_sync_refs WHERE state='unknown'),(SELECT count(*) FROM artifact_upload_sessions WHERE status='open')").fetch_one(pool).await?;
     ensure!(
         [
@@ -1227,7 +1232,7 @@ pub async fn adoption_preflight(
 }
 
 async fn verify_no_pending_work(pool: &sqlx::PgPool) -> anyhow::Result<()> {
-    let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE status='queued') OR EXISTS(SELECT 1 FROM job_queue WHERE state='queued') OR EXISTS(SELECT 1 FROM repository_sync_runs WHERE state='queued') OR EXISTS(SELECT 1 FROM schedule_fires WHERE status='pending') OR EXISTS(SELECT 1 FROM outbox_messages WHERE delivered_at IS NULL AND failed_at IS NULL) OR EXISTS(SELECT 1 FROM repository_sync_refs WHERE direction='pull' AND state='applied' AND NOT event_delivered)").fetch_one(pool).await?;
+    let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE status='queued') OR EXISTS(SELECT 1 FROM job_queue WHERE state='queued') OR EXISTS(SELECT 1 FROM repository_sync_runs WHERE state='queued') OR EXISTS(SELECT 1 FROM schedule_fires WHERE status='pending') OR EXISTS(SELECT 1 FROM outbox_messages WHERE delivered_at IS NULL AND failed_at IS NULL) OR EXISTS(SELECT 1 FROM repository_sync_refs WHERE direction='pull' AND state='applied' AND NOT event_delivered) OR EXISTS(SELECT 1 FROM development_workspace_operations WHERE state IN ('queued','running','unknown'))").fetch_one(pool).await?;
     ensure!(
         !pending,
         "pending source work cannot cross generation adoption"
