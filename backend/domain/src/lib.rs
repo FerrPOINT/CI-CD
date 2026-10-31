@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 pub mod artifact_names;
+pub mod development_workspace;
 pub mod image_build;
 pub mod image_publish;
 pub mod published_image;
