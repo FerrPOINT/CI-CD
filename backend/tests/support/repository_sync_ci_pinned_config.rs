@@ -124,6 +124,7 @@ async fn incoming_event_compiles_configuration_and_jobs_from_exact_commit_not_la
             repository_path: "fixture/local-only".into(),
             direction: Direction::Pull,
             automatic: false,
+            protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         },
         token: Some("fictional-unused-local-ci-credential".into()),
     };

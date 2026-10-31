@@ -666,6 +666,7 @@ mod tests {
         let release = root.join("release");
         let release_on_exit = Release(release.clone());
         let mut command = Command::new("git");
+        command.current_dir(&root);
         command
             .env("CAPACITY_READY", &ready)
             .env("CAPACITY_RELEASE", &release)
@@ -710,6 +711,7 @@ mod tests {
         let repository = Uuid::new_v4();
         let guard = MutationGuard::acquire(&root, repository).await.unwrap();
         let mut command = Command::new("git");
+        command.current_dir(&root);
         command.args(["-c", "alias.custody=!sleep 1", "custody"]);
         guard.inherit(&mut command).unwrap();
         let mut child = command.spawn().unwrap();
@@ -734,6 +736,7 @@ mod tests {
         let guard = MutationGuard::acquire(&root, repository).await.unwrap();
         let ready = root.join("ready");
         let mut command = Command::new("git");
+        command.current_dir(&root);
         command.env("CUSTODY_READY", &ready).args([
             "-c",
             "alias.custody=!f() { printf ready >\"$CUSTODY_READY\"; sleep 1; }; f",
@@ -823,6 +826,7 @@ mod tests {
             repository_path: repository,
             direction: cicd_domain::repository_sync::Direction::Both,
             automatic: false,
+            protected_branch_updates: Default::default(),
         };
         let mut session = GitSession::new(
             &root,
@@ -918,6 +922,8 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Pull,
                 automatic: false,
+                protected_branch_updates:
+                    cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
             "fictional-error-canary".into(),
             Uuid::new_v4(),
@@ -984,6 +990,8 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Pull,
                 automatic: false,
+                protected_branch_updates:
+                    cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
             "fictional-output-canary".into(),
             Uuid::new_v4(),
@@ -1123,6 +1131,8 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Both,
                 automatic: false,
+                protected_branch_updates:
+                    cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
             "fictional-empty-canary".into(),
             Uuid::new_v4(),
@@ -1221,6 +1231,7 @@ mod tests {
             repository_path: "fixture/repository".into(),
             direction: cicd_domain::repository_sync::Direction::Pull,
             automatic: false,
+            protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         };
         let attempt = || {
             GitSession::new(
@@ -1274,6 +1285,8 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Both,
                 automatic: false,
+                protected_branch_updates:
+                    cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
             "fictional-pipes-canary".into(),
             Uuid::new_v4(),
@@ -1345,6 +1358,7 @@ mod tests {
             repository_path: "a/b".into(),
             direction: cicd_domain::repository_sync::Direction::Both,
             automatic: false,
+            protected_branch_updates: Default::default(),
         };
         let guard = MutationGuard::acquire(&root, Uuid::new_v4()).await.unwrap();
         let mut session = GitSession::new(

@@ -174,6 +174,8 @@ pub(crate) async fn list(
         .map_err(api_error)?;
     // Apply the owner's signed namespace projection validation, not just display data.
     for item in &mut items {
+        item.can_manage_protected_branch_updates =
+            access(&claims).can_manage_protected_branch_updates();
         let repo = crate::repository_catalog::get_core(
             &state,
             item.repository_id,
@@ -231,15 +233,18 @@ pub(crate) async fn get_connection(
                 repository_path: String::new(),
                 direction: Direction::Disabled,
                 automatic: false,
+                protected_branch_updates: Default::default(),
             },
             has_credential: false,
             writable: false,
+            can_manage_protected_branch_updates: false,
             paused_reason: None,
             worker_enabled: state.config.git_sync.enabled,
             next_check_at: None,
             active_run: None,
             last_run: None,
         });
+    connection.can_manage_protected_branch_updates = access.can_manage_protected_branch_updates();
     connection.writable = sync_store.authorize(id, access, true).await.is_ok()
         && crate::api::bearer_token_has_scope(&claims, "git:write")
         && repo.ready
@@ -264,7 +269,7 @@ pub(crate) async fn save_connection(
     let access = authorize(&state, id, &claims, true, false).await?;
     let _lease = writable_lease(&state, id, permit.as_ref().map(|value| &value.0)).await?;
     let sync_store = store(&state)?;
-    let result = app::save(
+    let mut result = app::save(
         &sync_store
             .scoped(query.connection_id.unwrap_or(id))
             .with_owner(crate::pipeline_authority::current()?.map(|origin| origin.subject())),
@@ -277,6 +282,7 @@ pub(crate) async fn save_connection(
     )
     .await
     .map_err(api_error)?;
+    result.can_manage_protected_branch_updates = access.can_manage_protected_branch_updates();
     Ok(Json(result))
 }
 #[utoipa::path(post,operation_id="forge_repository_sync_check",path="/api/v1/catalog/repositories/{id}/sync/check",tag="repository-sync",params(("id"=Uuid,Path),SyncQuery),request_body=CheckConnection,responses((status=200,body=CheckResult),(status=503)))]

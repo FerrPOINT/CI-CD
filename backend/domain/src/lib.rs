@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 pub mod artifact_names;
 pub mod image_build;
+pub mod image_publish;
+pub mod published_image;
 pub mod sdlc_workspace;
 pub mod task_delivery;
 
@@ -174,3 +176,4 @@ mod aggregate_tests {
         assert_eq!(agg, JobStatus::Success);
     }
 }
+pub mod helm_deploy;

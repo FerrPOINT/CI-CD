@@ -560,6 +560,9 @@ pub async fn supervisor(pool: PgPool) {
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
+        let Ok(_effect) = crate::quiescence::enter(true) else {
+            continue;
+        };
         if refresh_checked(&pool).await.is_err() {
             tracing::warn!(
                 "Tracker project catalog refresh unavailable; preserving local projection"

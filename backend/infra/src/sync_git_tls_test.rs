@@ -62,6 +62,7 @@ async fn observe(
         repository_path: "fixture/repository".into(),
         direction: cicd_domain::repository_sync::Direction::Pull,
         automatic: false,
+        protected_branch_updates: Default::default(),
     };
     let session = GitSession::new(
         root,
@@ -168,6 +169,7 @@ async fn same_origin_redirect_is_not_contacted(root: &Path) {
             repository_path: "fixture/repository".into(),
             direction: cicd_domain::repository_sync::Direction::Pull,
             automatic: false,
+            protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         },
         "fictional-tls-canary".into(),
         Uuid::new_v4(),

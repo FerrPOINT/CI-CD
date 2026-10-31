@@ -417,6 +417,7 @@ pub(crate) fn build_router_with_cors(
             pdlc_auth_core::http_authority::enforce,
         ))
         .layer(axum::middleware::from_fn(request_id_mw))
+        .layer(axum::middleware::from_fn(crate::quiescence::middleware))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

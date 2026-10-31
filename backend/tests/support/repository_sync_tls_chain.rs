@@ -363,6 +363,7 @@ async fn tls_live(origin: &str) -> Live {
         repository_path: "fixture/repository".into(),
         direction: Direction::Both,
         automatic: false,
+        protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
     };
     let mut config = cicd::config::RuntimeConfig::from_env_source(|_| None, false)
         .unwrap()

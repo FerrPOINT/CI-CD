@@ -1,5 +1,5 @@
 //! Synchronization use cases and ports. External credentials never enter job secrets.
-use cicd_domain::repository_sync::{Connection, SaveConnection, Settings};
+use cicd_domain::repository_sync::{Connection, ProtectedBranchUpdates, SaveConnection, Settings};
 use std::future::Future;
 use uuid::Uuid;
 
@@ -23,6 +23,11 @@ pub struct Access {
     pub admin: bool,
     pub machine: bool,
     pub writable: bool,
+}
+impl Access {
+    pub fn can_manage_protected_branch_updates(self) -> bool {
+        self.admin && !self.machine
+    }
 }
 pub trait Crypto: Sync {
     fn seal(&self, value: &str) -> Result<String, Error>;
@@ -56,7 +61,10 @@ pub async fn save(
     if repository_id.is_nil() || operation.is_nil() || input.expected_version < 0 {
         return Err(Error::Invalid("Некорректная команда сохранения".into()));
     }
-    if !access.writable {
+    if !access.writable
+        || (input.settings.protected_branch_updates == ProtectedBranchUpdates::SourceFastForward
+            && !access.can_manage_protected_branch_updates())
+    {
         return Err(Error::Forbidden);
     }
     input.settings.validate(origins).map_err(Error::Invalid)?;

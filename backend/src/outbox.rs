@@ -31,6 +31,186 @@ pub const NOTIFICATION_CHANNEL_GENERIC_WEBHOOK: &str = "generic_webhook";
 
 pub const NOTIFICATION_CHANNEL_EMAIL: &str = "email";
 
+// Internal dispatch uses the same durable lease/retry/history worker as notifications.
+// The destination is deliberately not HTTP, including when an older worker sees it.
+const CHANNEL_PIPELINE_TRIGGER: &str = "pipeline_trigger";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MergePipelineTrigger {
+    schema_version: u32,
+    repository_id: Uuid,
+    configuration_id: Uuid,
+    reference: String,
+    commit_sha: String,
+    idempotency_key: String,
+    #[serde(default)]
+    merge_attempt: Option<Uuid>,
+    #[serde(default)]
+    owner_subject: Option<Uuid>,
+}
+
+/// Enqueue the policy already captured by the durable merge attempt.
+/// This transaction confirms native publication and records the original owner.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn enqueue_merge_ci(
+    connection: &mut sqlx::PgConnection,
+    pool: &PgPool,
+    repository_id: Uuid,
+    storage: &str,
+    pull_request: Uuid,
+    reference: &str,
+    commit_sha: &str,
+    merge_attempt: Option<Uuid>,
+    owner_subject: Option<Uuid>,
+) -> Result<(), crate::api::ApiError> {
+    use crate::api::ApiError;
+
+    let key = crate::git_host::git_push_idempotency_key(storage, reference, commit_sha);
+    // Reuse the canonical, immutable push decision rather than re-evaluating
+    // current policy on delivery. A rejected merge can leave only this intent.
+    let Some(configuration_id) = crate::delivery_configs::push_decision_for_ref(
+        pool,
+        repository_id,
+        Some(&key),
+        Some(reference),
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+    let matches: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1 AND repository_id=$2)",
+    )
+    .bind(configuration_id)
+    .bind(repository_id)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(ApiError::internal)?;
+    if !matches {
+        return Err(ApiError::conflict("merge_ci_repository_mismatch"));
+    }
+    let payload = serde_json::to_value(MergePipelineTrigger {
+        schema_version: 1,
+        repository_id,
+        configuration_id,
+        reference: reference.to_string(),
+        commit_sha: commit_sha.to_string(),
+        idempotency_key: key,
+        merge_attempt,
+        owner_subject,
+    })
+    .map_err(|_| ApiError::conflict("invalid_merge_ci_payload"))?;
+    let event_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO domain_events(id,event_type,aggregate_type,aggregate_id,payload,correlation_id) \
+         VALUES($1,'git.merge','repository',$2,$3,$4)",
+    )
+    .bind(event_id)
+    .bind(repository_id)
+    .bind(&payload)
+    .bind(pull_request)
+    .execute(&mut *connection)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
+        "INSERT INTO outbox_messages(id,event_id,project_id,subscription_id,channel,destination,payload) \
+         VALUES($1,$2,$3,$4,$5,$6,$7)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(event_id)
+    .bind(configuration_id)
+    .bind(format!("git-merge:{pull_request}"))
+    .bind(CHANNEL_PIPELINE_TRIGGER)
+    .bind(format!("forge-ci:{repository_id}"))
+    .bind(payload)
+    .execute(connection)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+async fn deliver_merge_ci(
+    pool: &PgPool,
+    configuration_id: Uuid,
+    payload: serde_json::Value,
+    git_root: &Path,
+) -> Result<(), String> {
+    let trigger: MergePipelineTrigger =
+        serde_json::from_value(payload).map_err(|_| "invalid merge CI payload".to_string())?;
+    let branch = trigger
+        .reference
+        .strip_prefix("refs/heads/")
+        .filter(|branch| !branch.is_empty())
+        .ok_or_else(|| "invalid merge CI reference".to_string())?;
+    if trigger.schema_version != 1
+        || trigger.configuration_id != configuration_id
+        || !matches!(trigger.commit_sha.len(), 40 | 64)
+        || !trigger.commit_sha.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err("invalid merge CI version or commit".to_string());
+    }
+    let matches: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1 AND repository_id=$2)",
+    )
+    .bind(configuration_id)
+    .bind(trigger.repository_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    if !matches {
+        return Err("merge CI configuration repository mismatch".to_string());
+    }
+    let storage = crate::repository_catalog::storage_by_id(pool, trigger.repository_id)
+        .await
+        .map_err(|error| error.message)?;
+    let key = crate::git_host::git_push_idempotency_key(
+        &storage,
+        &trigger.reference,
+        &trigger.commit_sha,
+    );
+    let decision: Option<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT configuration_id FROM repository_push_operations WHERE repository_id=$1 AND trigger_key=$2",
+    )
+    .bind(trigger.repository_id)
+    .bind(&key)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    if key != trigger.idempotency_key || decision != Some(Some(configuration_id)) {
+        return Err("merge CI captured decision mismatch".to_string());
+    }
+    if let Some(attempt) = trigger.merge_attempt {
+        let confirmed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pull_request_merge_attempts WHERE id=$1 AND repository_id=$2 AND merge_oid=$3 AND state='confirmed')",
+        ).bind(attempt).bind(trigger.repository_id).bind(&trigger.commit_sha)
+         .fetch_one(pool).await.map_err(|error| error.to_string())?;
+        if !confirmed {
+            return Err(
+                "merge publication is not confirmed; exact ref reconciliation required".into(),
+            );
+        }
+    }
+    // Exact commit, not the branch's current head. Pipeline trigger receipts
+    // deduplicate a retry after the pipeline commits but delivery acknowledgement is lost.
+    crate::pipeline_authority::with_saved(
+        trigger.owner_subject,
+        false,
+        crate::api::pipelines_routes::create_pipeline_at_commit(
+            pool,
+            configuration_id,
+            branch.to_string(),
+            crate::api::PIPELINE_TRIGGER_SOURCE_GIT_PUSH,
+            &trigger.idempotency_key,
+            git_root,
+            &trigger.commit_sha,
+        ),
+    )
+    .await
+    .map_err(|error| error.message)?;
+    Ok(())
+}
+
 /// Email notification body for terminal pipeline events
 /// (docs/AUTOMATION_ARCHITECTURE.md §9 stage 4 step 2).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -525,6 +705,16 @@ pub async fn deliver_due(
     client: &reqwest::Client,
     smtp: &crate::config::SmtpConfig,
 ) -> usize {
+    deliver_due_with_git_root(pool, client, smtp, &git_root_from_env_lossy()).await
+}
+
+/// Delivery pass with the installation's explicit repository root.
+pub async fn deliver_due_with_git_root(
+    pool: &PgPool,
+    client: &reqwest::Client,
+    smtp: &crate::config::SmtpConfig,
+    git_root: &Path,
+) -> usize {
     // Stage 5 scale-out: atomically claim due rows (lease-claim). The claim
     // bumps attempts and pushes next_attempt_at one lease window forward in a
     // single UPDATE ... WHERE next_attempt_at <= now() so a second worker
@@ -569,6 +759,48 @@ pub async fn deliver_due(
         let attempt_number = attempts;
         let started_at = Utc::now();
         let timer = std::time::Instant::now();
+        if channel == CHANNEL_PIPELINE_TRIGGER {
+            match deliver_merge_ci(pool, project_id, payload, git_root).await {
+                Ok(()) => {
+                    let _ = sqlx::query(
+                        "UPDATE outbox_messages SET delivered_at=now(), failed_at=NULL, last_error=NULL WHERE id=$1",
+                    )
+                    .bind(id)
+                    .execute(pool)
+                    .await;
+                    record_delivery_attempt(
+                        pool,
+                        DeliveryAttemptRecord {
+                            message_id: id,
+                            attempt_number,
+                            started_at,
+                            outcome: OUTCOME_DELIVERED,
+                            http_status: None,
+                            error_message: None,
+                            duration_ms: elapsed_ms(timer),
+                        },
+                    )
+                    .await;
+                    resolve_destination_alert(pool, project_id, &channel, &url).await;
+                    crate::metrics::OUTBOX_DELIVERED_TOTAL
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    delivered += 1;
+                }
+                Err(error) => {
+                    record_failed_delivery_attempt(
+                        pool,
+                        id,
+                        attempt_number,
+                        started_at,
+                        timer,
+                        None,
+                        error,
+                    )
+                    .await;
+                }
+            }
+            continue;
+        }
         if channel == "notification" {
             let local_channel = payload
                 .get("channel")
@@ -1219,7 +1451,10 @@ pub async fn supervisor_loop_with_git_root(pool: PgPool, git_root: PathBuf) {
         .unwrap_or_default();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        let delivered = deliver_due(&pool, &client, &smtp).await;
+        let Ok(_effect) = crate::quiescence::enter(true) else {
+            continue;
+        };
+        let delivered = deliver_due_with_git_root(&pool, &client, &smtp, &git_root).await;
         let fired = fire_due_schedules_with_git_root(&pool, &git_root).await;
         if delivered > 0 || fired > 0 {
             tracing::info!(delivered, fired, "outbox/scheduler pass");

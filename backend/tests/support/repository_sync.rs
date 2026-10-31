@@ -125,6 +125,7 @@ async fn postgres_restart_preserves_unknown_intent_and_idempotency() {
             repository_path: "fixture/repository".into(),
             direction: Direction::Both,
             automatic: false,
+            protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         },
         token: Some("fictional-restart-credential".into()),
     };
@@ -848,6 +849,7 @@ async fn incoming_event_ci_uses_exact_sha_and_shared_push_receipt() {
                 repository_path: "a/b".into(),
                 direction: Direction::Pull,
                 automatic: false,
+                protected_branch_updates: Default::default(),
             },
             token: Some("unused-test-token".into()),
         },
@@ -1035,6 +1037,7 @@ async fn live_provider_worker_protection_automatic_and_lost_ack_recovery() {
             repository_path: path,
             direction: Direction::Pull,
             automatic: false,
+            protected_branch_updates: Default::default(),
         },
         token: Some(token),
     };
@@ -1215,6 +1218,7 @@ async fn durable_sync_cas_idempotency_coalescing_and_fencing() {
         repository_path: "example/disposable".into(),
         direction: Direction::Both,
         automatic: true,
+        protected_branch_updates: Default::default(),
     };
     let command = SaveConnection {
         expected_version: 0,
@@ -1477,6 +1481,7 @@ async fn queued_disable_keeps_history_and_manual_mode_ignores_automatic_signals(
             repository_path: "a/b".into(),
             direction: Direction::Pull,
             automatic: false,
+            protected_branch_updates: Default::default(),
         },
         token: Some("test-only".into()),
     };
@@ -1592,6 +1597,7 @@ async fn namespace_archive_pauses_queued_and_blocks_commands_without_losing_hist
             repository_path: "a/b".into(),
             direction: Direction::Pull,
             automatic: true,
+            protected_branch_updates: Default::default(),
         },
         token: Some("test-only".into()),
     };
@@ -1977,6 +1983,7 @@ async fn automatic_signals_cover_all_enabled_directions_and_coalesce() {
                 repository_path: "fixture/repository".into(),
                 direction,
                 automatic: true,
+                protected_branch_updates: Default::default(),
             },
             token: Some("fictional-signal-fixture".into()),
         };
@@ -2078,6 +2085,7 @@ async fn sync_server_pages_large_lists_history_and_refs() {
             repository_path: format!("fixture/page-{i:03}"),
             direction: Direction::Disabled,
             automatic: false,
+            protected_branch_updates: Default::default(),
         };
         app::save(
             &store,
@@ -2245,6 +2253,7 @@ async fn busy_repository_guards_do_not_starve_other_queued_work() {
                     repository_path: "fixture/repository".into(),
                     direction: Direction::Pull,
                     automatic: false,
+                    protected_branch_updates: Default::default(),
                 },
                 token: Some("fictional-fairness-fixture".into()),
             },
@@ -2354,4 +2363,114 @@ async fn sync_put_is_allowed_by_configured_cors_preflight() {
             .headers()
             .contains_key("access-control-allow-origin")
     );
+}
+
+#[tokio::test]
+async fn source_fast_forward_save_requires_human_admin_and_revocation_fences_run() {
+    use cicd_domain::repository_sync::ProtectedBranchUpdates;
+    let pool = test_pool().await;
+    let repository = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+        .bind(repository)
+        .bind(format!("sync-trusted-{repository}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let store = PgSyncStore {
+        pool: pool.clone(),
+        worker_enabled: true,
+        interval_seconds: 300,
+    };
+    let admin = Access {
+        actor_id: Uuid::new_v4(),
+        project_id: None,
+        admin: true,
+        machine: false,
+        writable: true,
+    };
+    let secrets = Secrets(Some([7; 32]));
+    let settings = Settings {
+        provider: Provider::Github,
+        instance_url: "https://github.com".into(),
+        repository_path: "example/disposable".into(),
+        direction: Direction::Pull,
+        automatic: false,
+        protected_branch_updates: ProtectedBranchUpdates::SourceFastForward,
+    };
+    let command = SaveConnection {
+        expected_version: 0,
+        settings,
+        token: Some("synthetic-reader".into()),
+    };
+    for rejected in [
+        Access {
+            admin: false,
+            ..admin
+        },
+        Access {
+            machine: true,
+            ..admin
+        },
+    ] {
+        assert!(matches!(
+            app::save(
+                &store,
+                &secrets,
+                repository,
+                Uuid::new_v4(),
+                rejected,
+                command.clone(),
+                &[]
+            )
+            .await,
+            Err(app::Error::Forbidden)
+        ));
+    }
+    let saved = app::save(
+        &store,
+        &secrets,
+        repository,
+        Uuid::new_v4(),
+        admin,
+        command.clone(),
+        &[],
+    )
+    .await
+    .unwrap();
+    assert!(saved.settings.permits_protected_pull());
+    let run = store
+        .enqueue(repository, "manual", Some((Uuid::new_v4(), admin)))
+        .await
+        .unwrap();
+    let owner = Uuid::new_v4();
+    let (claimed, generation) = store.claim(run.id, owner).await.unwrap().unwrap();
+    assert!(
+        store
+            .allowed_to_apply(&claimed, owner, generation)
+            .await
+            .unwrap()
+    );
+    let mut revoke = command;
+    revoke.expected_version = saved.version;
+    revoke.settings.protected_branch_updates = ProtectedBranchUpdates::Blocked;
+    revoke.settings.direction = Direction::Disabled;
+    revoke.token = None;
+    app::save(
+        &store,
+        &secrets,
+        repository,
+        Uuid::new_v4(),
+        admin,
+        revoke,
+        &[],
+    )
+    .await
+    .unwrap();
+    assert!(
+        !store
+            .allowed_to_apply(&claimed, owner, generation)
+            .await
+            .unwrap()
+    );
+    pool.close().await;
 }

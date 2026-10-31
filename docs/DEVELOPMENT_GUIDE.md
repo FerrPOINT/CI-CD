@@ -1,5 +1,14 @@
 # Руководство по разработке Forge CI/CD
 
+## Kubernetes baseline и миграции
+
+[ADR-0042](adr/0042-native-main-migration-lineages.md) описывает объединённый baseline,
+выбор SQLx history и запрет подмены checksums. Проверки native executor:
+[disposable qualification](KUBERNETES_EXECUTOR_NATIVE_TEST.md),
+[server canary](KUBERNETES_SERVER_CANARY.md),
+[recovery до подтверждённой отправки](KUBERNETES_UNSUBMITTED_RECOVERY.md).
+Каждая поверхность имеет отдельное evidence; source merge не является runtime-приёмкой.
+
 ## Несколько подключений синхронизации
 
 [ADR-0040](adr/0040-multiple-repository-sync-connections.md) сохраняет старые UUID

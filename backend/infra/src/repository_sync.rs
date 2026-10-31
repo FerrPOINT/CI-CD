@@ -588,6 +588,8 @@ impl Store for ConnectionStore<'_> {
             let recovering = previous.direction == Direction::Disabled;
             let mut disabling = previous;
             disabling.direction = Direction::Disabled;
+            disabling.protected_branch_updates =
+                cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked;
             // Reauthentication of an already stopped connection only enables
             // observation of its original intent; version/cancel fences still
             // prohibit any new Git write, including by a surviving old worker.
