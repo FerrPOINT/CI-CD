@@ -5,6 +5,7 @@ use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
@@ -24,6 +25,20 @@ pub struct Resources {
     pub cpu_millis: u32,
     pub memory_bytes: u64,
     pub ephemeral_storage_bytes: u64,
+}
+impl Resources {
+    fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            self.cpu_millis > 0
+                && self.cpu_millis <= 4000
+                && self.memory_bytes >= 16 * 1024 * 1024
+                && self.memory_bytes <= 4 * 1024 * 1024 * 1024
+                && self.ephemeral_storage_bytes >= 16 * 1024 * 1024
+                && self.ephemeral_storage_bytes <= 16 * 1024 * 1024 * 1024,
+            "invalid workload resource budget"
+        );
+        Ok(())
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -63,6 +78,8 @@ pub struct Config {
     #[serde(default)]
     pub deployment_recipes: Vec<deployment::Recipe>,
     pub resources: Resources,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resources_by_image: BTreeMap<String, Resources>,
     pub security: Security,
 }
 /// Optional host-worker transport; missing configuration preserves all old modes.
@@ -148,6 +165,12 @@ impl Config {
                 .context("Kubernetes runner config missing")?,
         ))
     }
+    fn workload_resources(&self, image: &str) -> Resources {
+        self.resources_by_image
+            .get(image)
+            .unwrap_or(&self.resources)
+            .clone()
+    }
     pub fn validate(&self) -> anyhow::Result<()> {
         ensure!(
             self.installation_sha256.len() == 64
@@ -205,15 +228,18 @@ impl Config {
                 "Duplicate Helm target grant"
             );
         }
+        self.resources.validate()?;
         ensure!(
-            self.resources.cpu_millis > 0
-                && self.resources.cpu_millis <= 4000
-                && self.resources.memory_bytes >= 16 * 1024 * 1024
-                && self.resources.memory_bytes <= 4 * 1024 * 1024 * 1024
-                && self.resources.ephemeral_storage_bytes >= 16 * 1024 * 1024
-                && self.resources.ephemeral_storage_bytes <= 16 * 1024 * 1024 * 1024,
-            "invalid workload resource budget"
+            self.resources_by_image.len() <= 32,
+            "too many image resource profiles"
         );
+        for (image, resources) in &self.resources_by_image {
+            ensure!(
+                digest_image(image),
+                "resource profile requires an immutable image"
+            );
+            resources.validate()?;
+        }
         ensure!(
             self.security.run_as_user > 0
                 && self.security.run_as_group > 0
@@ -341,7 +367,7 @@ impl Execution {
     /// Workspace is already owner-prepared and pinned. This function neither clones nor grants admission.
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
-        config: Config,
+        mut config: Config,
         root: &Path,
         scope: Scope,
         workspace: &Path,
@@ -367,6 +393,9 @@ impl Execution {
                         .any(|grant| image == grant.client_image)),
             "image outside operator allowlist"
         );
+        // Resolve only the reviewed immutable-image policy, after image admission.
+        // The effective budget is retained in the original native intent.
+        config.resources = config.workload_resources(image);
         ensure!(
             (5..=86400).contains(&timeout) && !command.is_empty(),
             "invalid execution bounds"
@@ -1663,6 +1692,7 @@ mod tests {
             registry_prefix: "registry.test/forge".into(),
             registry_secret: None,
             deployment_recipes: Vec::new(),
+            resources_by_image: BTreeMap::new(),
             resources: Resources {
                 cpu_millis: 500,
                 memory_bytes: 256 * 1024 * 1024,
@@ -1718,6 +1748,58 @@ mod tests {
         enabled.builder_enabled = true;
         enabled.registry_prefix.clear();
         assert!(enabled.validate().is_err());
+    }
+    #[test]
+    fn image_budgets_keep_legacy_defaults_and_do_not_grant_image_admission() {
+        let mut config = config();
+        let legacy = serde_json::to_value(&config).unwrap();
+        assert!(legacy.get("resourcesByImage").is_none());
+        let parsed: Config = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), legacy);
+        let selected = config.allowed_images[0].clone();
+        let other_digest = selected.replace(&"a".repeat(64), &"b".repeat(64));
+        let mut larger = config.resources.clone();
+        larger.memory_bytes = 2 * 1024 * 1024 * 1024;
+        config
+            .resources_by_image
+            .insert(selected.clone(), larger.clone());
+        config.validate().unwrap();
+        assert_eq!(config.workload_resources(&selected), larger);
+        assert_eq!(config.workload_resources(&other_digest), config.resources);
+        config
+            .resources_by_image
+            .insert(other_digest.clone(), larger);
+        let scope = Scope {
+            job_id: Uuid::new_v4(),
+            attempt_id: Uuid::new_v4(),
+            lease_id: Uuid::new_v4(),
+            generation: 1,
+            source_commit: "a".repeat(40),
+        };
+        let error = Execution::prepare(
+            config.clone(),
+            Path::new("/unselected-root"),
+            scope,
+            Path::new("/unselected-root/attempt/workspace"),
+            &other_digest,
+            &["true".into()],
+            &[],
+            60,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.to_string(), "image outside operator allowlist");
+        config
+            .resources_by_image
+            .insert("registry.test/job:latest".into(), config.resources.clone());
+        assert!(config.validate().is_err());
+        config.resources_by_image.remove("registry.test/job:latest");
+        config
+            .resources_by_image
+            .get_mut(&selected)
+            .unwrap()
+            .memory_bytes = 4 * 1024 * 1024 * 1024 + 1;
+        assert!(config.validate().is_err());
     }
     #[test]
     fn pod_is_single_attempt_without_controller_or_host_authority() {
