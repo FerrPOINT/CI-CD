@@ -43,7 +43,7 @@ async fn auto_registration_credential_is_used_without_being_written_to_process_l
             }),
         )
         .route("/api/v1/runner/heartbeat", post(authenticated.clone()))
-        .route("/api/v1/runner/poll", post(authenticated));
+        .route("/api/v1/runner/work:poll", post(authenticated));
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let root = tempfile::tempdir().unwrap();
     let output = tokio::time::timeout(
