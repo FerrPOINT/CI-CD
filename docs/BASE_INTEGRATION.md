@@ -2,15 +2,15 @@
 
 ## UI0.3.33 — общая адаптивная шапка
 
-Принят точный Base UI producer `77bbb10d4c1da35bb66a1f9f11ba51753342f89f`, reference
-`2043a53cf190b8abdf916f0e898fb22d619c5ccdff05d4667474106fef6ce2db`. Общая шапка сохраняет навигацию, название продукта
+Принят точный Base UI producer `d2b8b2b74d878f12cfed97629885d088ca7767e7`, reference
+`90c758bdf79ef054f4405d715775eccb05a61132320c296f080525127ef965fe`. Общая шапка сохраняет навигацию, название продукта
 и действия на узком экране; её высота следует типографике и плотности.
 Используется публичный контракт Base, без продуктового CSS для геометрии шапки.
 SDK/skills pins и внешние dependency resolutions сохранены.
 [Квалификация source-комплекта](https://github.com/FerrPOINT/services-base/blob/refactor/shared-ui-residuals-20261024/docs/reports/branding-local-qualification-20261101.md)
 разделяет локальные проверки, IAB и hosted CI; установленный runtime не обновлялся.
 
-## Текущий source-кандидат UI0.3.32
+## Предшествующий source-кандидат UI0.3.32
 
 Producer `6f3c557698a8224c5a19e56bdc37b199ba076694`, reference
 `3d36261c8fa88dcb116b0efbd03596237702f265aa479bbb5758bc2a5d4ba701`.
