@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
@@ -284,21 +285,31 @@ it("restores an unknown original operation explicitly after refresh", async () =
 });
 
 it("keeps the resolved configuration label while its catalog is loading", async () => {
-  vi.mocked(service.configurations).mockImplementation(() => new Promise(() => {}));
+  vi.mocked(service.configurations).mockImplementation(
+    () => new Promise(() => {}),
+  );
   mount();
   await screen.findByRole("button", { name: "Включить" });
   expect(screen.getByText("Development", { exact: true })).toBeVisible();
 });
 
 it("does not expose a resolved configuration label across namespace boundaries", async () => {
-  vi.mocked(service.configurations).mockImplementation(() => new Promise(() => {}));
-  vi.mocked(service.configuration).mockResolvedValue({ ...config, name: "Foreign configuration" });
+  vi.mocked(service.configurations).mockImplementation(
+    () => new Promise(() => {}),
+  );
+  vi.mocked(service.configuration).mockResolvedValue({
+    ...config,
+    name: "Foreign configuration",
+  });
   vi.mocked(service.repository).mockResolvedValue({
     id: repository,
     public_name: "another/product",
     slug: "another",
     kind: "local",
-    namespace: { ...context.ref, namespace_id: "99999999-9999-4999-8999-999999999999" },
+    namespace: {
+      ...context.ref,
+      namespace_id: "99999999-9999-4999-8999-999999999999",
+    },
     visibility: "private",
     ready: true,
     provider_refs: {},
@@ -307,7 +318,9 @@ it("does not expose a resolved configuration label across namespace boundaries",
   await screen.findByText(
     "Выбранная конфигурация принадлежит другому проекту. Выберите конфигурацию текущего проекта.",
   );
-  expect(screen.queryByText("Foreign configuration", { exact: true })).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("Foreign configuration", { exact: true }),
+  ).not.toBeInTheDocument();
   expect(service.list).not.toHaveBeenCalled();
 });
 
@@ -344,4 +357,51 @@ it("distinguishes an unavailable card from an unknown runtime", async () => {
   expect(
     screen.queryByRole("button", { name: "Включить" }),
   ).not.toBeInTheDocument();
+});
+
+it("keeps a return action when a paged workspace catalog shrinks", async () => {
+  vi.mocked(service.list)
+    .mockResolvedValueOnce({
+      items: Array.from({ length: 20 }, (_, index) => ({
+        ...workspace,
+        id: `55555555-5555-4555-8555-${String(index + 1).padStart(12, "0")}`,
+        name: `Проверяемое окружение ${index + 1}`,
+      })),
+      total: 21,
+    })
+    .mockResolvedValueOnce({ items: [], total: 1 });
+  mount();
+  await screen.findByText("Проверяемое окружение 20", { exact: true });
+  fireEvent.click(
+    within(
+      screen.getByRole("navigation", { name: "Страницы окружений" }),
+    ).getByRole("button", { name: "Далее" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Проверяемое окружение 20", { exact: true }),
+    ).not.toBeInTheDocument(),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByLabelText("Загружаем окружения…"),
+    ).not.toBeInTheDocument(),
+  );
+  expect(service.list).toHaveBeenCalledWith(
+    configuration,
+    20,
+    expect.any(AbortSignal),
+  );
+  const previous = within(
+    screen.getByRole("navigation", { name: "Страницы окружений" }),
+  ).getByRole("button", { name: "Назад" });
+  expect(previous).toBeEnabled();
+  fireEvent.click(previous);
+  await waitFor(() =>
+    expect(service.list).toHaveBeenLastCalledWith(
+      configuration,
+      0,
+      expect.any(AbortSignal),
+    ),
+  );
 });

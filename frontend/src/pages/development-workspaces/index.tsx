@@ -2,6 +2,11 @@ import { useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ActionGroup,
+  DescriptionItem,
+  OffsetPageNavigation,
+  SectionHeader,
+  TextLink,
   Button,
   Card,
   CardContent,
@@ -111,13 +116,10 @@ export function DevelopmentWorkspacesPage() {
   }
   return (
     <section className="space-y-5" aria-label="Рабочие окружения">
-      <div>
-        <h2 className="text-lg font-semibold">Рабочие окружения</h2>
-        <p className="text-text-muted">
-          Исходники, инструменты, сервисы и данные сохраняются между рабочими
-          сессиями.
-        </p>
-      </div>
+      <SectionHeader
+        title="Рабочие окружения"
+        context="Исходники, инструменты, сервисы и данные сохраняются между рабочими сессиями."
+      />
       <SearchableSelect
         label="Конфигурация проекта"
         placeholder="Выберите конфигурацию"
@@ -198,32 +200,16 @@ export function DevelopmentWorkspacesPage() {
               из опубликованного профиля.
             </Notice>
           )}
-          {list.data.total > 20 && (
-            <nav aria-label="Страницы окружений" className="flex gap-2">
-              <Button
-                disabled={!offset}
-                onClick={() =>
-                  select(
-                    "development_workspace_offset",
-                    String(Math.max(0, offset - 20)),
-                  )
-                }
-              >
-                Назад
-              </Button>
-              <span>
-                {offset + 1}–{offset + list.data.items.length} из{" "}
-                {list.data.total}
-              </span>
-              <Button
-                disabled={offset + 20 >= list.data.total}
-                onClick={() =>
-                  select("development_workspace_offset", String(offset + 20))
-                }
-              >
-                Далее
-              </Button>
-            </nav>
+          {(list.data.total > 20 || offset > 0) && (
+            <OffsetPageNavigation
+              label="Страницы окружений"
+              offset={offset}
+              limit={20}
+              total={list.data.total}
+              onOffsetChange={(value) =>
+                select("development_workspace_offset", String(value))
+              }
+            />
           )}
         </>
       )}
@@ -499,42 +485,33 @@ function WorkspaceCard({
           Владелец окружения: {workspace.owner_name ?? workspace.created_by}
         </p>
         {workspace.public_origin && (
-          <a
+          <TextLink
             href={workspace.public_origin}
             target="_blank"
             rel="noreferrer"
-            className="text-accent underline"
           >
             Открыть приложение
-          </a>
+          </TextLink>
         )}
         <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div>
-            <dt>Подготовленность</dt>
-            <dd>{stateName(workspace.preparation)}</dd>
-          </div>
-          <div>
-            <dt>Окружение</dt>
-            <dd>{stateName(workspace.runtime)}</dd>
-          </div>
-          <div>
-            <dt>Занятость</dt>
-            <dd>
-              {active(operation?.state)
-                ? "Выполняется операция"
-                : session
-                  ? "В работе"
-                  : "Свободно"}
-            </dd>
-          </div>
-          <div>
-            <dt>Последнее наблюдение</dt>
-            <dd>
-              {workspace.observed_at
-                ? new Date(workspace.observed_at).toLocaleString("ru-RU")
-                : "Ещё не подтверждено"}
-            </dd>
-          </div>
+          <DescriptionItem label="Подготовленность">
+            {stateName(workspace.preparation)}
+          </DescriptionItem>
+          <DescriptionItem label="Окружение">
+            {stateName(workspace.runtime)}
+          </DescriptionItem>
+          <DescriptionItem label="Занятость">
+            {active(operation?.state)
+              ? "Выполняется операция"
+              : session
+                ? "В работе"
+                : "Свободно"}
+          </DescriptionItem>
+          <DescriptionItem label="Последнее наблюдение">
+            {workspace.observed_at
+              ? new Date(workspace.observed_at).toLocaleString("ru-RU")
+              : "Ещё не подтверждено"}
+          </DescriptionItem>
         </dl>
         {(workspace.runtime === "unknown" ||
           detail.dataUpdatedAt - Date.parse(workspace.observed_at ?? "") >
@@ -564,30 +541,29 @@ function WorkspaceCard({
             </Button>
           </Notice>
         )}
-        <div className="flex flex-wrap gap-3">
+        <ActionGroup>
           {button("observe", "Обновить состояние", { action: "observe" })}
           {button("start", "Включить", { action: "start" })}
           {button("stop", "Выключить", { action: "stop" })}
-        </div>
+        </ActionGroup>
         <section className="space-y-3">
-          <h3 className="font-semibold">Рабочая сессия</h3>
+          <SectionHeader level={4} title="Рабочая сессия" />
           {session ? (
             <>
               <p className="break-words">
                 Владелец: {session.actor_name ?? session.actor_id} · задача{" "}
                 {trackerOrigin ? (
-                  <a
-                    className="text-accent underline"
+                  <TextLink
                     href={`${trackerOrigin.replace(/\/$/, "")}/issues/${encodeURIComponent(session.task_ref)}`}
                   >
                     {session.task_ref}
-                  </a>
+                  </TextLink>
                 ) : (
                   session.task_ref
                 )}{" "}
                 · с {new Date(session.started_at).toLocaleString("ru-RU")}
               </p>
-              <div className="flex flex-wrap gap-3">
+              <ActionGroup>
                 {button("end_session", "Закончить работу", {
                   action: "end_session",
                   session_id: session.id,
@@ -596,7 +572,7 @@ function WorkspaceCard({
                   action: "recover_session",
                   session_id: session.id,
                 })}
-              </div>
+              </ActionGroup>
             </>
           ) : (
             <>
@@ -623,7 +599,7 @@ function WorkspaceCard({
           )}
         </section>
         <section className="space-y-3">
-          <h3 className="font-semibold">Исходники и инструменты</h3>
+          <SectionHeader level={4} title="Исходники и инструменты" />
           <p>
             Профиль{" "}
             {String(object(workspace.profile).name ?? workspace.profile_id)} ·{" "}
@@ -639,7 +615,7 @@ function WorkspaceCard({
             prepare. Выбирайте полный commit каждого репозитория;
             незакоммиченные файлы остаются локально.
           </p>
-          <div className="flex flex-wrap items-start gap-3">
+          <ActionGroup>
             {button("prepare", "Проверить подготовленность", {
               action: "prepare",
               sources: workspace.sources as Extract<
@@ -651,18 +627,19 @@ function WorkspaceCard({
                 { action: "prepare" }
               >["local"],
             })}
-            <a
-              className="text-accent underline"
+          </ActionGroup>
+          <p>
+            <TextLink
               href="https://github.com/FerrPOINT/services-base/blob/main/docs/platform/WORKSPACES.md"
               target="_blank"
               rel="noreferrer"
             >
               Документация workspace
-            </a>
-          </div>
+            </TextLink>
+          </p>
         </section>
         <section className="space-y-3">
-          <h3 className="font-semibold">Проверки и сборка</h3>
+          <SectionHeader level={4} title="Проверки и сборка" />
           <Label htmlFor={`recipe-${id}`}>Опубликованный рецепт</Label>
           <Select
             id={`recipe-${id}`}
@@ -673,7 +650,7 @@ function WorkspaceCard({
               label: String(check.key),
             }))}
           />
-          <div className="flex flex-wrap gap-3">
+          <ActionGroup>
             <Button
               disabled={
                 disabled("check") || !recipe || typeof commit !== "string"
@@ -696,12 +673,12 @@ function WorkspaceCard({
             >
               Собрать приложение
             </Button>
-          </div>
+          </ActionGroup>
           {capability("check")?.reason && <p>{capability("check")?.reason}</p>}
         </section>
         {operation && (
           <section className="space-y-3">
-            <h3 className="font-semibold">Текущая операция</h3>
+            <SectionHeader level={4} title="Текущая операция" />
             <p>
               {String(object(operation.request).action ?? "")} ·{" "}
               {stateName(operation.state)} · {operation.id}
@@ -722,17 +699,16 @@ function WorkspaceCard({
               </>
             )}
             {operation.pipeline_id && (
-              <Link
-                to={`/pipelines/${operation.pipeline_id}`}
-                className="text-accent underline"
-              >
-                Открыть результат и логи
-              </Link>
+              <TextLink asChild>
+                <Link to={`/pipelines/${operation.pipeline_id}`}>
+                  Открыть результат и логи
+                </Link>
+              </TextLink>
             )}
           </section>
         )}
         <section className="space-y-2">
-          <h3 className="font-semibold">История операций</h3>
+          <SectionHeader level={4} title="История операций" />
           {history.isError && (
             <Notice tone="warning" appearance="inline">
               История недоступна: {message(history.error)}
@@ -747,12 +723,11 @@ function WorkspaceCard({
                 <>
                   {" "}
                   ·{" "}
-                  <Link
-                    className="text-accent underline"
-                    to={`/pipelines/${item.pipeline_id}`}
-                  >
-                    Результат и логи
-                  </Link>
+                  <TextLink asChild>
+                    <Link to={`/pipelines/${item.pipeline_id}`}>
+                      Результат и логи
+                    </Link>
+                  </TextLink>
                 </>
               )}
             </p>
