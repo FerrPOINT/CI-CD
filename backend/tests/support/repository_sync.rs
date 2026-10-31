@@ -125,6 +125,7 @@ async fn postgres_restart_preserves_unknown_intent_and_idempotency() {
             repository_path: "fixture/repository".into(),
             direction: Direction::Both,
             automatic: false,
+            protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         },
         token: Some("fictional-restart-credential".into()),
     };

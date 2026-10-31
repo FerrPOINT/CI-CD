@@ -5,7 +5,7 @@
 //! pending migrations without touching the database.
 
 #[path = "../../src/quiescence/kernel.rs"]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 mod quiescence;
 use anyhow::Context;
 use clap::Parser;

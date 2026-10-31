@@ -919,6 +919,8 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Pull,
                 automatic: false,
+                protected_branch_updates:
+                    cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
             "fictional-error-canary".into(),
             Uuid::new_v4(),
@@ -985,6 +987,8 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Pull,
                 automatic: false,
+                protected_branch_updates:
+                    cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
             "fictional-output-canary".into(),
             Uuid::new_v4(),
@@ -1124,6 +1128,8 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Both,
                 automatic: false,
+                protected_branch_updates:
+                    cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
             "fictional-empty-canary".into(),
             Uuid::new_v4(),
@@ -1222,6 +1228,7 @@ mod tests {
             repository_path: "fixture/repository".into(),
             direction: cicd_domain::repository_sync::Direction::Pull,
             automatic: false,
+            protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         };
         let attempt = || {
             GitSession::new(
@@ -1275,6 +1282,8 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Both,
                 automatic: false,
+                protected_branch_updates:
+                    cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
             "fictional-pipes-canary".into(),
             Uuid::new_v4(),

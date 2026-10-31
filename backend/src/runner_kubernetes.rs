@@ -456,8 +456,12 @@ async fn run_inner(
         until.is_none_or(|v| std::time::Instant::now() < v) && status != "canceled";
     if publish_allowed {
         let artifact_clock = crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
-            pool, job.pipeline_id, lease.attempt_id, config,
-        ).await?;
+            pool,
+            job.pipeline_id,
+            lease.attempt_id,
+            config,
+        )
+        .await?;
         if (input.is_none() || status == "success")
             && collect_declared_artifacts(
                 pool,

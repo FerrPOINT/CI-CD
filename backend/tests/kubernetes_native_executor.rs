@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use tokio::time::{Instant, sleep, timeout};
+use tokio::time::{sleep, timeout};
 use uuid::Uuid;
 
 const ROOT: &str = "/workspaces";

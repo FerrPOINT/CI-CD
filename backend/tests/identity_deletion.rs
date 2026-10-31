@@ -139,8 +139,14 @@ async fn verify_canonical_human_owner_sources(pool: &PgPool, store: &IdentityDel
         );
     }
     let error = sqlx::query("UPDATE outbox_messages SET payload=payload WHERE id=$1")
-        .bind(message).execute(pool).await.unwrap_err();
-    assert_eq!(error.as_database_error().unwrap().message(), "identity_deletion_fenced");
+        .bind(message)
+        .execute(pool)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().message(),
+        "identity_deletion_fenced"
+    );
     // An unrelated notification does not acquire a human CI owner.
     sqlx::query("INSERT INTO outbox_messages(id,event_id,project_id,subscription_id,channel,destination,payload) VALUES($1,$2,$3,'neighbor','notification','fixture','{}')")
         .bind(Uuid::new_v4()).bind(event).bind(project).execute(pool).await.unwrap();

@@ -984,6 +984,7 @@ fn json(path: &Path) -> anyhow::Result<serde_json::Value> {
     );
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
+#[cfg(test)]
 fn workspace_idle(root: &Path) -> anyhow::Result<()> {
     workspace_idle_bound(root, root, None, None, &[])
 }
