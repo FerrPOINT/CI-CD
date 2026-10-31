@@ -6,6 +6,20 @@ Compose/host-shell paths и SDK/UI pins сохранены.
 
 ## Конфигурация
 
+Необязательный `resourcesByImage` в owner JSON задаёт ресурсы отдельных
+квалифицированных образов по полному `repository@sha256:digest`. Его значения
+имеют те же поля и границы, что `resources`; максимум 32 записи. После проверки
+image admission выбирается точное совпадение, иначе сохраняется общий `resources`.
+Это не разрешение запускать образ вне `allowedImages` и не пользовательский
+параметр shell/job. Эффективный бюджет сохраняется в native intent и применяется
+к requests/limits Pod; recovery использует исходный бюджет.
+
+Так можно выделить R1 dependency images 2 GiB RAM, сохранив обычный бюджет
+остальных CI jobs. Перед принятием профиля проверяются namespace requests/limits,
+фактическая ёмкость и reserve узла/хоста. Quota или native OOM возвращают ошибку,
+лимит не повышается автоматически. Изменение owner JSON поставляется новой
+закреплённой generation; установленный immutable ConfigMap не редактируется.
+
 Для короткоживущего допуска runtime guard рекомендуется
 `CICD_KUBERNETES_ADMISSION_CONFIG_MAP=<owner ConfigMap name>`: controller читает
 ровно этот ConfigMap в своём namespace через штатный Kubernetes transport перед
