@@ -222,7 +222,7 @@ jobs:
           version: 10.28.1
       - uses: actions/setup-node@v6
         with:
-          node-version: 22.20.0
+          node-version: "22.22.2"
           cache: pnpm
           cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile

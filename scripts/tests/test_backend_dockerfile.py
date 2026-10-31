@@ -86,7 +86,7 @@ class BackendDockerfileTests(unittest.TestCase):
         for name in ('Dockerfile', 'Dockerfile.umbrella'):
             with self.subTest(recipe=name):
                 text = (backend / name).read_text(encoding='utf-8')
-                copied = set(re.findall(r'^COPY services-base/(base-modules/rust\S*)\s', text, re.M))
+                copied = set(re.findall(r'^COPY services-base/(base-modules/rust\S*)\s', text, re.MULTILINE))
                 self.assertEqual(copied, required | {'base-modules/rust/pdlc-cli-core/Cargo.toml'})
                 self.assertIn('compile_error!("metadata-only pdlc-cli-core must not be compiled");', text)
                 self.assertIn('> /services-base/base-modules/rust/pdlc-cli-core/src/lib.rs', text)

@@ -1,15 +1,14 @@
 """Scoped raw-container selection; all producer/verifier transports are inert."""
 import contextlib
 import io
-import json
 import os
-from pathlib import Path
 import runpy
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts import select_build
@@ -100,10 +99,10 @@ class BuildScopeTests(unittest.TestCase):
             self.assertEqual(select_build.auto_services(ROOT), [])
             load.assert_called_once_with(ROOT)
             plan.assert_called_once_with(ROOT, profile='build', base='HEAD', manifest=manifest)
-        with patch.object(select_build.selector, 'load', return_value=manifest), \
-             patch.object(select_build.selector, 'plan', side_effect=ValueError('bad comparison')):
-            with self.assertRaisesRegex(ValueError, 'bad comparison'):
-                select_build.auto_services(ROOT)
+        with (patch.object(select_build.selector, 'load', return_value=manifest),
+              patch.object(select_build.selector, 'plan', side_effect=ValueError('bad comparison')),
+              self.assertRaisesRegex(ValueError, 'bad comparison')):
+            select_build.auto_services(ROOT)
 
     def test_malformed_map_or_unknown_artifact_requires_review(self):
         for inputs in (None, {}, {'backend': [], 'frontend': ['x']}, {'backend': 'x', 'frontend': ['y']}):

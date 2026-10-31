@@ -52,7 +52,8 @@
       "backend/Dockerfile",
       "backend/Dockerfile.umbrella",
       "backend/src/task_delivery/postgres.rs",
-      "scripts/select_build.py"
+      "scripts/select_build.py",
+      "scripts/tests/test_current_performance_routes.py"
     ],
     "cli": [
       "backend/cli/**"
@@ -66,6 +67,13 @@
     ],
     "migration": [
       "backend/migration/**"
+    ],
+    "pinned-imports": [
+      "scripts/tests/test_postgres_import_boundary.py",
+      "scripts/postgres-delivery.py",
+      "backend/src/task_delivery/postgres.rs",
+      ".base-revision",
+      ".namespace-base-revision"
     ]
   },
   "gates": [
@@ -122,6 +130,9 @@
         "-B",
         "-m",
         "unittest",
+        "scripts.tests.test_postgres_rejection",
+        "scripts.tests.test_base_stand_backup",
+        "scripts.tests.test_current_performance_routes",
         "scripts.tests.test_quality_routes",
         "scripts.tests.test_ci_contract_checks",
         "scripts.tests.test_build_pin",
@@ -164,7 +175,10 @@
         "docs/screenshots/24-project-delete-confirm.png",
         "docs/assets/forge-readme-banner.svg",
         "backend/Cargo.toml",
-        "backend/*/Cargo.toml"
+        "backend/*/Cargo.toml",
+        "scripts/tests/test_current_performance_routes.py",
+        "scripts/tests/test_base_stand_backup.py",
+        "scripts/tests/test_postgres_rejection.py"
       ]
     },
     {
@@ -229,7 +243,7 @@
           "pattern": "^10\\.28\\.1\\s*$"
         }
       ],
-      "prepare_frontend": "22.20.0",
+      "prepare_frontend": "22.22.2",
       "test_tier": "static"
     },
     {
@@ -237,8 +251,6 @@
       "component": "frontend",
       "profiles": [
         "fast",
-        "integrated",
-        "release",
         "unit",
         "build"
       ],
@@ -270,7 +282,7 @@
           "pattern": "^10\\.28\\.1\\s*$"
         }
       ],
-      "prepare_frontend": "22.20.0",
+      "prepare_frontend": "22.22.2",
       "test_tier": "unit"
     },
     {
@@ -308,7 +320,7 @@
           "pattern": "^10\\.28\\.1\\s*$"
         }
       ],
-      "prepare_frontend": "22.20.0",
+      "prepare_frontend": "22.22.2",
       "test_tier": "static"
     },
     {
@@ -316,7 +328,6 @@
       "component": "backend",
       "profiles": [
         "fast",
-        "release",
         "unit",
         "build"
       ],
@@ -391,7 +402,8 @@
         }
       ],
       "sdk_revision": ".base-revision",
-      "test_tier": "integration"
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
     },
     {
       "id": "cli:format",
@@ -467,7 +479,7 @@
           "pattern": "^10\\.28\\.1\\s*$"
         }
       ],
-      "prepare_frontend": "22.20.0",
+      "prepare_frontend": "22.22.2",
       "outputs": [
         "frontend/dist"
       ],
@@ -975,6 +987,285 @@
       "exclude_inputs": [
         "backend/**/tests/**"
       ]
+    },
+    {
+      "id": "cli:quality",
+      "component": "cli",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace -- --test-threads=1"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
+    },
+    {
+      "id": "delivery:quality",
+      "component": "delivery",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace -- --test-threads=1"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
+    },
+    {
+      "id": "pg-migrate:quality",
+      "component": "pg-migrate",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace -- --test-threads=1"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
+    },
+    {
+      "id": "migration:quality",
+      "component": "migration",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace -- --test-threads=1"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
+    },
+    {
+      "id": "frontend:full-tests",
+      "component": "frontend",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "pnpm",
+        "test:all"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.22.2",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "tooling:delivery-preflight",
+      "component": "tooling",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "test_tier": "integration",
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_delivery_pin_preflight_integration",
+        "-q"
+      ],
+      "cwd": ".",
+      "cacheable": false,
+      "external_state": true,
+      "inputs": [
+        "scripts/tests/test_delivery_pin_preflight_integration.py",
+        "scripts/verify-task-delivery.ps1",
+        ".base-revision",
+        ".namespace-base-revision"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "pwsh",
+            "--version"
+          ],
+          "pattern": "^PowerShell 7\\."
+        }
+      ]
+    },
+    {
+      "id": "pinned-imports:unit",
+      "component": "pinned-imports",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "test_tier": "unit",
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_postgres_import_boundary",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_postgres_import_boundary.py",
+        "scripts/postgres-delivery.py",
+        "backend/src/task_delivery/postgres.rs",
+        ".base-revision",
+        ".namespace-base-revision"
+      ],
+      "cacheable": false,
+      "execution_slot": "none",
+      "sdk_revision": ".base-revision"
     }
   ],
   "additional_acceptance": "Manual qualification retains git_receive_only, PostgreSQL/native Git/CLI/MSRV/security/SDK QA/packed/themes gates; native selected graphs and exact artifact reuse remain unqualified.",

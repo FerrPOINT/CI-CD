@@ -79,7 +79,8 @@ raw heavy Cargo/just/helper требует общего Base execution slot; own
 - [ ] Затронутые unit/static проходят; отдельный full/manual статус указан явно.
 - [ ] Scoped frontend проверен; полный Vitest/packed/themes/browser gate выполняется
   на согласованной вехе. Зелёный unit не заменяет security/data/live acceptance.
-- [ ] `docker compose config` и `docker compose build` успешны при изменении контейнеров.
+- [ ] Для контейнерных правок проверены Source selection/contexts; `docker compose config`,
+  build и native qualification выполняются на общей согласованной вехе, их статус указан отдельно.
 - [ ] Для новых endpoint выполнена curl-проверка; для UI-изменений сделаны актуальные screenshots при необходимости.
 - [ ] Документация, `.env.example` и ADR обновлены, если изменились контракт, конфигурация или решение.
 - [ ] В diff отсутствуют credentials, токены, `.env` и другие чувствительные данные.
@@ -223,3 +224,11 @@ role/lifecycle/PR SQL locks с исходным proof. MutationGuard берёт�
 Перед публикацией проверять точный кандидат через `--ref <commit>`. Установка
 hooks и допустимые артефакты: [правила](docs/REPOSITORY_HYGIENE.md).
 Копии проверки принадлежат Base; SDK/UI pins не меняются.
+
+## Current performance routes
+
+Frontend full — `pnpm test:all` / `just test-frontend-all`, unit — `pnpm test:unit`.
+Node 22.22.2 согласован в preparation/CI. Manual Rust component gates сохраняют
+полный workspace, с явным shared-check coalescing в принятом portable selector.
+Ограничения Root/native adoption и remaining repeated targets:
+[DEVELOPMENT_GUIDE](docs/DEVELOPMENT_GUIDE.md#текущий-performance-candidate--31-октября-2026).

@@ -492,3 +492,57 @@ Domain/cache unit не объявляются исполнением bin process
 полный владелец `backend:quality` остаётся на ручной интегрированной/release вехе.
 Source command: `python -B -m unittest scripts.tests.test_bin_test_inputs -q`.
 Перенос, ограничения и финальные проверки: [план](plans/bin-test-source-boundary-20261029.md).
+
+## Текущий performance candidate — 31 октября 2026
+
+Source candidate переносит performance routes на текущий main без изменения
+production Rust поведения, Cargo manifests/lock, SDK/UI/namespace pins и runtime
+Docker stage. Test modules `forge_runner` и `forge_delivery` вынесены из production
+copy; bodies сохранены полностью, после снятия прежнего indentation. Manual
+workspace tests по-прежнему компилируют и выполняют эти modules.
+
+Все frontend preparation и оба frontend CI jobs используют текущий Node 22.22.2.
+`pnpm test` / `just test-frontend` — unit; полный frontend — `pnpm test:all` /
+`just test-frontend-all`. В manual Root profile full suite включает units без
+второго unit gate. Полный backend/CLI/delivery/pg-migrate/migration workspace-набор
+объявлен для каждого выбранного Rust component; один exact Base `shared_check`
+объединяет одинаковую свежую проверку при совместном выборе.
+
+PowerShell/Git preflight остаётся manual integration и отдельно объявлен в
+descriptor. Его обязательный `pwsh --version` tool guard предотвращает зелёный
+результат за счёт skip всего класса. На этом этапе native preflight не запускается.
+Прежние assertions сохранены, `subprocess.run(check=False)` лишь фиксирует
+прежнее default поведение. Linux/POSIX backup controls также требуют своей среды.
+
+Штатные raw entrypoints: `python scripts/build.py backend`, `frontend`, `runner`;
+пустой вызов сначала выбирает changed services, `--all` является явным полным
+запросом. Два runtime services `backend`/`runner` потребляют один bundle producer;
+отдельные CLI/delivery/migration artifacts не превращаются в runtime images.
+Raw heavy command по-прежнему требует общего Base execution slot согласно host
+policy; owning Root command вторым slot не оборачивать.
+
+Открытый повтор: несколько selected Rust artifact gates в обычном Root pipeline
+вызывают `run_rust_gate.sh` отдельно, получая отдельные fresh targets. Source
+selection не устраняет повтор dependency compilation этого полного набора.
+Доработка Base должна объединить необходимые targets внутри существующего frozen
+Source owner, сохраняя per-artifact identities, unit barrier, fail/cancel и cleanup.
+Постоянный compiled target между independent exports этим не разрешается.
+
+Portable quality pin обновлён отдельно до `0a552be41d7b6586abc8cb2f54cfbccd3d7f1c59`;
+auxiliary generator bytes сохранены. Root roles не переключались: старый manual
+reader может выполнить несколько одинаковых полных Rust suites. Native caller
+adoption остаётся отдельным этапом. Compilers, installs, Node/Tailwind/Vitest,
+Docker, hosted CI и runtime на этом Source этапе не запускались; actual speed,
+CPU/RAM/I/O, immutable image identity и cache-hit proof не заявляются.
+
+Общие правила: [Base build performance](https://github.com/FerrPOINT/services-base/blob/0a552be41d7b6586abc8cb2f54cfbccd3d7f1c59/docs/BUILD_PERFORMANCE.md).
+
+SDK import unit выделен в компонент `pinned-imports`. Правка только его теста
+выбирает Python security checks с фактическим SDK pin, без Rust setup, cache
+restore и application producer. CI использует тот же scope; при Rust changes
+прежние SDK import/Compose ownership guards сохраняются. Root unit требует
+проверенного sibling SDK по обычному `sdk_revision` contract; иной или отсутствующий
+SDK не заменяется текущим Source Base. Здесь семь import cases исполнены только
+в собственной маленькой source fixture из точного helper pin: это не SDK export,
+проверка Root SDK authority или native qualification. POSIX backup cases остаются
+непроверенными на Windows и не считаются PASS.

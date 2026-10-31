@@ -20,7 +20,11 @@ test-backend-all:
     cd backend && cargo test --locked --workspace
 
 test-frontend:
-    cd frontend && pnpm test
+    cd frontend && pnpm test:unit
+
+# Manual full frontend suite; pnpm test is a unit alias.
+test-frontend-all:
+    cd frontend && pnpm test:all
 
 build-frontend:
     cd frontend && pnpm build

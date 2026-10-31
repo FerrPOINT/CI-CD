@@ -3,16 +3,16 @@ import contextlib
 import hashlib
 import io
 import json
-from pathlib import Path
 import runpy
 import shutil
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from scripts.vendor import base_quality_selection as selector
 from scripts.select_ci import build_services, describe, outputs
+from scripts.vendor import base_quality_selection as selector
 
 ROOT = Path(__file__).resolve().parents[2]
 

@@ -1,8 +1,8 @@
 """Source contracts: bin test edits do not select an application producer."""
 import json
-from pathlib import Path
 import shlex
 import unittest
+from pathlib import Path
 
 from scripts.vendor import base_quality_selection as selection
 

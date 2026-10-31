@@ -1,13 +1,13 @@
 """Thin Forge CI/container adapter over the exact Base product plan."""
 import os
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.vendor import base_quality_selection as selector
 from scripts import select_build
+from scripts.vendor import base_quality_selection as selector
 
 RUST_COMPONENTS = {'backend', 'cli', 'delivery', 'pg-migrate', 'migration'}
 
@@ -16,6 +16,7 @@ def describe(plan):
     gates = {gate['id'] for gate in plan['gates']}
     return {
         'backend': bool(set(plan['components']) & RUST_COMPONENTS),
+        'pinned_imports': 'pinned-imports' in plan['components'],
         'server_checks': 'backend' in plan['components'],
         'frontend': 'frontend' in plan['components'],
         'backend_build': 'backend:build' in gates,

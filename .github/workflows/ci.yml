@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
+      pinned_imports: ${{ steps.classify.outputs.pinned_imports }}
       frontend: ${{ steps.classify.outputs.frontend }}
       frontend_build: ${{ steps.classify.outputs.frontend_build }}
       backend_build: ${{ steps.classify.outputs.backend_build }}
@@ -127,7 +128,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: documentation regression tests
-        run: python3 -B -m unittest scripts.tests.test_quality_routes scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks scripts.tests.test_postgres_rejection scripts.tests.test_backend_dockerfile scripts.tests.test_frontend_toolchain scripts.tests.test_build_pin scripts.tests.test_build_scope
+        run: python3 -B -m unittest scripts.tests.test_quality_routes scripts.tests.test_bin_test_inputs scripts.tests.test_current_performance_routes scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks scripts.tests.test_postgres_rejection scripts.tests.test_backend_dockerfile scripts.tests.test_frontend_toolchain scripts.tests.test_build_pin scripts.tests.test_build_scope
       - name: documentation checks
         run: python3 -B scripts/verify_docs.py --links --anchors --canonical --frontend-contracts
       - name: dependency inventory drift
@@ -170,20 +171,24 @@ jobs:
         working-directory: CI-CD
         run: python3 -B -m unittest scripts.tests.test_postgres_import_boundary
       - name: Native QA Compose ownership regressions
+        if: needs.changes.outputs.backend == 'true'
         env:
           SDLC_MAINTENANCE_BASE: ${{ github.workspace }}/services-base
           SDLC_MAINTENANCE_SDK_SHA256: 73059ebbfeb3a294cce503675b44fa71959882d89fd702edbd358aae4abcf4f8
         run: python3 -B scripts/tests/test_native_qa_compose.py
         working-directory: CI-CD
       - uses: dtolnay/rust-toolchain@stable
+        if: needs.changes.outputs.backend == 'true'
         with:
           toolchain: 1.88.0
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+        if: needs.changes.outputs.backend == 'true'
         with:
           workspaces: CI-CD/backend
           cache-targets: false
       - name: fmt
+        if: needs.changes.outputs.backend == 'true'
         run: cargo fmt --all -- --check
       - name: Quick domain/SDK unit tests
         if: needs.changes.outputs.server_checks == 'true'
@@ -211,7 +216,7 @@ jobs:
     needs:
       - changes
       - docs
-    if: needs.changes.outputs.backend == 'true'
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.pinned_imports == 'true'
   frontend:
     if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest

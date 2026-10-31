@@ -70,8 +70,9 @@ class ServerCliMetadataTests(unittest.TestCase):
     def test_server_graph_keeps_unselected_cli_metadata_and_a_compilation_guard(self):
         import re
         import shlex
-        import tomllib
         from pathlib import Path
+
+        import tomllib
 
         product = Path(__file__).resolve().parents[2]
         backend = product / 'backend'

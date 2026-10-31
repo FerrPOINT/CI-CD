@@ -1,5 +1,6 @@
 """Map the existing Base plan to product container services, without running gates."""
 from pathlib import Path
+
 from scripts.vendor import base_quality_selection as selector
 
 ROOT = Path(__file__).resolve().parents[1]

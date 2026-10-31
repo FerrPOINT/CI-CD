@@ -104,7 +104,7 @@ def validate_compose_execution(gate):
         return
     value = gate['compose_execution']
     keys = {'schema', 'context', 'working_dir', 'mounts', 'cache_mounts', 'environment', 'network', 'limits'}
-    if (not isinstance(value, dict) or not keys <= set(value) or set(value) - keys - {'proof_outputs', 'resources'}
+    if (not isinstance(value, dict) or not keys <= set(value) or set(value) - keys - {'proof_outputs', 'resources', 'pinned_sdk'}
             or value['schema'] != 'base-quality-compose/v1'
             or gate.get('prepare_frontend') or gate.get('execution_slot') in ('none', 'command')
             or gate.get('artifact_toolchain') != 'pinned-image'
@@ -145,6 +145,17 @@ def validate_compose_execution(gate):
         targets += ['/metrics', '/.__base_observer__']
     if not isinstance(value['mounts'], list) or not value['mounts'] or not isinstance(value['cache_mounts'], list):
         raise ValueError('Compose mounts require explicit lists')
+    if 'pinned_sdk' in value:
+        sdk = value['pinned_sdk']
+        if (not isinstance(sdk, dict) or set(sdk) != {'path', 'provenance_sha256'}
+                or not relative(sdk['path']) or not sdk['path'].startswith('.local/sdk/')
+                or not sdk['path'].endswith('/services-base') or len(sdk['path']) > 1024
+                or not isinstance(sdk['provenance_sha256'], str) or len(sdk['provenance_sha256']) != 64
+                or any(char not in '0123456789abcdef' for char in sdk['provenance_sha256'])
+                or gate.get('sdk_revision') != '.namespace-base-revision'
+                or value['mounts'].count({'root': 'workspace', 'path': sdk['path'],
+                                         'target': '/workspace/services-base'}) != 1):
+            raise ValueError('Pinned Compose SDK requires its exact namespace export, digest and consumed mount')
     for mount in value['mounts']:
         if (not isinstance(mount, dict) or set(mount) != {'root', 'path', 'target'}
                 or mount['root'] not in ('product', 'workspace', 'base') or not relative(mount['path'])
@@ -180,10 +191,28 @@ def validate_compose_execution(gate):
     validate_resource_limits(value['limits'])
 
 
-def artifact_environment(gate, values):
-    """An opt-in projection constrains the actual child, not only its cache key."""
+def artifact_environment_policy(gate):
+    """Validate a declaration without depending on child execution semantics.
+
+    Manifest-only consumers copy this canonical closure. Returning the declared
+    channels/patterns also keeps the executor from maintaining a second policy.
+    """
     if 'environment_input_contract' not in gate:
-        return dict(values)
+        return None, ()
+    if gate['environment_input_contract'] == 'frontend-agent-presence-v1':
+        channels = ('CODEX_THREAD_ID', 'CODEX_SESSION_ID')
+        artifact = gate.get('kind') == 'artifact'
+        if (gate.get('component') != 'frontend' or gate.get('cwd') != 'frontend'
+                or not gate.get('prepare_frontend') or gate.get('covers_units')
+                or gate.get('execution_slot') == 'command' or 'compose_execution' in gate
+                or 'workspace_toolchain' in gate or 'sdk_revision' in gate
+                or (artifact and (gate.get('test_tier') != 'artifact'
+                                  or gate.get('artifact_input_contract') != 'git-source-v1'))
+                or (not artifact and (gate.get('kind') is not None
+                                      or gate.get('test_tier') not in ('unit', 'static')))
+                or any(name in channels for name in gate.get('requires_env', []))):
+            raise ValueError('Agent presence contract requires qualified ordinary frontend gates')
+        return gate['environment_input_contract'], channels
     if (gate['environment_input_contract'] != 'declared-artifact-v1'
             or gate.get('kind') != 'artifact' or gate.get('execution_slot') == 'command'
             or gate.get('covers_units')):
@@ -199,8 +228,32 @@ def artifact_environment(gate, values):
     if any(name == 'BASE_QUALITY_ARTIFACTS' or not matches(name, patterns)
            for name in gate.get('requires_env', [])):
         raise ValueError('Required fixture environment is outside the artifact input contract')
+    return gate['environment_input_contract'], patterns
+
+
+def frontend_agent_environment(values):
+    """Shared actual presence projection for explicitly qualified consumers."""
+    result = dict(values)
+    for name in ('CODEX_THREAD_ID', 'CODEX_SESSION_ID'):
+        if name in result:
+            if not isinstance(result[name], str):
+                raise ValueError('Agent presence channels must contain string values')
+            if result[name]:
+                result[name] = '1'
+    return result
+
+
+def artifact_environment(gate, values):
+    """Project the actual child environment before computing its cache key."""
+    contract, inputs = artifact_environment_policy(gate)
+    if contract is None:
+        return dict(values)
+    if contract == 'frontend-agent-presence-v1':
+        # Only qualified consumers with presence semantics may use this policy.
+        # Preserve absent/empty and all other product inputs conservatively.
+        return frontend_agent_environment(values)
     return {name: value for name, value in values.items()
-            if name != 'BASE_QUALITY_ARTIFACTS' and matches(name, patterns)}
+            if name != 'BASE_QUALITY_ARTIFACTS' and matches(name, inputs)}
 # END GENERATED QUALITY SUPPORT
 
 
@@ -209,10 +262,15 @@ JAVA_NATIVE_MODULES = {'backend': 'backend', 'shared': 'shared', 'cli': 'cli', '
 DOCUMENTATION_CONTRACTS = {
     'base-readme-v1': 'verify_readme.py',
     'base-docs-hub-v1': 'verify_hub_docs.py',
+    'product-readme-v1': 'verify_readme.py',
 }
 DOCUMENTATION_CAPABILITY = {
     'argv': ['{python}', '-B', '{base}/scripts/documentation_inputs.py', 'capability'],
     'pattern': r'^base-documentation-inputs-v1\s*$',
+}
+PRODUCT_README_CAPABILITY = {
+    'argv': ['{python}', '-B', '{base}/scripts/product_readme_inputs.py', 'capability'],
+    'pattern': r'^product-readme-inputs-v1\s*$',
 }
 
 
@@ -222,9 +280,13 @@ def validate_documentation_gate(gate):
     contract = gate['documentation_input_contract']
     if not isinstance(contract, str) or contract not in DOCUMENTATION_CONTRACTS:
         raise ValueError('Unsupported documentation input contract')
-    if gate.get('tools') != [DOCUMENTATION_CAPABILITY]:
+    capability = PRODUCT_README_CAPABILITY if contract == 'product-readme-v1' else DOCUMENTATION_CAPABILITY
+    if gate.get('tools') != [capability]:
         raise ValueError('Documentation input contract requires the exact executor capability probe')
-    if (gate.get('argv') != ['{python}', '-B', 'scripts/' + DOCUMENTATION_CONTRACTS[contract]]
+    # A closed product reader must not load local/PYTHONPATH/user-site shims for
+    # its stdlib imports. The reviewed originals need no third-party packages.
+    flags = ['-I', '-S', '-B'] if contract == 'product-readme-v1' else ['-B']
+    if (gate.get('argv') != ['{python}', *flags, 'scripts/' + DOCUMENTATION_CONTRACTS[contract]]
             or gate.get('cwd', '.') != '.' or gate.get('test_tier') != 'static'
             or gate.get('component') != 'docs' or gate.get('inputs') != ['**']
             or any(gate.get(name) for name in (
@@ -279,10 +341,127 @@ ADMIN_NATIVE_V3_UNIT_GATE = {
 ADMIN_NATIVE_V3_GATE = {**ADMIN_NATIVE_GATE, 'cacheable': True}
 
 
+
+# Closed Wiki Rust1.88 commands; native dispatch preserves the ordinary gates.
+RUST_NATIVE_UNIT_GATE = {'id': 'backend:unit',
+ 'component': 'backend',
+ 'profiles': ['fast', 'release', 'unit', 'build'],
+ 'argv': ['bash',
+          '{base}/scripts/run_rust_gate.sh',
+          '--',
+          'bash',
+          '-euo',
+          'pipefail',
+          '-c',
+          'cargo fmt --all -- --check; cargo test --locked -p domain --lib'],
+ 'cwd': 'backend',
+ 'inputs': ['backend/**',
+            '.cargo/**',
+            '.base-revision',
+            '.namespace-base-revision',
+            'rust-toolchain*',
+            'rustfmt.toml',
+            '.rustfmt.toml',
+            '.gitattributes',
+            'LICENSE',
+            'NOTICE',
+            'THIRD_PARTY_NOTICES.md'],
+ 'cacheable': True,
+ 'platforms': ['linux'],
+ 'tools': [{'argv': ['rustc', '--version'], 'pattern': '^rustc 1\\.88\\.0\\b'}],
+ 'sdk_revision': '.namespace-base-revision',
+ 'test_tier': 'unit'}
+RUST_NATIVE_BUILD_GATE = {'id': 'backend:build',
+ 'component': 'backend',
+ 'profiles': ['build'],
+ 'argv': ['bash',
+          '{base}/scripts/run_rust_gate.sh',
+          '--',
+          'bash',
+          '-euo',
+          'pipefail',
+          '-c',
+          'cargo build --locked --release -p server --bin server\n'
+          'for binary in server; do\n'
+          '    test -s "$CARGO_TARGET_DIR/release/$binary"\n'
+          '    test -x "$CARGO_TARGET_DIR/release/$binary"\n'
+          '    cp -- "$CARGO_TARGET_DIR/release/$binary" "$BASE_QUALITY_ARTIFACTS/$binary"\n'
+          'done'],
+ 'cwd': 'backend',
+ 'inputs': ['backend/**',
+            '.base-revision',
+            '.namespace-base-revision',
+            '.cargo/**',
+            'rust-toolchain*',
+            '.gitattributes'],
+ 'cacheable': True,
+ 'platforms': ['linux'],
+ 'tools': [{'argv': ['rustc', '--version'], 'pattern': '^rustc 1\\.88\\.0\\b'}],
+ 'sdk_revision': '.namespace-base-revision',
+ 'kind': 'artifact',
+ 'exclude_inputs': ['backend/tests/**',
+                    'backend/**/tests/**',
+                    'backend/domain/src/value_objects/tests.rs',
+                    'backend/domain/src/wiki/tests.rs'],
+ 'artifact_outputs': ['server'],
+ 'artifact_toolchain': 'pinned-image',
+ 'environment_inputs': ['CARGO_*',
+                        'RUST*',
+                        'CC',
+                        'CC_*',
+                        'CFLAGS',
+                        'CFLAGS_*',
+                        'CXX',
+                        'CXX_*',
+                        'CXXFLAGS',
+                        'AR',
+                        'AR_*',
+                        'RANLIB',
+                        'LD',
+                        'LD_*',
+                        'LDFLAGS',
+                        'PKG_CONFIG*',
+                        'OPENSSL*',
+                        'LIBSSL*',
+                        'SQLX_*',
+                        'SQLITE*',
+                        'LIBSQLITE*',
+                        'VCPKG*',
+                        'BINDGEN*',
+                        'LIBCLANG*',
+                        'ZSTD*',
+                        'CMAKE*',
+                        'SOURCE_DATE_EPOCH',
+                        'HOME',
+                        'LIBRARY_PATH',
+                        'LD_LIBRARY_PATH',
+                        'CPATH',
+                        'C_INCLUDE_PATH',
+                        'CPLUS_INCLUDE_PATH'],
+ 'test_tier': 'artifact',
+ 'artifact_input_contract': 'git-source-v1'}
+RUST_NATIVE_REQUEST = {'backend:unit': {'component':'backend','role':'unit'},
+                       'backend:build': {'component':'backend','role':'build'}}
+
 def validate_native_execution(manifest):
     """Closed ordinary gate equivalence; unsupported commands stay unsupported."""
     value = manifest.get('native_execution')
     if value is None:
+        return
+    if isinstance(value, dict) and value.get('adapter') == 'rust-compose-v1':
+        gates = [gate for gate in manifest['gates'] if gate.get('id') in RUST_NATIVE_REQUEST]
+        if (set(value) != {'adapter', 'host_platforms', 'gates', 'runtime'}
+                or manifest.get('product') != 'wiki' or value['host_platforms'] != ['win32']
+                or value['gates'] != RUST_NATIVE_REQUEST
+                or gates != [RUST_NATIVE_UNIT_GATE, RUST_NATIVE_BUILD_GATE]):
+            raise ValueError('Native Rust v1 requires its closed ordinary Wiki unit and named server gates')
+        runtime = value['runtime']
+        if (not isinstance(runtime, dict) or set(runtime) != {'download_cache', 'limits', 'input_transport'}
+                or runtime['input_transport'] != 'operation-snapshot-v1'
+                or not isinstance(runtime['download_cache'], str)
+                or not re.fullmatch('[a-z0-9][a-z0-9-]{0,63}', runtime['download_cache'])):
+            raise ValueError('Native Rust requires one explicit download owner and operation snapshot')
+        validate_resource_limits(runtime['limits'])
         return
     if isinstance(value, dict) and value.get('adapter') in ('admin-compose-v2', 'admin-compose-v3'):
         v3 = value['adapter'] == 'admin-compose-v3'
@@ -320,11 +499,22 @@ def validate_native_execution(manifest):
                 raise ValueError('Native Admin runtime requires an explicit download owner and resource limits')
             validate_resource_limits(runtime['limits'])
         return
-    if (not isinstance(value, dict) or set(value) != {'adapter', 'host_platforms', 'gates'}
+    return validate_java_native_execution(manifest)
+
+
+def validate_java_native_execution(manifest):
+    """Canonical Java declaration, also emitted into the standalone QA consumer."""
+    value = manifest.get('native_execution')
+    if value is None:
+        return
+    if (not isinstance(value, dict) or set(value) not in (
+            {'adapter', 'host_platforms', 'gates'}, {'adapter', 'host_platforms', 'gates', 'cli_max_workers'})
             or manifest.get('product') != 'java-agent'
             or value['adapter'] != 'java-compose-v1' or value['host_platforms'] != ['win32']
             or not isinstance(value['gates'], dict) or not value['gates']):
         raise ValueError('Unsupported native execution declaration')
+    if 'cli_max_workers' in value and (type(value['cli_max_workers']) is not int or value['cli_max_workers'] != 3):
+        raise ValueError('Native Java CLI workers require the explicit measured profile3')
     gates = {gate['id']: gate for gate in manifest['gates']}
     for identifier, request in value['gates'].items():
         if not isinstance(request, dict) or set(request) != {'component', 'role'}:
@@ -340,7 +530,12 @@ def validate_native_execution(manifest):
         expected = (['bash', 'scripts/quality-gradle.sh', '--backend', ':' + task, *flags]
                     if component == 'backend' else
                     ['bash', 'scripts/quality-gradle.sh', *flags, ':' + JAVA_NATIVE_MODULES[component] + ':' + task])
-        if (gate is None or gate.get('component') != component or gate['argv'] != expected
+        commands = [expected]
+        if component != 'backend':
+            # The explicit clients graph excludes backend configuration. Keep
+            # its literal placement closed; this grants no cache qualification.
+            commands.append([*expected[:2], '--quality-root', *expected[2:]])
+        if (gate is None or gate.get('component') != component or gate['argv'] not in commands
                 or set(gate['profiles']) - {'fast', 'unit', 'build'}
                 or gate.get('platforms') != ['linux'] or gate.get('cwd', '.') != '.'
                 or gate.get('execution_slot') not in (None, 'host') or type(gate.get('cacheable')) is not bool
@@ -354,6 +549,12 @@ def validate_native_execution(manifest):
                 or (role == 'build' and (gate.get('kind') != 'artifact' or len(gate.get('outputs', [])) != 1))
                 or (role == 'unit' and gate.get('kind') not in (None, 'test'))):
             raise ValueError('Native Java declaration differs from its ordinary gate contract: ' + identifier)
+        if role == 'build':
+            prefix = JAVA_NATIVE_MODULES[component] + '/build/libs/'
+            output = gate['outputs'][0]
+            if (not isinstance(output, str) or not output.startswith(prefix)
+                    or re.fullmatch(r'[A-Za-z0-9_.-]+\.jar', output[len(prefix):]) is None):
+                raise ValueError('Native Java requires one explicit JAR in its module build/libs: ' + identifier)
         tools = gate.get('tools', [])
         context = ['{python}', 'scripts/gradle-context.py'] + (['--backend'] if component == 'backend' else [])
         if (len(tools) != 1 or tools[0].get('argv') != ['java', '-version']
@@ -363,9 +564,64 @@ def validate_native_execution(manifest):
             raise ValueError('Native Java requires the selected read-only JDK context: ' + identifier)
 
 
-def native_execution_plan(manifest, gates, execution_platform, docker_context=None, *, native_admin_inputs=None):
+def java_compiler_cache_request(value):
+    """Request metadata only; qualified authority is resolved after ready lookup."""
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or set(value) != {'id', 'owner_sha256', 'allocation_sha256'}
+            or not isinstance(value['id'], str) or not re.fullmatch('[a-z0-9][a-z0-9-]{0,63}', value['id'])
+            or any(not isinstance(value[name], str) or not re.fullmatch('[a-f0-9]{64}', value[name])
+                   for name in ('owner_sha256', 'allocation_sha256'))):
+        raise ValueError('Java compiler cache requires an explicit id and paired owner/allocation SHA256 pins')
+    return dict(value)
+
+
+def native_execution_plan(manifest, gates, execution_platform, docker_context=None, *, native_admin_inputs=None,
+                          native_rust_inputs=None, native_java_cache=False, native_rust_cache_inputs=None,
+                          native_java_main_unit=None):
     """Pure dispatch plan. No tool probes, filesystem preparation or Docker calls."""
     value = manifest.get('native_execution')
+    if native_java_main_unit is not None:
+        if (not isinstance(native_java_main_unit, dict) or set(native_java_main_unit) != {'path', 'sha256'}
+                or not isinstance(native_java_main_unit['path'], str) or '\0' in native_java_main_unit['path']
+                or not Path(native_java_main_unit['path']).is_absolute()
+                or not isinstance(native_java_main_unit['sha256'], str)
+                or not re.fullmatch('[a-f0-9]{64}', native_java_main_unit['sha256'])
+                or execution_platform != 'win32' or not docker_context
+                or not isinstance(value, dict) or value.get('adapter') != 'java-compose-v1'
+                or native_java_cache or native_admin_inputs is not None or native_rust_inputs is not None
+                or native_rust_cache_inputs is not None or not gates
+                or any(gate['id'] not in ('cli:unit', 'cli:build') for gate in gates)):
+            raise ValueError('Main/unit profile requires only explicit Windows CLI gates and its absolute pinned profile')
+    if native_rust_cache_inputs is not None:
+        if (native_rust_inputs is None or native_admin_inputs is not None or native_java_cache
+                or execution_platform != 'win32' or docker_context != 'desktop-linux'
+                or not isinstance(value,dict) or value.get('adapter') != 'rust-compose-v1'
+                or not isinstance(native_rust_cache_inputs,dict) or set(native_rust_cache_inputs) != {'path','sha256'}
+                or not isinstance(native_rust_cache_inputs['path'],str) or '\0' in native_rust_cache_inputs['path']
+                or not Path(native_rust_cache_inputs['path']).is_absolute()
+                or not isinstance(native_rust_cache_inputs['sha256'],str)
+                or not re.fullmatch('[a-f0-9]{64}',native_rust_cache_inputs['sha256'])):
+            raise ValueError('Rust compiler cache requires an explicit native input reference and its paired absolute SHA256 selection')
+    if type(native_java_cache) is not bool:
+        raise ValueError('Java compiler-cache execution profile must be explicit')
+    if native_java_cache and (
+            native_admin_inputs is not None or native_rust_inputs is not None
+            or execution_platform != 'win32' or not isinstance(value, dict)
+            or value.get('adapter') != 'java-compose-v1'
+            or not gates or any(gate['id'] not in ('cli:unit', 'cli:build') for gate in gates)
+            or not isinstance(docker_context, str) or not re.fullmatch('[A-Za-z0-9_.-]{1,128}', docker_context)):
+        raise ValueError('Java compiler cache requires only the explicit Windows native CLI graph and Docker context')
+    if native_rust_inputs is not None:
+        if (native_admin_inputs is not None or not isinstance(native_rust_inputs, dict)
+                or set(native_rust_inputs) != {'path', 'sha256'}
+                or not isinstance(native_rust_inputs['path'], str) or '\0' in native_rust_inputs['path']
+                or not Path(native_rust_inputs['path']).is_absolute()
+                or not isinstance(native_rust_inputs['sha256'], str)
+                or not re.fullmatch('[a-f0-9]{64}', native_rust_inputs['sha256'])
+                or execution_platform != 'win32'
+                or not isinstance(value, dict) or value.get('adapter') != 'rust-compose-v1'):
+            raise ValueError('Rust native requires its Windows selection and paired absolute SHA256 reference')
     if native_admin_inputs is not None:
         if (not isinstance(native_admin_inputs, dict) or set(native_admin_inputs) != {'path', 'sha256'}
                 or not isinstance(native_admin_inputs['path'], str)
@@ -389,6 +645,20 @@ def native_execution_plan(manifest, gates, execution_platform, docker_context=No
     requests = {gate['id']: value['gates'][gate['id']] for gate in gates if gate['id'] in value['gates']}
     if not requests:
         return None
+    if value['adapter'] == 'rust-compose-v1':
+        if (native_rust_inputs is None
+                or gates not in ([RUST_NATIVE_UNIT_GATE], [RUST_NATIVE_UNIT_GATE, RUST_NATIVE_BUILD_GATE])
+                or docker_context != 'desktop-linux'):
+            raise ValueError('Native Rust requires unit or unit+build, explicit local context and frozen inputs')
+        artifacts = ['backend'] if len(gates) == 2 else []
+        return {'adapter': value['adapter'], 'host_platform': execution_platform,
+                'docker_context': docker_context, 'profile': 'build' if artifacts else 'unit',
+                'components': ['backend'], 'artifact_components': artifacts, 'gates': requests,
+                'input_reference': dict(native_rust_inputs),
+                **({'compiler_cache_reference':dict(native_rust_cache_inputs)} if native_rust_cache_inputs is not None else {}),
+                'runtime': {'download_cache': value['runtime']['download_cache'],
+                            'limits': dict(value['runtime']['limits']),
+                            'input_transport': value['runtime']['input_transport']}}
     if value['adapter'] in ('admin-compose-v2', 'admin-compose-v3'):
         unit, artifact = ((ADMIN_NATIVE_V3_UNIT_GATE, ADMIN_NATIVE_V3_GATE)
                           if value['adapter'] == 'admin-compose-v3' else (ADMIN_NATIVE_UNIT_GATE, ADMIN_NATIVE_GATE))
@@ -424,10 +694,17 @@ def native_execution_plan(manifest, gates, execution_platform, docker_context=No
         raise ValueError('Expected an explicit Docker context name for native execution')
     components = [name for name in JAVA_NATIVE_MODULES if any(row['component'] == name for row in requests.values())]
     artifacts = [name for name in components if any(row == {'component': name, 'role': 'build'} for row in requests.values())]
-    return {'adapter': value['adapter'], 'host_platform': execution_platform,
+    result = {'adapter': value['adapter'], 'host_platform': execution_platform,
             'docker_context': docker_context, 'profile': 'build' if artifacts else 'unit',
             'components': components, 'artifact_components': artifacts,
-            'gates': requests}
+            'gates': requests,
+            **({'compiler_cache_profile': 'root-clients-v1'} if native_java_cache else {}),
+            **({'cli_max_workers': 3} if not native_java_cache and components == ['cli']
+               and value.get('cli_max_workers') == 3 else {})}
+    if native_java_main_unit is not None:
+        result.pop('cli_max_workers', None)
+        result.update(main_unit_profile=dict(native_java_main_unit), producer_profile='cli-main-unit-v1', artifact_epoch='dev-zero')
+    return result
 
 
 def inside(root, relative):
@@ -479,7 +756,7 @@ def load(root):
     identifiers = set()
     for gate in manifest["gates"]:
         validate_gate_slot(gate)
-        artifact_environment(gate, {})
+        artifact_environment_policy(gate)
         identifier = gate["id"]
         if (
             not re.fullmatch(r"[a-zA-Z0-9:_-]+", identifier)
@@ -575,13 +852,28 @@ def load(root):
                     and (tier in ("integration", "slow") or gate.get("external_state"))):
                 raise ValueError("Automatic build profiles cannot run boundary or slow tests")
     validate_affected_checks(manifest)
-    gradle_unit_groups(manifest["gates"])
-    covered_unit_owners(manifest["gates"])
     validate_native_execution(manifest)
+    gradle_unit_groups(manifest["gates"], native_gates=native_gradle_gate_ids(manifest))
+    covered_unit_owners(manifest["gates"])
+    shared_check_groups(manifest["gates"], require_pairs=True)
     return manifest
 
 
-def gradle_unit_groups(gates):
+def load_java(root):
+    """Full ordinary validation, restricted to the Java QA consumer's product."""
+    manifest = load(root)
+    if manifest.get('product') != 'java-agent':
+        raise ValueError('Java selector requires java-agent')
+    return manifest
+
+
+def native_gradle_gate_ids(manifest):
+    """Only closed Java declarations may consent to individual native reuse."""
+    value = manifest.get('native_execution')
+    return frozenset(value['gates']) if isinstance(value, dict) and value.get('adapter') == 'java-compose-v1' else frozenset()
+
+
+def gradle_unit_groups(gates, *, native_gates=()):
     """Join selected trailing Gradle tasks, preserving the complete unit contract."""
     identifiers = {gate["id"] for gate in gates}
     groups = {}
@@ -592,7 +884,8 @@ def gradle_unit_groups(gates):
         if (not isinstance(group, str) or not re.fullmatch(r"[a-zA-Z0-9:_-]+", group)
                 or group in identifiers
                 or gate.get("test_tier") != "unit" or gate.get("kind") == "artifact"
-                or gate.get("cacheable") or gate.get("external_state") or gate.get("requires_env")
+                or (gate.get("cacheable") and gate["id"] not in native_gates)
+                or gate.get("external_state") or gate.get("requires_env")
                 or gate.get("outputs") or gate.get("artifact_outputs") or gate.get("prepare_frontend")
                 or gate.get("execution_slot") == "command"
                 or len(gate["argv"]) < 2
@@ -603,12 +896,15 @@ def gradle_unit_groups(gates):
     merged = {}
     for group, members in groups.items():
         first = members[0]
-        contract = {key: value for key, value in first.items() if key not in ("id", "component", "argv")}
-        if any({key: value for key, value in member.items() if key not in ("id", "component", "argv")} != contract
+        # Individual native consent is not consent to reuse a portable grouped
+        # receipt. All command, input, environment and tool contracts stay equal.
+        ignored = ("id", "component", "argv", "cacheable")
+        contract = {key: value for key, value in first.items() if key not in ignored}
+        if any({key: value for key, value in member.items() if key not in ignored} != contract
                or member["argv"][:-1] != first["argv"][:-1] for member in members[1:]):
             raise ValueError("Gradle unit group has incompatible commands or execution contracts: " + group)
         merged[group] = {
-            **first, "id": group if len(members) > 1 else first["id"],
+            **first, "id": group if len(members) > 1 else first["id"], "cacheable": False,
             "argv": first["argv"][:-1] + list(dict.fromkeys(member["argv"][-1] for member in members)),
             "member_gates": [member["id"] for member in members],
         }
@@ -618,6 +914,53 @@ def gradle_unit_groups(gates):
         if group:
             if group in merged:
                 result.append(merged.pop(group))
+        else:
+            result.append(gate)
+    return result
+
+
+def shared_check_groups(gates, *, require_pairs=False):
+    """Validate an explicit fresh manual suite shared by product components."""
+    groups = {}
+    for gate in gates:
+        if 'shared_check' not in gate:
+            continue
+        name = gate['shared_check']
+        if (not isinstance(name, str) or len(name) > 128
+                or re.fullmatch(r'[a-z][a-z0-9_.:-]*', name) is None
+                or gate.get('test_tier') != 'integration' or gate.get('cacheable') is not False
+                or not gate.get('profiles')
+                or set(gate['profiles']) - {'integration', 'integrated', 'release'}
+                or gate.get('kind') not in (None, 'test')
+                or any(gate.get(field) for field in ('outputs', 'artifact_outputs', 'covers_units',
+                                                    'prepare_frontend', 'gradle_unit_group'))
+                or 'shared_check_members' in gate):
+            raise ValueError('Invalid shared manual check contract')
+        members = groups.setdefault(name, [])
+        contract = {key: value for key, value in gate.items() if key not in ('id', 'component')}
+        if members:
+            previous = {key: value for key, value in members[0].items() if key not in ('id', 'component')}
+            if contract != previous or gate['component'] in {member['component'] for member in members}:
+                raise ValueError('Incompatible shared manual check contracts')
+        members.append(gate)
+    if require_pairs and any(len(members) < 2 for members in groups.values()):
+        raise ValueError('A shared manual check requires distinct declared component members')
+    return groups
+
+
+def coalesce_shared_checks(gates):
+    """Plan one execution of a declared shared suite; never reuse a past result."""
+    groups = shared_check_groups(gates)
+    owners = {members[0]['id']: members for members in groups.values() if len(members) > 1}
+    omitted = {member['id'] for members in groups.values() for member in members[1:]}
+    result = []
+    for gate in gates:
+        if gate['id'] in omitted:
+            continue
+        if gate['id'] in owners:
+            result.append({**gate, 'shared_check_members': [
+                {'id': member['id'], 'component': member['component']} for member in owners[gate['id']]
+            ]})
         else:
             result.append(gate)
     return result
@@ -670,6 +1013,13 @@ def order_unit_coverage(gates):
         visited.add(gate["id"])
         ordered.append(gate)
 
+    # An explicit producer may own its unit prerequisite (for example bootJar),
+    # but independent checks must finish before any producer can spend work or
+    # publish a candidate. Product manifest insertion order is not this policy.
+    for gate in gates:
+        if (gate['id'] not in owners and gate.get('kind') != 'artifact'
+                and gate.get('test_tier') != 'artifact'):
+            visit(gate)
     for gate in gates:
         visit(gate)
     return ordered
@@ -719,6 +1069,362 @@ def components_for_paths(manifest, files, components=None):
                     selected.add(owner)
                     reasons.setdefault(owner, []).append(name)
     return sorted(selected), reasons
+
+
+# BEGIN GENERATED ADMIN CI SCOPE
+# Canonical rules: admin_server_projection/compiler_witnesses; IO: admin_ci_scope.
+def admin_ci_scope(root, head):
+    import json
+    import posixpath
+    import re
+    import stat
+    import subprocess
+    from pathlib import Path, PurePosixPath
+
+    import tomllib
+
+    REAL = ('api', 'app', 'domain', 'infra', 'migration', 'server', 'shared')
+
+    MEMBERS = (*REAL, 'ai-runtime')
+
+    SDK_CRATES = frozenset(('sdlc-auth-core', 'sdlc-shared', 'sdlc-telemetry', 'sdlc-messaging'))
+
+    TEST_PATHS = {'backend/domain/src/lib.rs': (('tests/url.rs', 'url_tests'), ('tests/lib.rs', 'tests')),
+                  **{f'backend/domain/src/{name}.rs': ((f'tests/{name}.rs', 'tests'),)
+                     for name in ('ai', 'inference', 'namespace')}}
+
+    TEST_FILES = frozenset('backend/domain/src/' + path for pairs in TEST_PATHS.values() for path, _ in pairs)
+
+    STUBS = {'backend/ai-runtime/src/lib.rs': '\n', 'backend/ai-runtime/src/main.rs': 'fn main() {}\n'}
+
+    ROOT_FILES = frozenset(('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', '.base-revision',
+                            '.namespace-base-revision', '.gitattributes', 'rust-toolchain', 'rust-toolchain.toml'))
+
+    MAX_FILES = 8192
+
+    MAX_BYTES = 64 * 1024**2
+
+    MAX_FILE_BYTES = 8 * 1024**2
+
+    def dependency_paths(value, keys=()):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == 'path' and any(part in ('dependencies', 'build-dependencies', 'dev-dependencies') for part in keys):
+                    if not isinstance(child, str):
+                        raise WorkspaceError('Admin dependency path must be literal')
+                    yield child
+                else:
+                    yield from dependency_paths(child, (*keys, key))
+
+    def manifest_paths(name, parsed):
+        relative = PurePosixPath(name).parent.as_posix()
+        sdk = {}
+        for value in dependency_paths(parsed):
+            if not value or '\\' in value or PurePosixPath(value).is_absolute():
+                raise WorkspaceError('Unreviewed Admin dependency path')
+            resolved = posixpath.normpath(relative + '/' + value)
+            if resolved.startswith('../services-base/crates/'):
+                crate = resolved.removeprefix('../services-base/crates/')
+                if crate not in SDK_CRATES:
+                    raise WorkspaceError('Admin server dependency requires unreviewed SDK crate')
+                sdk[value] = crate
+            elif resolved not in {'backend/' + member for member in REAL}:
+                # AI may depend on domain; server must never acquire an AI edge.
+                raise WorkspaceError('Admin server dependency leaves its reviewed crate graph')
+        return sdk
+
+    def validate_manifest(name, parsed):
+        if name == 'backend/Cargo.toml':
+            workspace = parsed.get('workspace', {})
+            if (not isinstance(workspace, dict) or set(workspace.get('members', [])) != set(MEMBERS)
+                    or len(workspace.get('members', [])) != len(MEMBERS)
+                    or workspace.get('exclude') or workspace.get('default-members')
+                    or any(key in parsed for key in ('package', 'patch', 'replace'))):
+                raise WorkspaceError('Unknown Admin workspace membership/patch layout')
+        else:
+            member = PurePosixPath(name).parent.name
+            package = parsed.get('package', {})
+            expected = 'admin-panel-' + ('ai-runtime' if member == 'ai-runtime' else member)
+            if (not isinstance(package, dict) or package.get('name') != expected or 'build' in package
+                    or parsed.get('lib', {}).get('proc-macro') or 'workspace' in parsed):
+                raise WorkspaceError('Unknown Admin package/build-script layout')
+            targets = [parsed.get('lib', {}), *parsed.get('bin', []), *parsed.get('example', []),
+                       *parsed.get('test', []), *parsed.get('bench', [])]
+            for target in targets:
+                path = target.get('path')
+                if path is not None and (not isinstance(path, str) or not path.startswith('src/')
+                        or any(part in ('', '.', '..') for part in path.split('/'))):
+                    raise WorkspaceError('Admin target leaves its source inventory')
+            if member == 'ai-runtime' and any(key in parsed for key in ('lib', 'bin', 'example', 'test', 'bench')):
+                raise WorkspaceError('AI target declarations require a new server projection contract')
+            # This profile reviewed only the existing OpenAPI target declaration.
+            # Default lib/main targets remain selected by Cargo, not invented here.
+            explicit = {key: parsed[key] for key in ('lib', 'bin', 'example', 'test', 'bench') if key in parsed}
+            approved = {'bin': [{'name': 'gen-openapi', 'path': 'src/bin/gen_openapi.rs'}]} if member == 'api' else (
+                {'bin': [{'name': 'admin-panel-server', 'path': 'src/main.rs'}]} if member == 'server' else {})
+            if explicit != approved:
+                raise WorkspaceError('Admin explicit targets require a new source projection contract')
+        return manifest_paths(name, parsed)
+
+    def validate_readers(name, raw):
+        text = raw.decode('utf-8').replace('\r\n', '\n')
+        tokens = [item[0] for item in _code_tokens(text)]
+        for path, module in TEST_PATHS.get(name, ()):
+            declaration = ['#', '[', 'cfg', '(', 'test', ')', ']', '#', '[', 'path', '=',
+                           json.dumps(path), ']', 'mod', module, ';']
+            found = [index for index in range(len(tokens)) if tokens[index:index + len(declaration)] == declaration]
+            if len(found) != 1:
+                raise WorkspaceError('Admin external test paths require their exact cfg(test) declarations')
+            index = found[0]
+            del tokens[index:index + len(declaration)]
+        test_regions = []
+        if name == 'backend/migration/src/lib.rs':
+            declaration = ['#', '[', 'cfg', '(', 'test', ')', ']', 'mod', 'tests', '{']
+            for index in range(len(tokens)):
+                if tokens[index:index + len(declaration)] != declaration:
+                    continue
+                start, depth, cursor = index + len(declaration), 1, index + len(declaration)
+                while cursor < len(tokens) and depth:
+                    depth += (tokens[cursor] == '{') - (tokens[cursor] == '}')
+                    cursor += 1
+                if depth:
+                    raise WorkspaceError('Unclosed Admin migration test module')
+                test_regions.append((start, cursor - 1))
+        for index, token in enumerate(tokens):
+            after = tokens[index + 1:index + 5]
+            if token in ('include', 'include_str', 'include_bytes'):
+                raise WorkspaceError('Admin compile-time include requires a reviewed source contract')
+            if token in ('env', 'option_env', 'file') and after[:1] == ['as']:
+                raise WorkspaceError('Admin reader macro aliases require a reviewed source contract')
+            # No local macro definitions exist in the reviewed server graph. A new
+            # higher-order macro could hide $reader!(...) from direct-call checks.
+            # Ordinary variables named file/env are legitimate runtime expressions.
+            if token == 'macro_rules' and after[:1] == ['!']:
+                raise WorkspaceError('Admin indirect reader binding requires a reviewed source contract')
+            if token in ('env', 'option_env') and after[:1] == ['!']:
+                package_version = after[1:] == ['(', '"CARGO_PKG_VERSION"', ')']
+                test_manifest = (after[1:] == ['(', '"CARGO_MANIFEST_DIR"', ')'] and len(test_regions) == 1
+                                 and test_regions[0][0] <= index < test_regions[0][1])
+                if not package_version and not test_manifest:
+                    raise WorkspaceError('Admin compile-time environment reader requires review')
+            if token == 'file' and after[:1] == ['!']:
+                raise WorkspaceError('Admin source-path embedding requires a reviewed projection contract')
+            if token == '#':
+                cursor, depth, attribute = index + 1, 0, []
+                while cursor < len(tokens):
+                    item = tokens[cursor]
+                    attribute.append(item)
+                    depth += (item == '[') - (item == ']')
+                    if depth == 0:
+                        break
+                    cursor += 1
+                if attribute[:2] == ['[', 'path'] or attribute[:2] == ['[', 'cfg_attr'] and 'path' in attribute:
+                    raise WorkspaceError('Unknown Admin path/cfg_attr reader outside selected sources: ' + name)
+
+    def production_file(name):
+        if name in ROOT_FILES or name.startswith('.cargo/'):
+            return True
+        if name in ('backend/Cargo.toml', 'backend/Cargo.lock', 'backend/LICENSE', 'backend/NOTICE',
+                    'backend/THIRD_PARTY_NOTICES.md') or name.startswith('backend/.cargo/'):
+            return True
+        parts = PurePosixPath(name).parts
+        if len(parts) >= 3 and parts[1] in MEMBERS:
+            if parts[1] == 'ai-runtime':
+                return name == 'backend/ai-runtime/Cargo.toml'
+            return name not in TEST_FILES and 'tests' not in parts
+        return False
+
+    def validate_config(name, raw):
+        """No hidden wrappers, config includes, or external replacement sources."""
+        if name not in ('.cargo/config', '.cargo/config.toml', 'backend/.cargo/config', 'backend/.cargo/config.toml'):
+            raise WorkspaceError('Admin Cargo configuration file requires source-contract review')
+        value = tomllib.loads(raw.decode('utf-8'))
+        if (set(value) != {'build'} or not isinstance(value['build'], dict)
+                or set(value['build']) != {'jobs'} or type(value['build']['jobs']) is not int
+                or not 1 <= value['build']['jobs'] <= 64):
+            raise WorkspaceError('Admin Cargo configuration requires source-contract review')
+
+    _ATOM = re.compile(r'r#[A-Za-z_]\w*|[A-Za-z_]\w*|\S', re.ASCII)
+
+    _CHAR = re.compile(r"(?:b)?'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^'\\\n])'")
+
+    _RAW = re.compile(r'(?:br|cr|r)(#*)"')
+
+    def _code_tokens(text):
+        """Locate code tokens without accepting comment/string declarations as code.
+
+        This is a lexical boundary, not a Rust grammar. Unknown inventory/macro
+        syntax is still rejected by the closed declaration checks below.
+        """
+        result, cursor = [], 0
+        while cursor < len(text):
+            if text[cursor].isspace():
+                cursor += 1
+                continue
+            if text.startswith('//', cursor):
+                end = text.find('\n', cursor)
+                cursor = len(text) if end < 0 else end + 1
+                continue
+            if text.startswith('/*', cursor):
+                cursor, depth = cursor + 2, 1
+                while depth and cursor < len(text):
+                    if text.startswith('/*', cursor):
+                        depth, cursor = depth + 1, cursor + 2
+                    elif text.startswith('*/', cursor):
+                        depth, cursor = depth - 1, cursor + 2
+                    else:
+                        cursor += 1
+                if depth:
+                    raise WorkspaceError('Unterminated Rust comment in compiler witness source')
+                continue
+            start = cursor
+            raw = _RAW.match(text, cursor)
+            if raw:
+                close = '"' + raw.group(1)
+                end = text.find(close, raw.end())
+                if end < 0:
+                    raise WorkspaceError('Unterminated Rust raw string in compiler witness source')
+                cursor = end + len(close)
+            elif text[cursor] == '"':
+                cursor += 1
+                while cursor < len(text) and text[cursor] != '"':
+                    cursor += 2 if text[cursor] == '\\' else 1
+                if cursor >= len(text):
+                    raise WorkspaceError('Unterminated Rust string in compiler witness source')
+                cursor += 1
+            elif char := _CHAR.match(text, cursor):
+                cursor = char.end()
+            else:
+                token = _ATOM.match(text, cursor)
+                cursor = token.end()
+            result.append((text[start:cursor].removeprefix('r#'), start, cursor))
+        return result
+
+    def plain_path(path):
+        for part in (path, *path.parents):
+            try:
+                metadata = part.lstat()
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            # One fresh, non-following read covers both POSIX links and Windows
+            # reparse points. Recheck ancestors on every call; do not cache them.
+            if stat.S_ISLNK(metadata.st_mode) or getattr(metadata, 'st_file_attributes', 0) & 1024:
+                raise ValueError('Linked paths are not eligible')
+        return path
+
+    class WorkspaceError(RuntimeError):
+        pass
+
+    def validate_ci_scope(root, head):
+        root = plain_path(Path(root).absolute())
+
+        def git_names(*args):
+            return subprocess.check_output(['git', '-C', str(root), *args], stderr=subprocess.PIPE).decode('utf-8')
+
+        if git_names('rev-parse', 'HEAD').strip() != head:
+            raise ValueError('Admin CI checkout differs from the classified head')
+        def source_names():
+            values = git_names('ls-files', '--cached', '--others', '--exclude-standard', '-z',
+                               '--', 'backend', '.cargo', *sorted(ROOT_FILES)).split('\0')
+            return {name for name in values if name and (
+                name.startswith(('backend/', '.cargo/')) or name in ROOT_FILES
+            )}
+
+        names = source_names()
+        if len(names) > MAX_FILES:
+            raise ValueError('Admin CI source path budget exceeded')
+        required = {'backend/Cargo.toml', 'backend/Cargo.lock', '.base-revision', '.namespace-base-revision',
+                    *(f'backend/{member}/Cargo.toml' for member in MEMBERS), *STUBS}
+        if required - names:
+            raise ValueError('Admin CI source layout is incomplete')
+        # Cargo discovers these even when a global ignore rule hides the file.
+        directories = ('backend', *(f'backend/{member}' for member in MEMBERS))
+        for directory in directories:
+            if plain_path(root / directory / 'build.rs').exists():
+                raise ValueError('Admin CI build script requires source-contract review')
+
+        total = 0
+        inspected = []
+        read_names = set()
+
+        def read(name):
+            nonlocal total
+            path = plain_path(root / name)
+            before = path.lstat()
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > MAX_FILE_BYTES:
+                raise ValueError('Admin CI source requires bounded independent regular files')
+            raw = path.read_bytes()
+            after = plain_path(path).lstat()
+            fields = ('st_ino', 'st_size', 'st_mode', 'st_mtime_ns', 'st_ctime_ns', 'st_nlink')
+            if len(raw) != before.st_size or any(getattr(before, key) != getattr(after, key) for key in fields):
+                raise ValueError('Admin CI source changed during inspection')
+            total += len(raw)
+            if total > MAX_BYTES:
+                raise ValueError('Admin CI source byte budget exceeded')
+            inspected.append((path, after, fields))
+            read_names.add(name)
+            return raw
+
+        try:
+            for name in ('backend/Cargo.toml', *(f'backend/{member}/Cargo.toml' for member in MEMBERS)):
+                validate_manifest(name, tomllib.loads(read(name).decode('utf-8')))
+            for pin in ('.base-revision', '.namespace-base-revision'):
+                if not re.fullmatch('[a-f0-9]{40}', read(pin).decode('utf-8').strip()):
+                    raise ValueError('Admin CI source requires both exact SDK pins')
+            for name in sorted(names):
+                path = plain_path(root / name)
+                parts = PurePosixPath(name).parts
+                if name.endswith('/build.rs'):
+                    raise ValueError('Admin CI build script requires source-contract review')
+                if name.startswith('backend/ai-runtime/') and len(parts) > 3 and parts[2] in ('tests', 'examples', 'benches'):
+                    raise ValueError('Admin CI automatic AI targets require source-contract review')
+                if name.startswith('backend/ai-runtime/src/bin/') and name.endswith('.rs'):
+                    raise ValueError('Admin CI automatic AI binary requires source-contract review')
+                if not production_file(name) or name in read_names:
+                    continue
+                if not path.exists():
+                    raise ValueError('Admin CI production input is missing: ' + name)
+                raw = read(name)
+                if name.startswith(('.cargo/', 'backend/.cargo/')):
+                    validate_config(name, raw)
+                if name.endswith('.rs') and name not in TEST_FILES and 'tests' not in parts:
+                    validate_readers(name, raw)
+        except WorkspaceError as error:
+            raise ValueError(str(error)) from error
+        for path, before, fields in inspected:
+            after = plain_path(path).lstat()
+            if any(getattr(before, key) != getattr(after, key) for key in fields):
+                raise ValueError('Admin CI inputs changed before selection completed')
+        if source_names() != names:
+            raise ValueError('Admin CI source inventory changed during inspection')
+        for directory in directories:
+            if plain_path(root / directory / 'build.rs').exists():
+                raise ValueError('Admin CI build script appeared during inspection')
+        if git_names('rev-parse', 'HEAD').strip() != head:
+            raise ValueError('Admin CI head changed during classification')
+        return {'files': len(inspected), 'bytes': total}
+
+    return validate_ci_scope(root, head)
+# END GENERATED ADMIN CI SCOPE
+
+
+def validate_artifact_selection(manifest):
+    value = manifest.get('artifact_selection')
+    if value is None:
+        return
+    gates = [gate for gate in manifest['gates'] if gate['id'] == 'backend:build']
+    if (manifest.get('product') != 'admin-panel'
+            or value != {'backend:build': 'admin-server-source-v1'}
+            or len(gates) != 1 or gates[0] not in (ADMIN_NATIVE_GATE, ADMIN_NATIVE_V3_GATE)):
+        raise ValueError('Artifact selection requires the closed Admin server source contract')
+
+
+def admin_artifact_unchanged(manifest, files):
+    """Only the declared AI payload is outside the validated server producer."""
+    return bool(manifest.get('artifact_selection') and files) and all(
+        name.startswith('backend/ai-runtime/') and name != 'backend/ai-runtime/Cargo.toml'
+        for name in files
+    )
 
 
 def validate_affected_checks(manifest):
@@ -778,8 +1484,14 @@ def affected_checks(gates, manifest, reasons):
 def plan(
     root, profile="fast", base="HEAD", changed=None, components=None, manifest=None,
     *, only_components=None, execution_platform=None, native_docker_context=None, native_admin_inputs=None,
+    native_rust_inputs=None, native_java_cache=None, native_rust_cache_inputs=None, native_java_main_unit=None,
 ):
     manifest = load(root) if manifest is None else manifest
+    validate_artifact_selection(manifest)
+    shared_check_groups(manifest['gates'], require_pairs=True)
+    if native_java_main_unit is not None and profile not in ('fast', 'unit', 'build'):
+        raise ValueError('Main/unit dev profile does not select manual/release gates')
+    cache_request = java_compiler_cache_request(native_java_cache)
     validate_affected_checks(manifest)
     if only_components and (components or set(only_components) - manifest["components"].keys()):
         raise ValueError("Affected component filter requires known components and no explicit selection")
@@ -819,6 +1531,10 @@ def plan(
                 for name in files
             )
         ]
+        if any(gate['id'] == 'backend:build' for gate in gates) and admin_artifact_unchanged(
+                manifest, reasons.get('backend', [])):
+            admin_ci_scope(root, git(root, 'rev-parse', 'HEAD'))
+            gates = [gate for gate in gates if gate['id'] != 'backend:build']
     if native_admin_inputs is not None:
         native = manifest.get('native_execution')
         if isinstance(native, dict) and native.get('adapter') in ('admin-compose-v2', 'admin-compose-v3'):
@@ -826,11 +1542,17 @@ def plan(
                 raise ValueError('Admin native v2/v3 inputs require only backend fast, unit or Build selection')
         elif profile != 'build' or selected != ['backend']:
             raise ValueError('Admin native inputs require only the backend Build selection')
+    if native_rust_inputs is not None and (profile not in ('fast', 'unit', 'build') or selected != ['backend']):
+        raise ValueError('Rust native inputs require only the backend fast/unit/Build selection')
+    gates = coalesce_shared_checks(gates)
     native = native_execution_plan(manifest, gates, execution_platform, native_docker_context,
-                                   native_admin_inputs=native_admin_inputs)
+                                   native_admin_inputs=native_admin_inputs, native_rust_inputs=native_rust_inputs,
+                                   native_java_cache=cache_request is not None, native_rust_cache_inputs=native_rust_cache_inputs,
+                                   native_java_main_unit=native_java_main_unit)
     if native:
         # Native adapters retain the ordinary gate identities for certification.
-        ordinary = gradle_unit_groups([gate for gate in gates if gate['id'] not in native['gates']])
+        ordinary = gradle_unit_groups([gate for gate in gates if gate['id'] not in native['gates']],
+                                      native_gates=native_gradle_gate_ids(manifest))
         replacements = {name: gate for gate in ordinary for name in gate.get('member_gates', [gate['id']])}
         projected, seen = [], set()
         for gate in gates:
@@ -840,7 +1562,7 @@ def plan(
                 seen.add(replacement['id'])
         ordered = order_unit_coverage(projected)
     else:
-        ordered = order_unit_coverage(gradle_unit_groups(gates))
+        ordered = order_unit_coverage(gradle_unit_groups(gates, native_gates=native_gradle_gate_ids(manifest)))
     result = {
         "schema": "base-quality-plan/v1",
         "product": manifest["product"],
@@ -855,6 +1577,8 @@ def plan(
     }
     if native:
         result['native_execution'] = native
+    if cache_request is not None:
+        result['java_compiler_cache_request'] = cache_request
     return result
 
 
@@ -872,7 +1596,7 @@ def plan_summary(candidate):
             for component, paths in candidate["reasons"].items()
         },
         "gates": [
-            {name: gate[name] for name in ("id", "component", "test_tier", "member_gates") if name in gate}
+            {name: gate[name] for name in ("id", "component", "test_tier", "member_gates", "shared_check_members") if name in gate}
             for gate in candidate["gates"]
         ],
         "additional_acceptance": candidate.get("additional_acceptance"),
@@ -880,15 +1604,16 @@ def plan_summary(candidate):
     }
     if candidate.get('native_execution'):
         result['native_execution'] = candidate['native_execution']
+    if candidate.get('java_compiler_cache_request') is not None:
+        result['java_compiler_cache_request'] = dict(candidate['java_compiler_cache_request'])
     return result
 
 
-def ci_components(root, event, base, head, manifest_root=None):
-    manifest = load(manifest_root or root)
+def ci_changed_files(root, event, base, head):
     if event not in ("pull_request", "push") or (
         event == "push" and (not base or base == "0" * 40)
     ):
-        return list(manifest["components"])
+        return None
     if not re.fullmatch(r"[0-9a-f]{40}", base or "") or not re.fullmatch(
         r"[0-9a-f]{40}", head or ""
     ):
@@ -897,8 +1622,13 @@ def ci_components(root, event, base, head, manifest_root=None):
         )
     # Direct comparison needs only the two exact commits, not an entire history.
     # Diverged target changes may overselect, but can never omit a source change.
-    files = git(root, "diff", "--name-only", "--no-renames", base, head).splitlines()
-    return components_for_paths(manifest, files)[0]
+    return git(root, "diff", "--name-only", "--no-renames", base, head).splitlines()
+
+
+def ci_components(root, event, base, head, manifest_root=None):
+    manifest = load(manifest_root or root)
+    files = ci_changed_files(root, event, base, head)
+    return list(manifest['components']) if files is None else components_for_paths(manifest, files)[0]
 
 
 def classify(event, base, head, *, repo, manifest_root=None):
@@ -912,12 +1642,15 @@ def classify(event, base, head, *, repo, manifest_root=None):
 
 
 def ci_outputs(event, base, head, *, repo, manifest_root=None):
-    values = classify(event, base, head, repo=repo, manifest_root=manifest_root)
     manifest = load(manifest_root or repo)
-    if event in ("pull_request", "push") and base and base != "0" * 40:
-        files = git(
-            repo, "diff", "--name-only", "--no-renames", base, head
-        ).splitlines()
+    validate_artifact_selection(manifest)
+    files = ci_changed_files(repo, event, base, head)
+    components = list(manifest['components']) if files is None else components_for_paths(manifest, files)[0]
+    values = {
+        'backend': str(any(name in components for name in ('backend', 'shared', 'bot', 'cli'))).lower(),
+        'frontend': str('frontend' in components).lower(),
+    }
+    if files is not None:
         # Decide each producer from its own affected paths. An unrelated backend
         # change must not turn a frontend test-only change into an asset rebuild.
         # Unknown paths and explicit shared impacts still expand through the map.
@@ -931,6 +1664,9 @@ def ci_outputs(event, base, head, *, repo, manifest_root=None):
         backend_unit_only = bool(backend_files) and all(
             matches(name, manifest.get("backend_unit_inputs", [])) for name in backend_files
         )
+        if not backend_unit_only and admin_artifact_unchanged(manifest, backend_files):
+            admin_ci_scope(repo, head)
+            backend_unit_only = True
     else:
         unit_only = False
         backend_unit_only = False

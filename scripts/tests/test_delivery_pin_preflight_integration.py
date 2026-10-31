@@ -35,7 +35,7 @@ class DeliveryPinPreflightTests(unittest.TestCase):
                 [shutil.which("pwsh"), "-NoProfile", "-File", str(script), "-BaseRoot", str(base),
                  "-RustImage", "sha256:" + "1" * 64, "-PostgresImage", "sha256:" + "2" * 64,
                  "-TargetCache", "unused-target", "-CargoCache", "unused-cargo", "-RustupCache", "unused-rustup"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=30, check=False,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Pinned Base validation failed", result.stderr)
@@ -76,7 +76,7 @@ class DeliveryPinPreflightTests(unittest.TestCase):
             )
             result = subprocess.run(
                 [shutil.which("pwsh"), "-NoProfile", "-Command", command],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=30, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             hashes = json.loads(result.stdout)
