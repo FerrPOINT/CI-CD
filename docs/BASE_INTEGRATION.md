@@ -1,5 +1,15 @@
 # Интеграция CI-CD с Base
 
+## UI0.3.33 — общая адаптивная шапка
+
+Принят точный Base UI producer `77bbb10d4c1da35bb66a1f9f11ba51753342f89f`, reference
+`2043a53cf190b8abdf916f0e898fb22d619c5ccdff05d4667474106fef6ce2db`. Общая шапка сохраняет навигацию, название продукта
+и действия на узком экране; её высота следует типографике и плотности.
+Используется публичный контракт Base, без продуктового CSS для геометрии шапки.
+SDK/skills pins и внешние dependency resolutions сохранены.
+[Квалификация source-комплекта](https://github.com/FerrPOINT/services-base/blob/refactor/shared-ui-residuals-20261024/docs/reports/branding-local-qualification-20261101.md)
+разделяет локальные проверки, IAB и hosted CI; установленный runtime не обновлялся.
+
 ## Текущий source-кандидат UI0.3.32
 
 Producer `6f3c557698a8224c5a19e56bdc37b199ba076694`, reference
@@ -53,7 +63,6 @@ SDK/skills pins независимы. Установка и authenticated runtim
 
 ## Квалификация прежнего UI0.3.27: независимые радиусы контейнеров
 
-
 Текущий pin включает общий card-radius для Card, framed ResourceList,
 Disclosure, preview frame и toast. Вложенные controls, меню и диалоги
 сохраняют отдельные control/menu/dialog. Расчёт и skin принадлежат Base;
@@ -70,7 +79,6 @@ Private evidence: ui027-card-radius-20261029/gate и unit-input-deltas.json.
 Установка, hosted CI и полная authenticated browser matrix этим не подтверждены.
 
 ## Предыдущие source-квалификации
-
 
 Финальный checkpoint 2de0f72b включает bounded fetch/body wait. Frozen offline
 refresh, exact snapshot, types, production build и shell contract PASS.
