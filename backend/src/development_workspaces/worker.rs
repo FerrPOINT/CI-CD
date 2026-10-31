@@ -121,7 +121,7 @@ pub(super) async fn tick(state: &AppState) -> Result<(), ApiError> {
                     work.request["action"].as_str(),
                     Some("register" | "create" | "observe" | "start" | "stop")
                 );
-                finish(pool,&work,if native || error.status.is_server_error() {"unknown"}else{"failed"},json!({"reason":if native {"native_result_unconfirmed"}else{"command_rejected"},"status":error.status.as_u16()})).await?;
+                finish(pool,&work,if native || error.status.is_server_error() {"unknown"}else{"failed"},json!({"reason":if native {"native_result_unconfirmed"}else{error.message.as_str()},"status":error.status.as_u16()})).await?;
             }
         }
     }
@@ -253,9 +253,10 @@ async fn execute(
         }
         let result = match &action {
             WorkspaceAction::BeginSession{task} => {
-                let project:String=sqlx::query_scalar("SELECT project_key FROM forge_workspace_projects WHERE tracker_instance_id=$1 AND tracker_project_id=$2 AND state='active'")
+                let (registry_instance_id,namespace_id):(Uuid,Uuid)=sqlx::query_as("SELECT registry_instance_id,namespace_id FROM forge_workspace_projects WHERE tracker_instance_id=$1 AND tracker_project_id=$2 AND state='active'")
                     .bind(workspace.tracker_instance_id).bind(workspace.tracker_project_id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
-                let (task_id,task_ref)=crate::task_delivery::tracker::read_workspace_issue(&state.config.sdlc_workspace,task,&project,workspace.tracker_project_id).await?;
+                let namespace=pdlc_shared::resource_context::NamespaceRef{registry_instance_id,namespace_id};
+                let (task_id,task_ref)=super::tracker::read_task(&namespace,workspace.tracker_instance_id,workspace.tracker_project_id,task).await?;
                 sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,sources) VALUES($1,$2,$3,$4,$5,$6,$7)")
                     .bind(work.id).bind(workspace.id).bind(work.actor_id).bind(work.owner_subject).bind(task_id).bind(task_ref).bind(&workspace.sources).execute(&mut *tx).await.map_err(ApiError::internal)?;
                 json!({"state":"succeeded","sessionId":work.id})

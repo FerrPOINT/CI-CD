@@ -2,6 +2,7 @@
 
 mod catalog;
 mod native;
+mod tracker;
 pub mod worker;
 use crate::api::{ApiError, AppState, authz_mw::VerifiedRequestIdentity};
 use crate::space_admission::RepositoryWrite;

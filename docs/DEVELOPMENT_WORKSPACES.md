@@ -24,6 +24,12 @@ environment проверяются по конфигурации, Tracker projec
 Service account не подменяет человека. Сохранённый владелец повторно проверяется
 перед исполнением; принятие команды не сохраняет его права навсегда.
 
+Задача ручной сессии проверяется существующим registered namespace reader
+Tracker (`CICD_NAMESPACE__TRACKER_*`). Ключ разрешается в scoped catalog, затем
+UUID/project/namespace/state перечитываются через namespace task context.
+Отдельный SDLC execution или его credential для этого не требуются. Весь lookup
+ограничен тремя секундами и 10000 metadata entries; известный UUID читается прямо.
+
 Одна сессия получает право записи. Таймаут не освобождает её. Stop не завершает
 сессию и отклоняется при активной работе. Проверки, сборки, delivery, pending
 leases и неподтверждённое native completion удерживают свой instance.
