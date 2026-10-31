@@ -157,10 +157,8 @@ async fn resolve(
                 {
                     return Err(unavailable());
                 }
-                if item.task_key == identifier {
-                    if found.replace(item.task.task_id).is_some() {
-                        return Err(unavailable());
-                    }
+                if item.task_key == identifier && found.replace(item.task.task_id).is_some() {
+                    return Err(unavailable());
                 }
             }
             if found.is_some() || page.len() < 50 {
