@@ -146,6 +146,7 @@ jobs:
       run:
         working-directory: CI-CD/backend
     env:
+      CARGO_INCREMENTAL: "0"
       CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v4
@@ -184,11 +185,29 @@ jobs:
         with:
           toolchain: 1.88.0
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache Cargo downloads
         if: needs.changes.outputs.backend == 'true'
+        uses: actions/cache@v6
         with:
-          workspaces: CI-CD/backend
-          cache-targets: false
+          path: |
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            ~/.cargo/git/db
+          key: >-
+            ${{ format('{0}-{1}-cargo-downloads-v1-rust1.88.0-{2}-{3}-{4}-{5}-{6}-{7}-{8}-{9}-{10}',
+            runner.os,
+            runner.arch,
+            hashFiles('CI-CD/backend/Cargo.lock', 'CI-CD/backend/**/Cargo.toml', 'CI-CD/.base-revision', 'CI-CD/.namespace-base-revision', 'CI-CD/.cargo/config.toml', 'CI-CD/backend/.cargo/config.toml'),
+            needs.changes.outputs.backend,
+            needs.changes.outputs.backend_build,
+            needs.changes.outputs.cli_build,
+            needs.changes.outputs.delivery_build,
+            needs.changes.outputs.migration_build,
+            needs.changes.outputs.openapi_check,
+            needs.changes.outputs.pg_migrate_build,
+            needs.changes.outputs.server_checks) }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-downloads-v1-rust1.88.0-
       - name: fmt
         if: needs.changes.outputs.backend == 'true'
         run: cargo fmt --all -- --check

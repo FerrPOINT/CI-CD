@@ -146,7 +146,7 @@ class CurrentPerformanceRoutesTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
         self.assertIn("if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.pinned_imports == 'true'", workflow)
         for step in ('      - uses: dtolnay/rust-toolchain@stable\n',
-                     '      - uses: Swatinem/rust-cache@v2\n', '      - name: fmt\n',
+                     '      - name: Cache Cargo downloads\n', '      - name: fmt\n',
                      '      - name: Native QA Compose ownership regressions\n'):
             self.assertIn(step + "        if: needs.changes.outputs.backend == 'true'\n", workflow)
 
