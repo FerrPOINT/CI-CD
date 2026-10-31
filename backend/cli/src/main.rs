@@ -1,4 +1,5 @@
 mod commands;
+mod dev_workspace;
 mod support;
 mod task_git;
 use std::{path::PathBuf, time::Duration};
@@ -118,6 +119,11 @@ fn resolve_profile(flag: &Option<String>) -> Option<ProfileOverrides> {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Управляемые окружения разработки проекта.
+    DevWorkspace {
+        #[command(subcommand)]
+        command: dev_workspace::Command,
+    },
     #[command(flatten)]
     Work(commands::WorkCommand),
     /// K5: emit shell completions (bash/zsh/fish/powershell).
@@ -1002,6 +1008,7 @@ fn classify_error(err: &anyhow::Error) -> u8 {
 async fn execute(api: &ApiClient, command: Command) -> anyhow::Result<Value> {
     match command {
         Command::Work(command) => commands::execute(api, command).await,
+        Command::DevWorkspace { command } => dev_workspace::execute(api, command).await,
         // Completions is handled in main() before the API client exists.
         Command::Completions { .. } => Ok(Value::Null),
         Command::Project { command } => project(api, command).await,

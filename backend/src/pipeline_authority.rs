@@ -42,6 +42,22 @@ impl Origin {
             clock: GitDeadline::native(until)?,
         }))
     }
+    pub(crate) fn from_owner(
+        owner: &pdlc_auth_core::application_access::VerifiedApplicationAccess,
+    ) -> Result<Self, ApiError> {
+        if !owner.decision.enforced || !owner.permits(&["ci-cd"], false) {
+            return Err(ApiError::forbidden());
+        }
+        let subject =
+            Uuid::parse_str(&owner.decision.subject).map_err(|_| ApiError::forbidden())?;
+        let clock = GitDeadline::owner(owner);
+        clock.require()?;
+        Ok(Self {
+            subject,
+            admin: owner.decision.role == pdlc_auth_core::application_access::HumanRole::Admin,
+            clock,
+        })
+    }
     pub(crate) fn subject(self) -> Uuid {
         self.subject
     }

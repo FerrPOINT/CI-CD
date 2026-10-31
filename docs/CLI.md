@@ -1,5 +1,11 @@
 # CLI Forge CI/CD
 
+Группа `dev-workspace` управляет постоянными окружениями разработки через
+отдельный API: list/profiles/show/register/create/observe/start/stop,
+begin-session/end-session/recover-session/prepare/check/build,
+operations/operation/wait/reconcile. [Примеры, права и recovery](DEVELOPMENT_WORKSPACES.md).
+Изменяющие команды требуют исходный operation UUID и expected_version.
+
 Поставка sdlc1 принята 2026-10-03: три backend обновлены после fresh backup, QA/rollback, live acceptance и наблюдения. [Установка](CLI_INSTALL.md), [проверки и ограничения](CLI_VALIDATION.md). Команды/API/exit codes сохранены; Linux x86_64/WSL, без version bumps/tags/public release.
 
 `cicd-cli` - HTTP-only утилита управления control plane. Бинарь живёт в отдельном workspace-пакете `backend/cli` (ADR-0005), общается с API через публичные routes и не линкует серверный код, SQLx, Git storage или runner implementation.

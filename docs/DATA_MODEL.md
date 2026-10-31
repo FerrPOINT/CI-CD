@@ -1,5 +1,13 @@
 # Дата-модель Forge CI/CD
 
+Аддитивная 0113 добавляет `development_workspaces`,
+`development_workspace_sessions`, `development_workspace_operations`.
+Уникальные partial indexes обеспечивают одну writer session и одну
+queued/running/unknown операцию на instance. История и terminal outcome
+неизменяемы; owner/identity references участвуют в существующих deletion fences.
+Настоящий Tracker project, Forge repository/configuration и execution environment
+сохраняются отдельно. [Контракт](DEVELOPMENT_WORKSPACES.md).
+
 Две выпущенные SQLx histories сходятся через явные migration directories: [ADR-0042](adr/0042-native-main-migration-lineages.md). Канонические 0108–0111 добавляют native Kubernetes target/execution, push refs и internal outbox channel. Общая 0112 устанавливает request clocks на добавленные таблицы, сохраняет owner_subject merge attempt и расширяет identity deletion fencing на попытки и владельца internal outbox. Исторические SQL/checksums не меняются.
 
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и

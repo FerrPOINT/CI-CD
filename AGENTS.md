@@ -70,6 +70,10 @@ cd frontend && pnpm build
 
 ## References
 
+- [Рабочие окружения разработки](docs/DEVELOPMENT_WORKSPACES.md): отдельное API,
+  один writer, custody/recovery и delivery/lifecycle admission. Не подменять
+  существующие TaskWorkspace или installation identifiers.
+
 - `docs/ARCHITECTURE.md`
 - `docs/CODE_STYLE.md`
 - `docs/TESTING.md`

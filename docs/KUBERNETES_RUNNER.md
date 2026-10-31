@@ -6,6 +6,36 @@ Compose/host-shell paths и SDK/UI pins сохранены.
 
 ## Конфигурация
 
+Необязательный `resourcesByImage` в owner JSON задаёт ресурсы отдельных
+квалифицированных образов по полному `repository@sha256:digest`. Его значения
+имеют те же поля и границы, что `resources`; максимум 32 записи. После проверки
+image admission выбирается точное совпадение, иначе сохраняется общий `resources`.
+Это не разрешение запускать образ вне `allowedImages` и не пользовательский
+параметр shell/job. Эффективный бюджет сохраняется в native intent и применяется
+к requests/limits Pod; recovery использует исходный бюджет.
+
+Так можно выделить R1 dependency images 2 GiB RAM, сохранив обычный бюджет
+остальных CI jobs. Перед принятием профиля проверяются namespace requests/limits,
+фактическая ёмкость и reserve узла/хоста. Quota или native OOM возвращают ошибку,
+лимит не повышается автоматически. Изменение owner JSON поставляется новой
+закреплённой generation; установленный immutable ConfigMap не редактируется.
+
+Для короткоживущего допуска runtime guard рекомендуется
+`CICD_KUBERNETES_ADMISSION_CONFIG_MAP=<owner ConfigMap name>`: controller читает
+ровно этот ConfigMap в своём namespace через штатный Kubernetes transport перед
+новым эффектом. Нужен только RBAC `get` с `resourceNames: [<owner ConfigMap name>]`;
+job этот доступ и service-account token не получает. Проверяются identity
+ConfigMap, installation/namespace UID, разрешение и прежний срок до 45 секунд.
+Ошибка чтения, закрытый либо просроченный допуск запрещают создание Pod; перехода
+к файловой копии после отказа нет. Recovery уже выданного эффекта читает исходный
+Pod без нового admission или повторного POST.
+
+Без этой настройки сохраняется чтение `CICD_KUBERNETES_ADMISSION_FILE` (по умолчанию
+`/run/pdlc-admission/admission.json`). [Проекция ConfigMap обновляется с задержкой](https://kubernetes.io/docs/concepts/configuration/configmap/#mounted-configmaps-are-updated-automatically),
+которая может превышать срок допуска. Это не основание увеличивать TTL или
+принимать старое разрешение. На временном controller этот случай воспроизведён
+отдельно от действующих runtime и данных R1.
+
 Backend и внешний runner используют один product-local adapter
 `backend/src/execution/kubernetes.rs`. Включение: `CICD_RUNNER_MODE=kubernetes`,
 `CICD_KUBERNETES_RUNNER_CONFIG=/etc/forge/runner.json`.
@@ -43,6 +73,13 @@ digest. Непустой список — явная дополнительна�
 v0.20.6 упакован с committed official archive checksums. Его registry reader
 credentials остаются controller-only; operator может задать `DOCKER_CONFIG`.
 Credentials процесса controller не копируются в job environment.
+
+Обычный job получает исходные `CICD_PIPELINE_ID`, `CICD_JOB_ID`, имя job,
+commit/ref и пути artifacts из выданной lease. Secrets проекта не могут
+заменить эти reserved identity fields. Автоматическая регистрация runner
+держит выданный credential в памяти процесса и не печатает его в stdout/stderr.
+Для постоянной регистрации operator заранее передаёт credential через штатный
+Secret/`CICD_RUNNER_CREDENTIAL`; restart не восстанавливает его из логов.
 
 Controller читает стандартные in-cluster token/CA; redirects и HTTP отключены,
 CA bytes сверяются с pin. Перед effects проверяются Namespace UID и Bound PVC UID.

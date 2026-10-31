@@ -7,6 +7,7 @@ import {
   Play,
   RefreshCw,
   Rocket,
+  Monitor,
 } from 'lucide-react'
 import {
   SidebarList,
@@ -48,6 +49,7 @@ export function WorkspaceNavigation({
     ['syncs', 'Синхронизации', RefreshCw],
     ['pipelines', 'Пайплайны', Play],
     ['deployments', 'Деплои', Rocket],
+    ['development-workspaces', 'Рабочие окружения', Monitor],
   ] as const
   if (malformed || catalog.isError)
     return (
