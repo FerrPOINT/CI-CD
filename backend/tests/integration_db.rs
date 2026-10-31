@@ -9291,7 +9291,9 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
     sqlx::query("INSERT INTO messaging_outbox (id, source, event_id, subject, payload, fingerprint, published_at, stream, stream_sequence) VALUES ($1, 'ci-cd', $2, 'pipeline.finished', $3, $4, now(), 'historical', 11)")
         .bind(message).bind(Uuid::new_v4()).bind(b"historical fixture".as_slice()).bind([0x5a_u8; 32].as_slice())
         .execute(&pool).await.unwrap();
-    let snapshot_sql = "SELECT jsonb_build_object('pipeline', (SELECT to_jsonb(p) FROM pipelines p WHERE id = $1), 'message', (SELECT to_jsonb(m) FROM messaging_outbox m WHERE id = $2))";
+    // Migration 0109 adds an ordering field; every previously existing column
+    // and the entire messaging receipt must retain its original value.
+    let snapshot_sql = "SELECT jsonb_build_object('pipeline', (SELECT to_jsonb(p)-'delivery_order' FROM pipelines p WHERE id = $1), 'message', (SELECT to_jsonb(m) FROM messaging_outbox m WHERE id = $2))";
     let snapshot: serde_json::Value = sqlx::query_scalar(snapshot_sql)
         .bind(pipeline)
         .bind(message)

@@ -34,6 +34,18 @@ async fn rows(pool: &PgPool) -> Value {
         .fetch_one(pool).await.unwrap()
 }
 
+fn original_columns(mut observed: Value, original: &Value) -> Value {
+    for (table, rows) in observed.as_object_mut().unwrap() {
+        let columns = original[table].as_array().unwrap()[0].as_object().unwrap();
+        for row in rows.as_array_mut().unwrap() {
+            row.as_object_mut()
+                .unwrap()
+                .retain(|key, _| columns.contains_key(key));
+        }
+    }
+    observed
+}
+
 #[tokio::test]
 async fn released_lineages_preserve_populated_rows_and_checksums() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -112,11 +124,11 @@ async fn released_lineages_preserve_populated_rows_and_checksums() {
         assert_eq!(snapshot(&pool, historical).await, history);
         catalog.run(&pool).await.unwrap();
         assert_eq!(snapshot(&pool, historical).await, history);
-        assert_eq!(rows(&pool).await, before);
+        assert_eq!(original_columns(rows(&pool).await, &before), before);
         let applied = snapshot(&pool, i64::MAX).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(snapshot(&pool, i64::MAX).await, applied);
-        assert_eq!(rows(&pool).await, before);
+        assert_eq!(original_columns(rows(&pool).await, &before), before);
         pool.close().await;
         sqlx::query(&format!("DROP DATABASE {name}"))
             .execute(&admin)
