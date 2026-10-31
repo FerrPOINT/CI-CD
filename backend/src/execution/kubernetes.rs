@@ -614,12 +614,30 @@ impl Execution {
     }
     /// Persist issued before POST. After crash/transport loss only GET of the same name is legal.
     pub async fn start(&self) -> anyhow::Result<()> {
-        self.start_with_admission(|| admission(&self.config)).await
+        self.start_with_async_admission(|| async {
+            match std::env::var("CICD_KUBERNETES_ADMISSION_CONFIG_MAP") {
+                Ok(name) => self.config_map_admission(&name).await,
+                Err(std::env::VarError::NotPresent) => admission(&self.config),
+                Err(error) => Err(error.into()),
+            }
+        })
+        .await
     }
+    #[cfg(test)]
     async fn start_with_admission(
         &self,
         authorize: impl FnOnce() -> anyhow::Result<Admission>,
     ) -> anyhow::Result<()> {
+        self.start_with_async_admission(|| std::future::ready(authorize()))
+            .await
+    }
+    async fn start_with_async_admission<F>(
+        &self,
+        authorize: impl FnOnce() -> F,
+    ) -> anyhow::Result<()>
+    where
+        F: std::future::Future<Output = anyhow::Result<Admission>>,
+    {
         let _submission = self.submission_lock()?;
         ensure!(
             !self.not_submitted()?,
@@ -632,7 +650,7 @@ impl Execution {
                 self.manifest.is_object(),
                 "reopened custody cannot create a new effect"
             );
-            let admission = authorize()?;
+            let admission = authorize().await?;
             // A private digest only: never persist command/env/secrets in custody.
             self.seal_authored_spec()?;
             write_once(&issued, b"true")?;
@@ -661,6 +679,38 @@ impl Execution {
             &serde_json::to_vec(&uid)?,
         )?;
         Ok(())
+    }
+    async fn config_map_admission(&self, name: &str) -> anyhow::Result<Admission> {
+        ensure!(dns(name), "invalid admission ConfigMap name");
+        let path = format!(
+            "/api/v1/namespaces/{}/configmaps/{name}",
+            self.config.namespace
+        );
+        let value = self
+            .get(&path)
+            .await?
+            .context("admission ConfigMap unavailable")?;
+        ensure!(
+            value["apiVersion"] == "v1"
+                && value["kind"] == "ConfigMap"
+                && value["metadata"]["name"] == name
+                && value["metadata"]["namespace"] == self.config.namespace,
+            "admission ConfigMap identity mismatch"
+        );
+        let bytes = value["data"]["admission.json"]
+            .as_str()
+            .context("admission ConfigMap data missing")?
+            .as_bytes();
+        ensure!(bytes.len() <= 8192, "admission exceeds bound");
+        let grant: Admission = serde_json::from_slice(bytes)?;
+        validate_admission(
+            &self.config,
+            &grant,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+        )?;
+        Ok(grant)
     }
     // The existing immutable intent inode serializes the two irreversible
     // outcomes: a submitted request, or a closed-before-submission receipt.
@@ -1797,7 +1847,7 @@ pub fn retry_unconfirmed(root: &Path, attempt: Uuid) -> anyhow::Result<bool> {
     Ok(false)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Admission {
     schema_version: u32,
@@ -1857,6 +1907,7 @@ mod lifecycle_tests {
     #[derive(Default)]
     struct Api {
         pod: Option<Value>,
+        admission: Option<Value>,
         creates: usize,
         deletes: usize,
         log_reads: usize,
@@ -1875,7 +1926,8 @@ mod lifecycle_tests {
                 return Response::builder().status(if unavailable { 500 } else { 200 })
                     .body(Body::from(if unavailable { "logs removed" } else { "CI_CANCEL_STARTED\n" })).unwrap();
             }
-            let (status,value)=if path.ends_with("/persistentvolumeclaims/workspaces"){(200,json!({"metadata":{"uid":c.workspace_claim_uid},"status":{"phase":"Bound"}}))}
+            let (status,value)=if path.ends_with("/configmaps/guard-admission") {api.admission.clone().map(|value|(200,value)).unwrap_or((404,json!({})))}
+            else if path.ends_with("/persistentvolumeclaims/workspaces"){(200,json!({"metadata":{"uid":c.workspace_claim_uid},"status":{"phase":"Bound"}}))}
             else if path==format!("/api/v1/namespaces/{}",c.namespace){(200,json!({"metadata":{"uid":c.namespace_uid}}))}
             else if method==Method::POST && path.ends_with("/pods") {api.creates+=1;let mut pod:Value=serde_json::from_slice(&bytes).unwrap();pod["metadata"]["uid"]=json!(Uuid::new_v4().to_string());pod["metadata"]["resourceVersion"]=json!("1");pod["status"]=json!({"phase":"Running","containerStatuses":[{"name":"execution","restartCount":0,"state":{"running":{"startedAt":"2026-10-22T00:00:00Z"}}}]});api.pod=Some(pod.clone());(201,pod)}
             else if method==Method::DELETE {api.deletes+=1;if let Some(pod)=&mut api.pod{pod["metadata"]["deletionTimestamp"]=json!("2026-10-22T00:01:00Z");pod["status"]=json!({"phase":"Failed","containerStatuses":[{"name":"execution","restartCount":0,"state":{"terminated":{"exitCode":143,"finishedAt":"2026-10-22T00:01:00Z","reason":"Terminated"}}}]});(200,pod.clone())}else{(404,json!({}))}}
@@ -1951,6 +2003,76 @@ mod lifecycle_tests {
             expires_epoch: 145,
             operation_id: "candidate".into(),
             epoch: Uuid::new_v4().to_string(),
+        }
+    }
+    #[tokio::test]
+    async fn live_admission_keeps_freshness_identity_and_denial_before_submission() {
+        for condition in [
+            "allowed",
+            "closed",
+            "expired",
+            "future",
+            "foreign-installation",
+            "foreign-namespace",
+            "missing",
+        ] {
+            let (execution, state, task) = fixture().await;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let mut admission = grant(&execution.config);
+            admission.observed_epoch = now;
+            admission.expires_epoch = now + 45;
+            match condition {
+                "closed" => admission.allow_new_operations = false,
+                "expired" => {
+                    admission.observed_epoch = now - 46;
+                    admission.expires_epoch = now - 1;
+                }
+                "future" => {
+                    admission.observed_epoch = now + 60;
+                    admission.expires_epoch = now + 105;
+                }
+                "foreign-installation" => admission.installation_sha256 = "f".repeat(64),
+                _ => (),
+            }
+            if condition != "missing" {
+                let namespace = if condition == "foreign-namespace" {
+                    "foreign"
+                } else {
+                    &execution.config.namespace
+                };
+                state.lock().unwrap().admission = Some(json!({
+                    "apiVersion":"v1","kind":"ConfigMap",
+                    "metadata":{"name":"guard-admission","namespace":namespace},
+                    "data":{"admission.json":serde_json::to_string(&admission).unwrap()}
+                }));
+            }
+            let result = execution
+                .start_with_async_admission(|| execution.config_map_admission("guard-admission"))
+                .await;
+            assert_eq!(result.is_ok(), condition == "allowed", "{condition}");
+            assert_eq!(
+                state.lock().unwrap().creates,
+                usize::from(condition == "allowed")
+            );
+            assert_eq!(
+                execution.directory.join("issued.json").exists(),
+                condition == "allowed"
+            );
+            if condition == "allowed" {
+                state.lock().unwrap().admission = None;
+                execution
+                    .start_with_async_admission(|| async {
+                        panic!("issued custody must only read the original Pod")
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(state.lock().unwrap().creates, 1);
+            }
+            task.abort();
+            fs::remove_dir_all(&execution.directory).unwrap();
         }
     }
     #[tokio::test]

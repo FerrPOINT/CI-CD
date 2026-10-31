@@ -6,6 +6,22 @@ Compose/host-shell paths и SDK/UI pins сохранены.
 
 ## Конфигурация
 
+Для короткоживущего допуска runtime guard рекомендуется
+`CICD_KUBERNETES_ADMISSION_CONFIG_MAP=<owner ConfigMap name>`: controller читает
+ровно этот ConfigMap в своём namespace через штатный Kubernetes transport перед
+новым эффектом. Нужен только RBAC `get` с `resourceNames: [<owner ConfigMap name>]`;
+job этот доступ и service-account token не получает. Проверяются identity
+ConfigMap, installation/namespace UID, разрешение и прежний срок до 45 секунд.
+Ошибка чтения, закрытый либо просроченный допуск запрещают создание Pod; перехода
+к файловой копии после отказа нет. Recovery уже выданного эффекта читает исходный
+Pod без нового admission или повторного POST.
+
+Без этой настройки сохраняется чтение `CICD_KUBERNETES_ADMISSION_FILE` (по умолчанию
+`/run/pdlc-admission/admission.json`). [Проекция ConfigMap обновляется с задержкой](https://kubernetes.io/docs/concepts/configuration/configmap/#mounted-configmaps-are-updated-automatically),
+которая может превышать срок допуска. Это не основание увеличивать TTL или
+принимать старое разрешение. На временном controller этот случай воспроизведён
+отдельно от действующих runtime и данных R1.
+
 Backend и внешний runner используют один product-local adapter
 `backend/src/execution/kubernetes.rs`. Включение: `CICD_RUNNER_MODE=kubernetes`,
 `CICD_KUBERNETES_RUNNER_CONFIG=/etc/forge/runner.json`.
