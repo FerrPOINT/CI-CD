@@ -51,6 +51,9 @@ mod git_sat_receive;
 #[path = "support/pull_merge_fencing.rs"]
 mod pull_merge_fencing;
 
+#[path = "support/unified_cicd.rs"]
+mod unified_cicd;
+
 type CanceledExternalLeaseState = (
     String,
     String,

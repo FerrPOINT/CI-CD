@@ -4,6 +4,9 @@
 //! an advisory lock so concurrent instances cannot race. `--dry-run` lists
 //! pending migrations without touching the database.
 
+#[path = "../../src/quiescence/kernel.rs"]
+#[allow(dead_code)]
+mod quiescence;
 use anyhow::Context;
 use clap::Parser;
 use std::path::PathBuf;
@@ -26,7 +29,16 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::var_os("CICD_QUIESCENCE_DIR").is_none() {
+        return run_main().await;
+    }
+    tokio::select! { result=run_main()=>result, result=quiescence::wait_for_exit()=>result }
+}
+async fn run_main() -> anyhow::Result<()> {
     let args = Args::parse();
+    quiescence::initialize("migration", vec![])?;
+    quiescence::wait_for_enrollment().await?;
+    let _effect = quiescence::enter(true)?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_secs(10))
         .connect(&args.database_url)
@@ -74,6 +86,12 @@ async fn run(
         if args.verify {
             anyhow::bail!("verify failed: history has {applied} entries but migrator has {total}");
         }
+        // An equal row count does not prove that this is the configured lineage.
+        // SQLx still validates every applied checksum before reporting no work.
+        migrator
+            .run(pool)
+            .await
+            .context("validate applied migration lineage")?;
         println!("nothing to apply ({applied} migrations in history)");
         return Ok(());
     }

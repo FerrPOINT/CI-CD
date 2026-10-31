@@ -10,6 +10,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wire the storage-layer enqueue hook to the in-process dispatch signal
     // (the storage crate itself is transport-agnostic; ADR-0012).
     let config = RuntimeConfig::from_env()?;
+    let workspace = if matches!(
+        config.runner.mode,
+        cicd::config::RunnerMode::Docker | cicd::config::RunnerMode::Kubernetes
+    ) {
+        std::path::PathBuf::from("/workspaces")
+    } else {
+        std::env::temp_dir()
+    };
+    let mut custody = vec![
+        cicd::quiescence::CustodyRoot::workspace(workspace),
+        cicd::quiescence::CustodyRoot::git(config.git.root.clone()),
+    ];
+    custody.extend(
+        config
+            .sdlc_workspace
+            .local_delivery_root
+            .iter()
+            .cloned()
+            .map(cicd::quiescence::CustodyRoot::delivery),
+    );
+    custody.extend(
+        std::env::var_os("CICD_LOCAL_PG_ROOT")
+            .map(std::path::PathBuf::from)
+            .map(cicd::quiescence::CustodyRoot::delivery),
+    );
+    cicd::quiescence::initialize("server", custody)?;
+    cicd::quiescence::wait_for_enrollment().await?;
+    let startup = cicd::quiescence::enter(true)?;
     let git = config.git.to_git_config();
     if git.internal_token.is_none() {
         tracing::warn!(
@@ -110,6 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hook_pool = pool.clone();
     let hook_git = git.clone();
     tokio::spawn(async move {
+        let _effect = startup;
         cicd::git_host::ensure_post_receive_hooks(&hook_pool, &hook_git).await;
     });
 
@@ -118,10 +147,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "CI/CD API listening");
-    axum::serve(
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await?;
+    );
+    if std::env::var_os("CICD_QUIESCENCE_DIR").is_some() {
+        use std::future::IntoFuture;
+        tokio::select! {
+            result = server.into_future() => result?,
+            result = cicd::quiescence::wait_for_exit() => result?,
+        }
+    } else {
+        server.await?;
+    }
     Ok(())
 }

@@ -62,6 +62,7 @@ async fn observe(
         repository_path: "fixture/repository".into(),
         direction: cicd_domain::repository_sync::Direction::Pull,
         automatic: false,
+        protected_branch_updates: Default::default(),
     };
     let session = GitSession::new(
         root,

@@ -1,5 +1,7 @@
 # Архитектура Forge CI/CD
 
+Установленные native Kubernetes execution/image publication/Helm delivery включаются в main вместе с его актуальными admission и human-owner проверками. Развилка SQLx histories и транзакционная граница merge/CI: [ADR-0042](adr/0042-native-main-migration-lineages.md). Общий binary не означает автоматическую установку или принятие workspace API.
+
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и
 сохранённый владелец CI: [ADR-0041](adr/0041-sync-admission-and-automation-owner.md).
 Аддитивная 0107; HTTP DTO не меняются. Runtime отдельно от source-поставки.
@@ -93,6 +95,10 @@ runtime qualification. GET читает history без effects. Existing platfor
 не становятся admission и не переименовываются в verified deployment.
 Процессный lock и durable filesystem journal не являются общей транзакцией с
 DB или протоколом orchestration stop. [ADR-0020](adr/0020-owner-local-manifest-delivery.md).
+
+Kubernetes source adapter и его ограниченные operator contracts описаны в
+[Kubernetes runner](KUBERNETES_RUNNER.md). Source completion, native builder
+feasibility и installed qualification проверяются отдельно.
 
 Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), внешний `forge-runner` shell MVP поверх runner protocol, платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.
 
@@ -238,7 +244,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_ARTIFACTS_DIR` | локальное хранилище артефактов |
 | `CICD_ARTIFACT_RETENTION_DAYS` | TTL новых артефактов; default 30, диапазон `1..3650` |
 | `CICD_EMBEDDED_RUNNER_ENABLED` | `true` по умолчанию; `false` отключает embedded execution в backend |
-| `CICD_RUNNER_MODE` | `host` в local compose; `docker`/`host` в backend binary |
+| `CICD_RUNNER_MODE` | `host` в local compose; `docker`/`host`/`kubernetes` в backend binary |
 | `CICD_RUNNER_DOCKER_NETWORK` | Docker network для embedded job-контейнеров; default сохраняет standalone Compose, umbrella deployment передаёт своё имя сети |
 | `CICD_RUNNER_SHARED_SOURCES_VOLUME` | Опциональный read-only volume, монтируемый в job как `/runner-sources`; отделён от writable workspace и Cargo cache |
 | `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS` | safety timeout queued job без compatible runner-а; default 86400, `0` отключает |
@@ -343,3 +349,6 @@ Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` prox
 полной загрузки страниц каталога, по статусу и immutable resource identity;
 имя проекта не влияет на видимость. Неподключённые и локальные проекты
 не считаются архивными по отсутствию связи.
+
+Приостановка producers и source-owned writer closure перед backup описаны в
+[FORGE_QUIESCENCE](FORGE_QUIESCENCE.md) и [ADR-0033](adr/0033-product-local-quiescence.md).

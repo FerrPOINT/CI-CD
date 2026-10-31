@@ -25,6 +25,9 @@ use crate::{
 #[path = "runner_image_build_admission_tests.rs"]
 mod image_build_admission_tests;
 
+#[path = "runner_kubernetes.rs"]
+mod kubernetes;
+
 #[cfg(all(test, feature = "integration"))]
 #[path = "runner_image_build_terminal_tests.rs"]
 mod image_build_terminal_tests;
@@ -122,6 +125,18 @@ pub async fn run_job_with_config(
     running: RunningJobs,
     config: RuntimeRunnerConfig,
 ) {
+    let new_work = if std::env::var_os("CICD_QUIESCENCE_DIR").is_some() {
+        let existing = sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id=$1")
+            .bind(job_id)
+            .fetch_optional(&pool)
+            .await;
+        !matches!(existing, Ok(Some(ref status)) if status == "running")
+    } else {
+        true
+    };
+    let Ok(_effect) = crate::quiescence::enter(new_work) else {
+        return;
+    };
     {
         let mut guard = running.lock().await;
         if guard.contains_key(&job_id) {
@@ -268,6 +283,7 @@ async fn claim_embedded_job_lease(
               AND q.state = 'queued'
               AND q.not_before <= now()
               AND cardinality(q.required_tags) = 0
+               AND j.command NOT IN ('forge:image-publish','forge:helm-deploy')
               AND j.status = 'queued'
               AND a.status = 'queued'
               AND NOT j.manual
@@ -817,7 +833,8 @@ pub async fn reconcile_queue_timeouts_with_config(
                  WHERE ys.pipeline_id = p.id AND ys.position = s.position \
                    AND y.status = 'failed' AND NOT y.allow_failure \
                ) \
-               AND NOT ($2::boolean AND cardinality(q.required_tags) = 0) \
+               AND NOT ($2::boolean AND cardinality(q.required_tags) = 0
+               AND j.command NOT IN ('forge:image-publish','forge:helm-deploy')) \
                AND NOT EXISTS ( \
                  SELECT 1 \
                  FROM runners r \
@@ -827,6 +844,15 @@ pub async fn reconcile_queue_timeouts_with_config(
                    AND r.credential_hash IS NOT NULL \
                    AND (r.credential_expires_at IS NULL OR r.credential_expires_at > now()) \
                    AND q.required_tags <@ r.tags \
+                   AND (j.command <> 'forge:image-publish' OR \
+                        r.capabilities->'jobKinds' @> '[\"image-publish-v1\"]'::jsonb AND r.capabilities->'executorKinds' @> '[\"kubernetes\"]'::jsonb) \
+                   AND (j.command <> 'forge:helm-deploy' OR ( \
+                        r.capabilities->'jobKinds' @> '[\"helm-deploy-v1\"]'::jsonb AND \
+                        r.capabilities->'executorKinds' @> '[\"kubernetes\"]'::jsonb AND \
+                        EXISTS(SELECT 1 FROM pipeline_plans pp, jsonb_array_elements(pp.plan->'jobs') entry \
+                            WHERE pp.pipeline_id=p.id AND entry->>'key'=j.name AND \
+                            r.capabilities->'helmTargets' ? (entry->'helm_deploy'->>'environment_id')))) \
+                   AND j.command <> 'forge:image-build' \
                    AND ( \
                      NOT (r.capabilities ? 'executorKinds') \
                      OR EXISTS ( \
@@ -838,7 +864,7 @@ pub async fn reconcile_queue_timeouts_with_config(
                            ELSE '[]'::jsonb \
                          END \
                        ) AS executor(kind) \
-                       WHERE btrim(executor.kind) = 'shell' \
+                       WHERE btrim(executor.kind) IN ('shell','kubernetes') \
                      ) \
                    ) \
                ) \
@@ -1037,37 +1063,40 @@ async fn image_build_input(
     let Some(spec) = planned_image_build(job, &snapshot)? else {
         return Ok(None);
     };
-    if config.mode != RunnerMode::Docker {
+    if !matches!(config.mode, RunnerMode::Docker | RunnerMode::Kubernetes) {
         return Err(ApiError::conflict(
             "Backend image builds require the configured Docker runner",
         ));
     }
+    Ok(Some((spec, task_job_source(pool, job, config).await?)))
+}
+
+async fn task_job_source(
+    pool: &PgPool,
+    job: &JobRow,
+    config: &RuntimeRunnerConfig,
+) -> Result<crate::runner_workspace::preparation::PreparationSource, ApiError> {
     let mut conn = pool.acquire().await.map_err(ApiError::internal)?;
     let record = cicd_infra::sdlc_workspace::find_task_pipeline(&mut conn, job.pipeline_id, false)
         .await
         .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::conflict("Image build requires authenticated task intent"))?;
+        .ok_or_else(|| ApiError::conflict("Authenticated task source required"))?;
     drop(conn);
     if record.project_id != job.project_id
         || Some(record.intent.source_commit.as_str()) != job.commit_sha.as_deref()
     {
-        return Err(ApiError::conflict(
-            "Image build task source differs from pipeline",
-        ));
+        return Err(ApiError::conflict("Task source differs from pipeline"));
     }
     let storage = crate::repository_catalog::local_storage_for_project(pool, job.project_id)
         .await?
-        .ok_or_else(|| ApiError::conflict("Hosted build source is unavailable"))?;
+        .ok_or_else(|| ApiError::conflict("Hosted source unavailable"))?;
     let storage = crate::git_host::validate_repo_name(&storage).map_err(ApiError::conflict)?;
-    Ok(Some((
-        spec,
-        crate::runner_workspace::preparation::PreparationSource {
-            project_id: job.project_id,
-            repository_id: record.intent.repository_id,
-            repository: config.git_root.join(format!("{storage}.git")),
-            source_commit: record.intent.source_commit.clone(),
-        },
-    )))
+    Ok(crate::runner_workspace::preparation::PreparationSource {
+        project_id: job.project_id,
+        repository_id: record.intent.repository_id,
+        repository: config.git_root.join(format!("{storage}.git")),
+        source_commit: record.intent.source_commit.clone(),
+    })
 }
 
 async fn image_build_attempt_active(
@@ -1247,6 +1276,12 @@ async fn run_job_inner(
     let attempt_id = lease.attempt_id;
     if admitted_attempt.is_some_and(|admitted| admitted != attempt_id) {
         return Ok(ExecutionOutcome::Held);
+    }
+
+    if config.mode == RunnerMode::Kubernetes {
+        // Parent projections follow the claimed job, not later Pod cleanup.
+        refresh_stage(pool.clone(), job.id).await?;
+        return kubernetes::run(&pool, &job, &lease, &running, config, owner_clock).await;
     }
 
     if !matches!(
@@ -2404,10 +2439,15 @@ pub async fn maintenance_loop(pool: PgPool) {
 
 pub async fn maintenance_loop_with_config(pool: PgPool, config: RuntimeRunnerConfig) {
     loop {
+        let Ok(_effect) = crate::quiescence::enter(false) else {
+            tokio::time::sleep(Duration::from_secs(RUNNER_RECONCILE_INTERVAL_SECONDS)).await;
+            continue;
+        };
         match reconcile_runtime_state_with_config(&pool, &config).await {
             Ok(()) => {}
             Err(error) => tracing::error!(%error, "runner maintenance failed"),
         }
+        drop(_effect);
         tokio::time::sleep(Duration::from_secs(RUNNER_RECONCILE_INTERVAL_SECONDS)).await;
     }
 }
@@ -2424,8 +2464,17 @@ async fn poll_and_dispatch_with_config(
     running: RunningJobs,
     config: &RuntimeRunnerConfig,
 ) -> Result<(), sqlx::Error> {
+    let Ok(_effect) = crate::quiescence::enter(false) else {
+        return Ok(());
+    };
     reconcile_runtime_state_with_config(pool, config).await?;
+    if config.mode == RunnerMode::Kubernetes {
+        kubernetes::reconcile_terminal(pool, &running, config).await?;
+    }
 
+    if !crate::quiescence::accepting() {
+        return Ok(());
+    }
     let enqueued = crate::store::enqueue_missing_ready_jobs(pool).await?;
     if enqueued > 0 {
         tracing::debug!(enqueued, "runner materialized missing job queue rows");
@@ -2440,7 +2489,8 @@ async fn poll_and_dispatch_with_config(
          JOIN pipelines p ON p.id = s.pipeline_id \
          WHERE q.state = 'queued' \
            AND q.not_before <= now() \
-           AND cardinality(q.required_tags) = 0 \
+           AND cardinality(q.required_tags) = 0
+               AND j.command NOT IN ('forge:image-publish','forge:helm-deploy') \
            AND j.status = 'queued' \
            AND a.status = 'queued' \
            AND NOT j.manual \
@@ -2599,7 +2649,7 @@ struct Candidate {
 /// the shared `forge_runner_workspaces` volume rather than the container's
 /// private /tmp. Host-shell mode keeps /tmp.
 fn workspace_root(config: &RuntimeRunnerConfig) -> std::path::PathBuf {
-    if config.mode == RunnerMode::Docker {
+    if matches!(config.mode, RunnerMode::Docker | RunnerMode::Kubernetes) {
         std::path::Path::new("/workspaces").to_path_buf()
     } else {
         std::env::temp_dir()

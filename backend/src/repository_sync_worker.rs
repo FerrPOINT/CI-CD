@@ -35,12 +35,18 @@ pub async fn supervisor(pool: PgPool, config: crate::config::RuntimeConfig) {
                 inflight.clear();
             }
         }
-        if let Err(error) = deliver_events(&store, &config).await {
-            tracing::warn!(%error,"sync pipeline delivery pending");
-        }
-        if config.git_sync.enabled {
-            if let Err(error) = store.schedule().await {
-                tracing::warn!(%error,"sync scheduling unavailable");
+        let Ok(_effect) = crate::quiescence::enter(false) else {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            continue;
+        };
+        if let Ok(_producer) = crate::quiescence::enter(true) {
+            if let Err(error) = deliver_events(&store, &config).await {
+                tracing::warn!(%error,"sync pipeline delivery pending");
+            }
+            if config.git_sync.enabled {
+                if let Err(error) = store.schedule().await {
+                    tracing::warn!(%error,"sync scheduling unavailable");
+                }
             }
         }
         if let Ok(candidates) = store.candidates().await {
@@ -79,6 +85,7 @@ pub async fn supervisor(pool: PgPool, config: crate::config::RuntimeConfig) {
                 });
             }
         }
+        drop(_effect);
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
@@ -116,6 +123,10 @@ async fn execute(
     repository: Uuid,
     storage: &str,
 ) -> Result<(), Error> {
+    let new_work = store.run(repository, id).await?.state == "queued";
+    let Ok(_effect) = crate::quiescence::enter(new_work) else {
+        return Ok(());
+    };
     let storage = crate::git_host::validate_repo_name(storage).map_err(Error::Invalid)?;
     // Namespace admission always precedes the OS mutation guard, as in receive-pack/merge.
     let mut lease =
@@ -311,7 +322,7 @@ async fn execute_claimed(
             let plan = plan_ref(
                 run.settings.direction,
                 tag,
-                protected,
+                protected && !run.settings.permits_protected_pull(),
                 a.map(String::as_str),
                 b.map(String::as_str),
                 a_ancestor,
@@ -399,6 +410,7 @@ async fn execute_claimed(
                 .ref_name
                 .strip_prefix("refs/heads/")
                 .is_some_and(|branch| protected.iter().any(|p| p == branch))
+                && !run.settings.permits_protected_pull()
             {
                 reference.state = "blocked".into();
                 store
@@ -568,9 +580,14 @@ async fn deliver_event(
         .await
         .map_err(|_| Error::Unavailable("Git storage недоступен"))?;
     let key = crate::git_host::git_push_idempotency_key(&storage, &reference.ref_name, sha);
-    let project = crate::delivery_configs::push_decision(&store.pool, repository, Some(&key))
-        .await
-        .map_err(|_| Error::Unavailable("Не удалось прочитать push policy"))?;
+    let project = crate::delivery_configs::push_decision_for_ref(
+        &store.pool,
+        repository,
+        Some(&key),
+        Some(&reference.ref_name),
+    )
+    .await
+    .map_err(|_| Error::Unavailable("Не удалось прочитать push policy"))?;
     if let Some(project) = project {
         // Git tags may legally point to a blob/tree. Transfer them, but there is no
         // commit to build; persist that terminal CI decision instead of retrying forever.

@@ -95,13 +95,19 @@ async fn verify_canonical_human_owner_sources(pool: &PgPool, store: &IdentityDel
     let settings = serde_json::json!({"provider":"github","instance_url":"https://github.com","repository_path":"fixture/owner","direction":"pull","automatic":false});
     sqlx::query("INSERT INTO repository_sync_connections(repository_id,settings,version,encrypted_credential,owner_subject) VALUES($1,$2,1,'synthetic-ciphertext',$3)").bind(repository).bind(&settings).bind(subject).execute(pool).await.unwrap();
     sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,owner_subject) VALUES($1,$2,1,$3,'manual','queued',$4)").bind(Uuid::new_v4()).bind(repository).bind(settings).bind(subject).execute(pool).await.unwrap();
+    let event = Uuid::new_v4();
+    let message = Uuid::new_v4();
+    sqlx::query("INSERT INTO domain_events(id,event_type,aggregate_type,aggregate_id) VALUES($1,'git.merge','repository',$2)")
+        .bind(event).bind(repository).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO outbox_messages(id,event_id,project_id,subscription_id,channel,destination,payload) VALUES($1,$2,$3,'fixture','pipeline_trigger','forge-ci:fixture',$4)")
+        .bind(message).bind(event).bind(project).bind(serde_json::json!({"ownerSubject":subject})).execute(pool).await.unwrap();
     assert_eq!(
         store
             .check(&target, &window())
             .await
             .unwrap()
             .reference_count,
-        6
+        7
     );
     assert_eq!(
         store
@@ -109,7 +115,7 @@ async fn verify_canonical_human_owner_sources(pool: &PgPool, store: &IdentityDel
             .await
             .unwrap()
             .reference_count,
-        6
+        7
     );
     for table in [
         "pipeline_human_owners",
@@ -132,6 +138,12 @@ async fn verify_canonical_human_owner_sources(pool: &PgPool, store: &IdentityDel
             "{table}"
         );
     }
+    let error = sqlx::query("UPDATE outbox_messages SET payload=payload WHERE id=$1")
+        .bind(message).execute(pool).await.unwrap_err();
+    assert_eq!(error.as_database_error().unwrap().message(), "identity_deletion_fenced");
+    // An unrelated notification does not acquire a human CI owner.
+    sqlx::query("INSERT INTO outbox_messages(id,event_id,project_id,subscription_id,channel,destination,payload) VALUES($1,$2,$3,'neighbor','notification','fixture','{}')")
+        .bind(Uuid::new_v4()).bind(event).bind(project).execute(pool).await.unwrap();
     // NULL is the released non-human scheduler contract, not an inferred UUID.
     sqlx::query("INSERT INTO schedules(id,project_id,cron,git_ref,owner_subject) VALUES($1,$2,'0 0 * * *','main',NULL)")
         .bind(Uuid::new_v4()).bind(project).execute(pool).await.unwrap();
@@ -170,7 +182,7 @@ async fn verify_canonical_human_owner_sources(pool: &PgPool, store: &IdentityDel
             .await
             .unwrap()
             .reference_count,
-        6
+        7
     );
 }
 

@@ -7156,6 +7156,10 @@ components:
       required:
       - name
       properties:
+        kubernetes_target:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/KubernetesTarget'
         name:
           type: string
         protected:
@@ -7664,6 +7668,11 @@ components:
           - string
           - 'null'
           format: uuid
+        runtime_phase:
+          type:
+          - string
+          - 'null'
+        runtime_receipt: {}
         status:
           type: string
     DeploymentApproval:
@@ -7813,6 +7822,10 @@ components:
         id:
           type: string
           format: uuid
+        kubernetes_target:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/KubernetesTarget'
         name:
           type: string
         project_id:
@@ -8204,6 +8217,56 @@ components:
       - success
       - failed
       - canceled
+    KubernetesTarget:
+      type: object
+      required:
+      - schema
+      - cluster
+      - namespace
+      - release
+      - chart
+      - health_url
+      properties:
+        chart:
+          type: string
+        cluster:
+          type: string
+        files:
+          type: object
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+        health_url:
+          type: string
+        namespace:
+          type: string
+        release:
+          type: string
+        schema:
+          type: string
+        values:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+    KubernetesTerminationProof:
+      type: object
+      required:
+      - clusterCaSha256
+      - namespaceUid
+      - workspaceClaimUid
+      - podUid
+      properties:
+        clusterCaSha256:
+          type: string
+        namespaceUid:
+          type: string
+        podUid:
+          type: string
+        workspaceClaimUid:
+          type: string
+      additionalProperties: false
     LoginRequest:
       type: object
       required:
@@ -9099,6 +9162,23 @@ components:
         user_id:
           type: string
           format: uuid
+    PublishedImage:
+      type: object
+      required:
+      - schema
+      - sourceCommit
+      - imageRef
+      - descriptorSha256
+      properties:
+        descriptorSha256:
+          type: string
+        imageRef:
+          type: string
+        schema:
+          type: string
+        sourceCommit:
+          type: string
+      additionalProperties: false
     PullRequest:
       type: object
       required:
@@ -9202,6 +9282,12 @@ components:
           - string
           - 'null'
           format: uuid
+        refs:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
       additionalProperties: false
     Readiness:
       type: object
@@ -9313,6 +9399,49 @@ components:
           type: string
         tag_name:
           type: string
+    ReleaseMetadata:
+      type: object
+      required:
+      - environmentId
+      - deploymentId
+      - pipelineId
+      - attemptId
+      - leaseId
+      - generation
+      - sourceCommit
+      - pipelineOrder
+      - images
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        deploymentId:
+          type: string
+          format: uuid
+        environmentId:
+          type: string
+          format: uuid
+        generation:
+          type: integer
+          format: int64
+        images:
+          type: object
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+        leaseId:
+          type: string
+          format: uuid
+        pipelineId:
+          type: string
+          format: uuid
+        pipelineOrder:
+          type: integer
+          format: int64
+        sourceCommit:
+          type: string
+      additionalProperties: false
     RenewalReadback:
       type: object
       required:
@@ -9476,6 +9605,8 @@ components:
           oneOf:
           - type: 'null'
           - $ref: '#/components/schemas/RepositorySyncSyncRun'
+        can_manage_protected_branch_updates:
+          type: boolean
         has_credential:
           type: boolean
         id:
@@ -9531,6 +9662,11 @@ components:
         registry_instance_id:
           type: string
           format: uuid
+    RepositorySyncProtectedBranchUpdates:
+      type: string
+      enum:
+      - blocked
+      - source_fast_forward
     RepositorySyncProvider:
       type: string
       enum:
@@ -9597,6 +9733,8 @@ components:
           $ref: '#/components/schemas/RepositorySyncDirection'
         instance_url:
           type: string
+        protected_branch_updates:
+          $ref: '#/components/schemas/RepositorySyncProtectedBranchUpdates'
         provider:
           $ref: '#/components/schemas/RepositorySyncProvider'
         repository_path:
@@ -9743,6 +9881,22 @@ components:
           type:
           - string
           - 'null'
+    RollbackRelease:
+      type: object
+      required:
+      - revision
+      - expectedCurrentRevision
+      - metadata
+      properties:
+        expectedCurrentRevision:
+          type: integer
+          format: int32
+        metadata:
+          $ref: '#/components/schemas/ReleaseMetadata'
+        revision:
+          type: integer
+          format: int32
+      additionalProperties: false
     RunPage:
       type: object
       required:
@@ -9824,11 +9978,19 @@ components:
           type: string
         gitRef:
           type: string
+        helmDeploy:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeploymentOffer'
         id:
           type: string
           format: uuid
         image:
           type: string
+        imagePublish:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/ImagePublishSpec'
         jobId:
           type: string
           format: uuid
@@ -9874,6 +10036,10 @@ components:
         attemptId:
           type: string
           format: uuid
+        deploymentObservation:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeploymentObservation'
         diagnostic:
           type:
           - string
@@ -9896,6 +10062,10 @@ components:
         protocolVersion:
           type: integer
           format: int32
+        terminationProof:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/KubernetesTerminationProof'
     RunnerCompleteResponse:
       type: object
       required:
@@ -10927,6 +11097,10 @@ components:
     UpdateEnvironment:
       type: object
       properties:
+        kubernetes_target:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/KubernetesTarget'
         name:
           type:
           - string

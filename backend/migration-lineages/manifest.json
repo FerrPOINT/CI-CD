@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "mainRevision": "5ab203ddf8efac2a796b39765cf0f8b0f196553e",
+  "kubernetesV1Revision": "73c72491b5a0e43af532852de3c8bcbec25a581b",
+  "main": [
+    {
+      "file": "0001_bootstrap_v1.sql",
+      "sha384": "a11ea685a7220ab5838f77eaba7b8712e54c595520e194d57b5600abbbd5a1adfb477e6f56774bdcc0dd341b1ad6ca89"
+    },
+    {
+      "file": "0002_runtime_role.sql",
+      "sha384": "1a088bd10bc27808eb864c87d04adc1d68475bd2c99ad904a98bab681fbba8e45eaa1fd4da51a59fc96ed8de8c7e68ca"
+    },
+    {
+      "file": "0003_auth_foundation.sql",
+      "sha384": "437f2c100ac6b89d31736ff320eeaae8da08381d1e837cb6c1a782206cbc58ed35d16bd5dda981a312782af91c47413c"
+    },
+    {
+      "file": "0004_outbox_delivery.sql",
+      "sha384": "4b037d99b55eae7e1d857f1f1deef257a41cc3226ba18ca9af1f0e69c87a4634785d8264fbc0749d35b46318c6ceb5ed"
+    },
+    {
+      "file": "0005_execution_gaps.sql",
+      "sha384": "5ab46833b750487107a1a4281da9c0838074c8d0e94ce02d4c9f62c6f659a4f09d834ebc13603b37f098328f513ad330"
+    },
+    {
+      "file": "0006_git_ci_details.sql",
+      "sha384": "625513d0a2687737553384854d707d25f60ff761b6dd8da8993f49c34306ec4b75b9dfbd37094a28aec474c7fc6f70d6"
+    },
+    {
+      "file": "0007_execution_attempts.sql",
+      "sha384": "ca71a0c5f2f817e157eed738a13a2700c79e363abd7c450833e1cf7181e4355d552f2c274058153355dcf848dc14721f"
+    },
+    {
+      "file": "0008_project_memberships.sql",
+      "sha384": "ea3eca10655cfcba5f44753bed8d3509c76acab7e4c6d04c87d036ad663f085fb590ecced8540f8ab9e8437ffd78fffc"
+    },
+    {
+      "file": "0009_pipeline_trigger_idempotency.sql",
+      "sha384": "e745f7bc3df333d18e58c9301265ef3bc725befaac5f968f3894d0cd7c7638a3d37d48fd2106cb609915e8a2b149710d"
+    },
+    {
+      "file": "0010_scoped_api_tokens.sql",
+      "sha384": "004419987d8032656e07364bf56ba9f593664c600d4d288e1a93d649e3b16890e420068976f51d601622948aa7d372d0"
+    },
+    {
+      "file": "0011_notification_outbox_index.sql",
+      "sha384": "8e0e83a59a83a46604f281272f2e8180204f433688913f6fd2b5c9e1e4a298c8f76149d0a193335fc75804bd51d66518"
+    },
+    {
+      "file": "0012_outbox_delivery_history.sql",
+      "sha384": "2d6f9654901446a8c01529d779545def9ebdac4ec9d1fc93aa8fa6458a80c4c854527e12a70cc5be772dface81fdc240"
+    },
+    {
+      "file": "0013_artifact_checksums.sql",
+      "sha384": "6cb6b3071839d4fa41497c0ec9fdee7784f5771db21f3a73173e9621dd1934c7c08cfc8b8e446abc586daea3f05988a8"
+    },
+    {
+      "file": "0014_schedule_fire_slots.sql",
+      "sha384": "1c895d134d96650da6a04c5d1ef78c92248f36e226752ad8b44fbe9a4f5915690aac43c7c80bb12b910fd5aafcb60083"
+    },
+    {
+      "file": "0015_job_leases.sql",
+      "sha384": "2e71126c0754cf7caf4241fae28baceb013c622082814fad427f5d966723f4b2fdbfb93812d9148df9bbf33e87c3b335"
+    },
+    {
+      "file": "0016_pipeline_plans.sql",
+      "sha384": "a0dd17dca3a740271777acb78ff4f1776ecabc87fdd81493f30558394fa6fea2a0bf5d0fea13f949ea0706fb8c715a75"
+    },
+    {
+      "file": "0017_runner_protocol_mvp.sql",
+      "sha384": "be1e0d112f99f08c560926f91292b2ef1f5cfbddf09049f359a1a6e5acfb75f5277c51e825fe794006b342bc4b75a102"
+    },
+    {
+      "file": "0018_job_queue.sql",
+      "sha384": "89c06612228e740a9d690b31ad608b14a056db59be7a0bc998de1bbeb3183a6aff1747063fbee60e6e10a1e8b7d5d126"
+    },
+    {
+      "file": "0019_runner_tag_matching.sql",
+      "sha384": "9d01890e039443c4a855a796357e1cb7c8b02c6def3afc9be9d49dff37abdba756505eca99c4d617969a6d2b04b3105a"
+    },
+    {
+      "file": "0020_runner_secret_delivery.sql",
+      "sha384": "7d359775caab2bd5269fd654b8c35b7ec881c6d23bde808e2534d91c36bfa276f0296bfb2d8bd51eea1cbae89c8ec71c"
+    },
+    {
+      "file": "0021_runner_artifact_paths.sql",
+      "sha384": "f94725c14adc5c0cad6a636cd4a23522b08d98e4524c23692e59149ccd7a8eeb10ce4500f4a24544ebd5012d28d6f8b8"
+    },
+    {
+      "file": "0022_runner_work_notifications.sql",
+      "sha384": "796519b26e57581b95b428c859294956dafadb0bb29e642159351ebb9d62de1a403f9aa08e4f61ae2d4a0da6c3c452c0"
+    },
+    {
+      "file": "0023_artifact_retention.sql",
+      "sha384": "ee414226d6835404c338bf412ffc86e6c5679b97389069e0ccccad175bd44d91b4f918de98365e493a47b5b265dce49f"
+    },
+    {
+      "file": "0024_environment_approvals.sql",
+      "sha384": "7213316c3582468b080b21eb066b2f1ef6404a40ab7e905b4dfba243857a082723bb2b9892275e1bc7c1f12cd0de67ef"
+    },
+    {
+      "file": "0025_session_csrf_tokens.sql",
+      "sha384": "5c0aeaf2b63c0ad6b2d361fdae48b56453b3a31d2cf526ce87fb39c1accd6629a0324c01adb29762afcad06ada614500"
+    },
+    {
+      "file": "0026_session_family_reuse.sql",
+      "sha384": "2c5d7b063333fa97d56bac647d481f2a97d594da4b5685abe1c7bd584b0a415970ff981cb3f1d95f4eef3b334d54216a"
+    },
+    {
+      "file": "0027_artifact_upload_sessions.sql",
+      "sha384": "1cbd71cc7e247efc8ec962586542e9d1b8f9e74f85315b4dc4a2456f3b58bea7989525b740bb0720c4d9b37f886688b0"
+    },
+    {
+      "file": "0028_project_dispatch_limits.sql",
+      "sha384": "7ccb4d3cfb1c5f7c2c970568aaf9bfa1fecb035ce8eccede98780777fcc14cb3ffc87d594ffceb253b6ee66ff7de0d8e"
+    },
+    {
+      "file": "0029_service_accounts.sql",
+      "sha384": "7d4c5cd9b1c3f42c97fefcd3f951e957d0e869b83eec108a000bb83bd330ae6e57e22c08e5443dfc62eb7ed30815af4a"
+    },
+    {
+      "file": "0030_tenants.sql",
+      "sha384": "0614d14f71791a5999a8cad3abd8c56e6a9bb6792f5a55be8e88682e07df782761d3a7e8f33cd6e76b7e168424ce424b"
+    },
+    {
+      "file": "0031_outbox_email_channel.sql",
+      "sha384": "1d9bd134f4e270d64a3aa8138387b40299fc0831a6a1452c2f0452701ca0f29f575ed762286f906cfa8ce5ea055fb840"
+    },
+    {
+      "file": "0032_notification_rules_templates.sql",
+      "sha384": "f2616f437b9a97055ed339bb5f6d1f9837c57e90ab592fae8bf5174575f4aed5e50fbb7e92fd6d0d432777f0d6588045"
+    },
+    {
+      "file": "0033_aggregation_quiet_hours.sql",
+      "sha384": "102410e6befb0dd35539e2c50b375f33431070c681416a5211017e7c42585ac9e618230e62572383236c24464f26c144"
+    },
+    {
+      "file": "0034_central_subject.sql",
+      "sha384": "63cf5c7d7ee118809b2c03328bce69eea55e3e7f5770ba3ed13fed3809093b62106199aafb42a846d4c2b4de051c41e9"
+    },
+    {
+      "file": "0035_audit_log_pagination.sql",
+      "sha384": "f57c3f1c48f6d7a2387ef1923c8ea1b06a2712fa49a7bd4b23dc8f14186e77fb52be98353dc7e489b66cff6d0b853da3"
+    },
+    {
+      "file": "0036_deployment_idempotency.sql",
+      "sha384": "6ddb8c12a069cb39e9362fb0d471155cb64dbe1f25c5a3302f7c580ec5d12097acd61e05273820ce662fd25bb06e92c4"
+    },
+    {
+      "file": "0037_deployment_plan_source.sql",
+      "sha384": "e929bda9b62b3bbbf35a2dc829b2f754753531d5d8a03613f94cbd785ad7ca1c7839e217ae1c6e8a409d02e1772bf896"
+    },
+    {
+      "file": "0038_platform_messaging.sql",
+      "sha384": "875f127c9f0c51477f61cee89816edea0168d5cf842f3bdbfce5d683df033af224f5619035439f84359f671aee2981ce"
+    },
+    {
+      "file": "0039_runner_completion_readback.sql",
+      "sha384": "0399ff0b6cbd8835dab6d1fc7fd3ba82586f919a14ffed1824a6867e0f2dbff158ee1bd383d6a8cd546755d4cfda6023"
+    },
+    {
+      "file": "0040_sdlc_workspace_operations.sql",
+      "sha384": "df7aa07ad5956ba4ab36acb32d1b4a31e28cfe5fc5a0ce5fbf9144d1fd57bce508ff732868ef9d4b9d602a44b487a557"
+    },
+    {
+      "file": "0090_namespaces_and_repository_identity.sql",
+      "sha384": "549511b2a5adedd602da6b2e10baf7cc287b5cfa6f62c1cfa4ff84c2ca04a32264f752454ffa37528c18f03df1dcb16b"
+    },
+    {
+      "file": "0091_workspace_projects.sql",
+      "sha384": "68ac034e79e30e02f4a1820773ea533909ecb51f4ad81b2f1ea8dfd5e4b857f62229ceb1557772fd35a2e811b1217ce8"
+    },
+    {
+      "file": "0092_task_pipeline_intents.sql",
+      "sha384": "85f7c7010ae0983fccc2fa73e6114708493d451ceb434fb5c1b8b49c27997d6f5e1931f8ec1974958892ae2e68d491c5"
+    },
+    {
+      "file": "0093_repository_sync.sql",
+      "sha384": "ebf962ffe2298956658b062d381460fc744826739f4edea5f3ea483631f9b98d4f2c7dd1a8abca9a38eb6cf820964af5"
+    },
+    {
+      "file": "0094_delegated_task_credentials.sql",
+      "sha384": "21e9a73fb2b6a6351258b6ea43bec792cf2c70444b4c0dd643e9905a0d0f3609f844316bfade1ce81cc74ea5ee9d544f"
+    },
+    {
+      "file": "0095_task_credential_successors.sql",
+      "sha384": "9fb43b3b1903e4d48c0b2966d74a4e6e50165981ca42363ac5e8f4e102246b30046c0e8a605935ae572dc5e53cc39478"
+    },
+    {
+      "file": "0096_shared_space_lifecycle.sql",
+      "sha384": "19e76f7d9f1a192b7ce1a60b4568de9fbb00bd02982a24fc5e99b2a51c71bba67d865ba8a9813c5e1398d93b7d1a2624"
+    },
+    {
+      "file": "0097_space_admission_activation.sql",
+      "sha384": "ec9d1b36b39a004a861100c58d99f3edef5d8521b77feecbea6eccebc14302ac747085881cc985441c6bb3a6c5c67292"
+    },
+    {
+      "file": "0098_pull_request_merge_attempts.sql",
+      "sha384": "6cf8693a085ed3367f6fa13164a05c51d160ea5ed36bbf93cf26adcea3166f9cf17a21ed3dfa2453edc0ebd4a60bc254"
+    },
+    {
+      "file": "0099_confirmed_central_product_roles.sql",
+      "sha384": "35cbea7e734d01504d7d9e889f3e45221377cc244084960b7e75faf5a411b31979d2d750e1509e534500a559373bc41f"
+    },
+    {
+      "file": "0100_application_request_clock.sql",
+      "sha384": "d43d5e5be34c736ba3efc6c5f5a1c54590e4eee04c2d3378bd1faee1c098423deee7acd88e556df85c3b872996acaeb7"
+    },
+    {
+      "file": "0101_pipeline_human_owners.sql",
+      "sha384": "aa2050d5afd78b8e2a706515f892c416306d9a9cebbcd01ad9e5ca242a5836ebe9e5ef302a8ce71eea3b636d39d43bee"
+    },
+    {
+      "file": "0102_schedule_human_owner.sql",
+      "sha384": "1e1e8c10196946b89d20cde51f70e0fbf447e3346c81a048c8cb250c96f2fc26eb4a3a6d737d56e212978cc41d30ee91"
+    },
+    {
+      "file": "0103_retry_attempt_human_owner.sql",
+      "sha384": "3260c62094649a192e3bfe8eb5ac083f94be958fc2af3f592c6402f8d1af8029b72e2299a2bf228af3a582c9f95c4b4a"
+    },
+    {
+      "file": "0104_human_request_connection_clock.sql",
+      "sha384": "0a7abe97e97fcc49ce377e5b06e91e4cfc94e2ae9c42b9589f8e88a6296deeebd1075797941d8147a8dbdbb87042e4af"
+    },
+    {
+      "file": "0105_identity_deletion_fences.sql",
+      "sha384": "f0ac8679af391acd420d73b7d868a82ccc1055c0e25caa9b20b41a6436cef2ee54a3d7e8f5714ba003fbee47e219b423"
+    },
+    {
+      "file": "0106_repository_multiple_syncs.sql",
+      "sha384": "e31e74a2df58db3b1f4bc14ad5f6636c61b58bbc3a1db350a526cbcd5ff2343072a49e270788839450b9493033629e5a"
+    },
+    {
+      "file": "0107_repository_sync_human_owner.sql",
+      "sha384": "fab91815439de597b9fd8000d5ab89b926d9cffc47d6aa1e616065eb84438e9efcc24aa58d9a072da2f532feeeeae07e"
+    }
+  ],
+  "kubernetesV1": [
+    {
+      "file": "0096_kubernetes_environment_target.sql",
+      "sha384": "ad650f471a1b0a54ccf0e275607e4afde41469867a39a566e8a125521e56c9c860d57edadfdf03599d5d7b119825c8e6"
+    },
+    {
+      "file": "0097_kubernetes_deployment_execution.sql",
+      "sha384": "ab1f7e2085962182781a853843a17a7107a1e42a6d469512d63eeae59ec3a844b8877971950dcb786e47c901220224bc"
+    },
+    {
+      "file": "0098_repository_push_refs.sql",
+      "sha384": "ca3373353a4c9011a662aa4a64e15aa3a0ba3abdb9affada4dcd1aa0c9b76f53bed86625ea920c1796de576089a3d39b"
+    },
+    {
+      "file": "0099_native_merge_ci_outbox.sql",
+      "sha384": "e308ee1167dca2c3891a88a28b8e6a855e29d03c383234aa14cfdb71ea859248c4f9ffd60547c144043e670e9db82244"
+    }
+  ]
+}
