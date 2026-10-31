@@ -532,9 +532,6 @@ async fn project_scope_allows(
 }
 
 pub(crate) fn api_token_scope_allows(claims: &crate::auth::AccessClaims, method: &str) -> bool {
-    if claims.token_id.is_none() {
-        return true;
-    }
     let required_scope = if matches!(method, "GET" | "HEAD" | "OPTIONS") {
         "api:read"
     } else {
@@ -547,11 +544,23 @@ pub(crate) fn bearer_token_has_scope(
     claims: &crate::auth::AccessClaims,
     required_scope: &str,
 ) -> bool {
-    claims.token_id.is_none()
-        || claims
-            .token_scopes
-            .iter()
-            .any(|scope| scope == required_scope)
+    // Only mapped human sessions are unscoped. Central PATs have no local id.
+    if claims.token_id.is_none() && claims.token_scopes.is_empty() {
+        return true;
+    }
+    let required_scope = if claims.token_id.is_none() {
+        match required_scope {
+            "api:read" | "git:read" => "ci-cd:read",
+            "api:write" | "git:write" => "ci-cd:write",
+            other => other,
+        }
+    } else {
+        required_scope
+    };
+    claims
+        .token_scopes
+        .iter()
+        .any(|scope| scope == required_scope)
 }
 
 pub(crate) fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
@@ -1095,5 +1104,45 @@ async fn local_identity_for_bearer_token(
         claims.role = current.role;
         claims.ver = current.token_version;
         Ok(claims)
+    }
+}
+
+#[cfg(test)]
+mod token_scope_tests {
+    use super::*;
+
+    #[test]
+    fn central_capabilities_do_not_replace_exact_local_pat_scopes() {
+        let mut claims = crate::auth::AccessClaims {
+            sub: Uuid::new_v4(),
+            sid: None,
+            service_account_name: None,
+            token_id: Some(Uuid::new_v4()),
+            token_project_id: None,
+            token_scopes: vec!["api:read".into()],
+            role: "admin".into(),
+            ver: 0,
+            iat: 1,
+            exp: i64::MAX,
+        };
+        assert!(api_token_scope_allows(&claims, "GET"));
+        assert!(!api_token_scope_allows(&claims, "POST"));
+        assert!(!bearer_token_has_scope(&claims, "git:read"));
+        claims.token_scopes = vec!["ci-cd:read".into()];
+        assert!(!api_token_scope_allows(&claims, "GET"));
+        claims.token_id = None;
+        assert!(api_token_scope_allows(&claims, "GET"));
+        assert!(bearer_token_has_scope(&claims, "git:read"));
+        assert!(!bearer_token_has_scope(&claims, "git:write"));
+        claims.token_scopes = vec!["ci-cd:write".into()];
+        assert!(!api_token_scope_allows(&claims, "GET"));
+        assert!(api_token_scope_allows(&claims, "POST"));
+        assert!(bearer_token_has_scope(&claims, "git:write"));
+        claims.token_scopes.clear();
+        assert!(api_token_scope_allows(&claims, "GET"));
+        assert!(api_token_scope_allows(&claims, "POST"));
+        claims.token_id = Some(Uuid::new_v4());
+        assert!(!api_token_scope_allows(&claims, "GET"));
+        assert!(!api_token_scope_allows(&claims, "POST"));
     }
 }

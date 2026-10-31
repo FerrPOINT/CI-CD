@@ -62,6 +62,7 @@ Current middleware проверяет `Authorization: Bearer ...` при неп�
 | `viewer` | только чтение большинства API |
 
 - Project-owned routes дополнительно требуют `project_memberships`; `admin` имеет instance-wide bypass. Scoped PAT дополнительно ограничивает REST методы scopes `api:read`/`api:write`, project boundary через `project_id`, а Git Smart HTTP — scopes `git:read`/`git:write`. Tenant boundary, service-account tokens и scoped Git credentials — **Target approved**.
+- Центральный PAT требует явных `ci-cd:read`/`ci-cd:write` для REST и Git. Отсутствие локального `token_id` не снимает ограничения. Пустые и посторонние PAT отклоняются до JIT; JWT scopes human session не являются PAT capabilities. Локальные PAT сохраняют точные `api:*`/`git:*` scopes.
 - `/git/*` также принимает legacy `CICD_GIT_TOKEN` как shared operator token; пустой token допустим только в trusted local mode без `CICD_AUTH_SECRET`.
 
 ### 4.2 Middleware

@@ -1,5 +1,7 @@
 # Git Hosting — Forge CI/CD
 
+Центральный PAT ограничен явными `ci-cd:read`/`ci-cd:write` независимо от отсутствия локального token UUID. Для Git право выбирается по `upload-pack`/`receive-pack`, включая POST read RPC; тот же контракт определяет writable в метаданных repository sync. Пустой или посторонний PAT не создаёт локальный профиль. Обычная human session сохраняет текущие предметные права, локальный PAT — точные `api:*`/`git:*` scopes.
+
 Объединение установленного Kubernetes Forge с main описано в [ADR-0042](adr/0042-native-main-migration-lineages.md). Git RPC сохраняет bounded streaming с anonymous disk spool и исходный proof deadline. PR merge сохраняет durable attempt, выбранную CI-политику и исходного владельца; outbox создаётся после подтверждённой публикации. Перед dispatch повторно проверяются текущие права именно этого владельца.
 
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и
