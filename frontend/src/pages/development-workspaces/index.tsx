@@ -638,25 +638,27 @@ function WorkspaceCard({
             prepare. Выбирайте полный commit каждого репозитория;
             незакоммиченные файлы остаются локально.
           </p>
-          {button("prepare", "Проверить подготовленность", {
-            action: "prepare",
-            sources: workspace.sources as Extract<
-              WorkspaceCommand,
-              { action: "prepare" }
-            >["sources"],
-            local: workspace.local_preparation as Extract<
-              WorkspaceCommand,
-              { action: "prepare" }
-            >["local"],
-          })}
-          <a
-            className="text-accent underline"
-            href="https://github.com/FerrPOINT/services-base/blob/main/docs/platform/WORKSPACES.md"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Документация workspace
-          </a>
+          <div className="flex flex-wrap items-start gap-3">
+            {button("prepare", "Проверить подготовленность", {
+              action: "prepare",
+              sources: workspace.sources as Extract<
+                WorkspaceCommand,
+                { action: "prepare" }
+              >["sources"],
+              local: workspace.local_preparation as Extract<
+                WorkspaceCommand,
+                { action: "prepare" }
+              >["local"],
+            })}
+            <a
+              className="text-accent underline"
+              href="https://github.com/FerrPOINT/services-base/blob/main/docs/platform/WORKSPACES.md"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Документация workspace
+            </a>
+          </div>
         </section>
         <section className="space-y-3">
           <h3 className="font-semibold">Проверки и сборка</h3>
