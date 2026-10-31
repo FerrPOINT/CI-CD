@@ -206,6 +206,16 @@ pub async fn link_central_user(
         return Err(crate::api::ApiError::unauthorized());
     }
     let ctx = &verified.context;
+    let personal = pdlc_auth_core::is_personal_token(&ctx.token);
+    // Reject an unrelated/empty PAT before creating or touching its local user.
+    if personal
+        && !ctx
+            .scopes
+            .iter()
+            .any(|scope| matches!(scope.as_str(), "ci-cd:read" | "ci-cd:write"))
+    {
+        return Err(crate::api::ApiError::forbidden());
+    }
     if !matches!(
         verified.subject_role.as_deref(),
         Some(
@@ -286,7 +296,11 @@ pub async fn link_central_user(
             .and_then(|id| Uuid::parse_str(id).ok()),
         token_id: None,
         token_project_id: None,
-        token_scopes: ctx.scopes.iter().cloned().collect(),
+        token_scopes: if personal {
+            ctx.scopes.iter().cloned().collect()
+        } else {
+            Vec::new()
+        },
         role: effective_role,
         ver: 0,
         iat: now.timestamp(),
