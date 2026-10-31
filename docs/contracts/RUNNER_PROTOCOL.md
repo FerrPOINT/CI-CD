@@ -225,3 +225,24 @@ acceptance этим не доказаны. Подробности — [API](../A
 - Изменение обязательности, типа, семантики, endpoint либо state transition требует следующей major protocolVersion и параллельной поддержки предыдущей версии на срок, объявленный release policy.
 - Retry повторяет byte-equivalent mutation с тем же token, fencing token, sequence и outcome; новый poll никогда не переиспользует старую lease.
 - Реализация обязана иметь contract tests для текущей и предыдущей поддерживаемой protocolVersion до включения feature flag.
+
+
+## Optional typed clients
+
+Capabilities jobKinds advertises image-publish-v1 and helm-deploy-v1.
+Capabilities helmTargets lists canonical environment UUIDs with actual
+operator-mounted grants. Claim and queue-timeout reconciliation use the same
+restrictions. Old shell/Docker runners remain valid for existing jobs.
+
+A typed attempt optionally contains imagePublish or helmDeploy. Ownership still
+requires the exact authenticated runner, attempt, lease token and generation.
+Build completion reads a root-owned host receipt separately from client Pod
+termination. Helm completion carries deploymentObservation separately from
+the existing strict termination proof. Expired leases cannot manufacture success.
+Unknown external effects retain the environment lock.
+
+The normal image and embedded/Compose defaults remain unchanged.
+backend/Dockerfile.kubernetes-runner adds SSH and pinned Helm only to explicitly
+selected Kubernetes runners. Clients run isolated Python with fixed commands,
+a closed environment and dedicated tokenless accounts. The operator creates
+target-scoped Secrets and native admission profiles.

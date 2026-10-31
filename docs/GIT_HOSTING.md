@@ -1,5 +1,7 @@
 # Git Hosting — Forge CI/CD
 
+Объединение установленного Kubernetes Forge с main описано в [ADR-0042](adr/0042-native-main-migration-lineages.md). Git RPC сохраняет bounded streaming с anonymous disk spool и исходный proof deadline. PR merge сохраняет durable attempt, выбранную CI-политику и исходного владельца; outbox создаётся после подтверждённой публикации. Перед dispatch повторно проверяются текущие права именно этого владельца.
+
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и
 сохранённый владелец CI: [ADR-0041](adr/0041-sync-admission-and-automation-owner.md).
 Аддитивная 0107; HTTP DTO не меняются. Runtime отдельно от source-поставки.

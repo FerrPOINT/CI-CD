@@ -149,6 +149,13 @@ async fn sync_authenticates_project_tokens_without_opening_catalog_access() {
         request(&router, "PUT", &path, &tokens[5].1, save.clone()).await,
         StatusCode::FORBIDDEN
     );
+    let mut privileged = save.clone();
+    privileged["settings"]["direction"] = serde_json::json!("pull");
+    privileged["settings"]["protected_branch_updates"] = serde_json::json!("source_fast_forward");
+    assert_eq!(
+        request(&router, "PUT", &path, &tokens[0].1, privileged).await,
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(
         request(&router, "PUT", &path, &tokens[0].1, save).await,
         StatusCode::OK

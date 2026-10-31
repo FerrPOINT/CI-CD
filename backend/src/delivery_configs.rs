@@ -39,6 +39,8 @@ pub struct CreateConfig {
 #[serde(deny_unknown_fields)]
 pub struct PushConfig {
     pub configuration_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs: Option<Vec<String>>,
 }
 #[derive(Default, Deserialize, utoipa::IntoParams)]
 pub struct ConfigQuery {
@@ -56,16 +58,26 @@ pub async fn push_decision(
     repository: Uuid,
     key: Option<&str>,
 ) -> Result<Option<Uuid>, ApiError> {
+    push_decision_for_ref(pool, repository, key, None).await
+}
+
+pub async fn push_decision_for_ref(
+    pool: &sqlx::PgPool,
+    repository: Uuid,
+    key: Option<&str>,
+    reference: Option<&str>,
+) -> Result<Option<Uuid>, ApiError> {
     if let Some(key) = key {
-        sqlx::query("INSERT INTO repository_push_operations(repository_id,trigger_key,configuration_id) VALUES($1,$2,(SELECT configuration_id FROM repository_push_configs WHERE repository_id=$1)) ON CONFLICT DO NOTHING")
-            .bind(repository).bind(key).execute(pool).await.map_err(ApiError::internal)?;
+        sqlx::query("INSERT INTO repository_push_operations(repository_id,trigger_key,configuration_id) VALUES($1,$2,(SELECT configuration_id FROM repository_push_configs WHERE repository_id=$1 AND (cardinality(refs)=0 OR $3=ANY(refs)))) ON CONFLICT DO NOTHING")
+            .bind(repository).bind(key).bind(reference).execute(pool).await.map_err(ApiError::internal)?;
         return sqlx::query_scalar("SELECT configuration_id FROM repository_push_operations WHERE repository_id=$1 AND trigger_key=$2")
             .bind(repository).bind(key).fetch_one(pool).await.map_err(ApiError::internal);
     }
     sqlx::query_scalar(
-        "SELECT configuration_id FROM repository_push_configs WHERE repository_id=$1",
+        "SELECT configuration_id FROM repository_push_configs WHERE repository_id=$1 AND (cardinality(refs)=0 OR $2=ANY(refs))",
     )
     .bind(repository)
+    .bind(reference)
     .fetch_optional(pool)
     .await
     .map_err(ApiError::internal)
@@ -234,15 +246,18 @@ pub async fn push_get(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PushConfig>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    let configuration_id = sqlx::query_scalar(
-        "SELECT configuration_id FROM repository_push_configs WHERE repository_id=$1",
+    let result: Option<(Option<Uuid>, Vec<String>)> = sqlx::query_as(
+        "SELECT configuration_id,refs FROM repository_push_configs WHERE repository_id=$1",
     )
     .bind(id)
     .fetch_optional(pool)
     .await
-    .map_err(ApiError::internal)?
-    .flatten();
-    Ok(Json(PushConfig { configuration_id }))
+    .map_err(ApiError::internal)?;
+    let (configuration_id, refs) = result.unwrap_or_default();
+    Ok(Json(PushConfig {
+        configuration_id,
+        refs: if refs.is_empty() { None } else { Some(refs) },
+    }))
 }
 #[utoipa::path(put,operation_id="forge_delivery_push_put",path="/api/v1/catalog/repositories/{id}/push-config",tag="delivery-configurations",params(("id"=Uuid,Path)),request_body=PushConfig,responses((status=200,body=PushConfig)))]
 pub async fn push_put(
@@ -250,6 +265,33 @@ pub async fn push_put(
     Path(id): Path<Uuid>,
     Json(input): Json<PushConfig>,
 ) -> Result<Json<PushConfig>, ApiError> {
+    if let Some(refs) = &input.refs {
+        if refs.len() > 32
+            || refs.iter().collect::<std::collections::BTreeSet<_>>().len() != refs.len()
+        {
+            return Err(ApiError::bad_request(
+                "At most 32 distinct full Git refs are supported",
+            ));
+        }
+        for reference in refs {
+            if !reference.starts_with("refs/heads/") && !reference.starts_with("refs/tags/") {
+                return Err(ApiError::bad_request(
+                    "Push filters require full branch or tag refs",
+                ));
+            }
+            if reference.len() > 255
+                || !tokio::process::Command::new("git")
+                    .args(["check-ref-format", reference])
+                    .output()
+                    .await
+                    .map_err(|_| ApiError::bad_request("Git ref validation unavailable"))?
+                    .status
+                    .success()
+            {
+                return Err(ApiError::bad_request("Invalid push ref filter"));
+            }
+        }
+    }
     let mut tx = crate::repository_catalog::catalog_write_lease(&state, id).await?;
     if let Some(config) = input.configuration_id {
         let matches: bool = sqlx::query_scalar(
@@ -264,7 +306,7 @@ pub async fn push_put(
             return Err(ApiError::conflict("push_configuration_repository_mismatch"));
         }
     }
-    sqlx::query("INSERT INTO repository_push_configs(repository_id,configuration_id) VALUES($1,$2) ON CONFLICT(repository_id) DO UPDATE SET configuration_id=EXCLUDED.configuration_id").bind(id).bind(input.configuration_id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+    sqlx::query("INSERT INTO repository_push_configs(repository_id,configuration_id,refs) VALUES($1,$2,COALESCE($3,'{}')) ON CONFLICT(repository_id) DO UPDATE SET configuration_id=EXCLUDED.configuration_id,refs=COALESCE($3,repository_push_configs.refs)").bind(id).bind(input.configuration_id).bind(input.refs.as_deref()).execute(&mut *tx).await.map_err(ApiError::internal)?;
     tx.commit().await.map_err(ApiError::internal)?;
     Ok(Json(input))
 }

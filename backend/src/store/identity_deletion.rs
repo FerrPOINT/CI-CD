@@ -36,6 +36,8 @@ const SOURCES: &[&str] = &[
     "execution_attempt_human_owners",
     "schedules",
     "schedule_fires",
+    "outbox_messages",
+    "pull_request_merge_attempts",
 ];
 
 #[derive(Debug, thiserror::Error)]

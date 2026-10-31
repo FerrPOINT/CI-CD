@@ -12,6 +12,8 @@ pub mod metrics;
 pub mod outbox;
 pub(crate) mod pipeline_authority;
 pub(crate) mod product_tokens;
+
+pub mod quiescence;
 pub mod rate_limit;
 pub mod request_database;
 pub(crate) mod schedule;
@@ -37,6 +39,7 @@ pub async fn migrations_from_path(
 pub(crate) mod candidate_evidence;
 pub mod delivery_configs;
 pub mod domain;
+pub mod execution;
 pub mod git_host;
 pub mod namespace;
 pub mod platform;
@@ -60,3 +63,5 @@ pub(crate) mod task_owner;
 pub mod workspace_projects;
 
 pub use cicd_domain as domain_types;
+
+pub(crate) mod deployment_runtime;

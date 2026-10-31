@@ -6,7 +6,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, PgPool};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
@@ -894,14 +894,21 @@ pub async fn pr_action(
         authority.retain_native_owner();
     }
     // An accepted native merge keeps its admission and row lock if the HTTP caller disconnects.
-    tokio::spawn(pr_action_owned(
-        state,
-        repo,
-        number,
-        permit.map(|p| p.0),
-        application_clock,
-        input,
-    ))
+    let effect = crate::quiescence::enter(input.action == "merge")
+        .map_err(|_| ApiError::service_unavailable("Forge draining"))?;
+    let origin = crate::pipeline_authority::current()?;
+    tokio::spawn(crate::pipeline_authority::with_origin(origin, async move {
+        let _effect = effect;
+        pr_action_owned(
+            state,
+            repo,
+            number,
+            permit.map(|p| p.0),
+            application_clock,
+            input,
+        )
+        .await
+    }))
     .await
     .map_err(|_| {
         ApiError::service_unavailable(
@@ -962,8 +969,16 @@ async fn pr_action_owned(
         .map_err(ApiError::internal)?
     {
         if input.action == "merge" {
-            let result =
-                recover_merge(&state, &path, transaction, pr, attempt, write.as_ref()).await;
+            let result = recover_merge(
+                &state,
+                &repo,
+                &path,
+                transaction,
+                pr,
+                attempt,
+                write.as_ref(),
+            )
+            .await;
             drop(mutation_guard);
             return result;
         }
@@ -1086,6 +1101,27 @@ async fn pr_action_owned(
             cicd_infra::pull_merge::prepare(&mut transaction, pr.id, &attempt)
                 .await
                 .map_err(ApiError::internal)?;
+            let owner =
+                crate::pipeline_authority::require_creation(false)?.map(|origin| origin.subject());
+            sqlx::query("UPDATE pull_request_merge_attempts SET owner_subject=$2 WHERE id=$1")
+                .bind(attempt.id)
+                .bind(owner)
+                .execute(&mut *transaction)
+                .await
+                .map_err(ApiError::internal)?;
+            // Capture policy before native publication, using its immutable push receipt.
+            let key = crate::git_host::git_push_idempotency_key(
+                &repo,
+                &attempt.target_ref,
+                &attempt.merge_oid,
+            );
+            crate::delivery_configs::push_decision_for_ref(
+                pool,
+                repository_id,
+                Some(&key),
+                Some(&attempt.target_ref),
+            )
+            .await?;
             require_write(write.as_ref())?;
             transaction
                 .commit()
@@ -1140,7 +1176,8 @@ async fn pr_action_owned(
                 }
                 return Err(error);
             }
-            let updated = complete_merge(transaction, pr.id, &attempt, write.as_ref()).await?;
+            let updated =
+                complete_merge(pool, &repo, transaction, pr.id, &attempt, write.as_ref()).await?;
             crate::repository_sync::signal(pool, repository_id).await;
             Ok(Json(updated))
         }
@@ -1183,6 +1220,8 @@ async fn pr_action_owned(
 }
 
 async fn complete_merge(
+    pool: &PgPool,
+    storage: &str,
     mut transaction: sqlx::Transaction<'_, sqlx::Postgres>,
     pull: Uuid,
     attempt: &cicd_infra::pull_merge::Attempt,
@@ -1197,6 +1236,24 @@ async fn complete_merge(
     .fetch_one(&mut *transaction)
     .await
     .map_err(|_| merge_unconfirmed())?;
+    let owner: Option<Uuid> =
+        sqlx::query_scalar("SELECT owner_subject FROM pull_request_merge_attempts WHERE id=$1")
+            .bind(attempt.id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| merge_unconfirmed())?;
+    crate::outbox::enqueue_merge_ci(
+        &mut transaction,
+        pool,
+        attempt.repository_id,
+        storage,
+        pull,
+        &attempt.target_ref,
+        &attempt.merge_oid,
+        Some(attempt.id),
+        owner,
+    )
+    .await?;
     cicd_infra::pull_merge::finish(&mut transaction, attempt.id, true)
         .await
         .map_err(|_| merge_unconfirmed())?;
@@ -1208,8 +1265,10 @@ async fn complete_merge(
     Ok(updated)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn recover_merge(
     state: &AppState,
+    storage: &str,
     path: &std::path::Path,
     transaction: sqlx::Transaction<'_, sqlx::Postgres>,
     pr: PullRequest,
@@ -1248,7 +1307,15 @@ async fn recover_merge(
         return Err(merge_unconfirmed());
     }
     if target.oid == attempt.merge_oid {
-        let updated = complete_merge(transaction, pr.id, &attempt, write).await?;
+        let updated = complete_merge(
+            state.pool.as_ref().ok_or_else(ApiError::unavailable)?,
+            storage,
+            transaction,
+            pr.id,
+            &attempt,
+            write,
+        )
+        .await?;
         crate::repository_sync::signal(
             state.pool.as_ref().ok_or_else(ApiError::unavailable)?,
             attempt.repository_id,

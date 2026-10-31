@@ -457,7 +457,9 @@ impl PreparedDeployment {
             "commands_sha256":self.commands_sha256,"task_binding":self.task_intent.binding,
             "agent_id":self.task_intent.agent_id,"tracker_lease_id":self.task_intent.tracker_lease_id});
         let directory = directory.to_owned();
+        let effect = crate::quiescence::enter(false)?;
         tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             private_directory(&directory)?;
             write_new(
                 &directory.join("deployment-start.json"),
@@ -480,7 +482,9 @@ impl PreparedDeployment {
             "unknown observation"
         );
         let directory = directory.to_owned();
+        let effect = crate::quiescence::enter(false)?;
         tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             private_directory(&directory)?;
             if name == "deployment-running.json" {
                 let created: serde_json::Value = serde_json::from_slice(&read_private(
@@ -509,7 +513,9 @@ impl PreparedDeployment {
         let directory = directory.to_owned();
         let artifact = self.artifact_path.clone();
         let scope = self.scope.clone();
+        let effect = crate::quiescence::enter(false)?;
         tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             private_directory(&directory)?;
             let original: serde_json::Value = serde_json::from_slice(&read_private(&directory.join("deployment-start.json"),65536)?)?;
             ensure!(original["scope"] == serde_json::to_value(scope)? && original["manifest_sha256"] == digest(&manifest),
@@ -801,49 +807,9 @@ pub(crate) async fn prepare_requested(
     control_root: &Path,
     project_secrets: &[(String, String)],
 ) -> Result<Option<PreparedDeployment>, ApiError> {
-    let row = sqlx::query("SELECT pp.plan,j.name,j.command,j.image,j.required_secrets,j.artifact_paths FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE j.id=$1 AND p.id=$2 AND p.project_id=$3")
-        .bind(scope.job_id).bind(scope.pipeline_id).bind(scope.project_id).fetch_optional(pool).await
-        .map_err(ApiError::internal)?;
-    let Some(row) = row else {
+    let Some(_) = sealed_requested(pool, &scope).await? else {
         return Ok(None);
     };
-    let plan: serde_json::Value = row.try_get("plan").map_err(ApiError::internal)?;
-    let name: String = row.try_get("name").map_err(ApiError::internal)?;
-    if !requested(&plan, &name) {
-        return Ok(None);
-    }
-    let planned = plan["jobs"]
-        .as_array()
-        .and_then(|jobs| jobs.iter().find(|job| job["key"].as_str() == Some(&name)))
-        .ok_or_else(|| ApiError::conflict("Deployment plan missing"))?;
-    let artifact = planned["workspace_deploy"]["images_manifest"]
-        .as_str()
-        .ok_or_else(|| ApiError::conflict("Deployment receipt missing"))?;
-    if planned["command"]
-        != row
-            .try_get::<String, _>("command")
-            .map_err(ApiError::internal)?
-        || planned["image"]
-            != row
-                .try_get::<String, _>("image")
-                .map_err(ApiError::internal)?
-        || planned["required_secrets"]
-            != serde_json::json!(
-                row.try_get::<Vec<String>, _>("required_secrets")
-                    .map_err(ApiError::internal)?
-            )
-        || row
-            .try_get::<Vec<String>, _>("artifact_paths")
-            .map_err(ApiError::internal)?
-            != vec![artifact.to_owned()]
-        || planned["allow_failure"] != false
-        || planned["image_build"].is_object()
-        || planned["commands"].as_array().is_none_or(|v| v.is_empty())
-    {
-        return Err(ApiError::conflict(
-            "Deployment job differs from immutable plan",
-        ));
-    }
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let prepared = tokio::time::timeout_at(
         tokio::time::Instant::from_std(deadline),
@@ -951,7 +917,7 @@ async fn read_completed_image(
     scope: &ImageBuildScope,
     daemon: &str,
 ) -> anyhow::Result<RetainedImage> {
-    let observe = || {
+    let observe = || -> anyhow::Result<_> {
         let (root, scope, repository, commit, daemon) = (
             root.to_owned(),
             scope.clone(),
@@ -959,11 +925,13 @@ async fn read_completed_image(
             source.source_commit.clone(),
             daemon.to_owned(),
         );
-        tokio::task::spawn_blocking(move || {
+        let effect = crate::quiescence::enter(false)?;
+        Ok(tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             read_retained(&root, &scope, repository, &commit, &daemon)
-        })
+        }))
     };
-    let before = observe().await??;
+    let before = observe()?.await??;
     let config = root
         .join(format!("image-build-{}", scope.attempt_id.simple()))
         .join("docker-config");
@@ -982,13 +950,16 @@ async fn read_completed_image(
         )
         .await?;
     ensure!(
-        before == observe().await??,
+        before == observe()?.await??,
         "retained image changed during readback"
     );
     Ok(before)
 }
 
-fn upstream_jobs(plan: &serde_json::Value, current: &str) -> anyhow::Result<BTreeSet<String>> {
+pub(crate) fn upstream_jobs(
+    plan: &serde_json::Value,
+    current: &str,
+) -> anyhow::Result<BTreeSet<String>> {
     let rows = plan["jobs"]
         .as_array()
         .context("missing immutable DAG jobs")?;
@@ -1236,6 +1207,58 @@ async fn read_registry(
         source_commit: source.source_commit.clone(),
         daemon: daemon.into(),
     })
+}
+
+/// Shared immutable-plan gate; no runtime, source IO or new task authority.
+pub(crate) async fn sealed_requested(
+    pool: &PgPool,
+    scope: &ImageBuildScope,
+) -> Result<Option<(serde_json::Value, String)>, ApiError> {
+    let row = sqlx::query("SELECT pp.plan,j.name,j.command,j.image,j.required_secrets,j.artifact_paths FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE j.id=$1 AND p.id=$2 AND p.project_id=$3")
+        .bind(scope.job_id).bind(scope.pipeline_id).bind(scope.project_id).fetch_optional(pool).await
+        .map_err(ApiError::internal)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let plan: serde_json::Value = row.try_get("plan").map_err(ApiError::internal)?;
+    let name: String = row.try_get("name").map_err(ApiError::internal)?;
+    if !requested(&plan, &name) {
+        return Ok(None);
+    }
+    let planned = plan["jobs"]
+        .as_array()
+        .and_then(|jobs| jobs.iter().find(|job| job["key"].as_str() == Some(&name)))
+        .ok_or_else(|| ApiError::conflict("Deployment plan missing"))?;
+    let artifact = planned["workspace_deploy"]["images_manifest"]
+        .as_str()
+        .ok_or_else(|| ApiError::conflict("Deployment receipt missing"))?;
+    if planned["command"]
+        != row
+            .try_get::<String, _>("command")
+            .map_err(ApiError::internal)?
+        || planned["image"]
+            != row
+                .try_get::<String, _>("image")
+                .map_err(ApiError::internal)?
+        || planned["required_secrets"]
+            != serde_json::json!(
+                row.try_get::<Vec<String>, _>("required_secrets")
+                    .map_err(ApiError::internal)?
+            )
+        || row
+            .try_get::<Vec<String>, _>("artifact_paths")
+            .map_err(ApiError::internal)?
+            != vec![artifact.to_owned()]
+        || planned["allow_failure"] != false
+        || planned["image_build"].is_object()
+        || planned["commands"].as_array().is_none_or(|v| v.is_empty())
+    {
+        return Err(ApiError::conflict(
+            "Deployment job differs from immutable plan",
+        ));
+    }
+    let artifact = artifact.to_owned();
+    Ok(Some((plan, artifact)))
 }
 
 #[cfg(test)]

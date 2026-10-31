@@ -1,0 +1,21 @@
+# Optional Kubernetes runner tools. Ordinary Forge/Compose uses backend/Dockerfile.
+# FORGE_IMAGE must be the exact qualified backend candidate, pinned by digest.
+ARG FORGE_IMAGE
+FROM ${FORGE_IMAGE}
+USER root
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client python3-yaml \
+ && rm -rf /var/lib/apt/lists/*
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) helm_arch=amd64; helm_sha=896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea ;; \
+      arm64) helm_arch=arm64; helm_sha=4c29e286b279d170fa048ddfc3e4e83dcd069ca9c52102766ba672d7149e694d ;; \
+      *) exit 1 ;; esac \
+ && curl -fsSL "https://get.helm.sh/helm-v3.22.1-linux-${helm_arch}.tar.gz" -o /tmp/helm.tgz \
+ && echo "${helm_sha}  /tmp/helm.tgz" | sha256sum -c - \
+ && tar -xzf /tmp/helm.tgz -C /tmp \
+ && install -m 0755 "/tmp/linux-${helm_arch}/helm" /usr/local/bin/helm \
+ && rm -rf /tmp/helm.tgz "/tmp/linux-${helm_arch}" \
+ && helm version --short
+COPY scripts/host_image_build.py /usr/local/libexec/forge/host_image_build.py
+COPY scripts/helm_deploy.py /usr/local/libexec/forge/helm_deploy.py
+USER cicd

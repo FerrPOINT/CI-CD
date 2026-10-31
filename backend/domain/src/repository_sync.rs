@@ -20,6 +20,19 @@ pub enum Direction {
     Push,
     Both,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = RepositorySyncProtectedBranchUpdates)]
+pub enum ProtectedBranchUpdates {
+    #[default]
+    Blocked,
+    SourceFastForward,
+}
+impl ProtectedBranchUpdates {
+    pub fn is_blocked(&self) -> bool {
+        *self == Self::Blocked
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 #[schema(as = RepositorySyncSettings)]
@@ -33,9 +46,20 @@ pub struct Settings {
     #[serde(default)]
     #[schema(required)]
     pub automatic: bool,
+    #[serde(default, skip_serializing_if = "ProtectedBranchUpdates::is_blocked")]
+    pub protected_branch_updates: ProtectedBranchUpdates,
 }
 impl Settings {
+    pub fn permits_protected_pull(&self) -> bool {
+        self.direction == Direction::Pull
+            && self.protected_branch_updates == ProtectedBranchUpdates::SourceFastForward
+    }
     pub fn validate(&mut self, allowed_gitlab_origins: &[String]) -> Result<(), String> {
+        if self.protected_branch_updates == ProtectedBranchUpdates::SourceFastForward
+            && self.direction != Direction::Pull
+        {
+            return Err("Обновление защищённых веток разрешено только из источника в Forge".into());
+        }
         // WHATWG accepts backslashes/control characters that Git/libcurl interprets differently.
         if self
             .instance_url
@@ -166,6 +190,8 @@ pub struct Connection {
     pub settings: Settings,
     pub has_credential: bool,
     pub writable: bool,
+    #[serde(default)]
+    pub can_manage_protected_branch_updates: bool,
     pub paused_reason: Option<String>,
     pub worker_enabled: bool,
     pub next_check_at: Option<DateTime<Utc>>,
@@ -228,6 +254,41 @@ pub fn plan_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protected_pull_is_opt_in_and_cannot_rewrite_history() {
+        let legacy = serde_json::json!({"provider":"github","instance_url":"https://github.com","repository_path":"team/repo","direction":"pull","automatic":true});
+        let mut settings: Settings = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(!settings.permits_protected_pull());
+        assert_eq!(serde_json::to_value(&settings).unwrap(), legacy);
+        settings.protected_branch_updates = ProtectedBranchUpdates::SourceFastForward;
+        settings.validate(&[]).unwrap();
+        assert!(settings.permits_protected_pull());
+        let protected = true;
+        for (tag, ancestor, expected) in [
+            (false, true, RefPlan::Pull),
+            (false, false, RefPlan::Conflict),
+            (true, true, RefPlan::Conflict),
+        ] {
+            assert_eq!(
+                plan_ref(
+                    settings.direction,
+                    tag,
+                    protected && !settings.permits_protected_pull(),
+                    Some("old"),
+                    Some("new"),
+                    ancestor,
+                    false
+                ),
+                expected
+            );
+        }
+        for direction in [Direction::Disabled, Direction::Push, Direction::Both] {
+            settings.direction = direction;
+            assert!(!settings.permits_protected_pull());
+            assert!(settings.validate(&[]).is_err());
+        }
+    }
     #[test]
     fn all_directions_preserve_refs_and_reject_rewrites() {
         use Direction::{Both, Disabled, Pull, Push};
@@ -399,6 +460,7 @@ mod tests {
             repository_path: "team/sub/repo.git".into(),
             direction: Direction::Both,
             automatic: false,
+            protected_branch_updates: Default::default(),
         };
         assert!(settings.validate(&[]).is_err());
         assert!(settings.validate(&["https://git.internal".into()]).is_ok());
@@ -442,6 +504,7 @@ mod tests {
                 repository_path: "team/repo".into(),
                 direction: Direction::Pull,
                 automatic: false,
+                protected_branch_updates: Default::default(),
             };
             assert!(
                 settings
@@ -460,6 +523,7 @@ mod tests {
             repository_path: "team/repo.git".into(),
             direction: Direction::Pull,
             automatic: false,
+            protected_branch_updates: Default::default(),
         };
         settings
             .validate(&["https://allowed.example.invalid".into()])
@@ -482,6 +546,7 @@ mod tests {
             repository_path: "team/repository".into(),
             direction: Direction::Both,
             automatic: false,
+            protected_branch_updates: Default::default(),
         };
         for raw in [
             "https://git.internal\\@127.0.0.1:9",

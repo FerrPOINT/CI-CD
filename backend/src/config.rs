@@ -337,6 +337,7 @@ pub struct RunnerConfig {
 pub enum RunnerMode {
     Docker,
     HostShell,
+    Kubernetes,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -655,9 +656,10 @@ pub fn runner_mode_from_env(raw: Option<String>) -> Result<RunnerMode, ConfigErr
     match value.as_str() {
         "docker" => Ok(RunnerMode::Docker),
         "host" => Ok(RunnerMode::HostShell),
+        "kubernetes" => Ok(RunnerMode::Kubernetes),
         _ => Err(ConfigError::invalid(
             "CICD_RUNNER_MODE",
-            "must be either docker or host",
+            "must be docker, host or kubernetes",
         )),
     }
 }

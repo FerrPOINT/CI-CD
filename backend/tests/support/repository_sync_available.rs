@@ -204,6 +204,8 @@ async fn available_hosted_catalog_pages_filter_exclusions_and_save_by_exact_uuid
                 repository_path: "fixture/already-connected".into(),
                 direction: Direction::Disabled,
                 automatic: false,
+                protected_branch_updates:
+                    cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
             token: Some("fixture-available-credential".into()),
         },
