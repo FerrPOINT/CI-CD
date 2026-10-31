@@ -18,6 +18,18 @@ class CurrentPerformanceRoutesTests(unittest.TestCase):
         with patch.object(selection, 'git', return_value='a' * 40):
             return selection.plan(ROOT, profile=profile, changed=[], components=components)
 
+    def test_cli_formatter_needs_no_sdk_or_cargo_target(self):
+        manifest = selection.load(ROOT)
+        gate = next(gate for gate in manifest['gates'] if gate['id'] == 'cli:format')
+        self.assertEqual(gate['argv'][:4], ['rustfmt', '--edition', '2024', '--check'])
+        self.assertTrue(all(name.startswith('cli/src/') and name.endswith('.rs') for name in gate['argv'][4:]))
+        self.assertNotIn('sdk_revision', gate)
+        self.assertEqual(gate['test_tier'], 'static')
+        self.assertEqual(gate['cwd'], 'backend')
+        self.assertEqual(gate['platforms'], ['linux'])
+        self.assertEqual(gate['tools'][0]['pattern'], r'^rustc 1\.88\.0\b')
+        self.assertIn('sdk_revision', next(gate for gate in manifest['gates'] if gate['id'] == 'cli:build'))
+
     def test_current_node_is_shared_by_all_frontend_preparation_routes(self):
         manifest = selection.load(ROOT)
         prepared = [gate for gate in manifest['gates'] if gate.get('prepare_frontend')]

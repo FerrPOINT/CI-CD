@@ -422,9 +422,6 @@
         "build"
       ],
       "argv": [
-        "bash",
-        "{base}/scripts/run_rust_gate.sh",
-        "--",
         "rustfmt",
         "--edition",
         "2024",
@@ -448,7 +445,6 @@
           "pattern": "^rustc 1\\.88\\.0\\b"
         }
       ],
-      "sdk_revision": ".base-revision",
       "test_tier": "static"
     },
     {
