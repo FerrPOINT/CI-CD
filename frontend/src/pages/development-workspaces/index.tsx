@@ -123,6 +123,7 @@ export function DevelopmentWorkspacesPage() {
         placeholder="Выберите конфигурацию"
         value={project}
         selectedLabel={
+          (correctProject ? configuration.data?.name : undefined) ??
           configurations.data?.items.find((item) => item.id === project)?.name
         }
         options={(configurations.data?.items ?? []).map((item) => ({

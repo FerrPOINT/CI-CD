@@ -283,6 +283,34 @@ it("restores an unknown original operation explicitly after refresh", async () =
   await waitFor(() => expect(reconcile).toHaveBeenCalledWith(id, operation.id));
 });
 
+it("keeps the resolved configuration label while its catalog is loading", async () => {
+  vi.mocked(service.configurations).mockImplementation(() => new Promise(() => {}));
+  mount();
+  await screen.findByRole("button", { name: "Включить" });
+  expect(screen.getByText("Development", { exact: true })).toBeVisible();
+});
+
+it("does not expose a resolved configuration label across namespace boundaries", async () => {
+  vi.mocked(service.configurations).mockImplementation(() => new Promise(() => {}));
+  vi.mocked(service.configuration).mockResolvedValue({ ...config, name: "Foreign configuration" });
+  vi.mocked(service.repository).mockResolvedValue({
+    id: repository,
+    public_name: "another/product",
+    slug: "another",
+    kind: "local",
+    namespace: { ...context.ref, namespace_id: "99999999-9999-4999-8999-999999999999" },
+    visibility: "private",
+    ready: true,
+    provider_refs: {},
+  });
+  mount();
+  await screen.findByText(
+    "Выбранная конфигурация принадлежит другому проекту. Выберите конфигурацию текущего проекта.",
+  );
+  expect(screen.queryByText("Foreign configuration", { exact: true })).not.toBeInTheDocument();
+  expect(service.list).not.toHaveBeenCalled();
+});
+
 it("does not load workspaces selected from another project namespace", async () => {
   vi.mocked(service.repository).mockResolvedValue({
     id: repository,
