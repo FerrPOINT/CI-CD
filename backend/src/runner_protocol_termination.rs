@@ -101,6 +101,7 @@ async fn acknowledge(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn acknowledge_with_observation(
     db: &PgPool,
     runner: Uuid,

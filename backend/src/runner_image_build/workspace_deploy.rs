@@ -1209,6 +1209,58 @@ async fn read_registry(
     })
 }
 
+/// Shared immutable-plan gate; no runtime, source IO or new task authority.
+pub(crate) async fn sealed_requested(
+    pool: &PgPool,
+    scope: &ImageBuildScope,
+) -> Result<Option<(serde_json::Value, String)>, ApiError> {
+    let row = sqlx::query("SELECT pp.plan,j.name,j.command,j.image,j.required_secrets,j.artifact_paths FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE j.id=$1 AND p.id=$2 AND p.project_id=$3")
+        .bind(scope.job_id).bind(scope.pipeline_id).bind(scope.project_id).fetch_optional(pool).await
+        .map_err(ApiError::internal)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let plan: serde_json::Value = row.try_get("plan").map_err(ApiError::internal)?;
+    let name: String = row.try_get("name").map_err(ApiError::internal)?;
+    if !requested(&plan, &name) {
+        return Ok(None);
+    }
+    let planned = plan["jobs"]
+        .as_array()
+        .and_then(|jobs| jobs.iter().find(|job| job["key"].as_str() == Some(&name)))
+        .ok_or_else(|| ApiError::conflict("Deployment plan missing"))?;
+    let artifact = planned["workspace_deploy"]["images_manifest"]
+        .as_str()
+        .ok_or_else(|| ApiError::conflict("Deployment receipt missing"))?;
+    if planned["command"]
+        != row
+            .try_get::<String, _>("command")
+            .map_err(ApiError::internal)?
+        || planned["image"]
+            != row
+                .try_get::<String, _>("image")
+                .map_err(ApiError::internal)?
+        || planned["required_secrets"]
+            != serde_json::json!(
+                row.try_get::<Vec<String>, _>("required_secrets")
+                    .map_err(ApiError::internal)?
+            )
+        || row
+            .try_get::<Vec<String>, _>("artifact_paths")
+            .map_err(ApiError::internal)?
+            != vec![artifact.to_owned()]
+        || planned["allow_failure"] != false
+        || planned["image_build"].is_object()
+        || planned["commands"].as_array().is_none_or(|v| v.is_empty())
+    {
+        return Err(ApiError::conflict(
+            "Deployment job differs from immutable plan",
+        ));
+    }
+    let artifact = artifact.to_owned();
+    Ok(Some((plan, artifact)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1592,56 +1644,4 @@ mod tests {
                 .is_err()
         );
     }
-}
-
-/// Shared immutable-plan gate; no runtime, source IO or new task authority.
-pub(crate) async fn sealed_requested(
-    pool: &PgPool,
-    scope: &ImageBuildScope,
-) -> Result<Option<(serde_json::Value, String)>, ApiError> {
-    let row = sqlx::query("SELECT pp.plan,j.name,j.command,j.image,j.required_secrets,j.artifact_paths FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE j.id=$1 AND p.id=$2 AND p.project_id=$3")
-        .bind(scope.job_id).bind(scope.pipeline_id).bind(scope.project_id).fetch_optional(pool).await
-        .map_err(ApiError::internal)?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let plan: serde_json::Value = row.try_get("plan").map_err(ApiError::internal)?;
-    let name: String = row.try_get("name").map_err(ApiError::internal)?;
-    if !requested(&plan, &name) {
-        return Ok(None);
-    }
-    let planned = plan["jobs"]
-        .as_array()
-        .and_then(|jobs| jobs.iter().find(|job| job["key"].as_str() == Some(&name)))
-        .ok_or_else(|| ApiError::conflict("Deployment plan missing"))?;
-    let artifact = planned["workspace_deploy"]["images_manifest"]
-        .as_str()
-        .ok_or_else(|| ApiError::conflict("Deployment receipt missing"))?;
-    if planned["command"]
-        != row
-            .try_get::<String, _>("command")
-            .map_err(ApiError::internal)?
-        || planned["image"]
-            != row
-                .try_get::<String, _>("image")
-                .map_err(ApiError::internal)?
-        || planned["required_secrets"]
-            != serde_json::json!(
-                row.try_get::<Vec<String>, _>("required_secrets")
-                    .map_err(ApiError::internal)?
-            )
-        || row
-            .try_get::<Vec<String>, _>("artifact_paths")
-            .map_err(ApiError::internal)?
-            != vec![artifact.to_owned()]
-        || planned["allow_failure"] != false
-        || planned["image_build"].is_object()
-        || planned["commands"].as_array().is_none_or(|v| v.is_empty())
-    {
-        return Err(ApiError::conflict(
-            "Deployment job differs from immutable plan",
-        ));
-    }
-    let artifact = artifact.to_owned();
-    Ok(Some((plan, artifact)))
 }

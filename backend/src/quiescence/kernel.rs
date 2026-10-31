@@ -193,7 +193,7 @@ fn lock(file: &File, exclusive: bool) -> anyhow::Result<bool> {
         if error.kind() == std::io::ErrorKind::WouldBlock {
             return Ok(false);
         }
-        return Err(error.into());
+        Err(error.into())
     }
     #[cfg(not(unix))]
     {

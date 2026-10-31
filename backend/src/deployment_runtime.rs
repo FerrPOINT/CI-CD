@@ -14,6 +14,7 @@ use sqlx::{Postgres, Transaction};
 use std::{collections::BTreeMap, fs};
 use uuid::Uuid;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn prepare(
     tx: &mut Transaction<'_, Postgres>,
     artifacts: &ArtifactsConfig,

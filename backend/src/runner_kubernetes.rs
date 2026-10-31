@@ -781,10 +781,8 @@ pub(super) async fn reconcile_terminal(
                                 .or_else(|_| workspace.record_recovered_termination(&job_status))
                                 .and_then(|_| workspace.acknowledge_completion(&job_status))
                                 .is_err()
-                            {
-                                workspace_done = false;
-                            } else if !config.keep_workspace
-                                && workspace.cleanup_after_ack().await.is_err()
+                                || (!config.keep_workspace
+                                    && workspace.cleanup_after_ack().await.is_err())
                             {
                                 workspace_done = false;
                             }
@@ -811,6 +809,26 @@ pub(super) async fn reconcile_terminal(
     }
     Ok(())
 }
+fn create_artifact_directory(path: &Path) -> anyhow::Result<()> {
+    let mut current = PathBuf::new();
+    for part in path.components() {
+        ensure!(
+            !matches!(part, Component::ParentDir),
+            "parent artifact path denied"
+        );
+        current.push(part);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) => ensure!(
+                meta.is_dir() && !meta.file_type().is_symlink(),
+                "linked artifact target denied"
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(&current)?,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -840,24 +858,4 @@ mod tests {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
-}
-
-fn create_artifact_directory(path: &Path) -> anyhow::Result<()> {
-    let mut current = PathBuf::new();
-    for part in path.components() {
-        ensure!(
-            !matches!(part, Component::ParentDir),
-            "parent artifact path denied"
-        );
-        current.push(part);
-        match std::fs::symlink_metadata(&current) {
-            Ok(meta) => ensure!(
-                meta.is_dir() && !meta.file_type().is_symlink(),
-                "linked artifact target denied"
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(&current)?,
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
 }

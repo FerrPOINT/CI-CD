@@ -1635,9 +1635,9 @@ async fn terminal_artifact_path(
         Err(error) => error,
     };
     if !failed_kubernetes_exit
-        || !error
+        || error
             .downcast_ref::<std::io::Error>()
-            .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            .is_none_or(|e| e.kind() != std::io::ErrorKind::NotFound)
     {
         return Err(error);
     }
@@ -3388,23 +3388,24 @@ mod runner_log_forwarding_tests {
         );
         batch.flush(&context).await.unwrap();
         assert!(batch.lines.is_empty());
-        let bodies = requests.lock().unwrap();
-        assert_eq!(bodies.len(), 69);
-        let lines: Vec<_> = bodies
-            .iter()
-            .flat_map(|body| body["lines"].as_array().unwrap())
-            .collect();
-        assert_eq!(lines.len(), 6805);
-        for (index, line) in lines.iter().enumerate() {
-            assert_eq!(line["message"], format!("line-{index}:***\\r"));
-            assert_eq!(line["stream"], "stdout");
-        }
-        assert!(
-            bodies
+        {
+            let bodies = requests.lock().unwrap();
+            assert_eq!(bodies.len(), 69);
+            let lines: Vec<_> = bodies
                 .iter()
-                .all(|body| body["lines"].as_array().unwrap().len() <= 100)
-        );
-        drop(bodies);
+                .flat_map(|body| body["lines"].as_array().unwrap())
+                .collect();
+            assert_eq!(lines.len(), 6805);
+            for (index, line) in lines.iter().enumerate() {
+                assert_eq!(line["message"], format!("line-{index}:***\\r"));
+                assert_eq!(line["stream"], "stdout");
+            }
+            assert!(
+                bodies
+                    .iter()
+                    .all(|body| body["lines"].as_array().unwrap().len() <= 100)
+            );
+        }
         server.abort();
         let _ = server.await;
     }
@@ -3430,29 +3431,31 @@ mod runner_log_forwarding_tests {
             batch.push(&context, "\u{0001}".repeat(8192)).await.unwrap();
         }
         batch.flush(&context).await.unwrap();
-        let bodies = bodies.lock().unwrap();
-        assert!(
-            bodies.len() > 1,
-            "byte bound must flush before reaching 100 lines"
-        );
-        assert_eq!(
-            bodies
-                .iter()
-                .map(|b| b["lines"].as_array().unwrap().len())
-                .sum::<usize>(),
-            12
-        );
-        assert!(
-            bodies
-                .iter()
-                .all(|b| serde_json::to_vec(b).unwrap().len() < LOG_APPEND_MAX_BYTES)
-        );
-        assert!(
-            bodies
-                .iter()
-                .all(|b| serde_json::to_vec(&b["lines"]).unwrap().len() <= LOG_BATCH_MAX_BYTES + 2)
-        );
-        drop(bodies);
+        {
+            let bodies = bodies.lock().unwrap();
+            assert!(
+                bodies.len() > 1,
+                "byte bound must flush before reaching 100 lines"
+            );
+            assert_eq!(
+                bodies
+                    .iter()
+                    .map(|b| b["lines"].as_array().unwrap().len())
+                    .sum::<usize>(),
+                12
+            );
+            assert!(
+                bodies
+                    .iter()
+                    .all(|b| serde_json::to_vec(b).unwrap().len() < LOG_APPEND_MAX_BYTES)
+            );
+            assert!(
+                bodies
+                    .iter()
+                    .all(|b| serde_json::to_vec(&b["lines"]).unwrap().len()
+                        <= LOG_BATCH_MAX_BYTES + 2)
+            );
+        }
         server.abort();
         let _ = server.await;
     }
@@ -3490,11 +3493,12 @@ mod runner_log_forwarding_tests {
             .await
             .unwrap();
         batch.flush(&context).await.unwrap();
-        let bodies = bodies.lock().unwrap();
-        assert_eq!(bodies.len(), 2);
-        assert_eq!(bodies[0], bodies[1]);
-        assert!(batch.lines.is_empty());
-        drop(bodies);
+        {
+            let bodies = bodies.lock().unwrap();
+            assert_eq!(bodies.len(), 2);
+            assert_eq!(bodies[0], bodies[1]);
+            assert!(batch.lines.is_empty());
+        }
         server.abort();
         let _ = server.await;
     }

@@ -339,6 +339,7 @@ pub struct Execution {
 }
 impl Execution {
     /// Workspace is already owner-prepared and pinned. This function neither clones nor grants admission.
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         config: Config,
         root: &Path,
@@ -875,11 +876,10 @@ impl Execution {
             if let Some(path) = &self.token_path {
                 request = request.bearer_auth(fs::read_to_string(path)?.trim());
             }
-            let response = request.send().await.map_err(|error| {
+            let response = request.send().await.inspect_err(|error| {
                 tracing::warn!(attempt_id = %self.intent.scope.attempt_id,
                     stage = "finalizer-release", timeout = error.is_timeout(),
                     connect = error.is_connect(), "Kubernetes custody transport held");
-                error
             })?;
             let status = response.status();
             if !status.is_success() {
@@ -1265,6 +1265,7 @@ fn transport(config: &Config) -> anyhow::Result<(Client, String, Option<PathBuf>
         .build()?;
     Ok((client, server, Some(service.join("token"))))
 }
+#[allow(clippy::too_many_arguments)]
 fn pod(
     config: &Config,
     scope: &Scope,
@@ -1696,7 +1697,7 @@ mod tests {
             p["spec"]["containers"][0]["volumeMounts"][0]["subPath"],
             "attempt-x/workspace"
         );
-        assert!(p.to_string().find("hostPath").is_none());
+        assert!(!p.to_string().contains("hostPath"));
         assert_eq!(p["metadata"]["finalizers"][0], FINALIZER);
     }
     #[test]
@@ -2171,7 +2172,7 @@ mod lifecycle_tests {
             .await
             .unwrap();
         assert!(!execution.close_not_submitted().await.unwrap());
-        assert!(execution.not_submitted().unwrap() == false);
+        assert!(!execution.not_submitted().unwrap());
         assert_eq!(state.lock().unwrap().creates, 1);
         task.abort();
         fs::remove_dir_all(&execution.directory).unwrap();

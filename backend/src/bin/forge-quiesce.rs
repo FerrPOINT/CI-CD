@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
             .take(64 * 1024 + 1)
             .read_to_end(&mut bytes)?;
         let result = cicd::execution::kubernetes::inspection::command(&bytes, request_sha256).await;
-        println!("{}", result);
+        println!("{result}");
         std::io::stdout().flush()?;
         if result["status"] != "VERIFIED" {
             std::process::exit(2);

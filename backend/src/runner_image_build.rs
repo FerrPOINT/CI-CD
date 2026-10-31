@@ -994,6 +994,51 @@ fn seal_directories(path: &Path) -> anyhow::Result<()> {
     sync_directory(path)
 }
 
+/// Kubernetes uses the same authenticated bare-source guards and bounded sealed exporter.
+pub(crate) async fn export_kubernetes_source(
+    source: &PreparationSource,
+    spec: &ImageBuildSpec,
+    workspace: &Path,
+) -> anyhow::Result<()> {
+    spec.validate().map_err(anyhow::Error::msg)?;
+    preparation::repository_pipeline_config(&source.repository, &source.source_commit).await?;
+    let entries = tree_entries(
+        &git_read(
+            &source.repository,
+            &["ls-tree", "-r", "-z", "--full-tree", &source.source_commit],
+            MAX_TREE,
+        )
+        .await?,
+    )?;
+    require_dockerfile(&entries, spec)?;
+    let output = workspace.join("source");
+    create_directory(&output)?;
+    export_objects(&source.repository, &output, &entries).await?;
+    seal_directories(&output)?;
+    let metadata = workspace.join("build-output");
+    create_directory(&metadata)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(metadata, fs::Permissions::from_mode(0o770))?;
+    }
+    Ok(())
+}
+
+/// Read-only backup closure; no Engine calls or inferred stop from process/lease expiry.
+pub(crate) fn quiescence_idle(directory: &Path) -> anyhow::Result<()> {
+    private_directory(directory)?;
+    let bytes = read_private(&directory.join("intent.json"), 8192)?;
+    let intent: Intent = serde_json::from_slice(&bytes)?;
+    intent.scope.validate()?;
+    ensure!(
+        intent.schema == "forge/backend-image-build/v1"
+            && cleanup_is_complete(directory, &intent, &digest(&bytes))?,
+        "image-build custody remains unresolved"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1503,49 +1548,4 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         result.unwrap();
     }
-}
-
-/// Kubernetes uses the same authenticated bare-source guards and bounded sealed exporter.
-pub(crate) async fn export_kubernetes_source(
-    source: &PreparationSource,
-    spec: &ImageBuildSpec,
-    workspace: &Path,
-) -> anyhow::Result<()> {
-    spec.validate().map_err(anyhow::Error::msg)?;
-    preparation::repository_pipeline_config(&source.repository, &source.source_commit).await?;
-    let entries = tree_entries(
-        &git_read(
-            &source.repository,
-            &["ls-tree", "-r", "-z", "--full-tree", &source.source_commit],
-            MAX_TREE,
-        )
-        .await?,
-    )?;
-    require_dockerfile(&entries, spec)?;
-    let output = workspace.join("source");
-    create_directory(&output)?;
-    export_objects(&source.repository, &output, &entries).await?;
-    seal_directories(&output)?;
-    let metadata = workspace.join("build-output");
-    create_directory(&metadata)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(metadata, fs::Permissions::from_mode(0o770))?;
-    }
-    Ok(())
-}
-
-/// Read-only backup closure; no Engine calls or inferred stop from process/lease expiry.
-pub(crate) fn quiescence_idle(directory: &Path) -> anyhow::Result<()> {
-    private_directory(directory)?;
-    let bytes = read_private(&directory.join("intent.json"), 8192)?;
-    let intent: Intent = serde_json::from_slice(&bytes)?;
-    intent.scope.validate()?;
-    ensure!(
-        intent.schema == "forge/backend-image-build/v1"
-            && cleanup_is_complete(directory, &intent, &digest(&bytes))?,
-        "image-build custody remains unresolved"
-    );
-    Ok(())
 }
