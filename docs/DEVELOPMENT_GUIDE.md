@@ -1,5 +1,14 @@
 # Руководство по разработке Forge CI/CD
 
+## Kubernetes baseline и миграции
+
+[ADR-0042](adr/0042-native-main-migration-lineages.md) описывает объединённый baseline,
+выбор SQLx history и запрет подмены checksums. Проверки native executor:
+[disposable qualification](KUBERNETES_EXECUTOR_NATIVE_TEST.md),
+[server canary](KUBERNETES_SERVER_CANARY.md),
+[recovery до подтверждённой отправки](KUBERNETES_UNSUBMITTED_RECOVERY.md).
+Каждая поверхность имеет отдельное evidence; source merge не является runtime-приёмкой.
+
 ## Несколько подключений синхронизации
 
 [ADR-0040](adr/0040-multiple-repository-sync-connections.md) сохраняет старые UUID
@@ -546,3 +555,20 @@ SDK не заменяется текущим Source Base. Здесь семь im
 в собственной маленькой source fixture из точного helper pin: это не SDK export,
 проверка Root SDK authority или native qualification. POSIX backup cases остаются
 непроверенными на Windows и не считаются PASS.
+
+### Совместимость с main b00d3773
+
+Во время переноса remote main обновился. Candidate включает этот main обычным
+merge в task branch, сохраняя предыдущие commits и исходный local main.
+Runtime bundle теперь содержит `cicd-server`, `forge-runner`, `forge-quiesce`;
+dependency/real producer и artifact outputs совпадают с runtime COPY.
+Новые migration lineages и projector входят в packaging context и отдельные
+быстрые checksum tests на обоих CI/manual routes. Projector-only изменение
+выбирает упаковку, без ненужного Rust artifact producer.
+
+Optional Kubernetes recipe получает существующий backend image через FORGE_IMAGE
+и не запускает Rust. Её context ограничен двумя COPY scripts, а изменение этой
+recipe не выбирает обычные backend/runner images. Source pin/digest contract
+parent image не является выполненным native handoff; эта qualification открыта.
+Production prefixes и все test bodies сверены с b00d3773; новая production/runtime
+логика main не переписывалась. Четыре POSIX backup cases на Windows остаются SKIP.

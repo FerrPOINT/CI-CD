@@ -112,7 +112,7 @@ class ServerCliMetadataTests(unittest.TestCase):
                 self.assertNotRegex(text, r'rm -rf --[^\n]*\bcli/src\b')
                 self.assertNotIn('> cli/src/lib.rs', text, 'Do not introduce an empty auto-library')
                 shipped = set(re.findall(r'COPY --from=build /app/target/release/([A-Za-z0-9_-]+)', text))
-                self.assertEqual(shipped, {'cicd-server', 'forge-runner'})
+                self.assertEqual(shipped, {'cicd-server', 'forge-runner', 'forge-quiesce'})
                 builds = re.findall(r'(?:/usr/local/cargo/bin/)?cargo build ([^\n\\]+)', text)
                 self.assertEqual(len(builds), 2)
                 for command in builds:

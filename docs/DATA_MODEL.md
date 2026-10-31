@@ -1,5 +1,7 @@
 # Дата-модель Forge CI/CD
 
+Две выпущенные SQLx histories сходятся через явные migration directories: [ADR-0042](adr/0042-native-main-migration-lineages.md). Канонические 0108–0111 добавляют native Kubernetes target/execution, push refs и internal outbox channel. Общая 0112 устанавливает request clocks на добавленные таблицы, сохраняет owner_subject merge attempt и расширяет identity deletion fencing на попытки и владельца internal outbox. Исторические SQL/checksums не меняются.
+
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и
 сохранённый владелец CI: [ADR-0041](adr/0041-sync-admission-and-automation-owner.md).
 Аддитивная 0107; HTTP DTO не меняются. Runtime отдельно от source-поставки.

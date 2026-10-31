@@ -210,6 +210,35 @@ pub(super) async fn output(
     body: Bytes,
     proof: Option<GitDeadline>,
 ) -> Result<std::process::Output, ApiError> {
+    output_with_stdout(command, body, proof, Stdio::piped()).await
+}
+
+/// Keep large pack responses on the repository filesystem, under the same
+/// fixed-clock native owner and process-group termination as buffered Git.
+pub(super) async fn output_spooled(
+    command: &mut Command,
+    body: Bytes,
+    proof: Option<GitDeadline>,
+    directory: &Path,
+) -> Result<(std::process::Output, std::fs::File), ApiError> {
+    use std::io::Seek;
+    let mut file = tempfile::tempfile_in(directory)
+        .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+    let writer = file
+        .try_clone()
+        .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+    let output = output_with_stdout(command, body, proof, Stdio::from(writer)).await?;
+    file.rewind()
+        .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+    Ok((output, file))
+}
+
+async fn output_with_stdout(
+    command: &mut Command,
+    body: Bytes,
+    proof: Option<GitDeadline>,
+    stdout: Stdio,
+) -> Result<std::process::Output, ApiError> {
     if let Some(proof) = proof {
         proof.require()?;
     }
@@ -227,13 +256,13 @@ pub(super) async fn output(
     let mut child = command
         .kill_on_drop(true)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(stdout)
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
     let pid = child.id();
     let mut stdin = child.stdin.take().expect("configured Git stdin");
-    let mut stdout = child.stdout.take().expect("configured Git stdout");
+    let stdout = child.stdout.take();
     let mut stderr = child.stderr.take().expect("configured Git stderr");
     let writer = tokio::spawn(async move {
         stdin.write_all(&body).await?;
@@ -241,7 +270,10 @@ pub(super) async fn output(
     });
     let mut out = tokio::spawn(async move {
         let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).await.map(|_| bytes)
+        if let Some(mut stdout) = stdout {
+            stdout.read_to_end(&mut bytes).await?;
+        }
+        Ok::<_, std::io::Error>(bytes)
     });
     let mut err = tokio::spawn(async move {
         let mut bytes = Vec::new();

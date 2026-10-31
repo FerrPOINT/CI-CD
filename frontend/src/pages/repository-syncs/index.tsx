@@ -11,6 +11,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
+  Checkbox,
   Fieldset,
   PageHeader,
   SectionHeader,
@@ -552,7 +553,9 @@ export function RepositorySyncEditor({
   useEffect(() => {
     requestedTab.current = activeTab;
   }, [activeTab]);
-  const writable = connection.writable && !busy && !uncertain;
+  const policyEditable = connection.settings.protected_branch_updates !== "source_fast_forward"
+    || connection.can_manage_protected_branch_updates === true;
+  const writable = connection.writable && policyEditable && !busy && !uncertain;
   const endpointChanged =
     draft.provider !== connection.settings.provider ||
     draft.instance_url !== connection.settings.instance_url;
@@ -561,7 +564,9 @@ export function RepositorySyncEditor({
     token !== "" ||
     JSON.stringify(draft) !== JSON.stringify(connection.settings);
   function patch(next: Partial<SyncSettings>) {
-    setDraft({ ...draft, ...next });
+    const updated = { ...draft, ...next };
+    if (updated.direction !== "pull") updated.protected_branch_updates = "blocked";
+    setDraft(updated);
     pending.current = null;
     setFeedback("");
   }
@@ -874,6 +879,20 @@ export function RepositorySyncEditor({
                 ))}
               </div>
             </Fieldset>
+            {connection.can_manage_protected_branch_updates === true && (
+              <Fieldset disabled={!writable || !!connection.active_run || draft.direction !== "pull"}
+                legend="Ветки проекта">
+                <Checkbox
+                  label="Обновлять защищённые ветки из доверенного источника"
+                  checked={draft.protected_branch_updates === "source_fast_forward"}
+                  onCheckedChange={(checked) => patch({ protected_branch_updates: checked === true ? "source_fast_forward" : "blocked" })}
+                />
+                <p className="text-xs text-text-secondary">Только получение и fast-forward; расходящаяся история требует PR.</p>
+              </Fieldset>
+            )}
+            {!policyEditable && (
+              <Notice>Подключением к доверенному источнику управляет администратор. Запуск синхронизации доступен по вашим правам.</Notice>
+            )}
             <Fieldset
               disabled={!writable || !!connection.active_run}
               legend={"Способ запуска"}
@@ -904,7 +923,9 @@ export function RepositorySyncEditor({
               </div>
             </Fieldset>
             <p className="text-xs text-text-secondary">
-              Защищённые ветки принимают изменения через обычный PR.
+              {draft.protected_branch_updates === 'source_fast_forward'
+                ? 'Защищённые ветки обновляет доверенный источник, только fast-forward.'
+                : 'Защищённые ветки принимают изменения через обычный PR.'}
               Расходящаяся история и отличающиеся теги требуют ручного
               разрешения.
             </p>

@@ -33,6 +33,15 @@ Source candidate: [общий read admission Git-браузера и PR](adr/003
 
 Source candidate общего Space lifecycle добавляет отдельный owner v2 GET/PUT, без изменения строгих v1 DTO: [протокол и ограничения](SPACE_LIFECYCLE_V2.md). Endpoint не означает готовность полного admission или установленного cohort.
 
+Source candidate `/api/v1/runner/leases/{lease_id}/complete` принимает optional
+`terminationProof` {`clusterCaSha256`, `namespaceUid`, `workspaceClaimUid`, `podUid`}.
+Legacy omission не меняет поведение. Только failure/canceled completion после
+expiry может использовать исключение: original runner/token/attempt/current
+generation, matching terminal DB projection и actual exact-UID stopped readback
+из protected Kubernetes custody. Success, чужие/старые identities и новый lease
+закрыты. Статусы/очередь не переоткрываются; duplicate termination ACK идемпотентен.
+[Полный контракт](KUBERNETES_RUNNER.md).
+
 Source candidate task-child delivery использует existing v1 `variablesSha256`
 commitment с closed kind-tagged payload; old/unbound credentials остаются закрытыми.
 Existing exact workspace/candidate/delivery routes и DTO не меняются, SAT не
@@ -623,8 +632,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 106,
-    "latest_required_version": 106,
+    "latest_applied_version": 112,
+    "latest_required_version": 112,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -2279,3 +2288,25 @@ separate resource/native authorization at every actual boundary.
 Forge PAT не пересылается в Auth и получает403 даже у текущего администратора:
 его audience остаётся Forge. Текущие права и scopes Forge PAT проверяются
 независимо для собственных административных API Forge, включая runners.
+
+
+## Политика защищённых веток внешней синхронизации
+
+В Settings существующих repository-sync routes добавлено optional поле
+protected_branch_updates: blocked | source_fast_forward. Отсутствующее поле
+сохраняет прежний blocked. Значение source_fast_forward может сохранять
+только human admin и только при direction=pull; остальные субъекты получают
+403, недопустимое направление — 400. JSONB snapshots используют ту же модель;
+таблицы и миграции не добавлены.
+
+Connection возвращает optional boolean can_manage_protected_branch_updates.
+GET/list/save вычисляют его из полномочий текущего principal; это подсказка UI,
+проверка записи остаётся в application service. Политика применяется при
+планировании и непосредственно перед effect; смена connection version
+закрывает старый run. Ancestry, tag conflicts, expected old SHA и lease/fencing
+остаются обязательными.
+
+Сначала устанавливается backend, затем UI. Перед откатом на backend, который
+не знает нового поля, надо штатно вернуть blocked у изменённых подключений,
+дождаться завершения/остановки их runs и проверить readback. Старый parser
+нельзя запускать поверх сохранённых settings source_fast_forward.

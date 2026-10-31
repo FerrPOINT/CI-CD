@@ -17,6 +17,8 @@ pub struct SourceObservationTimeout;
 const MARKER: &str = ".forge-attempt.json";
 const COMPLETION: &str = ".forge-completion.json";
 const ACK: &str = ".forge-completion-ack.json";
+const RECOVERY_COMPLETION: &str = ".forge-recovery-completion.json";
+const RECOVERY_ACK: &str = ".forge-recovery-completion-ack.json";
 const MAX_INVENTORY_ENTRIES: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,15 +161,41 @@ impl OwnedWorkspace {
         )
     }
 
+    /// Only after a fresh authenticated failure/cancel ACK for a definitively stopped original effect.
+    /// The pre-crash completion intention remains intact; an acknowledged result cannot be replaced.
+    pub fn record_recovered_termination(&self, terminal_status: &str) -> anyhow::Result<()> {
+        self.verify_owner()?;
+        ensure!(
+            matches!(terminal_status, "failed" | "canceled") && !self.directory.join(ACK).exists(),
+            "acknowledged/successful history cannot be superseded"
+        );
+        self.write_record(
+            RECOVERY_COMPLETION,
+            &Completion {
+                schema: "forge/attempt-completion/v1".into(),
+                owner: self.owner.clone(),
+                terminal_status: terminal_status.into(),
+            },
+        )
+    }
+    fn completion_paths(&self) -> (&'static str, &'static str) {
+        if self.directory.join(RECOVERY_COMPLETION).exists() {
+            (RECOVERY_COMPLETION, RECOVERY_ACK)
+        } else {
+            (COMPLETION, ACK)
+        }
+    }
+
     /// Call only after an exact terminal ACK or authenticated owner readback.
     pub fn acknowledge_completion(&self, terminal_status: &str) -> anyhow::Result<()> {
         self.verify_owner()?;
-        let completion = self.read_record(COMPLETION)?;
+        let (completion_path, ack_path) = self.completion_paths();
+        let completion = self.read_record(completion_path)?;
         ensure!(
             completion.terminal_status == terminal_status,
             "workspace terminal acknowledgement mismatch"
         );
-        self.write_record(ACK, &completion)
+        self.write_record(ack_path, &completion)
     }
 
     fn read_record(&self, name: &str) -> anyhow::Result<Completion> {
@@ -266,14 +294,16 @@ impl OwnedWorkspace {
                 continue;
             }
             let workspace = Self::reopen(&root, name)?;
-            let terminal_status = match fs::symlink_metadata(workspace.directory.join(COMPLETION)) {
-                Ok(_) => Some(workspace.read_record(COMPLETION)?.terminal_status),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
-            let acknowledged = match fs::symlink_metadata(workspace.directory.join(ACK)) {
+            let (completion_path, ack_path) = workspace.completion_paths();
+            let terminal_status =
+                match fs::symlink_metadata(workspace.directory.join(completion_path)) {
+                    Ok(_) => Some(workspace.read_record(completion_path)?.terminal_status),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => return Err(error.into()),
+                };
+            let acknowledged = match fs::symlink_metadata(workspace.directory.join(ack_path)) {
                 Ok(_) => {
-                    let ack = workspace.read_record(ACK)?;
+                    let ack = workspace.read_record(ack_path)?;
                     ensure!(
                         Some(&ack.terminal_status) == terminal_status.as_ref(),
                         "orphan workspace acknowledgement"
@@ -308,6 +338,28 @@ impl OwnedWorkspace {
         commit_sha: Option<&str>,
         git_ref: &str,
     ) -> anyhow::Result<()> {
+        self.clone_checkout_inner(repository, commit_sha, git_ref, false)
+            .await
+    }
+
+    /// Typed build/deploy consumes a tracked tree, never repository history.
+    /// Fetch the assigned object itself so a moving branch cannot change inputs.
+    pub async fn checkout_source_snapshot(
+        &self,
+        repository: &str,
+        commit_sha: &str,
+    ) -> anyhow::Result<()> {
+        self.clone_checkout_inner(repository, Some(commit_sha), "", true)
+            .await
+    }
+
+    async fn clone_checkout_inner(
+        &self,
+        repository: &str,
+        commit_sha: Option<&str>,
+        git_ref: &str,
+        snapshot: bool,
+    ) -> anyhow::Result<()> {
         self.verify_owner()?;
         if let Some(sha) = commit_sha {
             ensure!(
@@ -315,13 +367,31 @@ impl OwnedWorkspace {
                 "checkout requires a full commit SHA"
             );
         }
-        let mut clone = self.git(&self.directory);
-        clone.args(["clone", "--quiet", "--no-checkout", "--no-hardlinks"]);
-        if commit_sha.is_none() && !git_ref.is_empty() {
-            clone.args(["--branch", git_ref]);
+        if snapshot {
+            let pin = commit_sha.context("source snapshot requires an exact commit")?;
+            fs::create_dir(&self.checkout)?;
+            let mut init = self.git(&self.checkout);
+            init.args(["init", "--quiet"]);
+            run_git(init, "source snapshot init failed").await?;
+            let mut remote = self.git(&self.checkout);
+            remote.args(["remote", "add", "--", "origin", repository]);
+            run_git(remote, "source snapshot remote failed").await?;
+            let mut fetch = self.git(&self.checkout);
+            fetch.args(["fetch", "--quiet", "--depth=1", "--no-tags", "origin", pin]);
+            run_git(
+                fetch,
+                "source snapshot fetch failed; workspace retained for reconciliation",
+            )
+            .await?;
+        } else {
+            let mut clone = self.git(&self.directory);
+            clone.args(["clone", "--quiet", "--no-checkout", "--no-hardlinks"]);
+            if commit_sha.is_none() && !git_ref.is_empty() {
+                clone.args(["--branch", git_ref]);
+            }
+            clone.args(["--", repository, "workspace"]);
+            run_git(clone, "clone failed; workspace retained for reconciliation").await?;
         }
-        clone.args(["--", repository, "workspace"]);
-        run_git(clone, "clone failed; workspace retained for reconciliation").await?;
         let target = commit_sha.unwrap_or("HEAD");
         let mut checkout = self.git(&self.checkout);
         checkout.args(["checkout", "--quiet", "--detach", target, "--"]);
@@ -369,10 +439,13 @@ impl OwnedWorkspace {
 
     /// Caller must first obtain a durable terminal acknowledgement from the owner.
     pub async fn cleanup_after_ack(self) -> anyhow::Result<()> {
+        let effect = crate::quiescence::enter(false)?;
         tokio::task::spawn_blocking(move || {
+            let _effect = effect;
             self.verify_owner()?;
             ensure!(
-                self.read_record(COMPLETION)? == self.read_record(ACK)?,
+                self.read_record(self.completion_paths().0)?
+                    == self.read_record(self.completion_paths().1)?,
                 "workspace terminal acknowledgement missing"
             );
             fs::remove_dir_all(&self.directory).context("remove acknowledged attempt workspace")
@@ -580,8 +653,28 @@ mod tests {
             fs::read_to_string(owned.checkout().join("tracked.txt")).unwrap(),
             "first"
         );
+        assert!(!owned.checkout().join(".git/shallow").exists());
         acknowledge_fixture(&owned);
         owned.cleanup_after_ack().await.unwrap();
+        let snapshot = workspace(&root);
+        snapshot
+            .checkout_source_snapshot(repository.to_str().unwrap(), &pin)
+            .await
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(snapshot.checkout().join("tracked.txt")).unwrap(),
+            "first"
+        );
+        assert!(snapshot.checkout().join(".git/shallow").is_file());
+        let count = std::process::Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(snapshot.checkout())
+            .output()
+            .unwrap();
+        assert!(count.status.success());
+        assert_eq!(String::from_utf8(count.stdout).unwrap().trim(), "1");
+        acknowledge_fixture(&snapshot);
+        snapshot.cleanup_after_ack().await.unwrap();
         let invalid = workspace(&root);
         assert!(
             invalid
@@ -678,5 +771,43 @@ mod tests {
         assert!(OwnedWorkspace::inventory(&root).is_err());
         assert_eq!(fs::read_to_string(&outside).unwrap(), "secret fixture");
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod kubernetes_recovery_tests {
+    use super::*;
+    #[tokio::test]
+    async fn expired_failure_ack_preserves_original_unacknowledged_intention() {
+        let root =
+            std::env::temp_dir().join(format!("forge-recovery-intention-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let workspace = OwnedWorkspace::create(&root, Uuid::new_v4(), Uuid::new_v4(), 1).unwrap();
+        workspace.create_empty_checkout().unwrap();
+        workspace.record_completion("success").unwrap();
+        let original = fs::read(workspace.directory.join(COMPLETION)).unwrap();
+        workspace.record_recovered_termination("failed").unwrap();
+        assert_eq!(
+            fs::read(workspace.directory.join(COMPLETION)).unwrap(),
+            original
+        );
+        let inventory = OwnedWorkspace::inventory(&root).unwrap();
+        assert_eq!(inventory[0].terminal_status.as_deref(), Some("failed"));
+        assert!(!inventory[0].acknowledged);
+        workspace.acknowledge_completion("failed").unwrap();
+        workspace.cleanup_after_ack().await.unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+    #[tokio::test]
+    async fn recovered_failure_cannot_replace_acknowledged_success() {
+        let root = std::env::temp_dir().join(format!("forge-recovery-ack-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let workspace = OwnedWorkspace::create(&root, Uuid::new_v4(), Uuid::new_v4(), 1).unwrap();
+        workspace.create_empty_checkout().unwrap();
+        workspace.record_completion("success").unwrap();
+        workspace.acknowledge_completion("success").unwrap();
+        assert!(workspace.record_recovered_termination("failed").is_err());
+        workspace.cleanup_after_ack().await.unwrap();
+        fs::remove_dir(root).unwrap();
     }
 }

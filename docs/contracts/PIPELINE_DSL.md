@@ -169,3 +169,63 @@ Parser обязан применять size/depth limits до materialisation, v
 `legacy_template` - отдельный server-side `config_source`, разрешённый только migration/demo project policy. Он создаёт фиксированные linear stages `build`, `test`, `deploy` с legacy jobs; template snapshot/hash сохраняется вместе с pipeline. Пользовательский YAML не может включить fallback ключом.
 
 При `config_source=repository` отсутствие, unreadability или invalid `.forge-ci.yml` является planning error. Forge не подменяет её template и особенно не запускает deploy. Существующее current behaviour, где отсутствующий local config использует template, сохраняется только до migration за явным compatibility flag и должно быть наблюдаемым в pipeline metadata.
+
+
+## Published images and Kubernetes environments
+
+Optional v1 jobs support ordinary authorized repository pipelines. They do not
+substitute Tracker task intent or change task-bound image_build/workspace_deploy.
+Existing legacy and v1 jobs retain their defaults.
+
+~~~yaml
+version: 1
+jobs:
+  build:
+    image_publish:
+      context: .
+      dockerfile: Dockerfile
+      repository: registry.example/own-ci/app
+      descriptor_artifact: reports/build.json
+      published_artifact: reports/image.json
+      build_args:
+        BUILD_HASH: "$CI_COMMIT_SHA"
+  deploy:
+    needs: [build]
+    helm_deploy:
+      environment_id: 11111111-1111-4111-8111-111111111111
+      images:
+        images.web:
+          job: build
+          artifact: reports/image.json
+      receipt_artifact: reports/deployment.json
+~~~
+
+The operator grants registry repositories and environment targets explicitly.
+The separate forge/published-image/v1 artifact binds the exact commit, immutable
+registry digest and checksum of the original descriptor. The strict existing
+forge/oci-candidate/v1 is unchanged. CI_COMMIT_SHA expands only as an entire
+build argument, in dollar or braced form. Other arguments are literal and must
+not contain credentials.
+
+The optional environment kubernetes_target uses schema
+forge/kubernetes-environment/v1, cluster, namespace, release, chart, values,
+optional repository files and HTTPS health URL. The API accepts no kubeconfig
+in this field. Credentials and real namespace UID/CA belong to the operator.
+The _forge Helm values are reserved for verified provenance.
+
+Ordinary jobs cannot mount build/deploy credentials. Old runners do not receive
+these job kinds. An unavailable worker removes publication capability; normal
+job execution and Forge startup remain independent of it.
+
+Repository push policy optionally accepts full refs, for example
+["refs/heads/main"]. Absence preserves the previous filter; an empty array
+restores all-ref behavior. Old configurations default to all refs. Each push
+decision, including a filtered event, remains idempotently recorded.
+
+A target has one unresolved deployment at a time. Newer pipeline order wins.
+Success requires Helm readiness, live Pod image digests and HTTP readback.
+Private service health checks record cluster-service-http, separately from
+public TLS acceptance. Unknown state holds custody, never permitting a blind
+repeat. A durable effect marker precedes Helm writes. Rollback uses a previously
+verified Helm revision and image snapshot without rebuilding it; it neither
+deletes PVCs nor rolls back database schemas.

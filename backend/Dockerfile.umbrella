@@ -26,6 +26,7 @@ RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src 
  && printf '%s\n' 'compile_error!("metadata-only pdlc-cli-core must not be compiled");' > /services-base/base-modules/rust/pdlc-cli-core/src/lib.rs \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
  && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs \
+ && printf 'fn main() {}\n' > src/bin/forge-quiesce.rs \
  && printf 'fn main() {}\n' > src/bin/forge-delivery.rs && printf 'fn main() {}\n' > src/bin/forge-pg-migrate.rs \
  && printf '\n' > domain/src/lib.rs \
  && printf '\n' > app/src/lib.rs \
@@ -33,7 +34,7 @@ RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src 
  && printf '\n' > api/src/lib.rs \
  && printf '%s\n' 'compile_error!("metadata-only cicd-cli must not be compiled");' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs \
- && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner \
+ && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner --bin forge-quiesce \
  && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
 COPY --exclude=**/src/bin/tests/forge_runner.rs --exclude=**/src/bin/tests/forge_delivery.rs CI-CD/backend/src ./src
 COPY CI-CD/backend/domain/src domain/src
@@ -121,7 +122,7 @@ COPY services-base/scripts/_operator_compat.py \
      /services-base/scripts/
 RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib \
- && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner
+ && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner --bin forge-quiesce
 
 FROM debian:bookworm-slim
 # docker-cli only (DooD): embedded runner spawns job containers through the
@@ -159,10 +160,26 @@ RUN case "${TARGETARCH:-amd64}" in \
  && rm /tmp/docker-buildx \
  && docker buildx version
 
+# Pinned OCI resolver; controller-only registry auth stays out of job Pods.
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) crane_arch=x86_64; crane_sha=c1d593d01551f2c9a3df5ca0a0be4385a839bd9b86d4a76e18d7b17d16559127 ;; \
+      arm64) crane_arch=arm64; crane_sha=fc0515857bc38e4ddd2d37a5ab03fb5959449c7b2d4ad759bcc1174ac0cad91b ;; \
+      *) exit 1 ;; esac \
+ && curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v0.20.6/go-containerregistry_Linux_${crane_arch}.tar.gz" -o /tmp/crane.tgz \
+ && echo "${crane_sha}  /tmp/crane.tgz" | sha256sum -c - \
+ && tar -xzf /tmp/crane.tgz -C /usr/local/bin crane \
+ && rm /tmp/crane.tgz
+
 WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
 COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner
+COPY --from=build /app/target/release/forge-quiesce /usr/local/bin/forge-quiesce
 COPY --from=build /app/migrations /app/migrations
+COPY CI-CD/backend/migration-lineages /tmp/forge-lineages/backend/migration-lineages
+COPY CI-CD/scripts/migration_lineages.py /tmp/forge-lineages/scripts/migration_lineages.py
+RUN ln -s /app/migrations /tmp/forge-lineages/backend/migrations \
+ && python3 /tmp/forge-lineages/scripts/migration_lineages.py --output /app/migrations-kubernetes-v1 \
+ && rm -r /tmp/forge-lineages
 RUN mkdir -p /var/lib/forge/git /var/lib/forge/artifacts /workspaces \
  && chown -R cicd:cicd /var/lib/forge /workspaces
 USER cicd

@@ -24,6 +24,9 @@ use crate::{
     body_limits,
 };
 
+#[path = "runner_protocol_termination.rs"]
+mod termination;
+
 const PROTOCOL_VERSION: i32 = 1;
 const HEARTBEAT_INTERVAL_SECONDS: i32 = 15;
 const POLL_WAIT_MAX_SECONDS: i32 = 30;
@@ -198,6 +201,10 @@ pub(crate) struct RunnerAttemptSpec {
     timeout_seconds: i32,
     workspace: RunnerWorkspace,
     artifacts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_publish: Option<crate::domain::image_publish::ImagePublishSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    helm_deploy: Option<crate::domain::helm_deploy::DeploymentOffer>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -279,6 +286,10 @@ pub(crate) struct RunnerLogAppendResponse {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RunnerCompleteRequest {
+    #[serde(default)]
+    deployment_observation: Option<crate::domain::helm_deploy::DeploymentObservation>,
+    #[serde(default)]
+    termination_proof: Option<termination::KubernetesTerminationProof>,
     protocol_version: i32,
     lease_token: String,
     fencing_token: i64,
@@ -368,6 +379,7 @@ struct CompleteLeaseRow {
     job_id: Uuid,
     stage_id: Uuid,
     attempt_id: Uuid,
+    job_command: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -550,15 +562,18 @@ pub(crate) async fn poll_runner_work(
         .await
         .map_err(ApiError::internal)?;
 
-    if !runner_supports_executor(&runner.capabilities, CURRENT_EXECUTOR_KIND) {
+    if selected_executor(&runner.capabilities).is_none() {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
     let poll_started = tokio::time::Instant::now();
     let wait_budget = StdDuration::from_secs(input.wait_seconds as u64);
     loop {
+        if !crate::quiescence::accepting() {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        }
         let notified = crate::dispatch_signal::runner_work_notifier().notified();
-        match claim_next_work(db, &runner, &runner_tags).await? {
+        match claim_next_work(db, &state.config.artifacts, &runner, &runner_tags).await? {
             Some(offer) => return Ok(Json(offer).into_response()),
             None if input.wait_seconds == 0 => {
                 return Ok(StatusCode::NO_CONTENT.into_response());
@@ -1013,8 +1028,12 @@ pub(crate) async fn append_runner_lease_logs(
            AND l.attempt_id = $5 \
            AND l.lease_expires_at > now() \
            AND l.acknowledged_at IS NOT NULL \
-           AND j.status = 'running' \
-           AND a.status = 'running'",
+           AND ( \
+             (j.status = 'running' AND a.status = 'running') \
+             OR (l.cancel_requested_at IS NOT NULL \
+                 AND l.completion_received_at IS NULL \
+                 AND j.status = 'canceled' AND a.status = 'canceled') \
+           )",
     )
     .bind(lease_id)
     .bind(runner.id)
@@ -1090,7 +1109,7 @@ pub(crate) async fn complete_runner_lease(
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
     let mut tx = db.begin().await.map_err(ApiError::internal)?;
     let row = sqlx::query_as::<_, CompleteLeaseRow>(
-        "SELECT l.job_id, j.stage_id, l.attempt_id \
+        "SELECT l.job_id, j.stage_id, l.attempt_id, j.command AS job_command \
          FROM job_leases l \
          JOIN jobs j ON j.id = l.job_id \
          JOIN execution_attempts a ON a.id = l.attempt_id \
@@ -1120,6 +1139,11 @@ pub(crate) async fn complete_runner_lease(
 
     let Some(row) = row else {
         drop(tx);
+        if input.termination_proof.is_some()
+            && state.config.runner.mode == crate::config::RunnerMode::Kubernetes
+        {
+            return termination::complete(db, &runner, lease_id, &input).await;
+        }
         return Err(lease_mutation_error(db, lease_id, runner.id).await);
     };
 
@@ -1173,6 +1197,21 @@ pub(crate) async fn complete_runner_lease(
         .await
         .map_err(ApiError::internal)?;
 
+    if row.job_command == "forge:helm-deploy" {
+        crate::deployment_runtime::finish(
+            &mut tx,
+            row.attempt_id,
+            lease_id,
+            input.fencing_token,
+            terminal_status,
+            input.deployment_observation.as_ref(),
+        )
+        .await?;
+    } else if input.deployment_observation.is_some() {
+        return Err(ApiError::conflict(
+            "Ordinary job cannot submit a deployment observation",
+        ));
+    }
     tx.commit().await.map_err(ApiError::internal)?;
     crate::api::refresh_statuses(db, row.stage_id).await?;
 
@@ -1221,6 +1260,7 @@ pub(crate) async fn read_runner_lease_receipt(
 
 async fn claim_next_work(
     db: &PgPool,
+    artifacts: &crate::config::ArtifactsConfig,
     runner: &AuthenticatedRunner,
     runner_tags: &[String],
 ) -> Result<Option<RunnerLeaseOffer>, ApiError> {
@@ -1256,6 +1296,18 @@ async fn claim_next_work(
              LEFT JOIN git_groups gg ON gg.id=rc.group_id \
              WHERE q.state = 'queued' AND NOT EXISTS (SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                 AND NOT EXISTS(SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
+                AND j.command <> 'forge:image-build' \
+                AND (j.command <> 'forge:image-publish' OR $9::boolean) \
+                AND (j.command <> 'forge:helm-deploy' OR ($10::boolean AND EXISTS( \
+                  SELECT 1 FROM jsonb_array_elements(COALESCE(pp.plan->'jobs','[]'::jsonb)) granted \
+                  WHERE granted->>'key'=j.name \
+                    AND granted->'helm_deploy'->>'environment_id'=ANY($11::text[])))) \
+                AND NOT (j.command='forge:helm-deploy' AND EXISTS( \
+                  SELECT 1 FROM deployments d, jsonb_array_elements( \
+                    COALESCE(pp.plan->'jobs','[]'::jsonb)) planned \
+                  WHERE planned->>'key'=j.name \
+                    AND d.environment_id::text=planned->'helm_deploy'->>'environment_id' \
+                    AND d.runtime_phase IN ('prepared','running','held'))) \
                AND NOT EXISTS(SELECT 1 FROM repository_catalog nr JOIN forge_namespace_bindings nb ON nb.resource_id=nr.group_id WHERE nr.id=pr.repository_id AND nb.state<>'active') \
                AND q.not_before <= now() \
                AND q.required_tags <@ $8::text[] \
@@ -1346,6 +1398,9 @@ async fn claim_next_work(
     .bind(ACK_DEADLINE_SECONDS)
     .bind(PROTOCOL_VERSION)
     .bind(runner_tags)
+    .bind(runner_supports_job(&runner.capabilities, "image-publish-v1") && selected_executor(&runner.capabilities)==Some("kubernetes"))
+    .bind(runner_supports_job(&runner.capabilities, "helm-deploy-v1") && selected_executor(&runner.capabilities)==Some("kubernetes"))
+    .bind(runner_helm_targets(&runner.capabilities))
         .fetch_optional(&mut *tx)
         .await;
         let row = match row {
@@ -1379,6 +1434,82 @@ async fn claim_next_work(
             }
             _ => row.repository_url.clone(),
         };
+        let (image_publish, helm_deploy) = if matches!(
+            row.command.as_str(),
+            "forge:image-publish" | "forge:helm-deploy"
+        ) {
+            let (plan, plan_hash, config_hash, raw_config, resolved_commit): (
+                serde_json::Value,
+                String,
+                String,
+                String,
+                Option<String>,
+            ) = sqlx::query_as(
+                "SELECT plan, plan_sha256, config_sha256, raw_config, resolved_commit_sha
+                     FROM pipeline_plans WHERE pipeline_id=$1 AND config_source='repository'",
+            )
+            .bind(row.pipeline_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(|| ApiError::conflict("Typed build requires a repository plan"))?;
+            if row.command == "forge:image-publish" {
+                (
+                    Some(validated_image_publish(
+                        &row,
+                        &plan,
+                        &plan_hash,
+                        &config_hash,
+                        &raw_config,
+                        resolved_commit.as_deref(),
+                    )?),
+                    None,
+                )
+            } else {
+                let spec = validated_helm_deploy(
+                    &row,
+                    &plan,
+                    &plan_hash,
+                    &config_hash,
+                    &raw_config,
+                    resolved_commit.as_deref(),
+                )?;
+                let prepared = crate::deployment_runtime::prepare(
+                    &mut tx,
+                    artifacts,
+                    row.pipeline_id,
+                    row.job_id,
+                    &row.job_name,
+                    row.attempt_id,
+                    row.lease_id,
+                    row.generation,
+                    row.commit_sha
+                        .as_deref()
+                        .ok_or_else(|| ApiError::conflict("Deployment source pin missing"))?,
+                    &plan,
+                    &spec,
+                )
+                .await?;
+                let Some(offer) = prepared else {
+                    refuse_undispatched(
+                        &mut tx,
+                        &row,
+                        "A newer pipeline is already applied to this environment",
+                    )
+                    .await?;
+                    match tx.commit().await {
+                        Ok(()) => {}
+                        Err(error) if is_claim_serialization_failure(&error) => continue,
+                        Err(error) => return Err(ApiError::internal(error)),
+                    }
+                    crate::api::refresh_statuses(db, row.stage_id).await?;
+                    continue;
+                };
+                (None, Some(offer))
+            }
+        } else {
+            (None, None)
+        };
         match tx.commit().await {
             Ok(()) => {}
             Err(error) if is_claim_serialization_failure(&error) => {
@@ -1405,7 +1536,9 @@ async fn claim_next_work(
                 job_key: row.job_name,
                 git_ref: row.git_ref,
                 commit_sha: row.commit_sha,
-                executor: "shell".to_string(),
+                executor: selected_executor(&runner.capabilities)
+                    .ok_or_else(|| ApiError::conflict("Runner executor unavailable"))?
+                    .to_string(),
                 image: row.image,
                 commands: vec![row.command],
                 environment: BTreeMap::new(),
@@ -1416,6 +1549,8 @@ async fn claim_next_work(
                     checkout_url: Some(checkout_url),
                 },
                 artifacts: row.artifact_paths,
+                image_publish,
+                helm_deploy,
             },
         }));
     }
@@ -1426,6 +1561,44 @@ async fn claim_next_work(
         "runner claim remained contended after serialization retries"
     );
     Ok(None)
+}
+
+async fn refuse_undispatched(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    row: &ClaimedWork,
+    diagnostic: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE execution_attempts SET status='failed',finished_at=now(),error_tail=$2
+        WHERE id=$1 AND status='running'",
+    )
+    .bind(row.attempt_id)
+    .bind(diagnostic)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
+        "UPDATE jobs SET status='failed',finished_at=now()
+        WHERE id=$1 AND status='running'",
+    )
+    .bind(row.job_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
+        "UPDATE job_leases SET lease_status='completed',terminal_status='failed',
+        completed_at=now(),completion_received_at=now(),error_tail=$2
+        WHERE id=$1 AND lease_status='active'",
+    )
+    .bind(row.lease_id)
+    .bind(diagnostic)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?;
+    crate::store::close_job_queue_for_attempt_tx(tx, row.attempt_id, "failed")
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(())
 }
 
 fn is_claim_serialization_failure(error: &sqlx::Error) -> bool {
@@ -1665,31 +1838,211 @@ fn validate_capabilities(value: &serde_json::Value) -> Result<(), ApiError> {
         return Err(ApiError::bad_request("capabilities must be an object"));
     };
 
-    if let Some(executor_kinds) = object.get("executorKinds") {
-        let Some(executor_kinds) = executor_kinds.as_array() else {
+    if let Some(targets) = object.get("helmTargets") {
+        let array = targets
+            .as_array()
+            .ok_or_else(|| ApiError::bad_request("capabilities.helmTargets must be an array"))?;
+        if array.len() > 32 || runner_helm_targets(value).len() != array.len() {
             return Err(ApiError::bad_request(
-                "capabilities.executorKinds must be an array",
-            ));
-        };
-        if executor_kinds.len() > 16 {
-            return Err(ApiError::bad_request(
-                "capabilities.executorKinds must contain at most 16 items",
+                "capabilities.helmTargets requires at most 32 canonical environment UUIDs",
             ));
         }
-        for kind in executor_kinds {
-            let Some(kind) = kind.as_str().map(str::trim) else {
+    }
+    for capability in ["executorKinds", "jobKinds"] {
+        if let Some(executor_kinds) = object.get(capability) {
+            let Some(executor_kinds) = executor_kinds.as_array() else {
                 return Err(ApiError::bad_request(
-                    "capabilities.executorKinds must contain executor names",
+                    "capabilities.executorKinds must be an array",
                 ));
             };
-            if !valid_tag(kind) {
+            if executor_kinds.len() > 16 {
                 return Err(ApiError::bad_request(
-                    "capabilities.executorKinds must match ^[a-z0-9][a-z0-9._-]{0,62}$",
+                    "capabilities.executorKinds must contain at most 16 items",
                 ));
+            }
+            for kind in executor_kinds {
+                let Some(kind) = kind.as_str().map(str::trim) else {
+                    return Err(ApiError::bad_request(
+                        "capabilities.executorKinds must contain executor names",
+                    ));
+                };
+                if !valid_tag(kind) {
+                    return Err(ApiError::bad_request(
+                        "capabilities.executorKinds must match ^[a-z0-9][a-z0-9._-]{0,62}$",
+                    ));
+                }
             }
         }
     }
     Ok(())
+}
+
+fn selected_executor(capabilities: &serde_json::Value) -> Option<&'static str> {
+    if capabilities.get("executorKinds").is_some()
+        && runner_supports_executor(capabilities, "kubernetes")
+    {
+        Some("kubernetes")
+    } else if runner_supports_executor(capabilities, CURRENT_EXECUTOR_KIND) {
+        Some(CURRENT_EXECUTOR_KIND)
+    } else {
+        None
+    }
+}
+
+fn runner_helm_targets(capabilities: &serde_json::Value) -> Vec<String> {
+    capabilities
+        .get("helmTargets")
+        .and_then(serde_json::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .filter(|value| {
+                    Uuid::parse_str(value).is_ok_and(|id| !id.is_nil() && id.to_string() == *value)
+                })
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn runner_supports_job(capabilities: &serde_json::Value, kind: &str) -> bool {
+    capabilities
+        .get("jobKinds")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|kinds| kinds.iter().any(|value| value.as_str() == Some(kind)))
+}
+
+/// Validate before committing the claim. The lease and source identities remain
+/// server-owned; an ordinary repository build never invents a task intent.
+fn validated_image_publish(
+    row: &ClaimedWork,
+    plan: &serde_json::Value,
+    plan_hash: &str,
+    config_hash: &str,
+    raw_config: &str,
+    resolved_commit: Option<&str>,
+) -> Result<crate::domain::image_publish::ImagePublishSpec, ApiError> {
+    use sha2::{Digest, Sha256};
+    let invalid =
+        || ApiError::conflict("Image publication differs from its immutable repository plan");
+    let entry = plan["jobs"]
+        .as_array()
+        .and_then(|jobs| {
+            jobs.iter()
+                .find(|entry| entry["key"].as_str() == Some(row.job_name.as_str()))
+        })
+        .ok_or_else(invalid)?;
+    let spec: crate::domain::image_publish::ImagePublishSpec =
+        serde_json::from_value(entry["image_publish"].clone()).map_err(|_| invalid())?;
+    spec.validate().map_err(ApiError::conflict)?;
+    let bytes = serde_json::to_vec(plan).map_err(|_| invalid())?;
+    let artifacts = vec![
+        spec.descriptor_artifact.clone(),
+        spec.published_artifact.clone(),
+    ];
+    if plan["format"] != "v1-dag"
+        || plan["version"] != 1
+        || plan["config_source"] != "repository"
+        || row
+            .commit_sha
+            .as_deref()
+            .is_none_or(|s| !crate::domain::image_build::valid_commit(s))
+        || resolved_commit != row.commit_sha.as_deref()
+        || plan["resolved_commit_sha"].as_str() != resolved_commit
+        || format!("{:x}", Sha256::digest(bytes)) != plan_hash
+        || row.plan_sha256.as_deref() != Some(plan_hash)
+        || format!("{:x}", Sha256::digest(raw_config.as_bytes())) != config_hash
+        || row.command != "forge:image-publish"
+        || entry["command"] != row.command
+        || row.image != "forge:runner-image-publish"
+        || entry["image"] != row.image
+        || entry["commands"] != serde_json::json!([])
+        || entry["required_secrets"] != serde_json::json!([])
+        || !row.required_secrets.is_empty()
+        || entry["allow_failure"] != false
+        || row.artifact_paths != artifacts
+        || entry["artifact_paths"] != serde_json::json!(artifacts)
+    {
+        return Err(invalid());
+    }
+    Ok(spec)
+}
+
+fn validated_helm_deploy(
+    row: &ClaimedWork,
+    plan: &serde_json::Value,
+    plan_hash: &str,
+    config_hash: &str,
+    raw_config: &str,
+    resolved_commit: Option<&str>,
+) -> Result<crate::domain::helm_deploy::HelmDeploySpec, ApiError> {
+    let invalid =
+        || ApiError::conflict("Helm deployment differs from its immutable repository plan");
+    let entry = plan["jobs"]
+        .as_array()
+        .and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| entry["key"].as_str() == Some(row.job_name.as_str()))
+        })
+        .ok_or_else(invalid)?;
+    let spec: crate::domain::helm_deploy::HelmDeploySpec =
+        serde_json::from_value(entry["helm_deploy"].clone()).map_err(|_| invalid())?;
+    spec.validate().map_err(ApiError::conflict)?;
+    let artifacts = vec![spec.receipt_artifact.clone()];
+    if plan["format"] != "v1-dag"
+        || plan["version"] != 1
+        || plan["config_source"] != "repository"
+        || row
+            .commit_sha
+            .as_deref()
+            .is_none_or(|sha| !crate::domain::image_build::valid_commit(sha))
+        || resolved_commit != row.commit_sha.as_deref()
+        || plan["resolved_commit_sha"].as_str() != resolved_commit
+        || format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(plan).map_err(|_| invalid())?)
+        ) != plan_hash
+        || row.plan_sha256.as_deref() != Some(plan_hash)
+        || format!("{:x}", Sha256::digest(raw_config.as_bytes())) != config_hash
+        || row.command != "forge:helm-deploy"
+        || entry["command"] != row.command
+        || row.image != "forge:runner-helm-deploy"
+        || entry["image"] != row.image
+        || entry["commands"] != serde_json::json!([])
+        || !row.required_secrets.is_empty()
+        || entry["required_secrets"] != serde_json::json!([])
+        || entry["allow_failure"] != false
+        || row.artifact_paths != artifacts
+        || entry["artifact_paths"] != serde_json::json!(artifacts)
+    {
+        return Err(invalid());
+    }
+    Ok(spec)
+}
+
+#[cfg(test)]
+mod typed_job_capability_tests {
+    use super::*;
+    #[test]
+    fn legacy_runner_has_no_implicit_build_or_deploy_capability() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"executorKinds":["kubernetes"]}),
+        ] {
+            assert!(!runner_supports_job(&value, "image-publish-v1"));
+            assert!(!runner_supports_job(&value, "helm-deploy-v1"));
+        }
+        assert!(runner_supports_job(
+            &serde_json::json!({"jobKinds":["image-publish-v1"]}),
+            "image-publish-v1"
+        ));
+        assert!(
+            validate_capabilities(&serde_json::json!({"jobKinds":"image-publish-v1"})).is_err()
+        );
+        assert!(validate_capabilities(&serde_json::json!({"jobKinds":["--invalid"]})).is_err());
+    }
 }
 
 fn runner_supports_executor(capabilities: &serde_json::Value, executor: &str) -> bool {

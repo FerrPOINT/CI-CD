@@ -24,13 +24,16 @@
       "rust-toolchain*",
       ".base-revision",
       ".namespace-base-revision",
-      "backend/Dockerfile*",
       "openapi/**",
       "scripts/postgres-delivery.py",
       "scripts/workspace_deploy_admission.py",
       "scripts/workspace_deploy_adapter.py",
       "scripts/workspace_deploy_bridge.py",
-      "backend/tests/**"
+      "backend/tests/**",
+      "backend/Dockerfile",
+      "backend/Dockerfile.dockerignore",
+      "backend/Dockerfile.umbrella",
+      "backend/Dockerfile.umbrella.dockerignore"
     ],
     "tooling": [
       "frontend/Dockerfile*",
@@ -53,7 +56,12 @@
       "backend/Dockerfile.umbrella",
       "backend/src/task_delivery/postgres.rs",
       "scripts/select_build.py",
-      "scripts/tests/test_current_performance_routes.py"
+      "scripts/tests/test_current_performance_routes.py",
+      "backend/migration-lineages/**",
+      "scripts/migration_lineages.py",
+      "scripts/test_migration_lineages.py",
+      "backend/Dockerfile.kubernetes-runner",
+      "backend/Dockerfile.kubernetes-runner.dockerignore"
     ],
     "cli": [
       "backend/cli/**"
@@ -535,7 +543,7 @@
         "-euo",
         "pipefail",
         "-c",
-        "cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner\nfor name in cicd-server forge-runner; do\n test -s \"$CARGO_TARGET_DIR/release/$name\"\n cp -- \"$CARGO_TARGET_DIR/release/$name\" \"$BASE_QUALITY_ARTIFACTS/$name\"\ndone"
+        "cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner --bin forge-quiesce\nfor name in cicd-server forge-runner forge-quiesce; do\n test -s \"$CARGO_TARGET_DIR/release/$name\"\n cp -- \"$CARGO_TARGET_DIR/release/$name\" \"$BASE_QUALITY_ARTIFACTS/$name\"\ndone"
       ],
       "cwd": "backend",
       "inputs": [
@@ -573,7 +581,8 @@
       "kind": "artifact",
       "artifact_outputs": [
         "cicd-server",
-        "forge-runner"
+        "forge-runner",
+        "forge-quiesce"
       ],
       "artifact_toolchain": "pinned-image",
       "environment_inputs": [
@@ -1266,6 +1275,39 @@
       "cacheable": false,
       "execution_slot": "none",
       "sdk_revision": ".base-revision"
+    },
+    {
+      "id": "tooling:migration-lineages",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "test_tier": "unit",
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts",
+        "-p",
+        "test_migration_lineages.py",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "backend/migration-lineages/**",
+        "scripts/migration_lineages.py",
+        "backend/migrations/**",
+        "scripts/test_migration_lineages.py"
+      ],
+      "cacheable": false,
+      "execution_slot": "none"
     }
   ],
   "additional_acceptance": "Manual qualification retains git_receive_only, PostgreSQL/native Git/CLI/MSRV/security/SDK QA/packed/themes gates; native selected graphs and exact artifact reuse remain unqualified.",
@@ -1344,10 +1386,20 @@
   ],
   "container_inputs": {
     "backend": [
-      "backend/Dockerfile*"
+      "backend/Dockerfile",
+      "backend/Dockerfile.dockerignore",
+      "backend/Dockerfile.umbrella",
+      "backend/Dockerfile.umbrella.dockerignore",
+      "backend/migration-lineages/**",
+      "scripts/migration_lineages.py"
     ],
     "runner": [
-      "backend/Dockerfile*"
+      "backend/Dockerfile",
+      "backend/Dockerfile.dockerignore",
+      "backend/Dockerfile.umbrella",
+      "backend/Dockerfile.umbrella.dockerignore",
+      "backend/migration-lineages/**",
+      "scripts/migration_lineages.py"
     ],
     "frontend": [
       "frontend/Dockerfile*",

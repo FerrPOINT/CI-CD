@@ -129,6 +129,8 @@ jobs:
           python-version: "3.12"
       - name: documentation regression tests
         run: python3 -B -m unittest scripts.tests.test_quality_routes scripts.tests.test_bin_test_inputs scripts.tests.test_current_performance_routes scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks scripts.tests.test_postgres_rejection scripts.tests.test_backend_dockerfile scripts.tests.test_frontend_toolchain scripts.tests.test_build_pin scripts.tests.test_build_scope
+      - name: Migration lineage packaging regressions
+        run: python3 -B -m unittest discover -s scripts -p test_migration_lineages.py -v
       - name: documentation checks
         run: python3 -B scripts/verify_docs.py --links --anchors --canonical --frontend-contracts
       - name: dependency inventory drift

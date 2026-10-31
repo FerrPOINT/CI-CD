@@ -19,7 +19,10 @@
 !CI-CD/backend/migration/**
 !CI-CD/backend/migrations/
 !CI-CD/backend/migrations/**
+!CI-CD/backend/migration-lineages/
+!CI-CD/backend/migration-lineages/**
 !CI-CD/scripts/
+!CI-CD/scripts/migration_lineages.py
 !CI-CD/scripts/postgres-delivery.py
 !CI-CD/scripts/workspace_deploy_admission.py
 !CI-CD/scripts/workspace_deploy_adapter.py

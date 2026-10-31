@@ -138,6 +138,46 @@ class CurrentPerformanceRoutesTests(unittest.TestCase):
                      '      - name: Native QA Compose ownership regressions\n'):
             self.assertIn(step + "        if: needs.changes.outputs.backend == 'true'\n", workflow)
 
+    def test_current_runtime_receives_every_declared_binary(self):
+        gate = next(gate for gate in selection.load(ROOT)['gates'] if gate['id'] == 'backend:build')
+        expected = {'cicd-server', 'forge-runner', 'forge-quiesce'}
+        self.assertEqual(set(gate['artifact_outputs']), expected)
+        for name in expected:
+            self.assertIn('--bin ' + name, gate['argv'][-1])
+        for filename in ('Dockerfile', 'Dockerfile.umbrella'):
+            recipe = (ROOT / 'backend' / filename).read_text(encoding='utf-8')
+            shipped = set(re.findall(r'COPY --from=build /app/target/release/([^ ]+) ', recipe))
+            self.assertEqual(shipped, expected)
+            final = recipe.split('RUN find src ', 1)[1].split('FROM debian:', 1)[0]
+            self.assertIn('--bin forge-quiesce', final)
+
+    def test_lineage_packaging_avoids_an_unnecessary_rust_producer(self):
+        with patch.object(selection, 'git', return_value='a' * 40):
+            plan = selection.plan(ROOT, profile='build', changed=['scripts/migration_lineages.py'])
+        self.assertFalse(any(gate.get('kind') == 'artifact' for gate in plan['gates']))
+        self.assertIn('tooling:migration-lineages', {gate['id'] for gate in plan['gates']})
+        self.assertEqual(select_build.build_services(plan, selection.load(ROOT)), ['backend', 'runner'])
+        for name in ('Dockerfile.dockerignore', 'Dockerfile.umbrella.dockerignore'):
+            ignore = (ROOT / 'backend' / name).read_text(encoding='utf-8')
+            self.assertIn('!CI-CD/backend/migration-lineages/**', ignore)
+            self.assertIn('!CI-CD/scripts/migration_lineages.py', ignore)
+        for name in ('ci.yml', 'qualification.yml'):
+            workflow = (ROOT / '.github/workflows' / name).read_text(encoding='utf-8')
+            self.assertIn('discover -s scripts -p test_migration_lineages.py', workflow)
+
+    def test_optional_kubernetes_recipe_does_not_rebuild_ordinary_images(self):
+        with patch.object(selection, 'git', return_value='a' * 40):
+            plan = selection.plan(ROOT, profile='build', changed=['backend/Dockerfile.kubernetes-runner'])
+        self.assertFalse(any(gate.get('kind') == 'artifact' for gate in plan['gates']))
+        self.assertEqual(select_build.build_services(plan, selection.load(ROOT)), [])
+        recipe = (ROOT / 'backend/Dockerfile.kubernetes-runner').read_text(encoding='utf-8')
+        self.assertIn('FROM ${FORGE_IMAGE}', recipe)
+        self.assertNotIn('cargo ', recipe)
+        self.assertNotIn('FROM rust:', recipe)
+        allowed = (ROOT / 'backend/Dockerfile.kubernetes-runner.dockerignore').read_text(encoding='utf-8')
+        self.assertEqual([line for line in allowed.splitlines() if line.startswith('!')],
+                         ['!scripts/', '!scripts/host_image_build.py', '!scripts/helm_deploy.py'])
+
 
 if __name__ == '__main__':
     unittest.main()

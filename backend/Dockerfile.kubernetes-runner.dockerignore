@@ -1,0 +1,5 @@
+# The optional image consumes an already qualified parent, no Rust source.
+**
+!scripts/
+!scripts/host_image_build.py
+!scripts/helm_deploy.py

@@ -51,6 +51,9 @@ mod git_sat_receive;
 #[path = "support/pull_merge_fencing.rs"]
 mod pull_merge_fencing;
 
+#[path = "support/unified_cicd.rs"]
+mod unified_cicd;
+
 type CanceledExternalLeaseState = (
     String,
     String,
@@ -9092,7 +9095,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=40).chain(90..=104).collect::<Vec<_>>()
+        (1..=40).chain(90..=112).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -9125,7 +9128,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=40).chain(90..=104).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=40).chain(90..=112).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);
@@ -9288,7 +9291,9 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
     sqlx::query("INSERT INTO messaging_outbox (id, source, event_id, subject, payload, fingerprint, published_at, stream, stream_sequence) VALUES ($1, 'ci-cd', $2, 'pipeline.finished', $3, $4, now(), 'historical', 11)")
         .bind(message).bind(Uuid::new_v4()).bind(b"historical fixture".as_slice()).bind([0x5a_u8; 32].as_slice())
         .execute(&pool).await.unwrap();
-    let snapshot_sql = "SELECT jsonb_build_object('pipeline', (SELECT to_jsonb(p) FROM pipelines p WHERE id = $1), 'message', (SELECT to_jsonb(m) FROM messaging_outbox m WHERE id = $2))";
+    // Migration 0109 adds an ordering field; every previously existing column
+    // and the entire messaging receipt must retain its original value.
+    let snapshot_sql = "SELECT jsonb_build_object('pipeline', (SELECT to_jsonb(p)-'delivery_order' FROM pipelines p WHERE id = $1), 'message', (SELECT to_jsonb(m) FROM messaging_outbox m WHERE id = $2))";
     let snapshot: serde_json::Value = sqlx::query_scalar(snapshot_sql)
         .bind(pipeline)
         .bind(message)

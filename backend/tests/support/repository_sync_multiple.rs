@@ -38,6 +38,7 @@ fn command(provider: Provider, automatic: bool) -> SaveConnection {
             repository_path: "fixture/service".into(),
             direction: Direction::Both,
             automatic,
+            protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         },
         token: Some("synthetic-multiple-sync-credential".into()),
     }

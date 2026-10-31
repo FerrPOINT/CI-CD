@@ -158,6 +158,8 @@ async fn saved_connections_group_filter_preserves_uuid_namespace_and_combined_pa
                         repository_path: format!("fixture/{slug}"),
                         direction,
                         automatic: false,
+                        protected_branch_updates:
+                            cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
                     },
                     token: Some("fictional-list-scope-credential".into()),
                 },

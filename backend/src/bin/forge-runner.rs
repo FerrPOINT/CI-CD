@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use chrono::Utc;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -82,6 +82,12 @@ struct LeaseOffer {
 #[serde(rename_all = "camelCase")]
 struct AttemptSpec {
     id: Uuid,
+    #[serde(default)]
+    job_id: Uuid,
+    #[serde(default = "shell_executor")]
+    executor: String,
+    #[serde(default)]
+    image: String,
     job_key: String,
     git_ref: String,
     commit_sha: Option<String>,
@@ -92,6 +98,10 @@ struct AttemptSpec {
     artifacts: Vec<String>,
     timeout_seconds: i32,
     workspace: WorkspaceSpec,
+    #[serde(default)]
+    image_publish: Option<cicd::domain::image_publish::ImagePublishSpec>,
+    #[serde(default)]
+    helm_deploy: Option<cicd::domain::helm_deploy::DeploymentOffer>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,7 +197,7 @@ struct CompletionAck {
     terminal_status: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LeaseReceipt {
     protocol_version: i32,
@@ -221,9 +231,20 @@ impl std::error::Error for UnconfirmedExecution {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::var_os("CICD_QUIESCENCE_DIR").is_none() {
+        return run().await;
+    }
+    tokio::select! { result=run()=>result, result=cicd::quiescence::wait_for_exit()=>result }
+}
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     validate_cli(&cli)?;
     let root = workspace_root(&cli);
+    cicd::quiescence::initialize(
+        "external-runner",
+        vec![cicd::quiescence::CustodyRoot::workspace(root.clone())],
+    )?;
+    cicd::quiescence::wait_for_enrollment().await?;
     if cli.inspect_workspaces {
         println!(
             "{}",
@@ -241,7 +262,9 @@ async fn main() -> anyhow::Result<()> {
         .retry(reqwest::retry::never())
         .build()
         .context("build runner HTTP client")?;
+    let startup = cicd::quiescence::enter(true)?;
     let credential = ensure_credential(&client, &base, &cli).await?;
+    drop(startup);
 
     if cli.reconcile_workspaces {
         reconcile_workspaces(&client, &base, &credential, &root, cli.keep_workspace).await?;
@@ -251,9 +274,23 @@ async fn main() -> anyhow::Result<()> {
     reconcile_workspaces(&client, &base, &credential, &root, true).await?;
 
     loop {
+        let Ok(_effect) = cicd::quiescence::enter(true) else {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        };
         heartbeat(&client, &base, &credential, &cli, 0, &[]).await?;
         let poll_started = tokio::time::Instant::now();
-        match poll_work(&client, &base, &credential, &cli).await? {
+        let offer = match poll_work(&client, &base, &credential, &cli).await {
+            Ok(offer) => offer,
+            Err(_) if !cicd::quiescence::accepting() => {
+                drop(_effect);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        drop(_effect);
+        match offer {
             Some(offer) => {
                 run_offer(&client, &base, &credential, &cli, offer).await?;
                 if cli.once {
@@ -267,9 +304,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn workspace_root(cli: &Cli) -> PathBuf {
-    cli.work_dir
-        .clone()
-        .unwrap_or_else(|| std::env::temp_dir().join("forge-runner"))
+    cli.work_dir.clone().unwrap_or_else(|| {
+        if kubernetes_mode() {
+            PathBuf::from("/workspaces")
+        } else {
+            std::env::temp_dir().join("forge-runner")
+        }
+    })
 }
 
 fn ensure_no_unresolved_workspaces(root: &Path) -> anyhow::Result<()> {
@@ -349,9 +390,86 @@ async fn reconcile_workspaces(
     root: &Path,
     keep_workspace: bool,
 ) -> anyhow::Result<()> {
+    let _effect = cicd::quiescence::enter(false)?;
     let mut unresolved = 0;
     for record in cicd::runner_workspace::OwnedWorkspace::inventory(root)? {
+        if kubernetes_mode()
+            && !cicd::execution::kubernetes::external_marker(
+                root,
+                record.attempt_id,
+                record.generation,
+            )?
+        {
+            let ownership = client
+                .get(format!(
+                    "{base}/api/v1/runner/leases/{}/receipt",
+                    record.lease_id
+                ))
+                .bearer_auth(credential)
+                .send()
+                .await?;
+            // Only an authenticated foreign lease with no issued external marker may be skipped.
+            if ownership.status() == reqwest::StatusCode::NOT_FOUND {
+                continue;
+            }
+            ensure_success(ownership).await?;
+        }
+        if kubernetes_mode() {
+            let known_unsubmitted = async {
+                let workspace =
+                    cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
+                workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
+                if cicd::execution::kubernetes::close_unprepared(
+                    &cicd::execution::kubernetes::Config::from_env()?,
+                    root,
+                    record.attempt_id,
+                    record.lease_id,
+                    record.generation,
+                    workspace.checkout(),
+                )
+                .await?
+                .is_some()
+                {
+                    return Ok::<bool, anyhow::Error>(true);
+                }
+                cicd::execution::kubernetes::Execution::reopen(
+                    root,
+                    record.attempt_id,
+                    record.generation,
+                )?
+                .close_not_submitted()
+                .await
+            }
+            .await;
+            match known_unsubmitted {
+                Ok(false) => {} // The original issued/terminal path below is unchanged.
+                Ok(true) => {
+                    if recover_kubernetes(client, base, credential, root, &record, keep_workspace)
+                        .await
+                        .is_err()
+                    {
+                        unresolved += 1;
+                    }
+                    continue;
+                }
+                Err(_) => {
+                    unresolved += 1;
+                    continue;
+                }
+            }
+        }
         let Some(outcome) = record.terminal_status.as_deref() else {
+            if kubernetes_mode() {
+                match recover_kubernetes(client, base, credential, root, &record, keep_workspace)
+                    .await
+                {
+                    Ok(()) => continue,
+                    Err(_) => {
+                        unresolved += 1;
+                        continue;
+                    }
+                }
+            }
             unresolved += 1;
             continue;
         };
@@ -367,14 +485,42 @@ async fn reconcile_workspaces(
         .await
         .is_err()
         {
+            if kubernetes_mode() {
+                match recover_kubernetes(client, base, credential, root, &record, keep_workspace)
+                    .await
+                {
+                    Ok(()) => continue,
+                    Err(_) => {
+                        unresolved += 1;
+                        continue;
+                    }
+                }
+            }
             unresolved += 1;
             continue;
         }
         let workspace = cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
         workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
+        if kubernetes_mode() {
+            cicd::execution::kubernetes::Execution::reopen(
+                root,
+                record.attempt_id,
+                record.generation,
+            )?
+            .acknowledge()
+            .await?;
+        }
         workspace.acknowledge_completion(outcome)?;
         if !keep_workspace {
             workspace.cleanup_after_ack().await?;
+        }
+        if kubernetes_mode() {
+            cicd::execution::kubernetes::Execution::reopen(
+                root,
+                record.attempt_id,
+                record.generation,
+            )?
+            .finish_workspace_cleanup()?;
         }
     }
     if unresolved > 0 {
@@ -428,7 +574,7 @@ async fn ensure_credential(
             "registrationToken": registration_token,
             "name": &cli.name,
             "tags": &cli.tags,
-            "capabilities": runner_capabilities(),
+            "capabilities": runner_capabilities().await,
         }))
         .send()
         .await
@@ -481,7 +627,7 @@ async fn heartbeat_with_config(
                 "busySlots": busy_slots,
             },
             "tags": &config.tags,
-            "capabilities": runner_capabilities(),
+            "capabilities": runner_capabilities().await,
             "activeLeaseIds": active_lease_ids,
         }))
         .send()
@@ -537,6 +683,7 @@ async fn run_offer(
     cli: &Cli,
     offer: LeaseOffer,
 ) -> anyhow::Result<()> {
+    let _effect = cicd::quiescence::enter(false)?;
     eprintln!(
         "accepted offer lease={} attempt={} job={}",
         offer.lease_id, offer.attempt.id, offer.attempt.job_key
@@ -811,6 +958,15 @@ async fn complete_lease(
     offer: &LeaseOffer,
     result: ExecutionResult,
 ) -> anyhow::Result<()> {
+    let deployment_observation = if kubernetes_mode() {
+        cicd::execution::helm::completion_observation(
+            Path::new("/workspaces"),
+            offer.attempt.id,
+            offer.fencing_token,
+        )?
+    } else {
+        None
+    };
     let response = client
         .post(format!(
             "{base}/api/v1/runner/leases/{}/complete",
@@ -826,6 +982,8 @@ async fn complete_lease(
             "finishedAt": Utc::now(),
             "exitCode": result.exit_code,
             "diagnostic": result.diagnostic,
+            "deploymentObservation": deployment_observation,
+            "terminationProof": if kubernetes_mode(){cicd::execution::kubernetes::Execution::reopen(Path::new("/workspaces"),offer.attempt.id,offer.fencing_token).ok().and_then(|e|e.termination_proof().ok())}else{None},
         }))
         .send()
         .await
@@ -849,7 +1007,12 @@ async fn complete_executed_attempt(
     keep_workspace: bool,
 ) -> anyhow::Result<()> {
     let outcome = result.outcome;
-    workspace.record_completion(outcome)?;
+    let cleanup_root = workspace_root_for_checkout(workspace.checkout())?;
+    let mut workspace_closed = true;
+    let recovery_record = workspace.record_completion(outcome).is_err();
+    if recovery_record && (!kubernetes_mode() || !matches!(outcome, "failed" | "canceled")) {
+        bail!("workspace completion intention conflicts");
+    }
     let completion = complete_lease(client, base, credential, offer, result).await;
     // Never repeat the POST: a lost reply may follow a committed completion.
     let completion = match completion {
@@ -868,12 +1031,44 @@ async fn complete_executed_attempt(
         }
     };
     if completion.is_ok() {
+        if recovery_record {
+            workspace.record_recovered_termination(outcome)?;
+        }
+        if kubernetes_mode() {
+            let execution = cicd::execution::kubernetes::Execution::reopen(
+                &workspace_root_for_checkout(workspace.checkout())?,
+                offer.attempt.id,
+                offer.fencing_token,
+            )?;
+            if execution.not_submitted()? {
+                read_terminal_receipt(
+                    client,
+                    base,
+                    credential,
+                    offer.lease_id,
+                    offer.attempt.id,
+                    offer.fencing_token,
+                    outcome,
+                )
+                .await?;
+            }
+            execution.acknowledge().await?;
+        }
         workspace.acknowledge_completion(outcome)?;
     }
     if completion.is_ok() && !keep_workspace {
         if let Err(error) = workspace.cleanup_after_ack().await {
+            workspace_closed = false;
             eprintln!("acknowledged workspace retained: {error:#}");
         }
+    }
+    if completion.is_ok() && workspace_closed && kubernetes_mode() {
+        cicd::execution::kubernetes::Execution::reopen(
+            &cleanup_root,
+            offer.attempt.id,
+            offer.fencing_token,
+        )?
+        .finish_workspace_cleanup()?;
     }
     completion
 }
@@ -886,6 +1081,12 @@ async fn execute_attempt(
 ) -> anyhow::Result<(ExecutionResult, cicd::runner_workspace::OwnedWorkspace)> {
     let owned_workspace = prepare_workspace(cli, offer).await?;
     let workspace = owned_workspace.checkout();
+    if kubernetes_mode() {
+        return execute_kubernetes(cli, offer, log_context, secret_env, owned_workspace).await;
+    }
+    if offer.attempt.executor != "shell" {
+        bail!("unsupported offered executor");
+    }
     let mut last_exit_code = None;
     let mut result = ExecutionResult {
         outcome: "success",
@@ -1016,13 +1217,22 @@ async fn prepare_workspace(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .context("lease requires checkout but checkoutUrl is missing")?;
-        workspace
-            .clone_checkout(
-                url,
-                offer.attempt.commit_sha.as_deref(),
-                &offer.attempt.git_ref,
-            )
-            .await?;
+        if offer.attempt.image_publish.is_some() || offer.attempt.helm_deploy.is_some() {
+            let pin = offer
+                .attempt
+                .commit_sha
+                .as_deref()
+                .context("typed delivery requires source pin")?;
+            workspace.checkout_source_snapshot(url, pin).await?;
+        } else {
+            workspace
+                .clone_checkout(
+                    url,
+                    offer.attempt.commit_sha.as_deref(),
+                    &offer.attempt.git_ref,
+                )
+                .await?;
+        }
     } else {
         workspace.create_empty_checkout()?;
     }
@@ -1336,6 +1546,17 @@ async fn upload_declared_artifacts(
     offer: &LeaseOffer,
     workspace: &Path,
 ) -> anyhow::Result<()> {
+    upload_terminal_artifacts(context, offer, workspace, false).await
+}
+
+// Only a natively confirmed failed Kubernetes execution may omit an output it
+// never produced. Successful jobs and the existing shell path remain strict.
+async fn upload_terminal_artifacts(
+    context: &LogContext,
+    offer: &LeaseOffer,
+    workspace: &Path,
+    failed_kubernetes_exit: bool,
+) -> anyhow::Result<()> {
     if offer.attempt.artifacts.is_empty() {
         return Ok(());
     }
@@ -1345,7 +1566,22 @@ async fn upload_declared_artifacts(
         .await
         .with_context(|| format!("canonicalize workspace {}", workspace.display()))?;
     for (artifact_path, artifact_name) in offer.attempt.artifacts.iter().zip(names) {
-        let file = resolve_workspace_artifact(&workspace, artifact_path).await?;
+        let Some(file) =
+            terminal_artifact_path(&workspace, artifact_path, failed_kubernetes_exit).await?
+        else {
+            let message =
+                format!("declared artifact {artifact_path} absent after failed execution");
+            eprintln!("{message}");
+            let _ = append_log_lines(
+                context,
+                vec![RunnerLogLine {
+                    stream: "system",
+                    message: protocol_log_message(&message),
+                }],
+            )
+            .await;
+            continue;
+        };
         let metadata = tokio::fs::metadata(&file)
             .await
             .with_context(|| format!("stat artifact {}", file.display()))?;
@@ -1387,6 +1623,48 @@ async fn upload_declared_artifacts(
         .await;
     }
     Ok(())
+}
+
+async fn terminal_artifact_path(
+    workspace: &Path,
+    artifact_path: &str,
+    failed_kubernetes_exit: bool,
+) -> anyhow::Result<Option<PathBuf>> {
+    let error = match resolve_workspace_artifact(workspace, artifact_path).await {
+        Ok(path) => return Ok(Some(path)),
+        Err(error) => error,
+    };
+    if !failed_kubernetes_exit
+        || error
+            .downcast_ref::<std::io::Error>()
+            .is_none_or(|e| e.kind() != std::io::ErrorKind::NotFound)
+    {
+        return Err(error);
+    }
+    // canonicalize(NotFound) can also mean an escaping/dangling symlink.
+    // Check every existing prefix before classifying a genuinely absent tail.
+    let mut current = workspace.to_path_buf();
+    for part in Path::new(artifact_path).components() {
+        match part {
+            Component::Normal(name) => current.push(name),
+            Component::CurDir => continue,
+            _ => bail!("artifact path {artifact_path} must stay within workspace"),
+        }
+        match tokio::fs::symlink_metadata(&current).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                current = tokio::fs::canonicalize(&current).await?;
+                ensure!(
+                    current.starts_with(workspace),
+                    "artifact path {artifact_path} must stay within workspace"
+                );
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    // A file appeared during the failed read; do not infer absent state.
+    Err(error)
 }
 
 async fn resolve_workspace_artifact(
@@ -1468,27 +1746,171 @@ where
     Ok(())
 }
 
-async fn append_log_lines(context: &LogContext, lines: Vec<RunnerLogLine>) -> anyhow::Result<()> {
-    let response = context
-        .client
-        .post(format!(
-            "{}/api/v1/runner/leases/{}/logs",
-            context.base, context.lease_id
-        ))
-        .bearer_auth(&context.credential)
-        .json(&json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "leaseToken": &context.lease_token,
-            "fencingToken": context.fencing_token,
-            "attemptId": context.attempt_id,
-            "lines": lines,
-        }))
-        .send()
-        .await
-        .context("append runner logs request failed")?;
-    ensure_success(response)
-        .await
-        .context("append runner logs failed")
+// Match the existing log protocol without increasing its server-side limits.
+const LOG_BATCH_MAX_LINES: usize = 100;
+const LOG_BATCH_MAX_BYTES: usize = 256 * 1024;
+const LOG_APPEND_MAX_BYTES: usize = 1024 * 1024;
+const LOG_APPEND_MAX_ATTEMPTS: usize = 3;
+const LOG_APPEND_RETRY_BUDGET: Duration = Duration::from_secs(75);
+
+#[derive(Default)]
+struct RunnerLogBatch {
+    lines: Vec<RunnerLogLine>,
+    encoded_bytes: usize,
+}
+
+impl RunnerLogBatch {
+    async fn push(&mut self, context: &LogContext, line: String) -> anyhow::Result<()> {
+        let line = RunnerLogLine {
+            stream: "stdout",
+            message: protocol_log_message(&mask_secrets(&line, &context.masks)),
+        };
+        let bytes = serde_json::to_vec(&line)?.len() + 1;
+        if !self.lines.is_empty()
+            && (self.lines.len() == LOG_BATCH_MAX_LINES
+                || self.encoded_bytes + bytes > LOG_BATCH_MAX_BYTES)
+        {
+            self.flush(context).await?;
+        }
+        ensure!(
+            bytes <= LOG_BATCH_MAX_BYTES,
+            "runner log line exceeds batch bound"
+        );
+        self.encoded_bytes += bytes;
+        self.lines.push(line);
+        if self.lines.len() == LOG_BATCH_MAX_LINES {
+            self.flush(context).await?;
+        }
+        Ok(())
+    }
+
+    async fn flush(&mut self, context: &LogContext) -> anyhow::Result<()> {
+        if !self.lines.is_empty() {
+            append_log_batch(context, &self.lines, true).await?;
+            self.lines.clear();
+            self.encoded_bytes = 0;
+        }
+        Ok(())
+    }
+}
+
+/// Terminal Pod output is a snapshot, not a live one-line HTTP stream.
+/// Await each bounded batch before reading more; completion waits for the final flush.
+async fn forward_kubernetes_logs(
+    execution: &cicd::execution::kubernetes::Execution,
+    context: &LogContext,
+) -> anyhow::Result<()> {
+    let sink = tokio::sync::Mutex::new(RunnerLogBatch::default());
+    let batch = &sink;
+    execution
+        .stream_logs(move |line| async move { batch.lock().await.push(context, line).await })
+        .await?;
+    sink.into_inner().flush(context).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LogAppendAck {
+    protocol_version: i32,
+    accepted: usize,
+    next_after: Option<i32>,
+}
+
+fn log_retry_delay(
+    value: Option<&reqwest::header::HeaderValue>,
+    now: chrono::DateTime<Utc>,
+) -> Duration {
+    if let Some(value) = value.and_then(|value| value.to_str().ok()) {
+        if let Ok(seconds) = value.parse::<u64>() {
+            return Duration::from_secs(seconds);
+        }
+        if let Ok(date) = chrono::DateTime::parse_from_rfc2822(value) {
+            return (date.with_timezone(&Utc) - now)
+                .to_std()
+                .unwrap_or_default();
+        }
+    }
+    // The current shared runner-protocol bucket has a 60-second window.
+    Duration::from_secs(60)
+}
+
+async fn append_log_lines(
+    context: &LogContext,
+    lines: impl AsRef<[RunnerLogLine]>,
+) -> anyhow::Result<()> {
+    // Existing live/shell and pre-cancel emitters remain fail-fast. In
+    // particular, a log rate limit must not postpone killing a canceled child.
+    append_log_batch(context, lines.as_ref(), false).await
+}
+
+async fn append_log_batch(
+    context: &LogContext,
+    lines: &[RunnerLogLine],
+    retry_rate_limit: bool,
+) -> anyhow::Result<()> {
+    ensure!(
+        !lines.is_empty() && lines.len() <= LOG_BATCH_MAX_LINES,
+        "invalid runner log batch size"
+    );
+    let body = serde_json::to_vec(&json!({
+        "protocolVersion": PROTOCOL_VERSION,
+        "leaseToken": &context.lease_token,
+        "fencingToken": context.fencing_token,
+        "attemptId": context.attempt_id,
+        "lines": lines,
+    }))?;
+    ensure!(
+        body.len() <= LOG_APPEND_MAX_BYTES,
+        "runner log request exceeds body limit"
+    );
+    let deadline = tokio::time::Instant::now() + LOG_APPEND_RETRY_BUDGET;
+    for attempt in 1..=LOG_APPEND_MAX_ATTEMPTS {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        ensure!(
+            !remaining.is_zero(),
+            "runner log rate-limit retry budget exhausted"
+        );
+        let response = context
+            .client
+            .post(format!(
+                "{}/api/v1/runner/leases/{}/logs",
+                context.base, context.lease_id
+            ))
+            .bearer_auth(&context.credential)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.clone())
+            .timeout(remaining.min(Duration::from_secs(45)))
+            .send()
+            .await
+            .context("append runner logs request failed; append outcome is unknown")?;
+        if retry_rate_limit && response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            // Middleware rejects 429 before any append. Other errors (including
+            // transport loss or 5xx after a partial append) are never replayed.
+            let delay = log_retry_delay(
+                response.headers().get(reqwest::header::RETRY_AFTER),
+                Utc::now(),
+            );
+            drop(response);
+            ensure!(
+                attempt < LOG_APPEND_MAX_ATTEMPTS
+                    && delay < deadline.saturating_duration_since(tokio::time::Instant::now()),
+                "runner log rate-limit retry budget exhausted"
+            );
+            tokio::time::sleep(delay).await;
+            continue;
+        }
+        let ack: LogAppendAck = response_json(response)
+            .await
+            .context("append runner logs failed; append outcome is unknown")?;
+        ensure!(
+            ack.protocol_version == PROTOCOL_VERSION
+                && ack.accepted == lines.len()
+                && ack.next_after.is_some_and(|sequence| sequence >= 0),
+            "runner log acknowledgement does not match the full batch"
+        );
+        return Ok(());
+    }
+    unreachable!("bounded runner log append attempts")
 }
 
 fn truncate_log_message(value: &str) -> String {
@@ -1544,11 +1966,57 @@ async fn ensure_success(response: reqwest::Response) -> anyhow::Result<()> {
     bail!("API returned {status}: {body}");
 }
 
-fn runner_capabilities() -> serde_json::Value {
+fn kubernetes_mode() -> bool {
+    std::env::var("CICD_RUNNER_MODE").is_ok_and(|v| v == "kubernetes")
+}
+fn shell_executor() -> String {
+    "shell".into()
+}
+fn workspace_root_for_checkout(path: &Path) -> anyhow::Result<PathBuf> {
+    Ok(path
+        .parent()
+        .and_then(Path::parent)
+        .context("workspace root missing")?
+        .to_path_buf())
+}
+
+async fn runner_capabilities() -> serde_json::Value {
+    let config = if kubernetes_mode() {
+        cicd::execution::kubernetes::Config::from_env().ok()
+    } else {
+        None
+    };
+    let publication = config.as_ref().is_some_and(|c| c.host_build.is_some())
+        && Path::new("/run/forge-build-host/connection.json").is_file()
+        && cicd::execution::publication::available().await;
+    let target_root = std::env::var("CICD_HELM_TARGET_ROOT")
+        .unwrap_or_else(|_| "/run/forge-deploy-targets".into());
+    let targets: Vec<String> = config
+        .as_ref()
+        .map(|c| {
+            c.helm_targets
+                .iter()
+                .filter(|grant| {
+                    Path::new(&target_root)
+                        .join(grant.environment_id.to_string())
+                        .join("target.json")
+                        .is_file()
+                })
+                .map(|grant| grant.environment_id.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut kinds = Vec::new();
+    if publication {
+        kinds.push("image-publish-v1");
+    }
+    if !targets.is_empty() {
+        kinds.push("helm-deploy-v1");
+    }
     json!({
-        "executorKinds": ["shell"],
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
+        "jobKinds":kinds,"helmTargets":targets,
+        "executorKinds":[if kubernetes_mode(){"kubernetes"}else{"shell"}],
+        "os":std::env::consts::OS,"arch":std::env::consts::ARCH
     })
 }
 
