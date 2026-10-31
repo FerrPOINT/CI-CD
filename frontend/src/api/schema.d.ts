@@ -2931,6 +2931,79 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        DeploymentObservation: {
+            /** Format: uuid */
+            attemptId: string;
+            /** Format: uuid */
+            deploymentId: string;
+            /** Format: int64 */
+            generation: number;
+            /** Format: uuid */
+            leaseId: string;
+            /** Format: uuid */
+            namespaceUid: string;
+            phase: string;
+            /** Format: uuid */
+            pipelineId: string;
+            receipt?: null | components["schemas"]["DeploymentReceipt"];
+            /** Format: int32 */
+            releaseRevision?: number | null;
+            schema: string;
+            sourceCommit: string;
+        };
+        /** @description Immutable execution input; never contains a kubeconfig or service-account token. */
+        DeploymentOffer: {
+            /** Format: uuid */
+            attemptId: string;
+            /** Format: uuid */
+            deploymentId: string;
+            /** Format: uuid */
+            environmentId: string;
+            /** Format: int64 */
+            generation: number;
+            images: {
+                [key: string]: components["schemas"]["PublishedImage"];
+            };
+            /** Format: uuid */
+            jobId: string;
+            /** Format: uuid */
+            leaseId: string;
+            /** Format: uuid */
+            pipelineId: string;
+            /** Format: int64 */
+            pipelineOrder: number;
+            receiptArtifact: string;
+            rollback?: null | components["schemas"]["RollbackRelease"];
+            sourceCommit: string;
+            target: components["schemas"]["KubernetesTarget"];
+        };
+        DeploymentReceipt: {
+            /** Format: uuid */
+            attemptId: string;
+            cluster: string;
+            /** Format: uuid */
+            deploymentId: string;
+            /** Format: int64 */
+            generation: number;
+            /** Format: int32 */
+            healthStatus: number;
+            healthTransport: string;
+            images: {
+                [key: string]: string;
+            };
+            /** Format: uuid */
+            leaseId: string;
+            namespace: string;
+            /** Format: uuid */
+            namespaceUid: string;
+            /** Format: uuid */
+            pipelineId: string;
+            release: string;
+            /** Format: int32 */
+            releaseRevision: number;
+            schema: string;
+            sourceCommit: string;
+        };
         /** @enum {string} */
         DesiredSpaceState: "active" | "archived";
         DestinationAlert: {
@@ -3050,6 +3123,17 @@ export interface components {
             /** Format: int32 */
             schema_version: number;
             scope_revision?: string | null;
+        };
+        ImagePublishSpec: {
+            build_args?: {
+                [key: string]: string;
+            };
+            context: string;
+            descriptor_artifact: string;
+            dockerfile: string;
+            published_artifact: string;
+            repository: string;
+            target?: string | null;
         };
         IssueServiceAccountToken: {
             /** Format: int32 */

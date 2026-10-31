@@ -44,6 +44,7 @@ const connection: SyncConnection = {
     repository_path: 'team/service',
     direction: 'both',
     automatic: false,
+    protected_branch_updates: 'blocked',
   },
   has_credential: true,
   writable: true,

@@ -7701,6 +7701,174 @@ components:
         id:
           type: string
           format: uuid
+    DeploymentObservation:
+      type: object
+      required:
+      - schema
+      - phase
+      - deploymentId
+      - pipelineId
+      - attemptId
+      - leaseId
+      - generation
+      - sourceCommit
+      - namespaceUid
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        deploymentId:
+          type: string
+          format: uuid
+        generation:
+          type: integer
+          format: int64
+        leaseId:
+          type: string
+          format: uuid
+        namespaceUid:
+          type: string
+          format: uuid
+        phase:
+          type: string
+        pipelineId:
+          type: string
+          format: uuid
+        receipt:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeploymentReceipt'
+        releaseRevision:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        schema:
+          type: string
+        sourceCommit:
+          type: string
+      additionalProperties: false
+    DeploymentOffer:
+      type: object
+      description: Immutable execution input; never contains a kubeconfig or service-account token.
+      required:
+      - environmentId
+      - deploymentId
+      - pipelineId
+      - jobId
+      - attemptId
+      - leaseId
+      - generation
+      - sourceCommit
+      - pipelineOrder
+      - target
+      - images
+      - receiptArtifact
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        deploymentId:
+          type: string
+          format: uuid
+        environmentId:
+          type: string
+          format: uuid
+        generation:
+          type: integer
+          format: int64
+        images:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/PublishedImage'
+          propertyNames:
+            type: string
+        jobId:
+          type: string
+          format: uuid
+        leaseId:
+          type: string
+          format: uuid
+        pipelineId:
+          type: string
+          format: uuid
+        pipelineOrder:
+          type: integer
+          format: int64
+        receiptArtifact:
+          type: string
+        rollback:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/RollbackRelease'
+        sourceCommit:
+          type: string
+        target:
+          $ref: '#/components/schemas/KubernetesTarget'
+      additionalProperties: false
+    DeploymentReceipt:
+      type: object
+      required:
+      - schema
+      - deploymentId
+      - pipelineId
+      - attemptId
+      - leaseId
+      - generation
+      - sourceCommit
+      - cluster
+      - namespace
+      - namespaceUid
+      - release
+      - releaseRevision
+      - images
+      - healthStatus
+      - healthTransport
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        cluster:
+          type: string
+        deploymentId:
+          type: string
+          format: uuid
+        generation:
+          type: integer
+          format: int64
+        healthStatus:
+          type: integer
+          format: int32
+          minimum: 0
+        healthTransport:
+          type: string
+        images:
+          type: object
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+        leaseId:
+          type: string
+          format: uuid
+        namespace:
+          type: string
+        namespaceUid:
+          type: string
+          format: uuid
+        pipelineId:
+          type: string
+          format: uuid
+        release:
+          type: string
+        releaseRevision:
+          type: integer
+          format: int32
+        schema:
+          type: string
+        sourceCommit:
+          type: string
+      additionalProperties: false
     DesiredSpaceState:
       type: string
       enum:
@@ -8008,6 +8176,36 @@ components:
           type:
           - string
           - 'null'
+    ImagePublishSpec:
+      type: object
+      required:
+      - context
+      - dockerfile
+      - repository
+      - descriptor_artifact
+      - published_artifact
+      properties:
+        build_args:
+          type: object
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+        context:
+          type: string
+        descriptor_artifact:
+          type: string
+        dockerfile:
+          type: string
+        published_artifact:
+          type: string
+        repository:
+          type: string
+        target:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
     IssueServiceAccountToken:
       type: object
       required:
