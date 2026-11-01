@@ -148,6 +148,10 @@ with ComposeHelper(project=projects[0],task='development-workspace-local-qualifi
                 subprocess.run([str(args.test_python), '-B', '-m', 'unittest', 'discover', '-s', 'scripts/pdlc',
                                 '-p', 'test_workspace_integration.py', '-v'],
                                cwd=args.r1_source, env=env, check=True, timeout=240)
+                baseline = json.loads((output/'runtime-baseline.json').read_text())
+                actual = json.loads(subprocess.check_output(docker+['inspect',baseline['containerId']]))[0]
+                assert actual['Id'] == baseline['containerId'] and actual['State']['Running'] is True
+                assert actual['Image'] == baseline['imageId'] and actual['Mounts'] == baseline['mounts']
                 result = json.loads((output/'result.json').read_text())
                 result.update(windowsHelperRealCli=True, lostReplyReadbackAndReplay=True,
                               r1_source=subprocess.check_output(['git','rev-parse','HEAD'],cwd=args.r1_source,text=True).strip())

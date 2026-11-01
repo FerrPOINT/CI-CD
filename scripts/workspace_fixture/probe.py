@@ -156,6 +156,7 @@ result = {'candidate':data['candidate'],'registration':registration,'session':be
     'productionAcceptance':False}
 Path('/evidence/result.json').write_text(json.dumps(result,indent=2)+'\n')
 if data.get('windows_helper'):
+    Path('/evidence/runtime-baseline.json').write_text(json.dumps(target['services']['application']))
     host = {'fixtureOnly': True, 'apiUrl': data['api_url'], 'applicationUrl': data['application_url'],
             'workspaceId': data['workspace'], 'projectId': data['project'],
             'repositoryId': data['repository'], 'environmentId': data['environment'],
