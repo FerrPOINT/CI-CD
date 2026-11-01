@@ -264,7 +264,7 @@ async fn run() -> anyhow::Result<()> {
         .retry(reqwest::retry::never())
         .build()
         .context("build runner HTTP client")?;
-    let startup = cicd::quiescence::enter(true)?;
+    let startup = cicd::quiescence::enter_startup()?;
     let credential = ensure_credential(&client, &base, &cli).await?;
     drop(startup);
 
