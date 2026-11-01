@@ -106,7 +106,7 @@ with ComposeHelper(project=projects[0],task='development-workspace-local-qualifi
             healthcheck={'test':['CMD-SHELL','pg_isready -U forge_owner -d forge_test_bridge'],
                 'interval':'2s','timeout':'2s','retries':30})
         shared={'type':'volume','source':'controller','target':'/controller'}
-        socket={'type':'bind','source':'/var/run/docker.sock','target':'/var/run/docker.sock','read_only':True}
+        daemon_socket={'type':'bind','source':'/var/run/docker.sock','target':'/var/run/docker.sock','read_only':True}
         target_file={'type':'bind','source':str(target.directory),'target':'/target-fixture','read_only':True}
         controller=service('768m',1,user='0:0',environment={
             'CICD_DATABASE_URL':'postgres://forge_owner:synthetic_fixture@db:5432/forge_test_bridge',
@@ -120,7 +120,7 @@ with ComposeHelper(project=projects[0],task='development-workspace-local-qualifi
             'CICD_NAMESPACE__TRACKER_INSTANCE_ID':data['tracker'],
             'CICD_NAMESPACE__TRACKER_URL':'http://tracker:8080',
             'CICD_NAMESPACE__TRACKER_TOKEN_FILE':'/fixture-input/tracker-token'},
-            volumes=[shared,socket,target_file,inputs],
+            volumes=[shared,daemon_socket,target_file,inputs],
             healthcheck={'test':['CMD','python3','-c',"import urllib.request; urllib.request.urlopen('http://127.0.0.1:22801/api/v1/readiness').read()"],
                 'interval':'2s','timeout':'2s','retries':40})
         tracker=service('128m',.25,entrypoint=['python3'],command=['/_qa/services.py','tracker'],
@@ -129,7 +129,7 @@ with ComposeHelper(project=projects[0],task='development-workspace-local-qualifi
             controller['ports'] = [loopback_port(22801)]
         probe=service('512m',.5,user='0:0',entrypoint=['/opt/pdlc-workspace/bin/python'],
             command=['-B','/probe/probe.py'],networks=['selected','target'],
-            volumes=[shared,socket,target_file,inputs,
+            volumes=[shared,daemon_socket,target_file,inputs,
                 {'type':'bind','source':str(scripts/'probe.py'),'target':'/probe/probe.py','read_only':True},
                 {'type':'bind','source':str(output),'target':'/evidence'}])
         control.write({'db':pg,'controller':controller,'tracker':tracker,'probe':probe},
