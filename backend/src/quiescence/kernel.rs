@@ -447,7 +447,10 @@ impl Gate {
         // A restarted container must not replace participant boot evidence
         // while the owner holds the exclusive backup/exit fence.
         let registration = file(&self.root.join("effects.lock"))?;
-        ensure!(lock(&registration, false)?, "Forge backup fence held during registration");
+        ensure!(
+            lock(&registration, false)?,
+            "Forge backup fence held during registration"
+        );
         generation::validate_registration(self, id, kind, &custody_roots)?;
         ensure!(
             safe_name(id) && safe_name(kind),
