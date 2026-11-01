@@ -1,3 +1,4 @@
+import { downloadBlob } from "@pdlc/ui/lib";
 import { currentSession } from "./auth";
 import {
   getPlatformProduct,
@@ -112,12 +113,7 @@ export async function downloadArtifact(
 }
 
 export function saveDownloadedArtifact(artifact: DownloadedArtifact): void {
-  const url = URL.createObjectURL(artifact.blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = artifact.filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(artifact.blob, artifact.filename);
 }
 
 export async function authenticatedFetch(

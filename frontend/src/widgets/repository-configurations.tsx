@@ -2,6 +2,11 @@ import { RequireAdministrator } from "@pdlc/ui/auth";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ResourceListDescription,
+  Prose,
+  ResourceListTitle,
+  PageNavigation,
+  FormField,
   CardContent,
   Card,
   SectionHeader,
@@ -17,6 +22,7 @@ import {
   ResourceListRow,
   LoadingState,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useSessionCommand } from "@pdlc/ui/lib";
 import { api, ApiError } from "@/api/client";
@@ -203,10 +209,12 @@ function AdministrativeRepositoryConfigurations({
               <ResourceListRow asChild key={config.id}>
                 <li className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="font-semibold">{config.name}</p>
-                    <p className="text-sm text-text-muted">
+                    <ResourceListTitle asChild><p >{config.name}</p></ResourceListTitle>
+                    <ResourceListDescription asChild technical>
+                      <p>
                       Ветка: {config.default_branch}
                     </p>
+                    </ResourceListDescription>
                   </div>
                   <div className="flex flex-wrap gap-3 text-sm">
                     {[
@@ -218,13 +226,11 @@ function AdministrativeRepositoryConfigurations({
                       ["webhooks", "Вебхуки"],
                       ["reports", "Отчёты"],
                     ].map(([path, label]) => (
-                      <Link
-                        key={path}
-                        className="text-accent"
-                        to={`/delivery-configs/${config.id}/${path}`}
-                      >
-                        {label}
-                      </Link>
+                      <TextLink key={path} asChild>
+                        <Link to={`/delivery-configs/${config.id}/${path}`}>
+                          {label}
+                        </Link>
+                      </TextLink>
                     ))}
                   </div>
                 </li>
@@ -246,22 +252,20 @@ function AdministrativeRepositoryConfigurations({
         </p>
       )}
       {(configs.data?.total ?? 0) > 50 && (
-        <nav aria-label="Страницы CI-конфигураций" className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={!offset}
-            onClick={() => setOffset(Math.max(0, offset - 50))}
-          >
-            Назад
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!configs.data || offset + 50 >= configs.data.total}
-            onClick={() => setOffset(offset + 50)}
-          >
-            Далее
-          </Button>
-        </nav>
+        <PageNavigation
+          page={Math.ceil(offset / 50) + 1}
+          hasNext={!!configs.data && offset + 50 < configs.data.total}
+          onPageChange={(nextPage) =>
+            setOffset(
+              nextPage < Math.ceil(offset / 50) + 1
+                ? Math.max(0, offset - 50)
+                : offset + 50,
+            )
+          }
+          label="Страницы CI-конфигураций"
+          previousLabel="Назад"
+          nextLabel="Далее"
+        />
       )}
       {error && management === null && (
         <Notice role="alert" tone="danger" appearance="inline">
@@ -304,9 +308,9 @@ function AdministrativeRepositoryConfigurations({
                     disabled={!writable || busy || !!journal.command}
                   />
                   {journal.command && (
-                    <p className="text-sm text-warning">
+                    <Notice tone="warning" appearance="inline">
                       Сначала проверим результат предыдущей операции.
-                    </p>
+                    </Notice>
                   )}
                   <Button disabled={busy || (!writable && !journal.command)}>
                     {journal.command ? "Проверить и продолжить" : "Создать"}
@@ -339,10 +343,12 @@ function AdministrativeRepositoryConfigurations({
                     }}
                   >
                     <CardContent className="space-y-3">
-                      <p className="text-sm text-text-muted">
+                      <Prose asChild>
+                        <p>
                         Push запускает одну выбранную конфигурацию. Остальные
                         доступны вручную и по расписанию.
                       </p>
+                      </Prose>
                       {push.isError || choices.isError ? (
                         <Notice role="alert" tone="danger" appearance="inline">
                           Настройки автозапуска недоступны.
@@ -350,30 +356,35 @@ function AdministrativeRepositoryConfigurations({
                       ) : !push.data || !choices.data ? (
                         <LoadingState message="Загружаем настройки…" />
                       ) : (
-                        <label className="block text-sm">
-                          Конфигурация
-                          <SearchableSelect
-                            label="Конфигурация автозапуска"
-                            value={selectedPush}
-                            selectedLabel={selected.data?.name}
-                            placeholder="Отключён"
-                            options={choices.data.items.map((config) => ({
-                              value: config.id,
-                              label: config.name,
-                            }))}
-                            search={search}
-                            onSearch={(value) => {
-                              setSearch(value);
-                              setChoiceOffset(0);
-                            }}
-                            offset={choiceOffset}
-                            pageSize={50}
-                            total={choices.data.total}
-                            onPage={setChoiceOffset}
-                            onChange={setPushDraft}
-                            disabled={busy}
-                          />
-                        </label>
+                        <FormField
+                          id={"push-configuration-" + repositoryId}
+                          label={"Конфигурация"}
+                        >
+                          {(attrs) => (
+                            <SearchableSelect
+                              {...attrs}
+                              label="Конфигурация автозапуска"
+                              value={selectedPush}
+                              selectedLabel={selected.data?.name}
+                              placeholder="Отключён"
+                              options={choices.data.items.map((config) => ({
+                                value: config.id,
+                                label: config.name,
+                              }))}
+                              search={search}
+                              onSearch={(value) => {
+                                setSearch(value);
+                                setChoiceOffset(0);
+                              }}
+                              offset={choiceOffset}
+                              pageSize={50}
+                              total={choices.data.total}
+                              onPage={setChoiceOffset}
+                              onChange={setPushDraft}
+                              disabled={busy}
+                            />
+                          )}
+                        </FormField>
                       )}
                       <Button
                         disabled={
@@ -406,42 +417,49 @@ function AdministrativeRepositoryConfigurations({
                     }}
                   >
                     <CardContent className="space-y-3">
-                      <p className="text-sm text-text-muted">
+                      <Prose asChild>
+                        <p>
                         Прежняя история и настройки сохраняются.
                       </p>
+                      </Prose>
                       {unbound.isError ? (
                         <Notice role="alert" tone="danger" appearance="inline">
                           Конфигурации недоступны.
                         </Notice>
                       ) : (
-                        <label className="block text-sm">
-                          Конфигурация
-                          <SearchableSelect
-                            label="Конфигурация подключения"
-                            placeholder="Выберите конфигурацию"
-                            allowEmpty={false}
-                            value={attachConfiguration}
-                            selectedLabel={selectedAttach.data?.name}
-                            onChange={setAttachConfiguration}
-                            options={(unbound.data?.items ?? []).map(
-                              (config) => ({
-                                value: config.id,
-                                label: config.name,
-                              }),
-                            )}
-                            loading={unbound.isPending}
-                            search={unboundSearch}
-                            onSearch={(value) => {
-                              setUnboundSearch(value);
-                              setUnboundOffset(0);
-                            }}
-                            offset={unboundOffset}
-                            pageSize={50}
-                            total={unbound.data?.total ?? 0}
-                            onPage={setUnboundOffset}
-                            disabled={busy}
-                          />
-                        </label>
+                        <FormField
+                          id={"attach-configuration-" + repositoryId}
+                          label={"Конфигурация"}
+                        >
+                          {(attrs) => (
+                            <SearchableSelect
+                              {...attrs}
+                              label="Конфигурация подключения"
+                              placeholder="Выберите конфигурацию"
+                              allowEmpty={false}
+                              value={attachConfiguration}
+                              selectedLabel={selectedAttach.data?.name}
+                              onChange={setAttachConfiguration}
+                              options={(unbound.data?.items ?? []).map(
+                                (config) => ({
+                                  value: config.id,
+                                  label: config.name,
+                                }),
+                              )}
+                              loading={unbound.isPending}
+                              search={unboundSearch}
+                              onSearch={(value) => {
+                                setUnboundSearch(value);
+                                setUnboundOffset(0);
+                              }}
+                              offset={unboundOffset}
+                              pageSize={50}
+                              total={unbound.data?.total ?? 0}
+                              onPage={setUnboundOffset}
+                              disabled={busy}
+                            />
+                          )}
+                        </FormField>
                       )}
                       <div className="flex gap-2">
                         <Button disabled={busy || !attachConfiguration}>

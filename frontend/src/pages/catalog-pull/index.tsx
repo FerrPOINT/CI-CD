@@ -1,4 +1,7 @@
 import {
+  ActionGroup,
+  ResourceListDescription,
+  EmptyState,
   CardContent,
   Card,
   PageHeader,
@@ -9,6 +12,7 @@ import {
   usePlatformServices,
   ErrorState,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useState } from "react";
 
@@ -133,12 +137,11 @@ export function CatalogPullPage() {
   )?.ui_url;
   return (
     <div className="space-y-4">
-      <Link
-        to={withNamespaceLocation(`/catalog/repositories/${id}`, ref)}
-        className="text-accent"
-      >
-        Репозиторий
-      </Link>
+      <TextLink asChild>
+        <Link to={withNamespaceLocation(`/catalog/repositories/${id}`, ref)}>
+          Репозиторий
+        </Link>
+      </TextLink>
       <PageHeader title={`#${pr.number} ${pr.title}`} />
       <p>
         {pr.source_branch} → {pr.target_branch} · {pr.status}
@@ -149,15 +152,17 @@ export function CatalogPullPage() {
           {error}
         </Notice>
       )}
-      <Link
-        className="block text-accent"
-        to={withNamespaceLocation(
-          `/repositories/${encodeURIComponent(pr.repository_name)}/pulls/${pr.number}`,
-          ref,
-        )}
-      >
-        Diff и проверки
-      </Link>
+      <TextLink asChild>
+        <Link
+          className="block"
+          to={withNamespaceLocation(
+            `/repositories/${encodeURIComponent(pr.repository_name)}/pulls/${pr.number}`,
+            ref,
+          )}
+        >
+          Diff и проверки
+        </Link>
+      </TextLink>
       <section className="space-y-2">
         <SectionHeader title={<>Связанные задачи</>} />
         {links.isPending ? (
@@ -167,14 +172,13 @@ export function CatalogPullPage() {
             Связи недоступны.
           </Notice>
         ) : links.data?.length === 0 ? (
-          <p className="text-text-muted">Задач пока нет.</p>
+          <EmptyState message="Задач пока нет." />
         ) : (
           links.data?.map((link) => (
             <Card key={`${link.task.tracker_instance_id}:${link.task.task_id}`}>
               <CardContent>
                 {trackerUrl ? (
-                  <a
-                    className="text-accent"
+                  <TextLink
                     href={withNamespaceLocation(
                       `${trackerUrl}/issues/${link.task.task_id}`,
                       link.namespace,
@@ -182,13 +186,15 @@ export function CatalogPullPage() {
                     )}
                   >
                     {link.task_key}
-                  </a>
+                  </TextLink>
                 ) : (
                   <span>{link.task_key}</span>
                 )}
-                <p className="break-all font-mono text-xs text-text-muted">
+                <ResourceListDescription asChild technical>
+                  <p className="break-all">
                   Commit: {link.source_commit_sha}
                 </p>
+                </ResourceListDescription>
               </CardContent>
             </Card>
           ))
@@ -212,7 +218,7 @@ export function CatalogPullPage() {
       {pr.status === "open" &&
         repository.data.state === "active" &&
         !repository.data.availability && (
-          <div className="flex gap-3">
+          <ActionGroup align="start">
             <Button disabled={busy} onClick={() => act("merge")}>
               Merge
             </Button>
@@ -223,7 +229,7 @@ export function CatalogPullPage() {
             >
               Закрыть
             </Button>
-          </div>
+          </ActionGroup>
         )}
     </div>
   );

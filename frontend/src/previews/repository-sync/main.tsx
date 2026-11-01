@@ -1,7 +1,8 @@
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, useSearchParams } from 'react-router'
+import { createBrowserRouter, RouterProvider, useSearchParams } from 'react-router'
 import { RepositorySyncPreview } from './preview'
 import { ProductionSyncPreview } from './production'
+import '../../shared/i18n/config'
 import '../../index.css'
 
 function PreviewEntrypoint() {
@@ -12,8 +13,5 @@ function PreviewEntrypoint() {
     <RepositorySyncPreview />
   )
 }
-createRoot(document.getElementById('root')!).render(
-  <BrowserRouter>
-    <PreviewEntrypoint />
-  </BrowserRouter>,
-)
+const router = createBrowserRouter([{ path: '*', element: <PreviewEntrypoint /> }])
+createRoot(document.getElementById('root')!).render(<RouterProvider router={router} />)

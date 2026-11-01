@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from '@pdlc/ui/ui'
@@ -106,7 +106,10 @@ describe('RepositoryBrowserPage', () => {
     expect(screen.getByRole('link', { name: 'navigation.repositories' })).toHaveClass('min-h-10')
     expect(screen.getByRole('link', { name: 'repositoryBrowser.compareChanges' })).toHaveClass('h-10')
     expect(screen.getByRole('link', { name: 'repositoryBrowser.createPullRequest' })).toHaveClass('h-10')
-    expect(screen.getByRole('button', { name: '/' })).toHaveClass('min-h-10', 'min-w-10')
+    const root = screen.getByRole('button', { name: 'repositoryBrowser.rootDirectory' })
+    expect(root).toHaveAttribute('type', 'button')
+    expect(root).toHaveAttribute('aria-current', 'page')
+    expect(root).toHaveClass('base-breadcrumb-control')
     fireEvent.click(screen.getByRole('button', { name: 'src' }))
     expect(screen.getByTestId('location')).toHaveTextContent('dir=src')
     expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', 'src', { limit: 101, offset: 0, search: '' })
@@ -140,6 +143,33 @@ describe('RepositoryBrowserPage', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('treeSearch=hotfix')
     expect(screen.getByTestId('location')).not.toHaveTextContent('treePage=')
     expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', undefined, { limit: 101, offset: 0, search: 'hotfix' })
+  })
+
+  it('keeps repeated directory names distinct and resets only tree state on explicit breadcrumb actions', () => {
+    setup('/repositories/demo?dir=shared%2Fshared&ref=release&treePage=3&treeSearch=needle&source=keep')
+    const navigation = screen.getByRole('navigation', { name: 'repositoryBrowser.code' })
+    const directories = within(navigation).getAllByRole('button', { name: 'shared' })
+    expect(directories).toHaveLength(2)
+    expect(directories[1]).toHaveAttribute('aria-current', 'page')
+    expect(directories[0]).not.toHaveAttribute('aria-current')
+    const location = screen.getByTestId('location').textContent
+    const reads = mocks.tree.mock.calls.length
+    directories[1].focus()
+    fireEvent.mouseOver(directories[1])
+    expect(screen.getByTestId('location').textContent).toBe(location)
+    expect(mocks.tree).toHaveBeenCalledTimes(reads)
+
+    fireEvent.click(directories[1])
+    expect(screen.getByTestId('location')).toHaveTextContent('dir=shared%2Fshared')
+    expect(screen.getByTestId('location')).not.toHaveTextContent('treePage=')
+    expect(screen.getByTestId('location')).not.toHaveTextContent('treeSearch=')
+    fireEvent.click(within(navigation).getAllByRole('button', { name: 'shared' })[0])
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'release', 'shared', { limit: 101, offset: 0, search: '' })
+    fireEvent.click(within(navigation).getByRole('button', { name: 'repositoryBrowser.rootDirectory' }))
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'release', undefined, { limit: 101, offset: 0, search: '' })
+    expect(screen.getByTestId('location')).toHaveTextContent('source=keep')
+    expect(screen.getByTestId('location')).toHaveTextContent('ref=release')
+    expect(screen.getByTestId('location')).not.toHaveTextContent('dir=')
   })
 
   it('opens a deep-linked empty file without a tree request or endless loading state', () => {

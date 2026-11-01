@@ -1,4 +1,11 @@
-import { CardContent } from "@pdlc/ui/ui";
+import {
+  ActionGroup,
+  EmptyState,
+  ResourceListDescription,
+  ResourceListTitle,
+  PageNavigation,
+  CardContent,
+} from "@pdlc/ui/ui";
 import { FormField } from "@pdlc/ui/ui";
 import { Notice, Badge, PageHeader, SectionHeader } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
@@ -36,15 +43,7 @@ import {
   ConfirmDialog,
 } from "@pdlc/ui/ui";
 
-import {
-  ChevronLeft,
-  ChevronRight,
-  RotateCcw,
-  Webhook,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
+import { RotateCcw, Webhook, Plus, Trash2, X } from "lucide-react";
 
 import { QueryState } from "@/shared/ui/query-state";
 import type {
@@ -184,7 +183,7 @@ export function WebhooksPage() {
                       />
                     )}
                   </FormField>
-                  <div className="flex flex-wrap gap-2">
+                  <ActionGroup align="start">
                     <Button
                       type="submit"
 
@@ -200,7 +199,7 @@ export function WebhooksPage() {
                     >
                       {t("common.cancel")}
                     </Button>
-                  </div>
+                  </ActionGroup>
                 </form>
               </CardContent>
             </Card>
@@ -223,12 +222,16 @@ export function WebhooksPage() {
                       <ResourceListRow asChild key={w.id}>
                         <div className="flex items-start gap-2">
                           <div className="min-w-0 flex-1 space-y-2">
-                            <p className="break-all font-mono text-xs">
+                            <ResourceListTitle asChild technical>
+                              <p className="break-all">
                               {w.url}
                             </p>
-                            <p className="text-xs text-text-secondary">
+                            </ResourceListTitle>
+                            <ResourceListDescription asChild>
+                              <p >
                               {w.events.length ? w.events.join(", ") : "—"}
                             </p>
+                            </ResourceListDescription>
                             <WebhookStatusBadge enabled={w.enabled} />
                           </div>
                           <Button
@@ -262,10 +265,10 @@ export function WebhooksPage() {
                     <TableBody>
                       {webhooks.map((w) => (
                         <TableRow key={w.id}>
-                          <TableCell className="max-w-xl break-all font-mono text-xs">
+                          <TableCell className="max-w-xl break-all" technical size="sm">
                             {w.url}
                           </TableCell>
-                          <TableCell className="text-xs text-text-secondary">
+                          <TableCell className="text-text-secondary" size="sm">
                             {w.events.length ? w.events.join(", ") : "—"}
                           </TableCell>
                           <TableCell>
@@ -545,9 +548,11 @@ function DeliveryHistorySection() {
                                 )
                               }
                             />
-                            <p className="break-all font-mono text-xs text-text-secondary">
+                            <ResourceListDescription asChild technical>
+                              <p className="break-all">
                               {delivery.channel} / {delivery.destination}
                             </p>
+                            </ResourceListDescription>
                             <div className="flex flex-wrap items-center gap-3 text-xs text-text-secondary">
                               <DeliveryStatusBadge status={delivery.status} />
                               <span>
@@ -607,16 +612,16 @@ function DeliveryHistorySection() {
                                 }
                               />
                             </TableCell>
-                            <TableCell className="max-w-md break-all font-mono text-xs">
+                            <TableCell className="max-w-md break-all" technical size="sm">
                               {delivery.channel} / {delivery.destination}
                             </TableCell>
                             <TableCell>
                               <DeliveryStatusBadge status={delivery.status} />
                             </TableCell>
-                            <TableCell className="font-mono text-xs">
+                            <TableCell technical size="sm">
                               {delivery.attempts}
                             </TableCell>
-                            <TableCell className="text-xs text-text-secondary">
+                            <TableCell className="text-text-secondary" size="sm">
                               <time dateTime={delivery.created_at}>
                                 {new Date(delivery.created_at).toLocaleString()}
                               </time>
@@ -644,36 +649,15 @@ function DeliveryHistorySection() {
                 </Card>
               )}
               {result.total > deliveryPageSize && (
-                <nav
-                  aria-label={t("deliveries.pages")}
-                  className="flex items-center justify-end gap-2"
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-
-                    disabled={page === 1 || deliveriesQuery.isFetching}
-                    onClick={() => changePage(page - 1)}
-                  >
-                    <ChevronLeft className="h-4 w-4" aria-hidden />
-                    {t("deliveries.previous")}
-                  </Button>
-                  <span className="min-w-16 text-center text-sm text-text-muted">
-                    {page} / {pageCount}
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-
-                    disabled={page === pageCount || deliveriesQuery.isFetching}
-                    onClick={() => changePage(page + 1)}
-                  >
-                    {t("deliveries.next")}
-                    <ChevronRight className="h-4 w-4" aria-hidden />
-                  </Button>
-                </nav>
+                <PageNavigation
+                  page={page}
+                  pageCount={pageCount}
+                  onPageChange={changePage}
+                  label={t("deliveries.pages")}
+                  previousLabel={t("deliveries.previous")}
+                  nextLabel={t("deliveries.next")}
+                  pending={deliveriesQuery.isFetching}
+                />
               )}
             </section>
           );
@@ -684,7 +668,7 @@ function DeliveryHistorySection() {
           <CardContent>
             <div className="mb-3 flex items-center justify-between gap-3">
               <SectionHeader level={3} title={t("deliveries.details")} />
-              <div className="flex items-center gap-2">
+              <ActionGroup align="start">
                 {selectedDelivery?.status === "failed" && (
                   <Button
                     type="button"
@@ -707,7 +691,7 @@ function DeliveryHistorySection() {
                 >
                   <X className="h-4 w-4" />
                 </Button>
-              </div>
+              </ActionGroup>
             </div>
             <QueryState
               data={detail.data}
@@ -718,9 +702,7 @@ function DeliveryHistorySection() {
             >
               {(data) =>
                 data.attempts.length === 0 ? (
-                  <p className="text-sm text-text-secondary">
-                    {t("deliveries.noAttempts")}
-                  </p>
+                  <EmptyState message={t("deliveries.noAttempts")} />
                 ) : (
                   <>
                     <ResourceList asChild>
@@ -729,20 +711,28 @@ function DeliveryHistorySection() {
                           <ResourceListRow asChild key={attempt.id}>
                             <div className="space-y-1 text-xs">
                               <div className="flex items-center justify-between gap-2">
-                                <span className="font-medium">
+                                <ResourceListTitle asChild>
+                                  <span >
                                   #{attempt.attempt_number}
                                 </span>
+                                </ResourceListTitle>
                                 <DeliveryStatusBadge status={attempt.outcome} />
                               </div>
-                              <p className="text-text-secondary">
+                              <ResourceListDescription asChild>
+                                <p>
                                 {t("deliveries.httpStatus")}:{" "}
                                 {attempt.http_status ?? "—"} ·{" "}
                                 {attempt.duration_ms} ms
                               </p>
+                              </ResourceListDescription>
                               {attempt.error_message && (
-                                <p className="break-all text-danger">
+                                <Notice
+                                  tone="danger"
+                                  appearance="inline"
+                                  className="break-all"
+                                >
                                   {attempt.error_message}
-                                </p>
+                                </Notice>
                               )}
                             </div>
                           </ResourceListRow>
@@ -763,19 +753,19 @@ function DeliveryHistorySection() {
                         <TableBody>
                           {data.attempts.map((attempt) => (
                             <TableRow key={attempt.id}>
-                              <TableCell className="font-mono text-xs">
+                              <TableCell technical size="sm">
                                 {attempt.attempt_number}
                               </TableCell>
                               <TableCell>
                                 <DeliveryStatusBadge status={attempt.outcome} />
                               </TableCell>
-                              <TableCell className="font-mono text-xs">
+                              <TableCell technical size="sm">
                                 {attempt.http_status ?? "—"}
                               </TableCell>
-                              <TableCell className="font-mono text-xs">
+                              <TableCell technical size="sm">
                                 {attempt.duration_ms} ms
                               </TableCell>
-                              <TableCell className="max-w-lg break-all text-xs text-text-secondary">
+                              <TableCell className="max-w-lg break-all text-text-secondary" size="sm">
                                 {attempt.error_message ?? "—"}
                               </TableCell>
                             </TableRow>
@@ -808,7 +798,7 @@ function DeliveryOpenButton({
     <Button
       variant="ghost"
       type="button"
-      className="w-full text-left hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      className="w-full flex-col items-start whitespace-normal text-left"
       aria-label={t("deliveries.openDetails", {
         event: delivery.event_type,
         id: delivery.aggregate_id.slice(0, 8),
@@ -1000,9 +990,7 @@ function NotificationsSection() {
       >
         {(events) =>
           events.length === 0 ? (
-            <p className="text-sm text-text-secondary">
-              {t("notifications.noEvents")}
-            </p>
+            <EmptyState message={t("notifications.noEvents")} />
           ) : (
             <Card className="overflow-hidden">
               <ResourceList asChild>
@@ -1010,15 +998,21 @@ function NotificationsSection() {
                   {events.map((event) => (
                     <ResourceListRow asChild key={event.id}>
                       <div className="space-y-2">
-                        <p className="break-words text-sm font-medium">
+                        <ResourceListTitle asChild className="break-words">
+                          <p >
                           {event.message}
                         </p>
-                        <p className="break-all font-mono text-xs text-text-secondary">
+                        </ResourceListTitle>
+                        <ResourceListDescription asChild technical>
+                          <p className="break-all">
                           {event.event_type} · {event.pipeline_id.slice(0, 8)}
                         </p>
-                        <p className="break-all font-mono text-xs text-text-secondary">
+                        </ResourceListDescription>
+                        <ResourceListDescription asChild technical>
+                          <p className="break-all">
                           {event.channel} / {event.target}
                         </p>
+                        </ResourceListDescription>
                         <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
                           <NotificationStatusBadge event={event} />
                           <time dateTime={event.created_at}>
@@ -1054,13 +1048,13 @@ function NotificationsSection() {
                             </p>
                           </div>
                         </TableCell>
-                        <TableCell className="break-all font-mono text-xs">
+                        <TableCell className="break-all" technical size="sm">
                           {event.channel} / {event.target}
                         </TableCell>
                         <TableCell>
                           <NotificationStatusBadge event={event} />
                         </TableCell>
-                        <TableCell className="text-xs text-text-muted">
+                        <TableCell className="text-text-muted" size="sm">
                           {new Date(event.created_at).toLocaleString()}
                         </TableCell>
                       </TableRow>

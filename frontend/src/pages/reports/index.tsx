@@ -1,4 +1,12 @@
-import { Button, PageHeader, Metric, NamespaceLink as Link } from "@pdlc/ui/ui";
+import {
+  EmptyState,
+  Badge,
+  Button,
+  PageHeader,
+  Metric,
+  DataBar,
+  NamespaceLink as Link,
+} from "@pdlc/ui/ui";
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useProjectReport } from "@/api/hooks";
@@ -44,18 +52,18 @@ export function ReportsPage() {
       >
         {(report) =>
           report.total_pipelines === 0 ? (
-            <div className="border-y border-border py-6">
-              <p className="text-sm font-medium">{t("reports.noData")}</p>
-              <p className="mt-1 text-sm text-text-secondary">
-                {t("reports.emptyHint")}
-              </p>
-              <Button asChild variant="link" className="mt-3">
-                <Link to={pipelinesPath}>
-                  {t("reports.openPipelines")}{" "}
-                  <ArrowRight className="h-4 w-4" aria-hidden />
-                </Link>
-              </Button>
-            </div>
+            <EmptyState
+              message={t("reports.noData")}
+              description={t("reports.emptyHint")}
+              action={
+                <Button asChild variant="link">
+                  <Link to={pipelinesPath}>
+                    {t("reports.openPipelines")}{" "}
+                    <ArrowRight className="h-4 w-4" aria-hidden />
+                  </Link>
+                </Button>
+              }
+            />
           ) : (
             <ReportSummary report={report} locale={i18n.language} />
           )
@@ -85,26 +93,23 @@ function ReportSummary({
     maximumFractionDigits: 1,
   });
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
-  const share = (count: number) =>
-    `${Math.min(100, Math.max(0, (count / report.total_pipelines) * 100))}%`;
-
   const counts = [
     {
       label: t("reports.totalPipelines"),
       value: report.total_pipelines,
-      color: null,
+      badgeTone: null,
     },
     {
       label: t("reports.successful"),
       value: report.successful_pipelines,
-      color: "bg-success",
+      badgeTone: "success" as const,
     },
     {
       label: t("reports.failed"),
       value: report.failed_pipelines,
-      color: "bg-danger",
+      badgeTone: "danger" as const,
     },
-    { label: t("reports.other"), value: other, color: "bg-text-muted" },
+    { label: t("reports.other"), value: other, badgeTone: "muted" as const },
   ];
 
   return (
@@ -135,48 +140,47 @@ function ReportSummary({
         <p className="text-xs text-text-secondary">
           {t("reports.statusDistribution")}
         </p>
-        <div
-          className="flex h-2 overflow-hidden rounded-sm bg-surface-raised"
-          role="img"
-          aria-label={t("reports.distribution", {
+        <DataBar
+          max={report.total_pipelines}
+          label={t("reports.distribution", {
             successful: report.successful_pipelines,
             failed: report.failed_pipelines,
             other,
           })}
-        >
-          <span
-            className="bg-success"
-            style={{ width: share(report.successful_pipelines) }}
-          />
-          <span
-            className="bg-danger"
-            style={{ width: share(report.failed_pipelines) }}
-          />
-          <span className="bg-text-muted" style={{ width: share(other) }} />
-        </div>
+          segments={[
+            {
+              id: "successful",
+              value: report.successful_pipelines,
+              tone: "success",
+            },
+            { id: "failed", value: report.failed_pipelines, tone: "danger" },
+            { id: "other", value: other, tone: "muted" },
+          ]}
+        />
       </div>
 
-      <dl className="grid grid-cols-2 border-y border-border sm:grid-cols-4">
+      <div className="grid grid-cols-2 border-y border-border sm:grid-cols-4">
         {counts.map((count, index) => (
           <div
             key={count.label}
             className={`min-w-0 px-3 py-3 first:pl-0 sm:px-4 ${index % 2 === 1 ? "border-l border-border" : ""} ${index >= 2 ? "border-t border-border sm:border-t-0" : ""} ${index === 2 ? "sm:border-l" : ""}`}
           >
-            <dt className="flex items-center gap-1.5 text-xs text-text-secondary">
-              {count.color && (
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${count.color}`}
-                  aria-hidden
-                />
-              )}
-              {count.label}
-            </dt>
-            <dd className="mt-1 text-xl font-semibold tabular-nums">
-              {number.format(count.value)}
-            </dd>
+            <Metric
+              appearance="inline"
+              label={
+                count.badgeTone ? (
+                  <Badge appearance="dot" tone={count.badgeTone}>
+                    {count.label}
+                  </Badge>
+                ) : (
+                  count.label
+                )
+              }
+              value={number.format(count.value)}
+            />
           </div>
         ))}
-      </dl>
+      </div>
     </div>
   );
 }

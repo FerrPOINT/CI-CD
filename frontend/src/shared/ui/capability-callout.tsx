@@ -1,4 +1,4 @@
-import { Badge, Notice } from "@pdlc/ui/ui";
+import { Badge, Notice, SectionHeader } from "@pdlc/ui/ui";
 
 type CapabilityTone = "current" | "mvp" | "configuration" | "target";
 
@@ -30,10 +30,14 @@ export function CapabilityCallout({
       tone={tones[tone]}
       className={className}
       title={
-        <h2 className="flex flex-wrap items-center gap-2">
-          {title}
-          <Badge>{label}</Badge>
-        </h2>
+        <SectionHeader
+          title={
+            <span className="flex flex-wrap items-center gap-2">
+              {title}
+              <Badge>{label}</Badge>
+            </span>
+          }
+        />
       }
     >
       {description}

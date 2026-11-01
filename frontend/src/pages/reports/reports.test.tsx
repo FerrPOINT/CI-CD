@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -78,7 +79,9 @@ describe("ReportsPage", () => {
       screen.getByRole("img", { name: "reports.distribution" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("reports.other").nextElementSibling,
+      within(screen.getByRole("group", { name: "reports.other" })).getByRole(
+        "definition",
+      ),
     ).toHaveTextContent("2");
     expect(
       screen.getByRole("link", { name: "reports.openPipelines" }),

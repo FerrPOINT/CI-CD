@@ -1,5 +1,9 @@
+import { InlineCode, ContentSection } from "@pdlc/ui/ui";
 import { useEffect, useState, type ComponentProps } from "react";
 import {
+  ResourceListDescription,
+  ResourceStateView,
+  AutocompleteInput,
   Badge,
   PageHeader,
   SectionHeader,
@@ -8,10 +12,10 @@ import {
   ResourceListRow,
   DiffBlock,
   Button,
-  Input,
   Label,
   EmptyState,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
@@ -51,14 +55,14 @@ function ComparisonResults({ comparison }: { comparison: Comparison }) {
 
   return (
     <section className="space-y-4" aria-label={t("compare.filesChanged")}>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-y border-border py-3 text-sm">
-        <span className="text-text-muted">{t("compare.mergeBase")}:</span>
-        <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
-          {comparison.merge_base}
-        </code>
-        <span className="font-mono text-text-primary">+{totalAdditions}</span>
-        <span className="font-mono text-text-primary">−{totalDeletions}</span>
-      </div>
+      <ContentSection asChild dividers="both" density="compact">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <span className="text-text-muted">{t("compare.mergeBase")}:</span>
+          <InlineCode className="break-all">{comparison.merge_base}</InlineCode>
+          <span className="font-mono text-text-primary">+{totalAdditions}</span>
+          <span className="font-mono text-text-primary">−{totalDeletions}</span>
+        </div>
+      </ContentSection>
       <SectionHeader
         title={
           <>
@@ -86,13 +90,15 @@ function ComparisonResults({ comparison }: { comparison: Comparison }) {
                     {t(`compare.status_${file.status}`)}
                   </Badge>
                   {file.binary ? (
-                    <span className="text-text-muted">
-                      {t("compare.binaryFile")}
-                    </span>
+                    <ResourceListDescription asChild>
+                      <span>{t("compare.binaryFile")}</span>
+                    </ResourceListDescription>
                   ) : (
-                    <span className="font-mono text-text-primary">
-                      +{file.additions} −{file.deletions}
-                    </span>
+                    <ResourceListDescription asChild technical>
+                      <span>
+                        +{file.additions} −{file.deletions}
+                      </span>
+                    </ResourceListDescription>
                   )}
                 </div>
               </li>
@@ -146,7 +152,14 @@ export function ComparePage() {
 
   if (!repo)
     return (
-      <p className="text-sm text-text-muted">{t("repositories.notFound")}</p>
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("repositories.notFound"),
+          headingLevel: 1,
+        }}
+      />
     );
 
   function applyComparison(event: React.FormEvent<HTMLFormElement>) {
@@ -163,19 +176,23 @@ export function ComparePage() {
     <div className="space-y-5">
       <div>
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
-          <Link
-            to="/repositories"
-            className="inline-flex min-h-10 items-center hover:text-text-primary"
-          >
-            {t("navigation.repositories")}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to="/repositories"
+              className="inline-flex min-h-10 items-center"
+            >
+              {t("navigation.repositories")}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" aria-hidden />
-          <Link
-            to={`/repositories/${encodeURIComponent(repo)}`}
-            className="inline-flex min-h-10 items-center break-all hover:text-text-primary"
-          >
-            {repo}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to={`/repositories/${encodeURIComponent(repo)}`}
+              className="inline-flex min-h-10 items-center break-all"
+            >
+              {repo}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" aria-hidden />
           <span>{t("repositoryBrowser.compare")}</span>
         </div>
@@ -191,106 +208,106 @@ export function ComparePage() {
         </div>
       </div>
 
-      <form
-        aria-label={t("compare.title")}
-        onSubmit={applyComparison}
-        className="grid gap-3 border-y border-border py-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] sm:items-end"
-      >
-        <div className="min-w-0 space-y-1.5">
-          <Label htmlFor="compare-from">{t("compare.baseRef")}</Label>
-          <Input
-            id="compare-from"
-            required
-            list="compare-refs-from"
-            className="font-mono"
-            value={from}
-            onChange={(event) => setFrom(event.target.value)}
+      <ContentSection asChild dividers="both">
+        <form
+          aria-label={t("compare.title")}
+          onSubmit={applyComparison}
+          className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] sm:items-end"
+        >
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="compare-from">{t("compare.baseRef")}</Label>
+            <AutocompleteInput
+              id="compare-from"
+              required
+              options={
+                fromRefs.data
+                  ?.slice(0, 50)
+                  .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
+              }
+              className="font-mono"
+              value={from}
+              onValueChange={(nextValue) => setFrom(nextValue)}
+            />
+          </div>
+          <GitCompareArrows
+            className="mb-3 hidden h-4 w-4 text-text-muted sm:block"
+            aria-hidden
           />
-          <datalist id="compare-refs-from">
-            {fromRefs.data?.slice(0, 50).map((ref) => (
-              <option key={`${ref.kind}-${ref.name}`} value={ref.name} />
-            ))}
-          </datalist>
-        </div>
-        <GitCompareArrows
-          className="mb-3 hidden h-4 w-4 text-text-muted sm:block"
-          aria-hidden
-        />
-        <div className="min-w-0 space-y-1.5">
-          <Label htmlFor="compare-to">{t("compare.headRef")}</Label>
-          <Input
-            id="compare-to"
-            required
-            list="compare-refs-to"
-            className="font-mono"
-            value={to}
-            onChange={(event) => setTo(event.target.value)}
-          />
-          <datalist id="compare-refs-to">
-            {toRefs.data?.slice(0, 50).map((ref) => (
-              <option key={`${ref.kind}-${ref.name}`} value={ref.name} />
-            ))}
-          </datalist>
-        </div>
-        <Button type="submit" disabled={sameRef}>
-          {t("compare.compareAction")}
-        </Button>
-        {sameRef && (
-          <Notice
-            role="alert"
-            className="sm:col-span-4"
-            tone="danger"
-            appearance="inline"
-          >
-            {t("compare.refsMustDiffer")}
-          </Notice>
-        )}
-        {(fromRefs.isLoading || toRefs.isLoading) && (
-          <Notice
-            role="status"
-            className="sm:col-span-4"
-            tone="neutral"
-            appearance="inline"
-          >
-            {t("compare.loadingRefs")}
-          </Notice>
-        )}
-        {((fromRefs.data?.length ?? 0) > 50 ||
-          (toRefs.data?.length ?? 0) > 50) && (
-          <Notice
-            role="status"
-            className="sm:col-span-4"
-            tone="warning"
-            appearance="inline"
-          >
-            {t("compare.refSuggestionsLimited")}
-          </Notice>
-        )}
-        {Boolean(fromRefs.error || toRefs.error) && (
-          <Notice
-            role="alert"
-            className="sm:col-span-4"
-            tone="warning"
-            appearance="panel"
-            actions={
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="compare-to">{t("compare.headRef")}</Label>
+            <AutocompleteInput
+              id="compare-to"
+              required
+              options={
+                toRefs.data
+                  ?.slice(0, 50)
+                  .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
+              }
+              className="font-mono"
+              value={to}
+              onValueChange={(nextValue) => setTo(nextValue)}
+            />
+          </div>
+          <Button type="submit" disabled={sameRef}>
+            {t("compare.compareAction")}
+          </Button>
+          {sameRef && (
+            <Notice
+              role="alert"
+              className="sm:col-span-4"
+              tone="danger"
+              appearance="inline"
+            >
+              {t("compare.refsMustDiffer")}
+            </Notice>
+          )}
+          {(fromRefs.isLoading || toRefs.isLoading) && (
+            <Notice
+              role="status"
+              className="sm:col-span-4"
+              tone="neutral"
+              appearance="inline"
+            >
+              {t("compare.loadingRefs")}
+            </Notice>
+          )}
+          {((fromRefs.data?.length ?? 0) > 50 ||
+            (toRefs.data?.length ?? 0) > 50) && (
+            <Notice
+              role="status"
+              className="sm:col-span-4"
+              tone="warning"
+              appearance="inline"
+            >
+              {t("compare.refSuggestionsLimited")}
+            </Notice>
+          )}
+          {Boolean(fromRefs.error || toRefs.error) && (
+            <Notice
+              role="alert"
+              className="sm:col-span-4"
+              tone="warning"
+              appearance="panel"
+              actions={
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
 
-                onClick={() => {
-                  if (fromRefs.error) void fromRefs.refetch();
-                  if (toRefs.error) void toRefs.refetch();
-                }}
-              >
-                {t("common.retry")}
-              </Button>
-            }
-          >
-            <span>{t("compare.refsUnavailable")}</span>
-          </Notice>
-        )}
-      </form>
+                  onClick={() => {
+                    if (fromRefs.error) void fromRefs.refetch();
+                    if (toRefs.error) void toRefs.refetch();
+                  }}
+                >
+                  {t("common.retry")}
+                </Button>
+              }
+            >
+              <span>{t("compare.refsUnavailable")}</span>
+            </Notice>
+          )}
+        </form>
+      </ContentSection>
 
       {!canCompare ? (
         <Notice role="status" tone="neutral" appearance="inline">
