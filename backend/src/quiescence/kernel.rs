@@ -355,6 +355,9 @@ impl Gate {
         Ok(())
     }
     pub fn requested(&self) -> anyhow::Result<bool> {
+        Ok(self.requested_operation()?.is_some())
+    }
+    fn requested_operation(&self) -> anyhow::Result<Option<Uuid>> {
         match fs::symlink_metadata(self.root.join("request.json")) {
             Ok(_) => {
                 let r: Request = read(&self.root.join("request.json"))?;
@@ -362,10 +365,27 @@ impl Gate {
                     r.schema_version == 1 && !r.operation_id.is_nil(),
                     "invalid drain request"
                 );
-                Ok(true)
+                Ok(Some(r.operation_id))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
+        }
+    }
+    // Only process initialization may continue under its explicitly configured
+    // operation. The shared kernel lease still excludes a held backup fence.
+    fn enter_startup(&self, operation: Uuid) -> anyhow::Result<Lease> {
+        ensure!(!operation.is_nil(), "startup operation identity required");
+        match self.requested_operation()? {
+            None => self.enter(true),
+            Some(request) => {
+                ensure!(request == operation, "Forge startup belongs to another drain operation");
+                let lease = self.enter(false)?;
+                ensure!(
+                    self.requested_operation()?.is_none_or(|request| request == operation),
+                    "Forge startup drain operation changed"
+                );
+                Ok(lease)
+            }
         }
     }
     pub fn enter(&self, new_work: bool) -> anyhow::Result<Lease> {
@@ -515,6 +535,27 @@ pub fn initialize(kind: &str, custody_roots: Vec<CustodyRoot>) -> anyhow::Result
     Ok(())
 }
 pub fn enter(new_work: bool) -> anyhow::Result<Lease> {
+    enter_effect(new_work, None)
+}
+/// Initialize a server/runner under an operator-owned closed admission latch.
+/// Ordinary work must continue to use enter(true), including delivery commands.
+pub fn enter_startup() -> anyhow::Result<Lease> {
+    let operation = match std::env::var("CICD_QUIESCENCE_STARTUP_OPERATION") {
+        Ok(value) => Some(startup_operation(&value)?),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(error.into()),
+    };
+    enter_effect(true, operation)
+}
+fn startup_operation(value: &str) -> anyhow::Result<Uuid> {
+    let operation = Uuid::parse_str(value).context("invalid Forge startup operation")?;
+    ensure!(
+        !operation.is_nil() && operation.to_string() == value,
+        "canonical nonnil Forge startup operation required"
+    );
+    Ok(operation)
+}
+fn enter_effect(new_work: bool, startup: Option<Uuid>) -> anyhow::Result<Lease> {
     let _entry = ENTRY
         .lock()
         .map_err(|_| anyhow::anyhow!("effect entry unavailable"))?;
@@ -528,16 +569,22 @@ pub fn enter(new_work: bool) -> anyhow::Result<Lease> {
                 PARTICIPANT.get().is_some(),
                 "Forge writer has no live participant registration"
             );
-            let mut lease = gate.enter(new_work)?;
+            let mut lease = match startup {
+                Some(operation) => gate.enter_startup(operation)?,
+                None => gate.enter(new_work)?,
+            };
             ACTIVE.fetch_add(1, Ordering::SeqCst);
             lease.tracked = true;
             Ok(lease)
         }
-        None => Ok(Lease {
-            _file: None,
-            record: None,
-            tracked: false,
-        }),
+        None => {
+            ensure!(startup.is_none(), "Forge startup operation requires a quiescence directory");
+            Ok(Lease {
+                _file: None,
+                record: None,
+                tracked: false,
+            })
+        }
     }
 }
 pub fn accepting() -> bool {
@@ -812,5 +859,64 @@ pub async fn wait_for_exit() -> anyhow::Result<()> {
             return Ok(());
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+#[cfg(test)]
+mod closed_startup_tests {
+    use super::*;
+
+    fn gate() -> (tempfile::TempDir, Gate) {
+        let temp = tempfile::tempdir().unwrap();
+        let gate = Gate::open(&temp.path().join("control")).unwrap();
+        (temp, gate)
+    }
+    fn request(gate: &Gate, operation_id: Uuid) {
+        replace(
+            &gate.root.join("request.json"),
+            &serde_json::to_vec(&Request { schema_version: 1, operation_id }).unwrap(),
+        ).unwrap();
+    }
+    #[test]
+    fn matching_startup_keeps_new_work_closed() {
+        let (_temp, gate) = gate();
+        let operation = Uuid::new_v4();
+        request(&gate, operation);
+        let startup = gate.enter_startup(operation).unwrap();
+        assert!(gate.enter(true).is_err());
+        let effects = file(&gate.root.join("effects.lock")).unwrap();
+        assert!(!lock(&effects, true).unwrap());
+        drop(startup);
+        assert!(lock(&effects, true).unwrap());
+    }
+    #[test]
+    fn different_startup_and_existing_backup_fence_are_rejected() {
+        let (_temp, gate) = gate();
+        let operation = Uuid::new_v4();
+        request(&gate, operation);
+        assert!(gate.enter_startup(Uuid::new_v4()).is_err());
+        let fence = file(&gate.root.join("effects.lock")).unwrap();
+        assert!(lock(&fence, true).unwrap());
+        assert!(gate.enter_startup(operation).is_err());
+    }
+    #[test]
+    fn absent_request_preserves_ordinary_startup_and_future_drain_blocks_it() {
+        let (_temp, gate) = gate();
+        let operation = Uuid::new_v4();
+        drop(gate.enter_startup(operation).unwrap());
+        request(&gate, Uuid::new_v4());
+        assert!(gate.enter_startup(operation).is_err());
+        fs::remove_file(gate.root.join("request.json")).unwrap();
+        drop(gate.enter_startup(operation).unwrap());
+    }
+    #[test]
+    fn startup_operation_requires_exact_nonnil_uuid() {
+        let operation = Uuid::new_v4();
+        assert_eq!(startup_operation(&operation.to_string()).unwrap(), operation);
+        for value in [String::new(), operation.simple().to_string(),
+                      operation.to_string().to_uppercase(),
+                      Uuid::nil().to_string(), format!(" {operation}")] {
+            assert!(startup_operation(&value).is_err());
+        }
     }
 }
