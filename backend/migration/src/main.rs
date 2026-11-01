@@ -10,6 +10,8 @@ mod quiescence;
 use anyhow::Context;
 use clap::Parser;
 use std::path::PathBuf;
+#[path = "../catalog.rs"]
+mod catalog;
 
 #[derive(clap::Parser)]
 #[command(name = "cicd-migrate", about = "Forge CI/CD migration runner", version)]
@@ -115,7 +117,7 @@ fn migrations_path() -> PathBuf {
 
 async fn load_migrator() -> anyhow::Result<sqlx::migrate::Migrator> {
     let path = migrations_path();
-    sqlx::migrate::Migrator::new(path.as_path())
+    catalog::load(path.as_path())
         .await
         .with_context(|| format!("load migrations from {}", path.display()))
 }

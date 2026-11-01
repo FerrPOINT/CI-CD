@@ -348,8 +348,8 @@ IAB source QA:24 сочетания light/dark/gray × standard/large ×320/375/
 вне страницы. Синтетические GET-only данные; runtime/credentials не используются.
 Это не authenticated приёмка продукта. Built Storybook regression, полный gate
 новой волны, HTTP parity167 и реальный zoom200 остаются открытыми.
-Доказательства: private evidence/search-filters-20261025/. Общий остаток — в Base
-`docs/plans/shared-ui-consolidation-20261021.md`; публикация и установка отдельно.
+Доказательства: private evidence/search-filters-20261025/. Общий остаток ведётся в
+[плане Base](https://github.com/FerrPOINT/services-base/blob/d2b8b2b74d878f12cfed97629885d088ca7767e7/docs/plans/shared-ui-consolidation-20261021.md); публикация и установка отдельно.
 
 ## Предыдущий кандидат: общие части меню — 25 октября 2026
 
@@ -405,7 +405,7 @@ Base types, examples, reference/coverage, настоящий offline UI-архи
 gate и hosted CI этой волны ещё открыты; прежний полный PASS не подменяет их.
 SDK/skills pins, установленный runtime и пользовательские данные не менялись.
 Девять owner AGENTS уточняют выбор AutocompleteInput/Select/SearchableSelect.
-Общий остаток ведётся в Base `docs/plans/shared-ui-consolidation-20261021.md`.
+Общий остаток ведётся в [плане Base](https://github.com/FerrPOINT/services-base/blob/d2b8b2b74d878f12cfed97629885d088ca7767e7/docs/plans/shared-ui-consolidation-20261021.md).
 
 ## Изменение
 

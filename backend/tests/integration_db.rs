@@ -54,6 +54,10 @@ mod pull_merge_fencing;
 #[path = "support/unified_cicd.rs"]
 mod unified_cicd;
 
+#[cfg(unix)]
+#[path = "support/git_platform_pat.rs"]
+mod git_platform_pat;
+
 type CanceledExternalLeaseState = (
     String,
     String,
@@ -9093,6 +9097,8 @@ async fn migration_catalog_failure(
 #[tokio::test]
 async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
+    let path = cicd::migrations_path();
+    let released = sqlx::migrate::Migrator::new(path.as_path()).await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
         (1..=40).chain(90..=113).collect::<Vec<_>>()
@@ -9103,11 +9109,15 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
             .find(|m| m.version == version)
             .expect("historical migration in catalog");
         assert_eq!(migration.description, description);
-        assert_eq!(migration.sql, sql);
+        // Check independent released bytes, apart from transaction setup.
+        let body = released.iter().find(|m| m.version == version).unwrap();
+        assert_eq!(body.sql, sql);
         assert_eq!(
-            format!("{:x}", sha2::Sha384::digest(migration.sql.as_bytes())),
+            format!("{:x}", sha2::Sha384::digest(body.sql.as_bytes())),
             checksum
         );
+        assert_eq!(migration.checksum, body.checksum);
+        assert!(migration.sql.ends_with(body.sql.as_ref()));
     }
 }
 
@@ -9330,7 +9340,12 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         .iter()
         .find(|m| m.version == 38)
         .expect("version 38");
-    assert_eq!(migration.sql, historical_sql);
+    let path = cicd::migrations_path();
+    let released = sqlx::migrate::Migrator::new(path.as_path()).await.unwrap();
+    let body = released.iter().find(|m| m.version == 38).unwrap();
+    assert_eq!(body.sql, historical_sql);
+    assert_eq!(migration.checksum, body.checksum);
+    assert!(migration.sql.ends_with(body.sql.as_ref()));
     let mut changed = catalog;
     changed
         .migrations
