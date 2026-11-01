@@ -1278,8 +1278,11 @@ mod tests {
     fn live_replaced_unknown_and_effect_custody_hold_before_preparation() {
         let (parent, gate, handoff, bytes, old) = fixture();
         let owner = Coordinator::for_adoption(gate.clone(), handoff.operation_id).unwrap();
-        let fence = owner.try_fence().unwrap().unwrap();
+        // A participant may change before the exclusive fence is acquired.
+        // Once held, the fence rejects registration itself; preparation must
+        // still reject the earlier live/replaced identity, even after exit.
         let (replacement, _) = gate.register("old", "server", vec![]).unwrap();
+        let fence = owner.try_fence().unwrap().unwrap();
         assert!(
             owner
                 .prepare_adoption(&fence, &handoff, &bytes, &old, vec![])
