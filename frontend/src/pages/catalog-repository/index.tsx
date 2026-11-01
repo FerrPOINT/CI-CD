@@ -1,3 +1,4 @@
+import { useForgePermissions } from "@/shared/auth/application-policy";
 import {
   CardContent,
   Card,
@@ -34,6 +35,7 @@ import type { components } from "@/api/schema";
 import { useNamespaceContext } from "@/widgets/namespace-context";
 export function CatalogRepositoryPage() {
   const { id } = useParams();
+  const canAdmin = useForgePermissions()?.permits([], true) === true;
   const [params] = useSearchParams();
   const intent =
     params.get("task_id") && params.get("tracker_instance_id")
@@ -158,7 +160,7 @@ export function CatalogRepositoryPage() {
         title={repo.public_name}
         actions={
           <>
-            {repo.kind === "hosted" && (
+            {canAdmin && repo.kind === "hosted" && (
               <Link
                 className="text-accent"
                 to={withNamespaceLocation(
@@ -178,7 +180,7 @@ export function CatalogRepositoryPage() {
           ...(repo.kind === "hosted" ? [["files", "Файлы и история"]] : []),
           ["pipelines", "Пайплайны"],
           ["deployments", "Деплои"],
-          ["configurations", "CI-конфигурации"],
+          ...(canAdmin ? [["configurations", "CI-конфигурации"]] : []),
         ].map(([key, label]) => (
           <SectionNavigationItem key={key} asChild active={tab === key}>
             <Link
@@ -228,6 +230,7 @@ export function CatalogRepositoryPage() {
           key={id}
           repositoryId={id!}
           writable={
+            canAdmin &&
             repo.state === "active" &&
             repo.ready &&
             !repo.availability
