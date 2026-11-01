@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 # BEGIN GENERATED QUALITY SUPPORT
-# Source: scripts/quality_support.py; run sync_quality_support.py after edits.
+# Sources: quality_support.py, aihub_api_contract.py; run sync_quality_support.py after edits.
 def digest(value):
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -254,6 +254,53 @@ def artifact_environment(gate, values):
         return frontend_agent_environment(values)
     return {name: value for name, value in values.items()
             if name != 'BASE_QUALITY_ARTIFACTS' and matches(name, inputs)}
+
+
+def _aihub_api_contract():
+    PROFILE = 'aihub-api-selected-git-root/v1'
+
+    LIVE_PROFILE = 'aihub-api-live-root/v1'
+
+    SDK_PROFILE = 'aihub-api-rust-sdk-v1'
+
+    RECIPE_PROFILE = 'aihub-api-three-pins-v1'
+
+    ARGV = ['{python}', '{base}/scripts/candidate_aihub_root.py']
+
+    INPUTS = ['Cargo.toml', 'Cargo.lock', 'LICENSE', '.cargo/**', 'rust-toolchain*',
+              '.base-revision', '.namespace-base-revision', '.base-ui-revision', '.gitattributes',
+              'backend/**', 'deploy/release-api.Dockerfile', 'deploy/release-healthcheck.rs',
+              'docs/examples/service-adapter-vector.json']
+
+    EXCLUDES = ['backend/tests/**', *[f'backend/crates/{name}/tests/**'
+                                    for name in ('domain', 'application', 'infrastructure', 'api')]]
+
+    def context(value):
+        if not isinstance(value, str) or not re.fullmatch('[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}', value):
+            raise ValueError('AIHub API image requires an explicit Docker context name')
+        return value
+
+    def validate_gate(gate, *, product):
+        config = gate.get('candidate_image')
+        if (product != 'ai-hub' or gate.get('id') != 'backend:build' or gate.get('component') != 'backend'
+                or gate.get('profiles') != ['build'] or gate.get('kind') != 'artifact'
+                or gate.get('test_tier') != 'artifact' or gate.get('execution_slot') != 'command'
+                or gate.get('cacheable') is not False or gate.get('argv') != ARGV
+                or gate.get('cwd', '.') != '.' or gate.get('inputs') != INPUTS
+                or gate.get('exclude_inputs') != EXCLUDES
+                or any(name in gate for name in ('artifact_outputs', 'outputs', 'covers_units',
+                    'prepare_frontend', 'sdk_revision', 'compose_execution', 'source_revision',
+                    'workspace_toolchain', 'native_execution', 'external_state', 'requires_env',
+                    'tools', 'environment_input_contract', 'artifact_input_contract'))
+                or not isinstance(config, dict)
+                or set(config) != {'profile', 'sdk_profile', 'recipe_profile', 'docker_context'}
+                or config['profile'] not in (PROFILE, LIVE_PROFILE) or config['sdk_profile'] != SDK_PROFILE
+                or config['recipe_profile'] != RECIPE_PROFILE):
+            raise ValueError('AIHub API requires its closed command-owned selected-Git image contract')
+        context(config['docker_context'])
+        return config
+
+    return context, validate_gate
 # END GENERATED QUALITY SUPPORT
 
 
@@ -823,6 +870,9 @@ def load(root):
             raise ValueError("Unsupported artifact toolchain qualification")
         validate_derived_environment(gate)
         validate_compose_execution(gate)
+        if 'candidate_image' in gate:
+            _, validate_api_image = _aihub_api_contract()
+            validate_api_image(gate, product=manifest['product'])
         if "source_date_epoch" in gate and (
             gate["source_date_epoch"] != "git-head"
             or not isinstance(gate.get("environment_inputs"), list)
@@ -1025,6 +1075,25 @@ def order_unit_coverage(gates):
     return ordered
 
 
+def clean_head(root):
+    """Certify only an empty HEAD-relative scope with one fresh Git observation.
+
+    Dirty status is not the net HEAD/worktree diff (for example staged content
+    reverted in the worktree), so all such cases retain the original reader.
+    """
+    raw = subprocess.check_output(
+        ['git', '--no-optional-locks', '-C', str(root), 'status', '--porcelain=v2', '--branch', '-z',
+         '--untracked-files=normal', '--ignore-submodules=none', '--no-renames', '--no-ahead-behind'],
+        stderr=subprocess.PIPE,
+    )
+    records = [record for record in raw.split(b'\0') if record]
+    heads = [record[len(b'# branch.oid '):] for record in records if record.startswith(b'# branch.oid ')]
+    if (any(not record.startswith(b'# ') for record in records) or len(heads) != 1
+            or not re.fullmatch(b'[0-9a-f]{40}', heads[0])):
+        return None
+    return heads[0].decode('ascii')
+
+
 def changed_files(root, base):
     files = subprocess.check_output(
         [
@@ -1083,6 +1152,14 @@ def admin_ci_scope(root, head):
 
     import tomllib
 
+    PROFILE = 'admin-server-source-v1'
+
+    MODULAR_PROFILE = 'admin-server-modular-source-v1'
+
+    MODULAR_CANDIDATE_PROFILE = 'admin-server-modular-candidate-v1'
+
+    MODULAR_PROFILES = frozenset((MODULAR_PROFILE, MODULAR_CANDIDATE_PROFILE))
+
     REAL = ('api', 'app', 'domain', 'infra', 'migration', 'server', 'shared')
 
     MEMBERS = (*REAL, 'ai-runtime')
@@ -1106,6 +1183,13 @@ def admin_ci_scope(root, head):
 
     MAX_FILE_BYTES = 8 * 1024**2
 
+    def sdk_layout(profile):
+        if profile == PROFILE:
+            return 'crates'
+        if profile in MODULAR_PROFILES:
+            return 'base-modules/rust'
+        raise WorkspaceError('Unreviewed Admin source profile')
+
     def dependency_paths(value, keys=()):
         if isinstance(value, dict):
             for key, child in value.items():
@@ -1116,16 +1200,18 @@ def admin_ci_scope(root, head):
                 else:
                     yield from dependency_paths(child, (*keys, key))
 
-    def manifest_paths(name, parsed):
+    def manifest_paths(name, parsed, *, profile=PROFILE):
         relative = PurePosixPath(name).parent.as_posix()
         sdk = {}
         for value in dependency_paths(parsed):
             if not value or '\\' in value or PurePosixPath(value).is_absolute():
                 raise WorkspaceError('Unreviewed Admin dependency path')
             resolved = posixpath.normpath(relative + '/' + value)
-            if resolved.startswith('../services-base/crates/'):
-                crate = resolved.removeprefix('../services-base/crates/')
-                if crate not in SDK_CRATES:
+            prefix = '../services-base/' + sdk_layout(profile) + '/'
+            if resolved.startswith(prefix):
+                crate = resolved.removeprefix(prefix)
+                approved = SDK_CRATES if profile == PROFILE else {name.replace('sdlc-', 'pdlc-', 1) for name in SDK_CRATES}
+                if crate not in approved:
                     raise WorkspaceError('Admin server dependency requires unreviewed SDK crate')
                 sdk[value] = crate
             elif resolved not in {'backend/' + member for member in REAL}:
@@ -1133,7 +1219,7 @@ def admin_ci_scope(root, head):
                 raise WorkspaceError('Admin server dependency leaves its reviewed crate graph')
         return sdk
 
-    def validate_manifest(name, parsed):
+    def validate_manifest(name, parsed, *, profile=PROFILE):
         if name == 'backend/Cargo.toml':
             workspace = parsed.get('workspace', {})
             if (not isinstance(workspace, dict) or set(workspace.get('members', [])) != set(MEMBERS)
@@ -1164,7 +1250,7 @@ def admin_ci_scope(root, head):
                 {'bin': [{'name': 'admin-panel-server', 'path': 'src/main.rs'}]} if member == 'server' else {})
             if explicit != approved:
                 raise WorkspaceError('Admin explicit targets require a new source projection contract')
-        return manifest_paths(name, parsed)
+        return manifest_paths(name, parsed, profile=profile)
 
     def validate_readers(name, raw):
         text = raw.decode('utf-8').replace('\r\n', '\n')
@@ -1177,6 +1263,9 @@ def admin_ci_scope(root, head):
                 raise WorkspaceError('Admin external test paths require their exact cfg(test) declarations')
             index = found[0]
             del tokens[index:index + len(declaration)]
+        _validate_reader_tokens(name, tokens)
+
+    def _validate_reader_tokens(name, tokens):
         test_regions = []
         if name == 'backend/migration/src/lib.rs':
             declaration = ['#', '[', 'cfg', '(', 'test', ')', ']', 'mod', 'tests', '{']
@@ -1437,17 +1526,22 @@ def validate_affected_checks(manifest):
     for component, rules in mapping.items():
         gates = {gate['id']: gate for gate in manifest['gates'] if gate['component'] == component}
         automatic = {name for name, gate in gates.items() if set(gate['profiles']) & {'fast', 'unit', 'build'}}
+        routed = {name for name in automatic if 'candidate_image' in gates[name]}
+        for name in routed:
+            _, validate_api_image = _aihub_api_contract()
+            validate_api_image(gates[name], product=manifest['product'])
+        independent = automatic - routed
         native = manifest.get('native_execution', {})
         declared = native.get('gates', {}) if isinstance(native, dict) else {}
         if isinstance(declared, (list, dict)) and any(name in declared for name in automatic):
             raise ValueError('Affected checks cannot narrow declared native execution components')
-        if (not automatic or any(
+        if (not independent or any(
                 gates[name].get('test_tier') not in ('unit', 'static')
                 or gates[name].get('kind') == 'artifact'
                 or gates[name].get('execution_slot') == 'command'
                 or any(gates[name].get(key) for key in ('prepare_frontend', 'external_state', 'requires_env',
                                                        'covers_units', 'gradle_unit_group'))
-                for name in automatic)):
+                for name in independent)):
             raise ValueError('Affected checks can narrow only independent unit/static component graphs')
         if not isinstance(rules, list) or not rules:
             raise ValueError('Affected checks require nonempty reviewed rules')
@@ -1457,7 +1551,7 @@ def validate_affected_checks(manifest):
                 raise ValueError('Affected checks require exact paths and gate ids')
             paths, names = rule['paths'], rule['gates']
             if (not isinstance(names, list) or not names or any(not isinstance(name, str) for name in names)
-                    or len(set(names)) != len(names) or set(names) - automatic):
+                    or len(set(names)) != len(names) or set(names) - independent):
                 raise ValueError('Affected checks reference unknown or nonautomatic gates')
             if not isinstance(paths, list) or not paths:
                 raise ValueError('Affected checks require exact owned relative paths')
@@ -1478,7 +1572,10 @@ def affected_checks(gates, manifest, reasons):
         paths = reasons.get(component, [])
         if paths and all(path in lookup for path in paths):
             choices[component] = {name for path in paths for name in lookup[path]}
-    return [gate for gate in gates if gate['component'] not in choices or gate['id'] in choices[gate['component']]]
+    # The closed image route keeps its own build-input selection below; a unit
+    # map cannot remove a producer that consumes the same embedded fixture.
+    return [gate for gate in gates if 'candidate_image' in gate
+            or gate['component'] not in choices or gate['id'] in choices[gate['component']]]
 
 
 def plan(
@@ -1495,7 +1592,8 @@ def plan(
     validate_affected_checks(manifest)
     if only_components and (components or set(only_components) - manifest["components"].keys()):
         raise ValueError("Affected component filter requires known components and no explicit selection")
-    files = (
+    head = clean_head(root) if changed is None and not components and base == 'HEAD' else None
+    files = [] if head is not None else (
         ([] if components else changed_files(root, base))
         if changed is None
         else changed
@@ -1566,7 +1664,7 @@ def plan(
     result = {
         "schema": "base-quality-plan/v1",
         "product": manifest["product"],
-        "head": git(root, "rev-parse", "HEAD"),
+        "head": head if head is not None else git(root, "rev-parse", "HEAD"),
         "profile": profile,
         "components": sorted(selected),
         "changed": files,
@@ -1577,6 +1675,9 @@ def plan(
     }
     if native:
         result['native_execution'] = native
+    if any('candidate_image' in gate for gate in ordered) and native_docker_context is not None:
+        image_context, _ = _aihub_api_contract()
+        result['candidate_image_context'] = image_context(native_docker_context)
     if cache_request is not None:
         result['java_compiler_cache_request'] = cache_request
     return result

@@ -81,3 +81,15 @@ Source команда: `python -B -m unittest scripts.tests.test_build_scope -q`
 Forge backend producer выбирает backend и runner: у них один recipe, но разные
 automatic image tags. `--all` включает также frontend; CLI/delivery/migrations
 сохраняют отдельные producers и не выдумывают container build.
+
+## Встроенный selector: 1 ноября 2026
+
+`python scripts/build.py` без аргументов выбирает текущие local changes относительно
+HEAD; это не cold bootstrap. Встроенный selector принят отдельно из Base
+`c6bc382dd89c77ad4d4e85000966ae70821211f0`. Чистый implicit HEAD использует один
+read-only Git status вместо трёх процессов; dirty paths сохраняют прежний net diff.
+Explicit service/`--all`, invalidation и неизвестные пути сохраняют прежний смысл.
+SDK/UI/skills и compiler pins не меняются. Общий контракт и ограничения измерений:
+[BUILD_PERFORMANCE](https://github.com/FerrPOINT/services-base/blob/c6bc382dd89c77ad4d4e85000966ae70821211f0/docs/BUILD_PERFORMANCE.md).
+Публикация этого candidate не переключает current main checkout и не подтверждает
+native build/cache/resource qualification.
