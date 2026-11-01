@@ -4,6 +4,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import socket
 import subprocess
 import sys
 import uuid
@@ -67,6 +68,15 @@ def service(memory, cpu, **values):
     return {'image':image,'mem_limit':memory,'memswap_limit':memory,'cpus':cpu,
         'pids_limit':128,'networks':['selected'],**values}
 
+
+def loopback_port(container_port):
+    # Keep the published endpoint stable through Compose stop/start. Docker's
+    # anonymous published ports are reassigned when the container starts again.
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    return f'127.0.0.1:{port}:{container_port}'
+
 with ComposeHelper(project=projects[0],task='development-workspace-local-qualification',
         purpose='retained-runtime-for-workspace-bridge',docker=docker,
         directory=root/'compose'/projects[0]) as target:
@@ -77,7 +87,7 @@ with ComposeHelper(project=projects[0],task='development-workspace-local-qualifi
     init = service('128m',.25,user='0:0',entrypoint=['python3'],command=['-c','import os; os.chown("/data",10001,10001)'],
         volumes=[{'type':'volume','source':'data','target':'/data'}])
     if windows_helper:
-        app['ports'] = ['127.0.0.1::8080']
+        app['ports'] = [loopback_port(8080)]
     target.write({'application':app,'init':init},volumes={'data':{}},
         networks={'selected':{'ipam':{'config':[{'subnet':str(subnets[0])}]}}})
     subprocess.run(target.run('init'),check=True)
@@ -116,7 +126,7 @@ with ComposeHelper(project=projects[0],task='development-workspace-local-qualifi
         tracker=service('128m',.25,entrypoint=['python3'],command=['/_qa/services.py','tracker'],
             volumes=[script,inputs])
         if windows_helper:
-            controller['ports'] = ['127.0.0.1::22801']
+            controller['ports'] = [loopback_port(22801)]
         probe=service('512m',.5,user='0:0',entrypoint=['/opt/pdlc-workspace/bin/python'],
             command=['-B','/probe/probe.py'],networks=['selected','target'],
             volumes=[shared,socket,target_file,inputs,
