@@ -444,6 +444,10 @@ impl Gate {
         kind: &str,
         custody_roots: Vec<CustodyRoot>,
     ) -> anyhow::Result<(Participant, Identity)> {
+        // A restarted container must not replace participant boot evidence
+        // while the owner holds the exclusive backup/exit fence.
+        let registration = file(&self.root.join("effects.lock"))?;
+        ensure!(lock(&registration, false)?, "Forge backup fence held during registration");
         generation::validate_registration(self, id, kind, &custody_roots)?;
         ensure!(
             safe_name(id) && safe_name(kind),
@@ -921,6 +925,15 @@ mod closed_startup_tests {
         fs::remove_file(gate.root.join("request.json")).unwrap();
         drop(gate.enter_startup(operation).unwrap());
     }
+    #[test]
+    fn held_fence_rejects_registration_before_boot_receipt_is_replaced() {
+        let (_temp, gate) = gate();
+        let fence = file(&gate.root.join("effects.lock")).unwrap();
+        assert!(lock(&fence, true).unwrap());
+        assert!(gate.register("restarted", "server", vec![]).is_err());
+        assert!(!gate.root.join("participants/restarted.json").exists());
+    }
+
     #[test]
     fn startup_operation_requires_exact_nonnil_uuid() {
         let operation = Uuid::new_v4();
