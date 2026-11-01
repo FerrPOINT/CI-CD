@@ -2,6 +2,10 @@
 
 Нормативное дополнение к `STORAGE_ARCHITECTURE.md` и `DELIVERY_ARCHITECTURE.md`.
 
+Техническая настройка request clock внутри migration transaction:
+[ADR-0044](adr/0044-technical-migration-request-clocks.md). Исходные SQL bodies,
+их checksums и режим обычных запросов сохраняются; deferred FK не меняются.
+
 ## 1. Workspace packages и инструменты
 
 | Package | Назначение |

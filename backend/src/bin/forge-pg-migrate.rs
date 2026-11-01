@@ -39,7 +39,7 @@ async fn run() -> anyhow::Result<()> {
         ensure!(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND granted AND pid=$1 AND classid=1179603527::oid AND objid=1162889028::oid)")
             .bind(pid).fetch_one(&mut conn).await?,"owner target guard unavailable");
     }
-    let migrator = sqlx::migrate::Migrator::new(dir.as_path()).await?;
+    let migrator = cicd::migration_catalog::load(dir.as_path()).await?;
     tokio::time::timeout(Duration::from_secs(20), migrator.run(&mut conn))
         .await
         .context("migration deadline; outcome unknown")??;
