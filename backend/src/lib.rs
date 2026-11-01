@@ -18,6 +18,8 @@ pub mod rate_limit;
 pub mod request_database;
 pub(crate) mod schedule;
 use std::path::{Path, PathBuf};
+#[path = "../migration/catalog.rs"]
+pub mod migration_catalog;
 
 /// Versioned migrations directory shared by the server binary and integration tests (ADR-0008).
 pub fn migrations_path() -> PathBuf {
@@ -34,7 +36,7 @@ pub async fn migrations() -> Result<sqlx::migrate::Migrator, sqlx::migrate::Migr
 pub async fn migrations_from_path(
     path: &Path,
 ) -> Result<sqlx::migrate::Migrator, sqlx::migrate::MigrateError> {
-    sqlx::migrate::Migrator::new(path).await
+    migration_catalog::load(path).await
 }
 pub(crate) mod candidate_evidence;
 pub mod delivery_configs;
