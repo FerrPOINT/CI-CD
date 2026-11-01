@@ -1,4 +1,3 @@
-import { useApplicationAccess } from "@pdlc/ui/auth";
 import { Fragment, type ReactNode } from "react";
 import { useParams, useLocation } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -31,7 +30,6 @@ export function ConfigurationContext({
 }) {
   const { projectId: routeId } = useParams();
   const location = useLocation();
-  const canAdmin = useApplicationAccess()?.permits([], true) === true;
   const projectId = configurationId ?? routeId;
   const { ref, malformed } = useNamespaceRef();
   const config = useQuery({
@@ -123,10 +121,6 @@ export function ConfigurationContext({
             ["webhooks", "Вебхуки"],
             ["reports", "Отчёты"],
           ]
-            .filter(
-              ([section]) =>
-                canAdmin || ["pipelines", "reports"].includes(section),
-            )
             .map(([section, label]) => (
               <SectionNavigationItem
                 asChild

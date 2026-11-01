@@ -1,4 +1,3 @@
-import { RequireAdministrator } from "@pdlc/ui/auth";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -25,17 +24,7 @@ import { useConfigurations, type Configuration } from "@/api/workspaces";
 import type { components } from "@/api/schema";
 import { useAuth } from "@/shared/auth/auth-provider";
 type Command = components["schemas"]["CreateConfig"];
-export function RepositoryConfigurations(props: {
-  repositoryId: string;
-  writable: boolean;
-}) {
-  return (
-    <RequireAdministrator>
-      <AdministrativeRepositoryConfigurations {...props} />
-    </RequireAdministrator>
-  );
-}
-function AdministrativeRepositoryConfigurations({
+export function RepositoryConfigurations({
   repositoryId,
   writable,
 }: {

@@ -3,39 +3,18 @@ import { LoadingState, Button } from "@pdlc/ui/ui";
 // K2: layout route guard driven by AuthProvider.
 
 import { Navigate, Outlet, useLocation } from "react-router";
-import { useAuth, ssoConfig } from "./auth-provider";
-import { clearSession } from "@/api/auth";
-import {
-  ApplicationAccessProvider,
-  RequireApplicationAccess,
-} from "@pdlc/ui/auth";
+import { useAuth } from "./auth-provider";
 import { getPlatformProduct } from "@pdlc/ui/platform";
 
 export function ProtectedRoute() {
-  const { status, error, invalidate, session } = useAuth();
+  const { status, error, invalidate } = useAuth();
   const location = useLocation();
 
   if (status === "checking") {
     return <LoadingState />;
   }
   if (status === "authenticated") {
-    return (
-      <ApplicationAccessProvider
-        issuer={ssoConfig.issuer}
-        token={session?.access_token ?? null}
-        onSessionExpired={() => {
-          clearSession();
-          invalidate();
-          getPlatformProduct()?.recheckAuthorization();
-        }}
-      >
-        <RequireApplicationAccess application="ci-cd">
-          <SpaceAdmissionBoundary>
-            <Outlet />
-          </SpaceAdmissionBoundary>
-        </RequireApplicationAccess>
-      </ApplicationAccessProvider>
-    );
+    return <SpaceAdmissionBoundary><Outlet /></SpaceAdmissionBoundary>;
   }
   if (status === "unavailable")
     return (
