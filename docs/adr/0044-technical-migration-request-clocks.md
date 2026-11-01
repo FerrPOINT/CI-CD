@@ -26,6 +26,10 @@ SQL-файлы выпущенных миграций, номера и SHA-384 и
 versions/checksums и advisory locking SQLx остаются обязательными.
 `-- no-transaction` сохраняет исходное выполнение без этой настройки.
 
+Для обновления заполненной БД используется `cicd-migrate` из проверенного
+образа. Прямой `sqlx-cli` читает те же тела и checksums, но не устанавливает
+технический режим request clock, поэтому не заменяет этот upgrade entrypoint.
+
 Сверено с закреплённым
 [SQLx 0.8.6](https://github.com/launchbadge/sqlx/blob/v0.8.6/sqlx-core/src/migrate/migrator.rs)
 и [PostgreSQL 17: SET CONSTRAINTS](https://www.postgresql.org/docs/17/sql-set-constraints.html).
