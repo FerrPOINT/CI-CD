@@ -82,7 +82,7 @@ gitignored каталог; `SDLC_HEADER_EVIDENCE_DIR` переопределяе
 
 ### Требования
 
-Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88, Node.js 22.20.0 и pnpm 10.28.1. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
+Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88, Node.js 22.22.2 и pnpm 10.28.1. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
 
 Перед первым запуском создайте только локальный файл конфигурации:
 
@@ -229,7 +229,7 @@ Secret scan: 440 text files PASS. Ни deployment, ни live seven-agent scenari
 
 | Уровень | Что проверяется | Текущий запуск | Статус и следующий обязательный шаг |
 |---|---|---|---|
-| Rust unit | `JobStatus::transition_to()` и чистые domain правила | `cargo test -p cicd-server --test domain_transitions` | Current verified |
+| Rust unit | `JobStatus::transition_to()` и чистые domain правила | `cargo test --locked -p cicd-domain --lib` | Быстрый чистый набор; дополнительные domain_transitions отдельно |
 | API contract без БД | router wiring, liveness/readiness no-DB behavior и extractor behavior через `app(None)` | `cargo test -p cicd-server --test api_contract` | Current verified; не заменяет persistence tests |
 | CLI contract | `cicd-cli --help`, public command groups, auth/output flags, pagination и ключевые platform mutations | `cargo test -p cicd-cli --test cli_contract` | Current verified |
 | Frontend unit | Components, pages, i18n contract и UI behavior через Vitest/Testing Library | `pnpm test` | Current verified |
@@ -237,7 +237,7 @@ Secret scan: 440 text files PASS. Ни deployment, ни live seven-agent scenari
 | Compose smoke | Запуск образов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | Локально: `just up && just health && just readiness` | Local verification |
 | API + PostgreSQL | CRUD, constraints, migrations/readiness, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo clippy --locked -p cicd-server --features integration --test integration_db -- -D warnings`, затем `cargo test --locked --features integration --test integration_db -- --test-threads=1` с PostgreSQL service в CI | Feature gate проверяется отдельно от default workspace; isolated owner/runtime matrix всё ещё target |
 | Scheduler/outbox/approval policy + PostgreSQL | UTC/DST, misfire, outbox ledger, повторный голос и окончательное отклонение deployment | `cargo test --locked --features integration --test integration_target_policy -- --test-threads=1` с `CICD_TEST_DATABASE_URL` | Отдельный локальный gate; защищённые API используют JWT тестовых учёток, не anonymous bypass |
-| CLI + real API | Current smoke: project create/list, idempotent pipeline run, attempts, protected deployment approval, env/flag config precedence, bounded HTTP timeout, JWT/PAT auth-mode, RBAC denial, project-scoped read-only PAT, token redaction на CLI failure, JSON output и non-zero API error exit; target hardening: expanded redaction fixtures, OS keyring and request tracing; profiles/NDJSON/completions/stable exit codes are current | `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1` с `CICD_TEST_DATABASE_URL`; CI backend job | Current verified MVP |
+| CLI + real API | Current smoke: project create/list, idempotent pipeline run, attempts, protected deployment approval, env/flag config precedence, bounded HTTP timeout, JWT/PAT auth-mode, RBAC denial, project-scoped read-only PAT, token redaction на CLI failure, JSON output и non-zero API error exit; target hardening: expanded redaction fixtures, OS keyring and request tracing; profiles/NDJSON/completions/stable exit codes are current | `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1` с `CICD_TEST_DATABASE_URL`; manual qualification backend job | Current verified MVP |
 | Browser E2E | Critical UI journeys, all-route desktop accessibility и seeded performance smoke against built frontend и real API/PostgreSQL | Локально: `pnpm seed:evidence && pnpm e2e` на running Compose stack | Local verification; full auth/RBAC/CLI journeys остаются target |
 | Accessibility | Keyboard flow, semantic controls, colour contrast и serious/critical violations | Локально: Playwright + axe по baseline routes; mobile drawer Escape/focus | Local verification; full keyboard/theme/Lighthouse coverage остаётся target |
 | Performance | Seeded API read p95 и Dashboard route ready-time regression budgets | Локально: `frontend/e2e/performance.spec.ts` в `pnpm e2e`; Lighthouse/load/30-day SLO evidence target | Local verification |
@@ -257,39 +257,51 @@ Secret scan: 440 text files PASS. Ни deployment, ни live seven-agent scenari
 
 ## Команды локальной проверки
 
-### Backend в Rust Docker image
+### Выбор компонентов и уровней проверки
 
-Команда ниже повторяет текущий backend CI набор в pinned image и сохраняет artifacts в `backend/target/`:
+Применять Base [BUILD_PERFORMANCE](https://github.com/FerrPOINT/services-base/blob/c6bc382dd89c77ad4d4e85000966ae70821211f0/docs/BUILD_PERFORMANCE.md),
+[TESTING](https://github.com/FerrPOINT/services-base/blob/c6bc382dd89c77ad4d4e85000966ae70821211f0/docs/TESTING.md) и
+[PERFORMANCE_SPEC](https://github.com/FerrPOINT/services-base/blob/c6bc382dd89c77ad4d4e85000966ae70821211f0/docs/PERFORMANCE_SPEC.md)
+из принятого quality tooling. Версии SDK/UI/skills
+не меняются ради чтения стандарта. Подробности текущего переноса и открытые gates:
+[план производительности](plans/build-performance-legacy-port-20261101.md).
 
-```bash
-cd /opt/dev/CI-CD
-docker run --rm --entrypoint /bin/bash \
-  -v "$PWD/backend:/workspace" \
-  -w /workspace \
-  -e CARGO_TARGET_DIR=/workspace/target \
-  rust:1.88-bookworm \
-  -lc '/usr/local/cargo/bin/cargo fmt --all -- --check && \
-       /usr/local/cargo/bin/cargo clippy --workspace --all-targets -- -D warnings && \
-       /usr/local/cargo/bin/cargo test --workspace && \
-       /usr/local/cargo/bin/cargo build --release --workspace'
-```
+| Когда | Команда в подготовленном pinned окружении | Объём |
+|---|---|---|
+| Domain unit во время разработки | `cargo test --locked -p cicd-domain --lib` из backend | Чистые правила, без PostgreSQL |
+| Frontend unit | `pnpm --dir frontend test:unit` | Исключены integration/slow/e2e; CSS input fixtures включены |
+| Проверка типов | `pnpm --dir frontend typecheck` | Без сборки dist |
+| Локальная frontend сборка с unit | `just build-frontend` | Unit → typecheck → один Vite build через общий slot |
+| Проверенные unit/typecheck уже выполнены в той же операции | `pnpm --dir frontend build:compile` | Только один dist, без повторных unit; raw heavy команда через общий slot |
+| Container build | `python3 -B scripts/build.py` или `just build` | Changed inputs относительно HEAD, включая staged/unstaged/untracked/deleted |
+| Явный cold bootstrap | `python3 -B scripts/build.py backend` | Только выбранный service; `runner` остаётся явным выбором |
+| Полный backend/integration/slow/release | Ручной `release.yml` → `qualification.yml` | Прежний полный набор, PostgreSQL, CLI API, compatibility/security и browser/theme |
 
-Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. CLI real-API smoke запускается тем же PostgreSQL service командой `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1`. Backend release build входит в current CI gate.
+No-change/docs/test-only не вызывают контейнерный producer. Неизвестный путь
+консервативно расширяет продукт. Backend не тянет frontend; optional runner
+автоматически выбирается только с `COMPOSE_PROFILES=external-runner`.
+`--all` намеренно выбирает полный состав. Разные SDK/UI pins для смешанного
+запроса требуют штатный multi-pin candidate route; helper отказывает до подготовки.
 
-### Frontend через Node Docker image
+Helper проверяет pin выбранного компонента и использует общий Base execution slot.
+Не добавлять вторую wrapper вокруг него. `just test-backend` вызывает только
+domain unit через тот же slot; подготовка зависимостей не повторяется отдельно
+для каждой команды. Совместимое окружение сохранять, `--frozen-lockfile` обязателен
+при действительной необходимости установки. Compiled Rust target не переносить
+между независимыми экспортами; download cache и стабильные Docker layers сохранять.
 
-Текущий `just test-frontend` и `just build-frontend` используют host pnpm. Если host Node/pnpm отсутствуют, запускайте эквивалент в pinned Node image:
+Automatic CI выполняет выбранные unit/static checks и frontend build при изменении
+production inputs; backend использует точные `cargo check` targets. Полные Rust
+clippy/test/workspace release, real-DB и CLI real-API commands из матрицы выше
+перенесены в manual workflow. Все frontend tests доступны через `test:all`.
+`*.integration.test.*`, `*.slow.test.*`, `*.e2e.test.*` не входят в unit-команду;
+браузерные `frontend/e2e` запускаются отдельным Playwright runner на ручной вехе.
+Зелёный unit-набор не подтверждает пропущенный native/live/release gate.
 
-```bash
-cd /opt/dev/CI-CD
-docker run --rm -it \
-  -v "$PWD/frontend:/workspace" \
-  -w /workspace \
-  node:22-bookworm-slim \
-  bash -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm test && pnpm build'
-```
-
-Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; CI устанавливает его только с `--frozen-lockfile`. Current GitHub Actions frontend job запускает generated-client drift gate, `pnpm lint`, `pnpm test` и `pnpm build`.
+Сам production image содержит server и runner; CLI/delivery/pg-migrate/migration
+остаются отдельными Cargo targets и проверяются вручную. Старые полные команды
+в тестовой матрице — каталог проверок, а не обязанность повторять его после правки.
+Docker builds/native CPU/RAM/invalidation этого переноса ещё не квалифицированы.
 
 Для браузерной проверки нужен поднятый disposable Compose stack и synthetic `CICD_SECRETS_KEY` для seeded secrets:
 

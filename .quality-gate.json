@@ -1,0 +1,1346 @@
+{
+  "schema": "base-quality-product/v1",
+  "product": "CI-CD",
+  "components": {
+    "docs": [
+      "docs/**",
+      "*.md",
+      "LICENSE",
+      "plans/**"
+    ],
+    "frontend": [
+      "frontend/**",
+      "openapi/**",
+      ".base-ui-revision"
+    ],
+    "backend": [
+      "backend/src/**",
+      "backend/domain/**",
+      "backend/app/**",
+      "backend/infra/**",
+      "backend/api/**",
+      "backend/migrations/**",
+      "backend/Cargo.*",
+      "rust-toolchain*",
+      ".base-revision",
+      ".namespace-base-revision",
+      "openapi/**",
+      "scripts/postgres-delivery.py",
+      "scripts/workspace_deploy_admission.py",
+      "scripts/workspace_deploy_adapter.py",
+      "scripts/workspace_deploy_bridge.py",
+      "backend/tests/**",
+      "backend/Dockerfile",
+      "backend/Dockerfile.dockerignore",
+      "backend/Dockerfile.umbrella",
+      "backend/Dockerfile.umbrella.dockerignore"
+    ],
+    "tooling": [
+      "frontend/Dockerfile*",
+      "scripts/tests/**",
+      "scripts/vendor/**",
+      "scripts/verify_docs.py",
+      "scripts/select_ci.py",
+      "scripts/build.py",
+      ".quality-gate.json",
+      ".quality-tooling-revision",
+      ".github/workflows/**",
+      "justfile",
+      "backend/src/bin/forge-runner.rs",
+      "backend/src/bin/tests/forge_runner.rs",
+      "backend/src/bin/forge-delivery.rs",
+      "backend/src/bin/tests/forge_delivery.rs",
+      "backend/Cargo.toml",
+      "backend/*/Cargo.toml",
+      "backend/Dockerfile",
+      "backend/Dockerfile.umbrella",
+      "backend/src/task_delivery/postgres.rs",
+      "scripts/select_build.py",
+      "scripts/tests/test_build_selection.py",
+      "scripts/tests/test_performance_selection.py"
+    ],
+    "cli": [
+      "backend/cli/**"
+    ],
+    "delivery": [
+      "backend/src/bin/forge-delivery.rs",
+      "backend/src/bin/tests/forge_delivery.rs"
+    ],
+    "pg-migrate": [
+      "backend/src/bin/forge-pg-migrate.rs"
+    ],
+    "migration": [
+      "backend/migration/**"
+    ],
+    "pinned-imports": [
+      "scripts/tests/test_postgres_import_boundary.py",
+      "scripts/postgres-delivery.py",
+      "backend/src/task_delivery/postgres.rs",
+      ".base-revision",
+      ".namespace-base-revision"
+    ]
+  },
+  "gates": [
+    {
+      "id": "tooling:quality-routes",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "test_tier": "unit",
+      "execution_slot": "none",
+      "cacheable": false,
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_performance_selection",
+        "scripts.tests.test_build_selection",
+        "scripts.tests.test_postgres_rejection",
+        "scripts.tests.test_base_stand_backup",
+        "scripts.tests.test_ci_contract_checks.CliIntegrationGateTests",
+        "scripts.tests.test_ci_contract_checks.RepositorySyncFixtureEnvironmentTests",
+        "scripts.tests.test_backend_dockerfile",
+        "scripts.tests.test_verify_docs",
+        "-q"
+      ],
+      "inputs": [
+        "frontend/scripts/base-generate-openapi.mjs",
+        "scripts/**",
+        ".quality-gate.json",
+        ".quality-tooling-revision",
+        ".github/**",
+        "justfile",
+        "backend/Dockerfile*",
+        "backend/src/runner_image_build/workspace_deploy.rs",
+        "backend/src/task_delivery/postgres.rs",
+        "frontend/package.json",
+        "frontend/Dockerfile*",
+        "frontend/vite.config.ts",
+        "frontend/vitest.config.ts",
+        "frontend/tsconfig*.json",
+        "README.md",
+        "docs/CURRENT_STATE.md",
+        "docs/DELIVERY_ARCHITECTURE.md",
+        "docs/API.md",
+        "docs/screenshots/2026-10-01-platform-header/desktop-light-1920.png",
+        "docs/screenshots/02-dashboard.png",
+        "docs/screenshots/07-settings.png",
+        "docs/screenshots/06-pipeline-detail.png",
+        "docs/screenshots/22-pr-diff.png",
+        "docs/screenshots/14-secrets.png",
+        "docs/screenshots/13-runners.png",
+        "docs/screenshots/15-environments.png",
+        "docs/screenshots/21-artifacts.png",
+        "docs/screenshots/33-job-logs.png",
+        "docs/screenshots/19-audit-log.png",
+        "docs/screenshots/24-project-delete-confirm.png",
+        "docs/assets/forge-readme-banner.svg",
+        "backend/Cargo.toml",
+        "backend/*/Cargo.toml",
+        "scripts/tests/test_build_selection.py",
+        "scripts/tests/test_base_stand_backup.py",
+        "scripts/tests/test_postgres_rejection.py",
+        "scripts/tests/test_performance_selection.py"
+      ]
+    },
+    {
+      "id": "docs:verify",
+      "component": "docs",
+      "profiles": [
+        "fast",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/verify_docs.py",
+        "--links",
+        "--anchors",
+        "--canonical",
+        "--frontend-contracts"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "test_tier": "static",
+      "execution_slot": "none"
+    },
+    {
+      "id": "frontend:types",
+      "component": "frontend",
+      "profiles": [
+        "fast",
+        "integrated",
+        "build",
+        "release"
+      ],
+      "argv": [
+        "pnpm",
+        "typecheck"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.22.2",
+      "test_tier": "static"
+    },
+    {
+      "id": "frontend:tests",
+      "component": "frontend",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "pnpm",
+        "test:unit"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.22.2",
+      "test_tier": "unit"
+    },
+    {
+      "id": "frontend:lint",
+      "component": "frontend",
+      "profiles": [
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "pnpm",
+        "lint"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.22.2",
+      "test_tier": "static"
+    },
+    {
+      "id": "backend:unit",
+      "component": "backend",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "cicd-domain",
+        "--lib"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "unit"
+    },
+    {
+      "id": "backend:quality",
+      "component": "backend",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace -- --test-threads=1"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
+    },
+    {
+      "id": "cli:format",
+      "component": "cli",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "cli/src/main.rs"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "backend/cli/src/**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "test_tier": "static"
+    },
+    {
+      "id": "frontend:build",
+      "component": "frontend",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "pnpm",
+        "exec",
+        "vite",
+        "build"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.22.2",
+      "outputs": [
+        "frontend/dist"
+      ],
+      "environment_inputs": [
+        "VITE_*",
+        "NODE_*",
+        "BROWSERSLIST*",
+        "npm_*",
+        "NPM_*",
+        "PNPM_*",
+        "SOURCE_DATE_EPOCH",
+        "HOME",
+        "USERPROFILE",
+        "TMPDIR",
+        "TEMP",
+        "TMP"
+      ],
+      "kind": "artifact",
+      "exclude_inputs": [
+        "frontend/src/**/*.test.ts",
+        "frontend/src/**/*.test.tsx",
+        "frontend/src/**/*.spec.ts",
+        "frontend/src/**/*.spec.tsx",
+        "frontend/src/**/*.test.mjs",
+        "frontend/src/**/*.test.cjs",
+        "frontend/src/*.test.ts",
+        "frontend/src/*.test.tsx",
+        "frontend/src/*.spec.ts",
+        "frontend/src/*.spec.tsx",
+        "frontend/src/*.test.mjs",
+        "frontend/src/*.test.cjs",
+        "frontend/src/test/**",
+        "frontend/vitest.config.ts",
+        "frontend/e2e/**",
+        "frontend/scripts/tailwind-source-inputs.test.mjs",
+        "frontend/Dockerfile*",
+        "frontend/nginx.conf",
+        "frontend/src/test-setup.ts"
+      ],
+      "test_tier": "artifact"
+    },
+    {
+      "id": "backend:build",
+      "component": "backend",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner\nfor name in cicd-server forge-runner; do\n test -s \"$CARGO_TARGET_DIR/release/$name\"\n cp -- \"$CARGO_TARGET_DIR/release/$name\" \"$BASE_QUALITY_ARTIFACTS/$name\"\ndone"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "backend/src/**",
+        "backend/domain/**",
+        "backend/app/**",
+        "backend/infra/**",
+        "backend/api/**",
+        "backend/migrations/**",
+        "backend/Cargo.*",
+        "rust-toolchain*",
+        ".base-revision",
+        ".namespace-base-revision",
+        "scripts/postgres-delivery.py",
+        "scripts/workspace_deploy_admission.py",
+        "scripts/workspace_deploy_adapter.py",
+        "scripts/workspace_deploy_bridge.py",
+        ".cargo/**",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "kind": "artifact",
+      "artifact_outputs": [
+        "cicd-server",
+        "forge-runner"
+      ],
+      "artifact_toolchain": "pinned-image",
+      "environment_inputs": [
+        "CARGO_*",
+        "RUST*",
+        "CC",
+        "CC_*",
+        "CFLAGS",
+        "CFLAGS_*",
+        "CXX",
+        "CXX_*",
+        "CXXFLAGS",
+        "AR",
+        "AR_*",
+        "RANLIB",
+        "LD",
+        "LD_*",
+        "LDFLAGS",
+        "PKG_CONFIG*",
+        "OPENSSL*",
+        "LIBSSL*",
+        "SQLX_*",
+        "SQLITE*",
+        "LIBSQLITE*",
+        "VCPKG*",
+        "BINDGEN*",
+        "LIBCLANG*",
+        "ZSTD*",
+        "CMAKE*",
+        "SOURCE_DATE_EPOCH",
+        "HOME",
+        "LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+        "CPATH",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH"
+      ],
+      "test_tier": "artifact",
+      "exclude_inputs": [
+        "backend/**/tests/**",
+        "backend/tests/**",
+        "backend/src/bin/forge-delivery.rs",
+        "backend/src/bin/forge-pg-migrate.rs",
+        "backend/src/bin/openapi-dump.rs"
+      ]
+    },
+    {
+      "id": "cli:build",
+      "component": "cli",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo build --locked --release -p cicd-cli --bin cicd-cli\ntest -s \"$CARGO_TARGET_DIR/release/cicd-cli\"\ncp -- \"$CARGO_TARGET_DIR/release/cicd-cli\" \"$BASE_QUALITY_ARTIFACTS/cicd-cli\""
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "backend/cli/**",
+        "backend/Cargo.*",
+        ".base-revision",
+        ".namespace-base-revision",
+        "rust-toolchain*",
+        ".cargo/**",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "kind": "artifact",
+      "artifact_outputs": [
+        "cicd-cli"
+      ],
+      "artifact_toolchain": "pinned-image",
+      "environment_inputs": [
+        "CARGO_*",
+        "RUST*",
+        "CC",
+        "CC_*",
+        "CFLAGS",
+        "CFLAGS_*",
+        "CXX",
+        "CXX_*",
+        "CXXFLAGS",
+        "AR",
+        "AR_*",
+        "RANLIB",
+        "LD",
+        "LD_*",
+        "LDFLAGS",
+        "PKG_CONFIG*",
+        "OPENSSL*",
+        "LIBSSL*",
+        "SQLX_*",
+        "SQLITE*",
+        "LIBSQLITE*",
+        "VCPKG*",
+        "BINDGEN*",
+        "LIBCLANG*",
+        "ZSTD*",
+        "CMAKE*",
+        "SOURCE_DATE_EPOCH",
+        "HOME",
+        "LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+        "CPATH",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH"
+      ],
+      "test_tier": "artifact",
+      "exclude_inputs": [
+        "backend/**/tests/**"
+      ]
+    },
+    {
+      "id": "delivery:build",
+      "component": "delivery",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo build --locked --release -p cicd-server --bin forge-delivery\ntest -s \"$CARGO_TARGET_DIR/release/forge-delivery\"\ncp -- \"$CARGO_TARGET_DIR/release/forge-delivery\" \"$BASE_QUALITY_ARTIFACTS/forge-delivery\""
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "backend/src/**",
+        "backend/domain/**",
+        "backend/app/**",
+        "backend/infra/**",
+        "backend/api/**",
+        "backend/migrations/**",
+        "backend/Cargo.*",
+        "rust-toolchain*",
+        ".base-revision",
+        ".namespace-base-revision",
+        "scripts/postgres-delivery.py",
+        "scripts/workspace_deploy_admission.py",
+        "scripts/workspace_deploy_adapter.py",
+        "scripts/workspace_deploy_bridge.py",
+        ".cargo/**",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "kind": "artifact",
+      "artifact_outputs": [
+        "forge-delivery"
+      ],
+      "artifact_toolchain": "pinned-image",
+      "environment_inputs": [
+        "CARGO_*",
+        "RUST*",
+        "CC",
+        "CC_*",
+        "CFLAGS",
+        "CFLAGS_*",
+        "CXX",
+        "CXX_*",
+        "CXXFLAGS",
+        "AR",
+        "AR_*",
+        "RANLIB",
+        "LD",
+        "LD_*",
+        "LDFLAGS",
+        "PKG_CONFIG*",
+        "OPENSSL*",
+        "LIBSSL*",
+        "SQLX_*",
+        "SQLITE*",
+        "LIBSQLITE*",
+        "VCPKG*",
+        "BINDGEN*",
+        "LIBCLANG*",
+        "ZSTD*",
+        "CMAKE*",
+        "SOURCE_DATE_EPOCH",
+        "HOME",
+        "LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+        "CPATH",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH"
+      ],
+      "test_tier": "artifact",
+      "exclude_inputs": [
+        "backend/**/tests/**",
+        "backend/tests/**",
+        "backend/src/main.rs",
+        "backend/src/bin/forge-runner.rs",
+        "backend/src/bin/openapi-dump.rs",
+        "backend/src/bin/forge-pg-migrate.rs"
+      ]
+    },
+    {
+      "id": "pg-migrate:build",
+      "component": "pg-migrate",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo build --locked --release -p cicd-server --bin forge-pg-migrate\ntest -s \"$CARGO_TARGET_DIR/release/forge-pg-migrate\"\ncp -- \"$CARGO_TARGET_DIR/release/forge-pg-migrate\" \"$BASE_QUALITY_ARTIFACTS/forge-pg-migrate\""
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "backend/src/**",
+        "backend/domain/**",
+        "backend/app/**",
+        "backend/infra/**",
+        "backend/api/**",
+        "backend/migrations/**",
+        "backend/Cargo.*",
+        "rust-toolchain*",
+        ".base-revision",
+        ".namespace-base-revision",
+        "scripts/postgres-delivery.py",
+        "scripts/workspace_deploy_admission.py",
+        "scripts/workspace_deploy_adapter.py",
+        "scripts/workspace_deploy_bridge.py",
+        ".cargo/**",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "kind": "artifact",
+      "artifact_outputs": [
+        "forge-pg-migrate"
+      ],
+      "artifact_toolchain": "pinned-image",
+      "environment_inputs": [
+        "CARGO_*",
+        "RUST*",
+        "CC",
+        "CC_*",
+        "CFLAGS",
+        "CFLAGS_*",
+        "CXX",
+        "CXX_*",
+        "CXXFLAGS",
+        "AR",
+        "AR_*",
+        "RANLIB",
+        "LD",
+        "LD_*",
+        "LDFLAGS",
+        "PKG_CONFIG*",
+        "OPENSSL*",
+        "LIBSSL*",
+        "SQLX_*",
+        "SQLITE*",
+        "LIBSQLITE*",
+        "VCPKG*",
+        "BINDGEN*",
+        "LIBCLANG*",
+        "ZSTD*",
+        "CMAKE*",
+        "SOURCE_DATE_EPOCH",
+        "HOME",
+        "LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+        "CPATH",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH"
+      ],
+      "test_tier": "artifact",
+      "exclude_inputs": [
+        "backend/**/tests/**",
+        "backend/tests/**",
+        "backend/src/main.rs",
+        "backend/src/bin/forge-runner.rs",
+        "backend/src/bin/openapi-dump.rs",
+        "backend/src/bin/forge-delivery.rs"
+      ]
+    },
+    {
+      "id": "migration:build",
+      "component": "migration",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo build --locked --release -p cicd-migrate --bin cicd-migrate\ntest -s \"$CARGO_TARGET_DIR/release/cicd-migrate\"\ncp -- \"$CARGO_TARGET_DIR/release/cicd-migrate\" \"$BASE_QUALITY_ARTIFACTS/cicd-migrate\""
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "backend/migration/**",
+        "backend/Cargo.*",
+        "rust-toolchain*",
+        ".base-revision",
+        ".namespace-base-revision",
+        ".cargo/**",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "kind": "artifact",
+      "artifact_outputs": [
+        "cicd-migrate"
+      ],
+      "artifact_toolchain": "pinned-image",
+      "environment_inputs": [
+        "CARGO_*",
+        "RUST*",
+        "CC",
+        "CC_*",
+        "CFLAGS",
+        "CFLAGS_*",
+        "CXX",
+        "CXX_*",
+        "CXXFLAGS",
+        "AR",
+        "AR_*",
+        "RANLIB",
+        "LD",
+        "LD_*",
+        "LDFLAGS",
+        "PKG_CONFIG*",
+        "OPENSSL*",
+        "LIBSSL*",
+        "SQLX_*",
+        "SQLITE*",
+        "LIBSQLITE*",
+        "VCPKG*",
+        "BINDGEN*",
+        "LIBCLANG*",
+        "ZSTD*",
+        "CMAKE*",
+        "SOURCE_DATE_EPOCH",
+        "HOME",
+        "LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+        "CPATH",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH"
+      ],
+      "test_tier": "artifact",
+      "exclude_inputs": [
+        "backend/**/tests/**"
+      ]
+    },
+    {
+      "id": "cli:quality",
+      "component": "cli",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace -- --test-threads=1"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
+    },
+    {
+      "id": "delivery:quality",
+      "component": "delivery",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace -- --test-threads=1"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
+    },
+    {
+      "id": "pg-migrate:quality",
+      "component": "pg-migrate",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace -- --test-threads=1"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
+    },
+    {
+      "id": "migration:quality",
+      "component": "migration",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace -- --test-threads=1"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".base-revision",
+      "test_tier": "integration",
+      "shared_check": "forge-rust-manual-v1"
+    },
+    {
+      "id": "frontend:full-tests",
+      "component": "frontend",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "pnpm",
+        "test:all"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.22.2",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "tooling:delivery-preflight",
+      "component": "tooling",
+      "profiles": [
+        "integration",
+        "integrated",
+        "release"
+      ],
+      "test_tier": "integration",
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_ci_contract_checks.DeliveryPinPreflightTests",
+        "-q"
+      ],
+      "cwd": ".",
+      "cacheable": false,
+      "external_state": true,
+      "inputs": [
+        "scripts/tests/test_delivery_pin_preflight_integration.py",
+        "scripts/verify-task-delivery.ps1",
+        ".base-revision",
+        ".namespace-base-revision",
+        "scripts/tests/test_ci_contract_checks.py"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "pwsh",
+            "--version"
+          ],
+          "pattern": "^PowerShell 7\\."
+        }
+      ]
+    },
+    {
+      "id": "pinned-imports:unit",
+      "component": "pinned-imports",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "test_tier": "unit",
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_postgres_import_boundary",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_postgres_import_boundary.py",
+        "scripts/postgres-delivery.py",
+        "backend/src/task_delivery/postgres.rs",
+        ".base-revision",
+        ".namespace-base-revision"
+      ],
+      "cacheable": false,
+      "execution_slot": "none",
+      "sdk_revision": ".base-revision"
+    }
+  ],
+  "additional_acceptance": "Full original actual-Source CI retained in manual release.yml -> reusable qualification.yml, including git_receive_only, PostgreSQL/native Git/CLI/MSRV/security/SDK QA/packed/themes. This Source port does not adopt upstream Kubernetes/runtime features or qualify native artifacts/resources.",
+  "frontend_generated": [
+    "src/api/schema.d.ts"
+  ],
+  "frontend_unit_inputs": [
+    "frontend/src/**/*.test.ts",
+    "frontend/src/**/*.test.tsx",
+    "frontend/src/**/*.spec.ts",
+    "frontend/src/**/*.spec.tsx",
+    "frontend/src/**/*.test.mjs",
+    "frontend/src/**/*.test.cjs",
+    "frontend/src/*.test.ts",
+    "frontend/src/*.test.tsx",
+    "frontend/src/*.spec.ts",
+    "frontend/src/*.spec.tsx",
+    "frontend/src/*.test.mjs",
+    "frontend/src/*.test.cjs",
+    "frontend/src/test/**",
+    "frontend/vitest.config.ts",
+    "frontend/scripts/tailwind-source-inputs.test.mjs",
+    "frontend/src/test-setup.ts"
+  ],
+  "test_policy": {
+    "automatic": [
+      "unit",
+      "static",
+      "artifact"
+    ],
+    "manual_release": [
+      "integration",
+      "slow",
+      "live"
+    ],
+    "release_required": true
+  },
+  "backend_unit_inputs": [
+    "backend/**/tests/**",
+    "backend/tests/**"
+  ],
+  "impacts": [
+    {
+      "paths": [
+        "backend/Cargo.*",
+        "rust-toolchain*",
+        ".base-revision",
+        ".namespace-base-revision"
+      ],
+      "components": [
+        "backend",
+        "cli",
+        "delivery",
+        "pg-migrate",
+        "migration"
+      ]
+    },
+    {
+      "paths": [
+        "backend/src/**",
+        "backend/domain/**",
+        "backend/app/**",
+        "backend/infra/**",
+        "backend/api/**",
+        "backend/migrations/**",
+        "scripts/postgres-delivery.py",
+        "scripts/workspace_deploy_admission.py",
+        "scripts/workspace_deploy_adapter.py",
+        "scripts/workspace_deploy_bridge.py"
+      ],
+      "components": [
+        "delivery",
+        "pg-migrate"
+      ]
+    }
+  ],
+  "container_inputs": {
+    "backend": [
+      "backend/Dockerfile",
+      "backend/Dockerfile.dockerignore",
+      "backend/Dockerfile.umbrella",
+      "backend/Dockerfile.umbrella.dockerignore",
+      "backend/migration-lineages/**",
+      "scripts/migration_lineages.py"
+    ],
+    "runner": [
+      "backend/Dockerfile",
+      "backend/Dockerfile.dockerignore",
+      "backend/Dockerfile.umbrella",
+      "backend/Dockerfile.umbrella.dockerignore",
+      "backend/migration-lineages/**",
+      "scripts/migration_lineages.py"
+    ],
+    "frontend": [
+      "frontend/Dockerfile*",
+      "frontend/nginx.conf"
+    ]
+  },
+  "affected_checks": {
+    "tooling": [
+      {
+        "paths": [
+          "scripts/build.py",
+          "scripts/select_build.py",
+          "scripts/tests/test_build_scope.py"
+        ],
+        "gates": [
+          "tooling:quality-routes"
+        ]
+      }
+    ]
+  }
+}

@@ -13,13 +13,17 @@ logs:
     docker compose logs -f
 
 test-backend:
-    docker run --rm --entrypoint /bin/bash -v "{{justfile_directory()}}/backend:/workspace" -w /workspace rust:1.88-bookworm -lc '/usr/local/cargo/bin/cargo test'
+    python3 -B ../services-base/scripts/execution_slot.py -- cargo test --manifest-path backend/Cargo.toml --locked -p cicd-domain --lib
 
 test-frontend:
     cd frontend && pnpm test
 
 build-frontend:
-    cd frontend && pnpm build
+    python3 -B ../services-base/scripts/execution_slot.py -- pnpm --dir frontend build
+
+# No arguments selects changed container services; --all is intentional full scope.
+build *services:
+    python3 -B scripts/build.py {{services}}
 
 health:
     curl -fsS http://127.0.0.1:22801/api/v1/health

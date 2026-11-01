@@ -1,5 +1,12 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 @import "@pdlc/ui/tokens.css";
+@source "./";
+@source "../index.html";
+@source "../../../services-base/base-modules/ui/src";
+@source not "./**/*.test.*";
+@source not "./**/*.spec.*";
+@source not "./test";
+@source not "./test-setup.ts";
 @source "../../../services-base/base-modules/ui/src";
 
 body {

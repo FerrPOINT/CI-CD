@@ -35,6 +35,20 @@
 - Изменения Git Smart HTTP, bare repository storage или post-receive hook синхронизировать с `docs/GIT_HOSTING.md`.
 - Документация проекта и пользовательские строки — на русском; код и комментарии — на английском согласно `docs/CODE_STYLE.md`.
 
+## Быстрые проверки и scoped builds
+
+Перед build/test/install применять Base docs/BUILD_PERFORMANCE.md и
+docs/PERFORMANCE_SPEC.md из принятого quality tooling. Обычный путь выбирает
+affected components; явные service arguments/--all задают намеренный scope.
+Docs/test-only не пересобирают приложение без изменения production inputs.
+Во время разработки — scoped unit/static; PostgreSQL/integration/slow/full
+workspace/security/compatibility проверки — отдельный manual release.yml.
+Каталог полных команд ниже не требует их после каждой правки. Полезные caches
+сохранять; повтор heavy обосновывать changed inputs/missing evidence.
+Standalone heavy builder использует общий Base execution slot; не добавлять
+вторую wrapper вокруг owner. SDK/UI/skills/operator pins независимы.
+Scope и незавершённые native gates: docs/plans/build-performance-legacy-port-20261101.md.
+
 ## Docker и команды проверки
 
 ```bash
@@ -61,9 +75,9 @@ cd frontend && pnpm build
 ## Checklist перед завершением
 
 - [ ] Изменения соответствуют существующей архитектуре и не затёрли чужую работу.
-- [ ] Backend-проверки проходят: fmt, clippy, test, release build.
-- [ ] Frontend-проверки проходят: `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm test`, `pnpm build`.
-- [ ] `docker compose config` и `docker compose build` успешны при изменении контейнеров.
+- [ ] Выполнены выбранные unit/static checks; полный backend и integration/release gate отмечен отдельно, без повторения после каждой правки.
+- [ ] Для frontend выбраны нужные checks; готовый dist передан дальше без повторного `pnpm build` после успешных unit/typecheck.
+- [ ] Для контейнеров проверен выбранный маршрут; native image qualification остаётся отдельной вехой. Не выполнять общий `docker compose build` автоматически.
 - [ ] Для новых endpoint выполнена curl-проверка; для UI-изменений сделаны актуальные screenshots при необходимости.
 - [ ] Документация, `.env.example` и ADR обновлены, если изменились контракт, конфигурация или решение.
 - [ ] В diff отсутствуют credentials, токены, `.env` и другие чувствительные данные.

@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
-    "test": "vitest run",
+    "build": "pnpm run test:unit && pnpm run typecheck && pnpm run build:compile",
+    "test": "pnpm run test:unit",
     "lint": "eslint src && pnpm lint:semantic && pnpm shell:check",
     "lint:semantic": "node scripts/pdlc-semantic-classes-check.mjs --css src/index.css --src src",
     "e2e": "playwright test --config playwright.config.ts",
@@ -17,9 +17,13 @@
     "openapi:generate": "node scripts/generate-openapi.mjs",
     "openapi:check": "node node_modules/@pdlc/ui/scripts/pdlc-openapi-check.mjs",
     "openapi:compat": "node scripts/base-openapi-compat.mjs",
-    "postinstall": "pnpm run openapi:generate",
+    "postinstall": "node scripts/base-generate-openapi.mjs --schema ../openapi/openapi.yaml --output src/api/schema.d.ts --spec-env SPEC",
     "theme:check": "node ../../services-base/base-modules/ui/scripts/pdlc-effective-theme-check.mjs",
-    "shell:check": "node ../../services-base/base-modules/ui/scripts/check-ui-contract.mjs --repo .. --shell-only --shell frontend/src/widgets/app-shell.tsx --tooling-from package.json"
+    "shell:check": "node ../../services-base/base-modules/ui/scripts/check-ui-contract.mjs --repo .. --shell-only --shell frontend/src/widgets/app-shell.tsx --tooling-from package.json",
+    "test:unit": "node --test scripts/tailwind-source-inputs.test.mjs && vitest run --exclude \"**/*.integration.test.*\" --exclude \"**/*.slow.test.*\" --exclude \"**/*.e2e.test.*\"",
+    "test:all": "node --test scripts/tailwind-source-inputs.test.mjs && vitest run",
+    "typecheck": "tsc --noEmit",
+    "build:compile": "vite build"
   },
   "dependencies": {
     "@pdlc/ui": "file:../../services-base/base-modules/ui",

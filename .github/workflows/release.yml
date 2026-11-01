@@ -1,0 +1,12 @@
+name: Manual release quality
+
+on:
+  workflow_dispatch:
+
+jobs:
+  full-quality:
+    uses: ./.github/workflows/qualification.yml
+    with:
+      git_receive_only: false
+    secrets:
+      SERVICES_BASE_TOKEN: ${{ secrets.SERVICES_BASE_TOKEN }}

@@ -1,0 +1,44 @@
+# Product frontend/OpenAPI and the pinned UI export only.
+**
+!CI-CD/
+!CI-CD/frontend/
+!CI-CD/frontend/**
+!CI-CD/openapi/
+!CI-CD/openapi/**
+!services-base/
+!services-base/base-modules/
+!services-base/base-modules/ui/
+!services-base/base-modules/ui/**
+# Exclusions stay after parent allow rules.
+**/.git
+**/.local
+**/.secrets
+**/.dr
+**/.smoke
+**/.artifacts
+**/.cache
+**/node_modules
+**/.pnpm-store
+**/target
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
+**/dist
+**/build
+**/.gradle
+**/.env
+**/.env.*
+**/*.dump
+**/*.backup
+**/backups
+**/coverage
+**/htmlcov
+**/.coverage*
+**/playwright-report
+**/test-results
+**/.workflow.db*
+**/data/workflow.db*
+**/data/state
+# Generated outputs are owned by the preceding install/generation layer.
+CI-CD/frontend/src/api/schema.d.ts
