@@ -154,7 +154,12 @@ with ComposeHelper(project=projects[0],task='development-workspace-local-qualifi
             (output/'identities.json').write_text(json.dumps(data))
             subprocess.run(control.run('probe'),check=True)
             if windows_helper:
-                env = {**os.environ, 'R1_WORKSPACE_INTEGRATION_FIXTURE': str(output/'windows-helper-fixture.json')}
+                env = dict(os.environ)
+                # The explicitly selected interpreter owns its standard library.
+                # Host execution tooling may use a different Python installation.
+                for name in ('PYTHONHOME', 'PYTHONPATH', 'VIRTUAL_ENV'):
+                    env.pop(name, None)
+                env['R1_WORKSPACE_INTEGRATION_FIXTURE'] = str(output/'windows-helper-fixture.json')
                 subprocess.run([str(args.test_python), '-B', '-m', 'unittest', 'discover', '-s', 'scripts/pdlc',
                                 '-p', 'test_workspace_integration.py', '-v'],
                                cwd=args.r1_source, env=env, check=True, timeout=240)
