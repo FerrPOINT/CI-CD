@@ -122,3 +122,14 @@ instance. Ручной Helm не должен обходить допуск.
 После последней поставки собираются свежие source/image/API/runtime/data/IAB
 доказательства. Rollback приложения сохраняет новые записи и историю. Down
 migrations и удаление журналов/PVC/Secret для снятия блокировки исключены.
+
+## Локальные интеграционные проверки
+
+[Disposable fixture](../scripts/workspace_fixture/README.md) проверяет готовые
+Forge API/worker, PostgreSQL, CLI и Base operator без ожидания установки общего
+стенда. Дополнительный Windows сценарий подключает helper R1 и настоящий CLI,
+теряет ответ принятой команды и проверяет original-key readback/replay, один
+writer, busy Stop, Stop/Start и сохранность данных/container identity.
+Используются готовые образы, синтетические Auth/Tracker и свои volumes;
+production credentials и данные не нужны. Проверка Kubernetes/R1 и IAB остаётся
+отдельной обязательной приёмкой.
