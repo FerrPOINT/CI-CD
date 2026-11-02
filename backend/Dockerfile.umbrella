@@ -100,7 +100,7 @@ COPY --from=build /app/migrations /app/migrations
 COPY CI-CD/backend/migration-lineages /tmp/forge-lineages/backend/migration-lineages
 COPY CI-CD/scripts/migration_lineages.py /tmp/forge-lineages/scripts/migration_lineages.py
 RUN ln -s /app/migrations /tmp/forge-lineages/backend/migrations \
- && python3 /tmp/forge-lineages/scripts/migration_lineages.py --output /app/migrations-kubernetes-v1 \
+ && python3 /tmp/forge-lineages/scripts/migration_lineages.py --input-format git-blob --output /app/migrations-kubernetes-v1 \
  && rm -r /tmp/forge-lineages
 RUN mkdir -p /var/lib/forge/git /var/lib/forge/artifacts /workspaces \
  && chown -R cicd:cicd /var/lib/forge /workspaces
