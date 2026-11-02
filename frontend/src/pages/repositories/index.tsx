@@ -2,15 +2,18 @@ import { useApplicationAccess } from "@pdlc/ui/auth";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ResourceListDescription,
+  EmptyState,
+  PageNavigation,
   PageHeader,
   CardTitle,
   Card,
   CardContent,
-  Button,
   Input,
   NamespaceLink as Link,
   LoadingState,
   ErrorState,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
@@ -34,9 +37,11 @@ export function RepositoriesPage() {
         actions={
           <>
             {canAdmin && (
-              <Link to="/projects?project_scope=all" className="text-accent">
-                Добавить репозиторий в проект
-              </Link>
+              <TextLink asChild>
+                <Link to="/projects?project_scope=all">
+                  Добавить репозиторий в проект
+                </Link>
+              </TextLink>
             )}
           </>
         }
@@ -69,7 +74,8 @@ export function RepositoriesPage() {
                   <CardTitle asChild>
                     <h2>{repo.public_name}</h2>
                   </CardTitle>
-                  <p className="mt-2 text-sm text-text-muted">
+                  <ResourceListDescription asChild>
+                    <p className="mt-2">
                     {repo.kind === "hosted" ? "Git в Forge" : "Внешний Git"} ·{" "}
                     {repo.availability
                       ? "Хранилище недоступно"
@@ -81,31 +87,30 @@ export function RepositoriesPage() {
                             ? "Подключён"
                             : "Инициализируется"}
                   </p>
+                  </ResourceListDescription>
                 </CardContent>
               </Link>
             </Card>
           ))}
           {!catalog.data.items.length && (
-            <p className="text-text-muted">Репозиториев пока нет.</p>
+            <EmptyState message="Репозиториев пока нет." />
           )}
         </div>
       )}
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          disabled={!offset}
-          onClick={() => setOffset(Math.max(0, offset - 50))}
-        >
-          Назад
-        </Button>
-        <Button
-          variant="outline"
-          disabled={!catalog.data || catalog.data.items.length < 50}
-          onClick={() => setOffset(offset + 50)}
-        >
-          Далее
-        </Button>
-      </div>
+      <PageNavigation
+        page={Math.ceil(offset / 50) + 1}
+        hasNext={!!catalog.data && catalog.data.items.length >= 50}
+        onPageChange={(nextPage) =>
+          setOffset(
+            nextPage < Math.ceil(offset / 50) + 1
+              ? Math.max(0, offset - 50)
+              : offset + 50,
+          )
+        }
+        label="Страницы репозиториев"
+        previousLabel="Назад"
+        nextLabel="Далее"
+      />
     </div>
   );
 }

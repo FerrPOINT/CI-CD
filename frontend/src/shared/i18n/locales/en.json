@@ -124,6 +124,7 @@
     "loadError": "Failed to load repository data",
     "tip": "Commit and branch views are refreshed from the repository Git API.",
     "code": "Code",
+    "rootDirectory": "Repository root",
     "tags": "Tags",
     "releases": "Releases",
     "emptyTree": "Empty",

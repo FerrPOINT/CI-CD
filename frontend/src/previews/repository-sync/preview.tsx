@@ -1,4 +1,12 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import {
+  ActionGroup,
+  PlatformHeader,
+  ResourceList,
+  ResourceListRow,
+  ResourceListTitle,
+  Prose,
+  ResourceListDescription,
   Fieldset,
   PageHeader,
   EmptyState,
@@ -20,6 +28,8 @@ import {
   TabsList,
   TabsTrigger,
   Notice,
+  FormField,
+  UnsavedChangesGuard,
 } from "@pdlc/ui/ui";
 
 import {
@@ -75,6 +85,16 @@ const initial: Connection = {
   mode: "disabled",
   automatic: true,
 };
+
+function hasConnectionChanges(
+  id: string,
+  saved: Connection | null,
+  draft: Connection,
+  token: string,
+) {
+  const clean = saved ?? { ...initial, path: `platform/${id}` };
+  return JSON.stringify(draft) !== JSON.stringify(clean) || token.length > 0;
+}
 const modes = [
   {
     value: "disabled",
@@ -128,10 +148,10 @@ function remoteUrl(connection: Connection): string {
 
 function PreviewNotice() {
   return (
-    <div className="border-b border-border bg-surface px-4 py-3 text-sm sm:px-8">
-      <strong>Предпросмотр</strong> · Все данные вымышлены. Действия выполняются
-      в памяти. Используйте только вымышленные токены.
-    </div>
+    <Notice title="Предпросмотр">
+      Все данные вымышлены. Действия выполняются в памяти. Используйте только
+      вымышленные токены.
+    </Notice>
   );
 }
 
@@ -265,15 +285,45 @@ export function RepositorySyncPreview() {
 
   return (
     <>
+      <UnsavedChangesGuard
+        when={entries.some((entry) => {
+          const retained = drafts[entry.id];
+          return retained
+            ? hasConnectionChanges(
+                entry.id,
+                entry.connection,
+                retained.draft,
+                retained.token,
+              )
+            : false;
+        })}
+        shouldBlockNavigation={({ currentLocation, nextLocation }) =>
+          // List, editor and history share retained drafts; changing preview mode unmounts them.
+          currentLocation.pathname !== nextLocation.pathname ||
+          (new URLSearchParams(currentLocation.search).get("production") ===
+            "1") !==
+            (new URLSearchParams(nextLocation.search).get("production") === "1")
+        }
+      />
       {!selected && (
         <div className="min-h-screen bg-background text-text-primary">
           <PreviewNotice />
-          <header className="flex items-center gap-3 border-b border-border px-4 py-4 sm:px-8">
-            <GitBranch aria-hidden className="h-6 w-6 text-accent" />
-            <strong>Forge</strong>
-            <span className="text-text-muted">/</span>
-            <span>Репозитории</span>
-          </header>
+          <PlatformHeader
+            currentServiceKey="ci-cd"
+            serviceSwitcher={false}
+            leading={
+              <>
+                <GitBranch aria-hidden className="h-6 w-6 text-accent" />
+                <strong>Forge</strong>
+              </>
+            }
+            context={
+              <>
+                <span className="text-text-muted">/</span>
+                <span>Репозитории</span>
+              </>
+            }
+          />
           <main className="mx-auto max-w-screen-2xl space-y-6 px-4 py-6 sm:px-8">
             <PageHeader
               title="Синхронизации"
@@ -294,91 +344,98 @@ export function RepositorySyncPreview() {
               }
             />
             {adding && (
-              <form
-                className="flex flex-wrap items-end gap-3 border-y border-border py-4"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  add();
-                }}
-              >
-                {available.length ? (
-                  <>
-                    <div className="min-w-48 flex-1 space-y-2">
-                      <Label htmlFor="new-repository">Репозиторий Forge</Label>
-                      <Select
-                        id="new-repository"
-                        className="min-w-0"
-                        value={
-                          available.includes(newRepository)
-                            ? newRepository
-                            : available[0]
-                        }
-                        onValueChange={(nextValue) =>
-                          setNewRepository(nextValue)
-                        }
-                        options={[
-                          ...(available.map((id) => ({
-                            value: String(id),
-                            label: ["platform / ", id].join(""),
-                          })) ?? []),
-                        ]}
-                      />
-                    </div>
-                    <Button type="submit">Настроить подключение</Button>
-                  </>
-                ) : (
-                  <p className="text-sm">
-                    Все демонстрационные репозитории уже подключены.
-                  </p>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setAdding(false)}
+              <ContentSection asChild dividers="both">
+                <form
+                  className="flex flex-wrap items-end gap-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    add();
+                  }}
                 >
-                  Отмена
-                </Button>
-              </form>
+                  {available.length ? (
+                    <>
+                      <div className="min-w-48 flex-1 space-y-2">
+                        <Label htmlFor="new-repository">
+                          Репозиторий Forge
+                        </Label>
+                        <Select
+                          id="new-repository"
+                          className="min-w-0"
+                          value={
+                            available.includes(newRepository)
+                              ? newRepository
+                              : available[0]
+                          }
+                          onValueChange={(nextValue) =>
+                            setNewRepository(nextValue)
+                          }
+                          options={[
+                            ...(available.map((id) => ({
+                              value: String(id),
+                              label: ["platform / ", id].join(""),
+                            })) ?? []),
+                          ]}
+                        />
+                      </div>
+                      <Button type="submit">Настроить подключение</Button>
+                    </>
+                  ) : (
+                    <p className="text-sm">
+                      Все демонстрационные репозитории уже подключены.
+                    </p>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setAdding(false)}
+                  >
+                    Отмена
+                  </Button>
+                </form>
+              </ContentSection>
             )}
             <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-              <div className="space-y-2">
-                <Label htmlFor="sync-search">Поиск</Label>
-                <Input
-                  id="sync-search"
-                  type="search"
-                  placeholder="Репозиторий или внешний адрес"
-                  value={search}
-                  onChange={(event) => filter("search", event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="provider-filter">Провайдер</Label>
-                <Select
-                  id="provider-filter"
-                  className="min-w-0"
-                  value={provider}
-                  onValueChange={(nextValue) => filter("provider", nextValue)}
-                  options={[
-                    { value: "all", label: "Все провайдеры" },
-                    { value: "gitlab", label: "Свой GitLab" },
-                    { value: "github", label: "GitHub.com" },
-                  ]}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="state-filter">Состояние</Label>
-                <Select
-                  id="state-filter"
-                  className="min-w-0"
-                  value={state}
-                  onValueChange={(nextValue) => filter("state", nextValue)}
-                  options={[
-                    { value: "all", label: "Все подключения" },
-                    { value: "active", label: "Включённые" },
-                    { value: "disabled", label: "Отключённые" },
-                  ]}
-                />
-              </div>
+              <FormField id="sync-search" label={"Поиск"}>
+                {(baseFieldAttrs) => (
+                  <Input
+                    {...baseFieldAttrs}
+                    type="search"
+                    placeholder="Репозиторий или внешний адрес"
+                    value={search}
+                    onChange={(event) => filter("search", event.target.value)}
+                  />
+                )}
+              </FormField>
+              <FormField id="provider-filter" label={"Провайдер"}>
+                {(baseFieldAttrs) => (
+                  <Select
+                    {...baseFieldAttrs}
+                    className="min-w-0"
+                    value={provider}
+                    onValueChange={(nextValue) => filter("provider", nextValue)}
+                    options={[
+                      { value: "all", label: "Все провайдеры" },
+                      { value: "gitlab", label: "Свой GitLab" },
+                      { value: "github", label: "GitHub.com" },
+                    ]}
+                  />
+                )}
+              </FormField>
+              <FormField id="state-filter" label={"Состояние"}>
+                {(baseFieldAttrs) => (
+                  <Select
+                    {...baseFieldAttrs}
+                    className="min-w-0"
+                    value={state}
+                    onValueChange={(nextValue) => filter("state", nextValue)}
+                    options={[
+                      { value: "all", label: "Все подключения" },
+                      { value: "active", label: "Включённые" },
+                      { value: "disabled", label: "Отключённые" },
+                    ]}
+                  />
+                )}
+              </FormField>
             </div>
             <p className="text-sm text-text-muted">
               Показано {visible.length} из {configured.length}
@@ -418,7 +475,7 @@ export function RepositorySyncPreview() {
                           <Button
                             variant="link"
                             type="button"
-                            className="text-left font-medium text-accent underline-offset-4 hover:underline"
+                            className="text-left"
                             onClick={() => open(entry.id)}
                           >
                             {entry.repository}
@@ -573,8 +630,7 @@ function RepositorySyncEditor({
   const [readOnly, setReadOnly] = useState(false);
   const busy = !!entry.running;
   const cleanDraft = saved ?? { ...initial, path: `platform/${entry.id}` };
-  const dirty =
-    JSON.stringify(draft) !== JSON.stringify(cleanDraft) || token.length > 0;
+  const dirty = hasConnectionChanges(entry.id, saved, draft, token);
   const remote = saved ? remoteUrl(saved) : null;
   const runs = entry.runs;
   const lastRun = runs.find((run) => run.remote === remote);
@@ -582,14 +638,6 @@ function RepositorySyncEditor({
   useEffect(() => {
     onRetain(entry.id, { draft, token, credential });
   }, [entry.id, draft, token, credential, onRetain]);
-
-  useEffect(() => {
-    function warn(event: BeforeUnloadEvent) {
-      if (dirty) event.preventDefault();
-    }
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
 
   function update<K extends keyof Connection>(key: K, value: Connection[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -657,17 +705,27 @@ function RepositorySyncEditor({
   return (
     <div className="min-h-screen bg-background text-text-primary">
       <PreviewNotice />
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-8">
-        <div className="flex items-center gap-3">
-          <GitBranch aria-hidden className="h-6 w-6 text-accent" />
-          <strong>Forge</strong>
-          <span className="text-text-muted">/</span>
-          <span>{entry.repository}</span>
-        </div>
-        <span className="text-sm text-text-secondary">
-          Настройки репозитория
-        </span>
-      </header>
+      <PlatformHeader
+        currentServiceKey="ci-cd"
+        serviceSwitcher={false}
+        leading={
+          <>
+            <GitBranch aria-hidden className="h-6 w-6 text-accent" />
+            <strong>Forge</strong>
+          </>
+        }
+        context={
+          <>
+            <span className="text-text-muted">/</span>
+            <span>{entry.repository}</span>
+          </>
+        }
+        actions={
+          <ResourceListDescription>
+            Настройки репозитория
+          </ResourceListDescription>
+        }
+      />
       <main className="mx-auto max-w-6xl space-y-3 px-4 py-4 sm:px-8">
         <PageHeader
           title="Внешний репозиторий"
@@ -698,44 +756,43 @@ function RepositorySyncEditor({
                   readOnly
                 }
               >
-                <RefreshCw
-                  aria-hidden
-                  className={`h-4 w-4 ${busy ? "animate-spin" : ""}`}
-                />
+                {!busy && <RefreshCw aria-hidden className="h-4 w-4" />}
                 {busy ? "Синхронизация…" : "Синхронизировать сейчас"}
               </Button>
             </>
           }
         />
-        <section
-          aria-label="Состояние подключения"
-          className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border pb-3 text-xs"
-        >
-          <strong className="shrink-0">
-            {busy
-              ? "Синхронизация выполняется"
-              : !saved
-                ? "Подключение не настроено"
-                : saved.mode === "disabled"
-                  ? "Синхронизация отключена"
-                  : modes.find((mode) => mode.value === saved.mode)?.title}
-          </strong>
-          {remote && (
-            <span className="min-w-0 break-all text-text-secondary">
-              {remote}
+        <ContentSection asChild dividers="end" density="compact">
+          <section
+            aria-label="Состояние подключения"
+            className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs"
+          >
+            <strong className="shrink-0">
+              {busy
+                ? "Синхронизация выполняется"
+                : !saved
+                  ? "Подключение не настроено"
+                  : saved.mode === "disabled"
+                    ? "Синхронизация отключена"
+                    : modes.find((mode) => mode.value === saved.mode)?.title}
+            </strong>
+            {remote && (
+              <span className="min-w-0 break-all text-text-secondary">
+                {remote}
+              </span>
+            )}
+            <span className="text-text-secondary sm:ml-auto">
+              {lastRun
+                ? `${lastRun.time} · ${lastRun.status}`
+                : "Запусков ещё нет"}
             </span>
-          )}
-          <span className="text-text-secondary sm:ml-auto">
-            {lastRun
-              ? `${lastRun.time} · ${lastRun.status}`
-              : "Запусков ещё нет"}
-          </span>
-        </section>
+          </section>
+        </ContentSection>
         {readOnly && (
-          <p className="border-l-2 border-border-strong pl-3 text-sm">
+          <Notice tone="neutral" appearance="inline">
             Доступ только для чтения. Изменение подключения и запуск
             синхронизации недоступны.
-          </p>
+          </Notice>
         )}
         {error && (
           <Notice role="alert" tone="danger" appearance="inline">
@@ -779,47 +836,50 @@ function RepositorySyncEditor({
             >
               <Fieldset disabled={readOnly || busy} className="space-y-3">
                 <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="provider">Провайдер</Label>
-                    <Select
-                      id="provider"
-                      className="min-w-0"
-                      value={draft.provider}
-                      onValueChange={(nextValue) => {
-                        update("provider", nextValue as Provider);
-                        setCredential(false);
-                        setToken("");
-                      }}
-                      options={[
-                        { value: "gitlab", label: "Свой GitLab" },
-                        { value: "github", label: "GitHub.com" },
-                      ]}
-                    />
-                  </div>
-                  {draft.provider === "gitlab" ? (
-                    <div className="space-y-2">
-                      <Label htmlFor="instance">Адрес инстанса GitLab</Label>
-                      <Input
-                        id="instance"
-                        type="url"
-                        required
-                        value={draft.instance}
-                        onChange={(event) => {
-                          update("instance", event.target.value);
+                  <FormField id="provider" label={"Провайдер"}>
+                    {(baseFieldAttrs) => (
+                      <Select
+                        {...baseFieldAttrs}
+                        className="min-w-0"
+                        value={draft.provider}
+                        onValueChange={(nextValue) => {
+                          update("provider", nextValue as Provider);
                           setCredential(false);
+                          setToken("");
                         }}
-                        placeholder="https://gitlab.example.org"
+                        options={[
+                          { value: "gitlab", label: "Свой GitLab" },
+                          { value: "github", label: "GitHub.com" },
+                        ]}
                       />
-                    </div>
+                    )}
+                  </FormField>
+                  {draft.provider === "gitlab" ? (
+                    <FormField id="instance" label={"Адрес инстанса GitLab"}>
+                      {(baseFieldAttrs) => (
+                        <Input
+                          {...baseFieldAttrs}
+                          type="url"
+                          required
+                          value={draft.instance}
+                          onChange={(event) => {
+                            update("instance", event.target.value);
+                            setCredential(false);
+                          }}
+                          placeholder="https://gitlab.example.org"
+                        />
+                      )}
+                    </FormField>
                   ) : (
-                    <div className="space-y-2">
-                      <Label htmlFor="github-host">Адрес GitHub</Label>
-                      <Input
-                        id="github-host"
-                        value="https://github.com"
-                        readOnly
-                      />
-                    </div>
+                    <FormField id="github-host" label={"Адрес GitHub"}>
+                      {(baseFieldAttrs) => (
+                        <Input
+                          {...baseFieldAttrs}
+                          value="https://github.com"
+                          readOnly
+                        />
+                      )}
+                    </FormField>
                   )}
                   <div className="space-y-2">
                     <Label htmlFor="repository">
@@ -868,17 +928,14 @@ function RepositorySyncEditor({
                 <Fieldset legend={"Направление синхронизации"}>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     {modes.map((mode) => (
-                      <label
+                      <Radio
                         key={mode.value}
-                        className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${draft.mode === mode.value ? "border-accent bg-surface" : "border-border"}`}
+                        appearance="card"
+                        name="mode"
+                        value={mode.value}
+                        checked={draft.mode === mode.value}
+                        onCheckedChange={() => update("mode", mode.value)}
                       >
-                        <Radio
-                          className="mt-1 shrink-0"
-                          name="mode"
-                          value={mode.value}
-                          checked={draft.mode === mode.value}
-                          onCheckedChange={() => update("mode", mode.value)}
-                        />
                         <span className="min-w-0">
                           <strong className="flex items-center gap-2 text-sm">
                             <mode.icon
@@ -891,7 +948,7 @@ function RepositorySyncEditor({
                             {mode.detail}
                           </span>
                         </span>
-                      </label>
+                      </Radio>
                     ))}
                   </div>
                 </Fieldset>
@@ -904,22 +961,20 @@ function RepositorySyncEditor({
                   <span aria-hidden className="col-span-2 text-sm font-medium">
                     Способ запуска
                   </span>
-                  <label className="flex min-h-10 items-center gap-2 text-sm">
-                    <Radio
-                      name={`launch-${entry.id}`}
-                      checked={!draft.automatic}
-                      onCheckedChange={() => update("automatic", false)}
-                    />
+                  <Radio
+                    name={`launch-${entry.id}`}
+                    checked={!draft.automatic}
+                    onCheckedChange={() => update("automatic", false)}
+                  >
                     Вручную
-                  </label>
-                  <label className="flex min-h-10 items-center gap-2 text-sm">
-                    <Radio
-                      name={`launch-${entry.id}`}
-                      checked={draft.automatic}
-                      onCheckedChange={() => update("automatic", true)}
-                    />
+                  </Radio>
+                  <Radio
+                    name={`launch-${entry.id}`}
+                    checked={draft.automatic}
+                    onCheckedChange={() => update("automatic", true)}
+                  >
                     Автоматически
-                  </label>
+                  </Radio>
                 </Fieldset>
                 <p className="text-xs text-text-secondary">
                   {draft.mode === "disabled"
@@ -938,42 +993,44 @@ function RepositorySyncEditor({
                   не удаляет ветки автоматически.
                 </p>
               </Fieldset>
-              <div className="bottom-0 flex flex-wrap items-center gap-3 border-t border-border bg-background py-3 sm:sticky">
-                <Button
-                  type="submit"
-                  disabled={readOnly || busy || (!dirty && !!saved)}
-                >
-                  Сохранить подключение
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={readOnly || busy}
-                  onClick={check}
-                >
-                  Проверить доступ
-                </Button>
-                {dirty && (
-                  <>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => {
-                        setDraft(cleanDraft);
-                        setCredential(!!saved);
-                        setToken("");
-                        setError("");
-                        setMessage("");
-                      }}
-                    >
-                      Отменить изменения
-                    </Button>
-                    <span className="text-xs text-text-muted">
-                      Есть несохранённые изменения
-                    </span>
-                  </>
-                )}
+              <div className="bottom-0 bg-background pb-3 sm:sticky">
+                <ActionGroup align="start" separated>
+                  <Button
+                    type="submit"
+                    disabled={readOnly || busy || (!dirty && !!saved)}
+                  >
+                    Сохранить подключение
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={readOnly || busy}
+                    onClick={check}
+                  >
+                    Проверить доступ
+                  </Button>
+                  {dirty && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => {
+                          setDraft(cleanDraft);
+                          setCredential(!!saved);
+                          setToken("");
+                          setError("");
+                          setMessage("");
+                        }}
+                      >
+                        Отменить изменения
+                      </Button>
+                      <ResourceListDescription asChild>
+                        <span>Есть несохранённые изменения</span>
+                      </ResourceListDescription>
+                    </>
+                  )}
+                </ActionGroup>
               </div>
             </form>
           </TabsContent>
@@ -985,23 +1042,32 @@ function RepositorySyncEditor({
                   description="Сохраните подключение и выберите активное направление."
                 />
               ) : (
-                runs.map((run) => (
-                  <article key={run.id} className="border-b border-border pb-4">
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <strong className="text-sm">{run.status}</strong>
-                      <span className="text-xs text-text-muted">
-                        {run.time} ·{" "}
-                        {modes.find((mode) => mode.value === run.mode)?.title}
-                      </span>
-                    </div>
-                    <p className="mt-2 break-all text-xs text-text-muted">
-                      {run.remote}
-                    </p>
-                    <p className="mt-2 text-sm text-text-secondary">
-                      {run.detail}
-                    </p>
-                  </article>
-                ))
+                <ResourceList>
+                  {runs.map((run) => (
+                    <ResourceListRow asChild key={run.id}>
+                      <article>
+                        <div className="flex flex-wrap justify-between gap-2">
+                          <ResourceListTitle asChild>
+                            <strong>{run.status}</strong>
+                          </ResourceListTitle>
+                          <ResourceListDescription>
+                            {run.time} ·{" "}
+                            {
+                              modes.find((mode) => mode.value === run.mode)
+                                ?.title
+                            }
+                          </ResourceListDescription>
+                        </div>
+                        <ResourceListDescription asChild technical>
+                          <p className="mt-2 break-all">{run.remote}</p>
+                        </ResourceListDescription>
+                        <Prose asChild>
+                          <p className="mt-2">{run.detail}</p>
+                        </Prose>
+                      </article>
+                    </ResourceListRow>
+                  ))}
+                </ResourceList>
               )}
             </div>
           </TabsContent>
@@ -1013,33 +1079,33 @@ function RepositorySyncEditor({
         )}
         <Disclosure className="mt-4" summary={<>Сценарии предпросмотра</>}>
           <div className="mt-4 flex flex-wrap items-end gap-5">
-            <div className="space-y-2">
-              <Label htmlFor="scenario">Результат следующего запуска</Label>
-              <Select
-                id="scenario"
-                className="min-w-0"
-                disabled={busy}
-                value={scenario}
-                onValueChange={(nextValue) =>
-                  setScenario(nextValue as Scenario)
-                }
-                options={[
-                  { value: "success", label: "Успех" },
-                  { value: "auth", label: "Ошибка доступа" },
-                  { value: "unavailable", label: "Провайдер недоступен" },
-                  { value: "conflict", label: "Расхождение истории" },
-                  { value: "partial", label: "Частичный результат" },
-                ]}
-              />
-            </div>
-            <label className="flex min-h-10 items-center gap-2">
-              <Checkbox
-                disabled={busy}
-                checked={readOnly}
-                onCheckedChange={(checked) => setReadOnly(checked === true)}
-              />
+            <FormField id="scenario" label={"Результат следующего запуска"}>
+              {(baseFieldAttrs) => (
+                <Select
+                  {...baseFieldAttrs}
+                  className="min-w-0"
+                  disabled={busy}
+                  value={scenario}
+                  onValueChange={(nextValue) =>
+                    setScenario(nextValue as Scenario)
+                  }
+                  options={[
+                    { value: "success", label: "Успех" },
+                    { value: "auth", label: "Ошибка доступа" },
+                    { value: "unavailable", label: "Провайдер недоступен" },
+                    { value: "conflict", label: "Расхождение истории" },
+                    { value: "partial", label: "Частичный результат" },
+                  ]}
+                />
+              )}
+            </FormField>
+            <Checkbox
+              disabled={busy}
+              checked={readOnly}
+              onCheckedChange={(checked) => setReadOnly(checked === true)}
+            >
               Только чтение
-            </label>
+            </Checkbox>
           </div>
         </Disclosure>
       </main>

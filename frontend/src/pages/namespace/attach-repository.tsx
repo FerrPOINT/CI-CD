@@ -1,14 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Prose,
   SectionHeader,
   Card,
   CardContent,
   Button,
   Input,
-  Label,
   SearchableSelect,
   Notice,
+  FormField,
 } from "@pdlc/ui/ui";
 import { useSessionCommand, type NamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
@@ -96,53 +97,56 @@ export function AttachRepository({
           <SectionHeader
             title={<>Подключить существующий репозиторий Forge</>}
           />
-          <p className="text-sm text-text-muted">
+          <Prose asChild>
+            <p>
             История Git, номера PR и прежний clone URL сохраняются.
           </p>
+          </Prose>
           {available.isError ? (
             <Notice role="alert" tone="danger" appearance="inline">
               Каталог недоступен.
             </Notice>
           ) : (
-            <div className="space-y-2">
-              <Label htmlFor="existing-repository">Репозиторий</Label>
-              <SearchableSelect
-                id="existing-repository"
-                label="Репозиторий Forge"
-                value={journal.command?.repository ?? repository}
-                disabled={
-                  busy || Boolean(journal.command) || available.isPending
-                }
-                onChange={(value) => {
-                  setRepository(value);
-                  setSlug(
-                    available.data?.items.find((r) => r.id === value)?.slug ??
-                      "",
-                  );
-                }}
-                selectedLabel={
-                  journal.command
-                    ? "Репозиторий выбранного подключения"
-                    : undefined
-                }
-                placeholder="Выберите репозиторий"
-                allowEmpty={false}
-                search={search}
-                onSearch={(value) => {
-                  setSearch(value);
-                  setOffset(0);
-                }}
-                offset={offset}
-                pageSize={50}
-                total={available.data?.total ?? 0}
-                onPage={setOffset}
-                loading={available.isPending}
-                options={(available.data?.items ?? []).map((repo) => ({
-                  value: repo.id,
-                  label: repo.public_name,
-                }))}
-              />
-            </div>
+            <FormField id="existing-repository" label={"Репозиторий"}>
+              {(baseFieldAttrs) => (
+                <SearchableSelect
+                  {...baseFieldAttrs}
+                  label="Репозиторий Forge"
+                  value={journal.command?.repository ?? repository}
+                  disabled={
+                    busy || Boolean(journal.command) || available.isPending
+                  }
+                  onChange={(value) => {
+                    setRepository(value);
+                    setSlug(
+                      available.data?.items.find((r) => r.id === value)?.slug ??
+                        "",
+                    );
+                  }}
+                  selectedLabel={
+                    journal.command
+                      ? "Репозиторий выбранного подключения"
+                      : undefined
+                  }
+                  placeholder="Выберите репозиторий"
+                  allowEmpty={false}
+                  search={search}
+                  onSearch={(value) => {
+                    setSearch(value);
+                    setOffset(0);
+                  }}
+                  offset={offset}
+                  pageSize={50}
+                  total={available.data?.total ?? 0}
+                  onPage={setOffset}
+                  loading={available.isPending}
+                  options={(available.data?.items ?? []).map((repo) => ({
+                    value: repo.id,
+                    label: repo.public_name,
+                  }))}
+                />
+              )}
+            </FormField>
           )}
           <div className="flex gap-2">
             <Button
@@ -153,16 +157,17 @@ export function AttachRepository({
               Обновить
             </Button>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="existing-repository-slug">Имя внутри проекта</Label>
-            <Input
-              id="existing-repository-slug"
-              required
-              value={journal.command?.command.slug ?? slug}
-              disabled={busy || Boolean(journal.command)}
-              onChange={(e) => setSlug(e.target.value)}
-            />
-          </div>
+          <FormField id="existing-repository-slug" label={"Имя внутри проекта"}>
+            {(baseFieldAttrs) => (
+              <Input
+                {...baseFieldAttrs}
+                required
+                value={journal.command?.command.slug ?? slug}
+                disabled={busy || Boolean(journal.command)}
+                onChange={(e) => setSlug(e.target.value)}
+              />
+            )}
+          </FormField>
           {error && (
             <Notice role="alert" tone="danger" appearance="inline">
               {error}. Повтор использует исходную операцию.

@@ -261,13 +261,6 @@ describe("pull request workflow", () => {
       search: "",
     });
     expect(
-      [
-        ...document.querySelectorAll<HTMLOptionElement>(
-          "#pr-source-refs option",
-        ),
-      ].map((option) => option.value),
-    ).toEqual(["main", "feature/1"]);
-    expect(
       screen.getByRole("combobox", { name: "pulls.sourceBranch" }),
     ).toHaveValue("");
     expect(
@@ -316,6 +309,33 @@ describe("pull request workflow", () => {
       screen.queryByRole("form", { name: "pulls.create" }),
     ).not.toBeInTheDocument();
     expect(toast.success).toHaveBeenCalledWith("pulls.created");
+  });
+
+  it("offers only branch suggestions and does not create a PR while navigating them", async () => {
+    // The real Popper needs a nonzero viewport/anchor in JSDOM.
+    const width = vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(1024);
+    const height = vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(768);
+    const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return DOMRect.fromRect(this === document.documentElement || this === document.body
+        ? { x: 0, y: 0, width: 1024, height: 768 }
+        : { x: 16, y: 16, width: 240, height: 40 });
+    });
+    try {
+      setup([]);
+      fireEvent.click(screen.getByRole("button", { name: "pulls.create" }));
+      const source = screen.getByRole("combobox", { name: "pulls.sourceBranch" });
+      act(() => source.focus());
+      const list = await screen.findByRole("listbox");
+      expect(within(list).getAllByRole("option").map(option => option.textContent)).toEqual(["main", "feature/1"]);
+      fireEvent.keyDown(source, { key: "ArrowDown" });
+      expect(mocks.create).not.toHaveBeenCalled();
+      fireEvent.keyDown(source, { key: "Enter" });
+      expect(source).toHaveValue("main");
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+      expect(mocks.create).not.toHaveBeenCalled();
+    } finally {
+      bounds.mockRestore(); width.mockRestore(); height.mockRestore();
+    }
   });
 
   it("confirms merge with branch context and keeps confirmation open after failure", () => {
@@ -369,7 +389,7 @@ describe("pull request workflow", () => {
     async (label) => {
       setup([pullRequest(1)], "/repositories/platform/pulls/1");
       const trigger = screen.getByRole("button", { name: label });
-      expect(trigger).toHaveClass("min-h-10", "sm:min-h-10");
+      expect(trigger).toHaveAttribute("data-size", "default");
       trigger.focus();
       fireEvent.click(trigger);
       expect(screen.getByRole("alertdialog")).toBeInTheDocument();

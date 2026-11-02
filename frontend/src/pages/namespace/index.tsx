@@ -1,4 +1,7 @@
 import {
+  ResourceListDescription,
+  EmptyState,
+  PageNavigation,
   PageHeader,
   CardTitle,
   Card,
@@ -7,13 +10,14 @@ import {
   NamespaceLink as Link,
   Button,
   Input,
-  Label,
   Select,
   Dialog,
   DialogContent,
   DialogTitle,
   ErrorState,
   Notice,
+  TextLink,
+  FormField,
 } from "@pdlc/ui/ui";
 import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
@@ -126,9 +130,9 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
       <div className="space-y-3">
         <PageHeader title="Репозитории проекта" />
         <p>Выберите проект в верхней панели.</p>
-        <Link className="text-accent" to="/repositories">
-          Каталог Forge
-        </Link>
+        <TextLink asChild>
+          <Link to="/repositories">Каталог Forge</Link>
+        </TextLink>
       </div>
     );
   if (query.isPending)
@@ -185,18 +189,20 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
                 <CardContent className="space-y-3">
                   <CardTitle asChild>
                     <h2>
-                      <Link
-                        className="text-accent"
-                        to={withNamespaceLocation(
-                          `/catalog/repositories/${repo.id}`,
-                          ref,
-                        )}
-                      >
-                        {repo.public_name}
-                      </Link>
+                      <TextLink asChild>
+                        <Link
+                          to={withNamespaceLocation(
+                            `/catalog/repositories/${repo.id}`,
+                            ref,
+                          )}
+                        >
+                          {repo.public_name}
+                        </Link>
+                      </TextLink>
                     </h2>
                   </CardTitle>
-                  <p className="mt-2 text-sm text-text-muted">
+                  <ResourceListDescription asChild>
+                    <p className="mt-2">
                     {repo.kind === "hosted" ? "Git в Forge" : "Внешний Git"} ·{" "}
                     {repo.availability
                       ? "Git-хранилище недоступно"
@@ -204,22 +210,25 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
                         ? "Подключён"
                         : "Инициализируется"}
                   </p>
+                  </ResourceListDescription>
                   <div className="flex flex-wrap gap-3 text-sm">
                     {[
                       ["pipelines", "Пайплайны"],
                       ["deployments", "Деплои"],
                       ["configurations", "CI-конфигурации"],
                     ].map(([tab, label]) => (
-                      <Link
-                        key={tab}
-                        className="text-accent underline"
-                        to={withNamespaceLocation(
-                          `/catalog/repositories/${repo.id}?tab=${tab}`,
-                          ref,
-                        )}
-                      >
-                        {label}
-                      </Link>
+                      <TextLink asChild>
+                        <Link
+                          key={tab}
+
+                          to={withNamespaceLocation(
+                            `/catalog/repositories/${repo.id}?tab=${tab}`,
+                            ref,
+                          )}
+                        >
+                          {label}
+                        </Link>
+                      </TextLink>
                     ))}
                   </div>
                 </CardContent>
@@ -227,26 +236,26 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
             </Card>
           ))}
           {repositories.data?.items.length === 0 && (
-            <div className="space-y-2 text-text-muted">
-              <p>
-                {search ? "Репозитории не найдены." : "Репозиториев пока нет."}
-              </p>
-              {search && (
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    setParams((current) => {
-                      const next = new URLSearchParams(current);
-                      next.delete("repository_search");
-                      next.delete("repository_offset");
-                      return next;
-                    })
-                  }
-                >
-                  Сбросить поиск
-                </Button>
-              )}
-            </div>
+            <EmptyState
+              message={search ? "Репозитории не найдены." : "Репозиториев пока нет."}
+              action={
+                search && (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      setParams((current) => {
+                        const next = new URLSearchParams(current);
+                        next.delete("repository_search");
+                        next.delete("repository_offset");
+                        return next;
+                      })
+                    }
+                  >
+                    Сбросить поиск
+                  </Button>
+                )
+              }
+            />
           )}
         </div>
       )}
@@ -258,22 +267,20 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
         </p>
       )}
       {(repositories.data?.total ?? 0) > 50 && (
-        <nav aria-label="Страницы репозиториев" className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={offset === 0}
-            onClick={() => setOffset(Math.max(0, offset - 50))}
-          >
-            Назад
-          </Button>
-          <Button
-            variant="outline"
-            disabled={offset + 50 >= (repositories.data?.total ?? 0)}
-            onClick={() => setOffset(offset + 50)}
-          >
-            Далее
-          </Button>
-        </nav>
+        <PageNavigation
+          page={Math.ceil(offset / 50) + 1}
+          hasNext={offset + 50 < (repositories.data?.total ?? 0)}
+          onPageChange={(nextPage) =>
+            setOffset(
+              nextPage < Math.ceil(offset / 50) + 1
+                ? Math.max(0, offset - 50)
+                : offset + 50,
+            )
+          }
+          label="Страницы репозиториев"
+          previousLabel="Назад"
+          nextLabel="Далее"
+        />
       )}
       {resource.binding.state === "active" && (
         <Dialog
@@ -288,23 +295,26 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
                 ? "Проверить создание репозитория"
                 : "Добавить репозиторий"}
             </DialogTitle>
-            <div className="space-y-2">
-              <Label htmlFor="repository-action">Действие</Label>
-              <Select
-                id="repository-action"
-                value={effectiveKind}
-                disabled={busy || !!journal.command}
-                onValueChange={(nextValue) => setKind(nextValue as typeof kind)}
-                options={[
-                  { value: "hosted", label: "Создать Git в Forge" },
-                  { value: "external", label: "Подключить внешний Git" },
-                  {
-                    value: "existing",
-                    label: "Подключить существующий репозиторий Forge",
-                  },
-                ]}
-              />
-            </div>
+            <FormField id="repository-action" label={"Действие"}>
+              {(baseFieldAttrs) => (
+                <Select
+                  {...baseFieldAttrs}
+                  value={effectiveKind}
+                  disabled={busy || !!journal.command}
+                  onValueChange={(nextValue) =>
+                    setKind(nextValue as typeof kind)
+                  }
+                  options={[
+                    { value: "hosted", label: "Создать Git в Forge" },
+                    { value: "external", label: "Подключить внешний Git" },
+                    {
+                      value: "existing",
+                      label: "Подключить существующий репозиторий Forge",
+                    },
+                  ]}
+                />
+              )}
+            </FormField>
             {effectiveKind === "existing" ? (
               <AttachRepository
                 groupId={resource.binding.resource.resource_id}
@@ -315,41 +325,46 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
               <Card asChild className="max-w-xl">
                 <form onSubmit={create}>
                   <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="repo-slug">Имя репозитория</Label>
-                      <Input
-                        id="repo-slug"
-                        name="slug"
-                        required
-                        defaultValue={journal.command?.slug}
-                        disabled={busy || !!journal.command}
-                      />
-                    </div>
-                    {effectiveKind === "external" && (
-                      <div className="space-y-2">
-                        <Label htmlFor="external-url">Git URL</Label>
+                    <FormField id="repo-slug" label={"Имя репозитория"}>
+                      {(baseFieldAttrs) => (
                         <Input
-                          id="external-url"
-                          name="external_url"
+                          {...baseFieldAttrs}
+                          name="slug"
                           required
-                          defaultValue={journal.command?.external_url ?? ""}
+                          defaultValue={journal.command?.slug}
                           disabled={busy || !!journal.command}
                         />
-                      </div>
+                      )}
+                    </FormField>
+                    {effectiveKind === "external" && (
+                      <FormField id="external-url" label={"Git URL"}>
+                        {(baseFieldAttrs) => (
+                          <Input
+                            {...baseFieldAttrs}
+                            name="external_url"
+                            required
+                            defaultValue={journal.command?.external_url ?? ""}
+                            disabled={busy || !!journal.command}
+                          />
+                        )}
+                      </FormField>
                     )}
-                    <div className="space-y-2">
-                      <Label htmlFor="visibility">Видимость Git</Label>
-                      <Select
-                        id="visibility"
-                        name="visibility"
-                        defaultValue={journal.command?.visibility ?? "private"}
-                        disabled={busy || !!journal.command}
-                        options={[
-                          { value: "private", label: "По авторизации" },
-                          { value: "public", label: "Публичное чтение" },
-                        ]}
-                      />
-                    </div>
+                    <FormField id="visibility" label={"Видимость Git"}>
+                      {(baseFieldAttrs) => (
+                        <Select
+                          {...baseFieldAttrs}
+                          name="visibility"
+                          defaultValue={
+                            journal.command?.visibility ?? "private"
+                          }
+                          disabled={busy || !!journal.command}
+                          options={[
+                            { value: "private", label: "По авторизации" },
+                            { value: "public", label: "Публичное чтение" },
+                          ]}
+                        />
+                      )}
+                    </FormField>
                     {error && (
                       <Notice role="alert" tone="danger" appearance="inline">
                         {error}. Проверьте результат создания, прежде чем

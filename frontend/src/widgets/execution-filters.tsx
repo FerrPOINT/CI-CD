@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ActionGroup,
   Fieldset,
   Button,
   Input,
@@ -444,12 +445,12 @@ export function ExecutionFilterForm({
           {error}
         </Notice>
       )}
-      <div className="flex flex-wrap justify-end gap-2">
+      <ActionGroup align="end">
         <Button type="button" variant="outline" onClick={onCancel}>
           Отмена
         </Button>
         <Button type="submit">Применить</Button>
-      </div>
+      </ActionGroup>
     </form>
   );
 }

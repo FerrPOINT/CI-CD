@@ -1,5 +1,5 @@
 import { SpaceAdmissionBoundary } from "./space-admission-boundary";
-import { LoadingState, Button } from "@pdlc/ui/ui";
+import { LoadingState, Button, Notice } from "@pdlc/ui/ui";
 // K2: layout route guard driven by AuthProvider.
 
 import { Navigate, Outlet, useLocation } from "react-router";
@@ -39,12 +39,18 @@ export function ProtectedRoute() {
   }
   if (status === "unavailable")
     return (
-      <section role="alert">
-        <p>{error}</p>
-        <Button variant="ghost" onClick={invalidate}>
-          Повторить
-        </Button>
-      </section>
+      <Notice
+        role="alert"
+        tone="danger"
+        appearance="inline"
+        actions={
+          <Button variant="ghost" onClick={invalidate}>
+            Повторить
+          </Button>
+        }
+      >
+        {error}
+      </Notice>
     );
   if (getPlatformProduct()) {
     getPlatformProduct()?.requireLogin(

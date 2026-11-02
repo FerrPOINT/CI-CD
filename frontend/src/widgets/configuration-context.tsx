@@ -9,6 +9,7 @@ import {
   SectionNavigationItem,
   ErrorState,
   LoadingState,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
@@ -80,35 +81,37 @@ export function ConfigurationContext({
         {project.data && (
           <>
             <ProjectAvatar projectKey={project.data.project_key} size="xs" />
-            <Link
-              className="text-accent"
-              to={withNamespaceLocation(
-                workspacePath(project.data),
-                project.data,
-              )}
-            >
-              {project.data.name} · {project.data.project_key}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to={withNamespaceLocation(
+                  workspacePath(project.data),
+                  project.data,
+                )}
+              >
+                {project.data.name} · {project.data.project_key}
+              </Link>
+            </TextLink>
             <span>/</span>
           </>
         )}
         {repository.data ? (
           <>
-            <Link
-              className="text-accent"
-              to={withNamespaceLocation(
-                `/catalog/repositories/${repository.data.id}`,
-                namespace,
-              )}
-            >
-              {repository.data.public_name}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to={withNamespaceLocation(
+                  `/catalog/repositories/${repository.data.id}`,
+                  namespace,
+                )}
+              >
+                {repository.data.public_name}
+              </Link>
+            </TextLink>
             <span>/</span>
           </>
         ) : (
-          <Link className="text-accent" to="/delivery-configs">
-            Непривязанные конфигурации /
-          </Link>
+          <TextLink asChild>
+            <Link to="/delivery-configs">Непривязанные конфигурации /</Link>
+          </TextLink>
         )}
         <span>CI: {config.data.name}</span>
       </nav>

@@ -1,4 +1,10 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import {
+  ResourceListTitle,
+  ActionGroup,
+  ResourceListDescription,
+  Badge,
+  PageNavigation,
   PageHeader,
   Disclosure,
   toast,
@@ -145,87 +151,89 @@ export function SchedulesPage() {
         }
       />
 
-      <p className="border-y border-border py-3 text-xs text-text-secondary">
-        {t("schedules.utcNotice")}
-      </p>
+      <Notice appearance="inline" separated>
+        <p>{t("schedules.utcNotice")}</p>
+      </Notice>
 
       {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          aria-label={t(editing ? "schedules.edit" : "schedules.create")}
-          aria-busy={saving}
-          className="grid gap-3 border-b border-border pb-4 sm:grid-cols-2"
-        >
-          <div className="min-w-0 space-y-1.5">
-            <Label htmlFor="schedule-cron">{t("schedules.cron")}</Label>
-            <Input
-              id="schedule-cron"
-              ref={cronRef}
-              className="min-w-0 font-mono"
-              required
-              disabled={saving}
-              placeholder="0 4 * * 1"
-              value={form.cron}
-              onChange={(event) => {
-                setForm({ ...form, cron: event.target.value });
-                setSaveError("");
-              }}
-            />
-          </div>
-          <div className="min-w-0 space-y-1.5">
-            <Label htmlFor="schedule-ref">{t("schedules.gitRef")}</Label>
-            <Input
-              id="schedule-ref"
-              className="min-w-0"
-              required
-              disabled={saving}
-              value={form.git_ref}
-              onChange={(event) => {
-                setForm({ ...form, git_ref: event.target.value });
-                setSaveError("");
-              }}
-            />
-          </div>
-          <label className="flex min-h-10 items-center gap-2 text-sm sm:col-span-2">
+        <ContentSection asChild dividers="end">
+          <form
+            onSubmit={handleSubmit}
+            aria-label={t(editing ? "schedules.edit" : "schedules.create")}
+            aria-busy={saving}
+            className="grid gap-3 sm:grid-cols-2"
+          >
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor="schedule-cron">{t("schedules.cron")}</Label>
+              <Input
+                id="schedule-cron"
+                ref={cronRef}
+                className="min-w-0 font-mono"
+                required
+                disabled={saving}
+                placeholder="0 4 * * 1"
+                value={form.cron}
+                onChange={(event) => {
+                  setForm({ ...form, cron: event.target.value });
+                  setSaveError("");
+                }}
+              />
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor="schedule-ref">{t("schedules.gitRef")}</Label>
+              <Input
+                id="schedule-ref"
+                className="min-w-0"
+                required
+                disabled={saving}
+                value={form.git_ref}
+                onChange={(event) => {
+                  setForm({ ...form, git_ref: event.target.value });
+                  setSaveError("");
+                }}
+              />
+            </div>
             <Checkbox
+              className="sm:col-span-2"
               checked={form.enabled}
               disabled={saving}
               onCheckedChange={(checked) => {
                 setForm({ ...form, enabled: checked === true });
                 setSaveError("");
               }}
-            />
-            {t("schedules.enabled")}
-          </label>
-          {saveError && (
-            <Notice
-              role="alert"
-              className="sm:col-span-2"
-              tone="danger"
-              appearance="inline"
             >
-              {saveError}
-            </Notice>
-          )}
-          <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
-            <Button
-              type="button"
-              variant="outline"
+              {t("schedules.enabled")}
+            </Checkbox>
+            {saveError && (
+              <Notice
+                role="alert"
+                className="sm:col-span-2"
+                tone="danger"
+                appearance="inline"
+              >
+                {saveError}
+              </Notice>
+            )}
+            <ActionGroup align="end" className="sm:col-span-2">
+              <Button
+                type="button"
+                variant="outline"
 
-              disabled={saving}
-              onClick={closeForm}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button
-              type="submit"
+                disabled={saving}
+                onClick={closeForm}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="submit"
 
-              disabled={saving || !form.cron.trim() || !form.git_ref.trim()}
-            >
-              {t(editing ? "schedules.save" : "schedules.create")}
-            </Button>
-          </div>
-        </form>
+                disabled={saving || !form.cron.trim() || !form.git_ref.trim()}
+              >
+                {t(editing ? "schedules.save" : "schedules.create")}
+              </Button>
+            </ActionGroup>
+          </form>
+        </ContentSection>
       )}
 
       <QueryState
@@ -272,26 +280,27 @@ export function SchedulesPage() {
                             aria-hidden
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="break-all font-mono text-sm font-medium">
-                              {schedule.cron}
-                            </p>
-                            <p className="break-all text-xs text-text-secondary">
-                              {schedule.git_ref}
-                            </p>
+                            <ResourceListTitle asChild technical>
+                              <p className="break-all">{schedule.cron}</p>
+                            </ResourceListTitle>
+                            <ResourceListDescription
+                              asChild
+                              className="break-all"
+                            >
+                              <p>{schedule.git_ref}</p>
+                            </ResourceListDescription>
                           </div>
-                          <span
-                            className={
-                              schedule.enabled
-                                ? "shrink-0 text-xs text-success"
-                                : "shrink-0 text-xs text-text-muted"
-                            }
+                          <Badge
+                            appearance="inline"
+                            tone={schedule.enabled ? "success" : "muted"}
+                            className="shrink-0"
                           >
                             {t(
                               schedule.enabled
                                 ? "schedules.enabledOn"
                                 : "schedules.enabledOff",
                             )}
-                          </span>
+                          </Badge>
                           <Button
                             variant="ghost"
                             type="button"
@@ -302,7 +311,8 @@ export function SchedulesPage() {
                               name: schedule.cron,
                             })}
                             disabled={saving}
-                            size="icon" className="shrink-0"
+                            size="icon"
+                            className="shrink-0"
                             onClick={() => openEditForm(schedule)}
                           >
                             <Pencil className="h-4 w-4" aria-hidden />
@@ -339,7 +349,9 @@ export function SchedulesPage() {
                         </div>
                         {schedule.last_fire_error && (
                           <Disclosure
-                            className="ml-6 min-w-0 text-xs text-danger-strong"
+                            className="ml-6 min-w-0"
+                            tone="danger"
+                            size="sm"
                             summary={<>{t("schedules.errorPaused")}</>}
                           >
                             <p className="break-all pb-1">
@@ -354,34 +366,14 @@ export function SchedulesPage() {
               </ResourceList>
             )}
             {filteredSchedules.length > pageSize && (
-              <nav
-                aria-label={t("schedules.pages")}
-                className="flex items-center justify-end gap-2"
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(currentPage - 1)}
-                >
-                  {t("schedules.previous")}
-                </Button>
-                <span className="text-sm text-text-muted">
-                  {currentPage} / {totalPages}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage(currentPage + 1)}
-                >
-                  {t("schedules.next")}
-                </Button>
-              </nav>
+              <PageNavigation
+                page={currentPage}
+                pageCount={totalPages}
+                onPageChange={setPage}
+                label={t("schedules.pages")}
+                previousLabel={t("schedules.previous")}
+                nextLabel={t("schedules.next")}
+              />
             )}
           </section>
         )}
