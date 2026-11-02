@@ -1323,6 +1323,33 @@ mod tests {
     }
 
     #[test]
+    fn deployment_readback_and_cancel_keep_separate_work_and_admin_permissions() {
+        for id in [
+            "018f3c59-38f6-7c2a-bc55-081eb78cbf17",
+            "ad81f340-8a03-433b-82af-b86bc902b9ed",
+        ] {
+            for path in [
+                format!("/api/v1/deployments/{id}"),
+                format!("/api/v1/environments/{id}/deployment-requests/{id}"),
+            ] {
+                assert!(human_allows(false, "GET", &path));
+                assert_eq!(
+                    user_required_role("GET", &path),
+                    Some((Action::Read, Role::Viewer))
+                );
+            }
+            let cancel = format!("/api/v1/deployments/{id}/cancel");
+            assert!(!human_allows(false, "POST", &cancel));
+            assert!(human_allows(true, "POST", &cancel));
+            assert_eq!(
+                user_required_role("POST", &cancel),
+                Some((Action::Admin, Role::Maintainer))
+            );
+            assert!(!allows(Role::Developer, "POST", &cancel));
+        }
+    }
+
+    #[test]
     fn human_work_never_grants_configuration_or_administration() {
         for (method, path) in [
             ("POST", "/api/v1/projects/p/pipelines"),
