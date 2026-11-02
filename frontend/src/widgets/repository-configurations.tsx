@@ -1,4 +1,4 @@
-import { RequireAdministrator } from "@pdlc/ui/auth";
+import { RequireForgeAdministrator as RequireAdministrator } from "@/shared/auth/application-policy";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {

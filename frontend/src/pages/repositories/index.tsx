@@ -1,4 +1,4 @@
-import { useApplicationAccess } from "@pdlc/ui/auth";
+import { useForgePermissions } from "@/shared/auth/application-policy";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -19,7 +19,7 @@ import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
 import type { components } from "@/api/schema";
 export function RepositoriesPage() {
-  const canAdmin = useApplicationAccess()?.permits([], true) === true;
+  const canAdmin = useForgePermissions()?.permits([], true) === true;
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState("");
   const catalog = useQuery({

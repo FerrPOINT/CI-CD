@@ -1,3 +1,4 @@
+import { applicationPolicyRequired } from "./application-policy";
 import { SpaceAdmissionBoundary } from "./space-admission-boundary";
 import { LoadingState, Button, Notice } from "@pdlc/ui/ui";
 // K2: layout route guard driven by AuthProvider.
@@ -19,6 +20,9 @@ export function ProtectedRoute() {
     return <LoadingState />;
   }
   if (status === "authenticated") {
+    if (!applicationPolicyRequired()) {
+      return <SpaceAdmissionBoundary><Outlet /></SpaceAdmissionBoundary>;
+    }
     return (
       <ApplicationAccessProvider
         issuer={ssoConfig.issuer}

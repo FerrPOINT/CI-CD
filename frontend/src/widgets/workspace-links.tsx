@@ -1,4 +1,4 @@
-import { useApplicationAccess } from "@pdlc/ui/auth";
+import { useForgePermissions } from "@/shared/auth/application-policy";
 import { usePlatformServices, TextLink } from "@pdlc/ui/ui";
 import { withNamespaceLocation, type NamespaceLocation } from "@pdlc/ui/lib";
 import { useLocation } from "react-router";
@@ -8,7 +8,7 @@ export function WorkspaceLinks({
   namespace?: NamespaceLocation;
 }) {
   const { services } = usePlatformServices();
-  const access = useApplicationAccess();
+  const access = useForgePermissions();
   const all =
     new URLSearchParams(useLocation().search).get("project_scope") === "all";
   const links = namespace

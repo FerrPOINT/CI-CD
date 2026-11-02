@@ -1,4 +1,4 @@
-import { useApplicationAccess } from "@pdlc/ui/auth";
+import { useForgePermissions } from "@/shared/auth/application-policy";
 import {
   EmptyState,
   CardContent,
@@ -37,7 +37,7 @@ import type { components } from "@/api/schema";
 import { useNamespaceContext } from "@/widgets/namespace-context";
 export function CatalogRepositoryPage() {
   const { id } = useParams();
-  const canAdmin = useApplicationAccess()?.permits([], true) === true;
+  const canAdmin = useForgePermissions()?.permits([], true) === true;
   const [params] = useSearchParams();
   const intent =
     params.get("task_id") && params.get("tracker_instance_id")

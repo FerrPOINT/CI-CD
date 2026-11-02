@@ -40,3 +40,18 @@ Restore/generation retirement требует явного release-owner mapping 
 exited receipt → current operation → destination UIDs до первого нового writer;
 автоматического удаления/игнорирования unknown custody нет. Native handoff
 остаётся открытым gate.
+
+## Закрытый запуск нового поколения
+
+Необязательный CICD_QUIESCENCE_STARTUP_OPERATION задаёт канонический UUID
+операции установки для инициализации backend и внешнего runner. При совпадении
+с текущим request они получают обычную kernel effect lease и могут поднять
+процесс; новые HTTP-операции, sync и задания остаются закрытыми. Эксклюзивный
+backup fence по-прежнему запрещает запуск. Чужая операция, неверный UUID или
+отсутствующий CICD_QUIESCENCE_DIR приводят к отказу.
+
+Оператор снимает request только после проверки установленного поколения и
+данных. При последующем drain с другим UUID прежний startup UUID не даёт
+права перезапуска. Локальный delivery и отдельный migrator не получают это
+исключение: их работа сохраняет обычный admission. Без новой переменной
+Docker/Compose и Kubernetes сохраняют прежнее поведение.

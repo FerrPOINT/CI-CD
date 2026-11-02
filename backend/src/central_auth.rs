@@ -281,8 +281,11 @@ pub async fn link_central_user(
         return Err(crate::api::ApiError::forbidden());
     }
     // Historical assignments remain data; only current Auth grants human authority.
-    let effective_role =
-        effective_human_role(ctx.role.as_deref().or(verified.subject_role.as_deref())).to_owned();
+    let effective_role = serving_human_role(
+        application_policy_required()?,
+        ctx.role.as_deref().or(verified.subject_role.as_deref()),
+    )
+    .to_owned();
     if !verified.lifetime.is_current() {
         return Err(crate::api::ApiError::unauthorized());
     }
@@ -526,6 +529,20 @@ mod personal_scope_tests {
     }
 }
 
+/// Keep the installed Auth-v1 serving contract until the operator activates
+/// the complete application-access cohort. Never fall back after a required
+/// policy denial; the bridge has already verified the live central identity.
+fn serving_human_role(application_policy_required: bool, current: Option<&str>) -> &'static str {
+    if application_policy_required {
+        effective_human_role(current)
+    } else {
+        // Auth-v1 Forge intentionally admitted verified central humans as product
+        // administrators (installed source a85442a7, central_auth.rs:203).
+        // This changes no central role, account, grant, token or database row.
+        "admin"
+    }
+}
+
 /// Application assignment and historical product roles never create global administration.
 fn effective_human_role(current: Option<&str>) -> &'static str {
     if current == Some("admin") {
@@ -550,6 +567,16 @@ pub(crate) fn application_policy_required() -> Result<bool, crate::api::ApiError
 #[cfg(test)]
 mod product_role_confirmation_tests {
     use super::*;
+    #[test]
+    fn installed_auth_v1_and_required_policy_are_separate_serving_contracts() {
+        for role in [Some("member"), Some("user"), Some("operator")] {
+            assert_eq!(serving_human_role(false, role), "admin");
+            assert_eq!(serving_human_role(true, role), "user");
+        }
+        assert_eq!(serving_human_role(true, Some("admin")), "admin");
+        assert_eq!(serving_human_role(true, None), "user");
+    }
+
     #[test]
     fn current_owner_role_is_independent_of_preserved_local_privileges() {
         for role in [

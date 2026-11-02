@@ -93,8 +93,12 @@ function expectNoDestination(menu: HTMLElement) {
   }
 }
 
-beforeEach(() => vi.stubEnv("VITE_NAMESPACE_ENABLED", "false"));
+beforeEach(() => {
+ vi.stubEnv("VITE_NAMESPACE_ENABLED", "false");
+ vi.stubEnv("VITE_AUTH_APPLICATION_ACCESS_REQUIRED", "true");
+});
 afterEach(() => {
+  vi.unstubAllEnvs();
   cleanup();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();

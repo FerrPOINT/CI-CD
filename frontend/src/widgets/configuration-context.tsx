@@ -1,4 +1,4 @@
-import { useApplicationAccess } from "@pdlc/ui/auth";
+import { useForgePermissions } from "@/shared/auth/application-policy";
 import { Fragment, type ReactNode } from "react";
 import { useParams, useLocation } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -32,7 +32,7 @@ export function ConfigurationContext({
 }) {
   const { projectId: routeId } = useParams();
   const location = useLocation();
-  const canAdmin = useApplicationAccess()?.permits([], true) === true;
+  const canAdmin = useForgePermissions()?.permits([], true) === true;
   const projectId = configurationId ?? routeId;
   const { ref, malformed } = useNamespaceRef();
   const config = useQuery({

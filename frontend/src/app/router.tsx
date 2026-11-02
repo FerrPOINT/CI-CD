@@ -1,4 +1,4 @@
-import { RequireAdministrator } from "@pdlc/ui/auth";
+import { RequireForgeAdministrator as RequireAdministrator } from "@/shared/auth/application-policy";
 import { LoadingState } from "@pdlc/ui/ui";
 import { createProductRouter, PlatformRoute } from "@pdlc/ui/platform";
 import { ConfigurationContext } from "@/widgets/configuration-context";

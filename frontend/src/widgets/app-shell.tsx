@@ -1,4 +1,4 @@
-import { useApplicationAccess } from "@pdlc/ui/auth";
+import { useForgePermissions } from "@/shared/auth/application-policy";
 import {
   SidebarList,
   AccountMenu,
@@ -54,7 +54,7 @@ function NavigationList({
       ? "?project_scope=all"
       : location.search;
 
-  const canAdmin = useApplicationAccess()?.permits([], true) === true;
+  const canAdmin = useForgePermissions()?.permits([], true) === true;
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: t("navigation.dashboard") },
     { to: "/projects", icon: FolderGit2, label: t("navigation.projects") },
