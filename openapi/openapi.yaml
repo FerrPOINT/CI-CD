@@ -8271,6 +8271,7 @@ components:
       required:
       - workspace
       - actor_id
+      - busy
       - actions
       properties:
         actions:
@@ -8280,6 +8281,8 @@ components:
         actor_id:
           type: string
           format: uuid
+        busy:
+          type: boolean
         latest_operation:
           oneOf:
           - type: 'null'

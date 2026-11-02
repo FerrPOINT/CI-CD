@@ -3182,6 +3182,7 @@ export interface components {
             actions: components["schemas"]["ActionAvailability"][];
             /** Format: uuid */
             actor_id: string;
+            busy: boolean;
             latest_operation?: null | components["schemas"]["DevelopmentWorkspaceOperation"];
             session?: null | components["schemas"]["DevelopmentWorkspaceSession"];
             workspace: components["schemas"]["DevelopmentWorkspace"];

@@ -239,7 +239,11 @@ describe("AppShell navigation", () => {
     expect(media.removeEventListener).toHaveBeenCalledWith("change", listener);
   });
 
-  it("owns one global header above the offset work area and navigation-only sidebar", () => {
+  it.each([
+    { namespace: "false", slots: ["leading", "services", "actions"] },
+    { namespace: "true", slots: ["leading", "services", "context", "actions"] },
+  ])("owns one global header and navigation-only sidebar with namespace=$namespace", ({ namespace, slots }) => {
+    vi.stubEnv("VITE_NAMESPACE_ENABLED", namespace);
     const { container } = renderShell();
     const header = screen.getByRole("banner");
     expect(container.querySelectorAll("[data-platform-header]")).toHaveLength(
@@ -249,7 +253,7 @@ describe("AppShell navigation", () => {
       [...header.querySelectorAll("[data-platform-header-slot]")].map((slot) =>
         slot.getAttribute("data-platform-header-slot"),
       ),
-    ).toEqual(["leading", "services", "actions"]);
+    ).toEqual(slots);
     expect(header.parentElement).toBe(container.firstElementChild);
     expect(
       within(header).getByRole("button", {
