@@ -138,6 +138,7 @@ afterEach(() => {
   clearSession();
   window.localStorage.clear();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("app router smoke", () => {
@@ -156,6 +157,7 @@ describe("app router smoke", () => {
   });
 
   it("rejects direct management navigation for a current ordinary Forge user", async () => {
+    vi.stubEnv("VITE_AUTH_APPLICATION_ACCESS_REQUIRED", "true");
     humanRole = "user";
     renderRoute("/runners");
     expect(await screen.findByText("Нет доступа")).toBeInTheDocument();
@@ -164,6 +166,7 @@ describe("app router smoke", () => {
   });
 
   it("keeps the session and destination while showing denied application access", async () => {
+    vi.stubEnv("VITE_AUTH_APPLICATION_ACCESS_REQUIRED", "true");
     humanRole = "user";
     humanApplications = [];
     const router = renderRoute("/projects");
@@ -171,6 +174,13 @@ describe("app router smoke", () => {
     expect(router.state.location.pathname).toBe("/projects");
     expect(currentSession()).not.toBeNull();
     expect(screen.queryByText("forge-api")).not.toBeInTheDocument();
+  });
+
+  it("allows management navigation for a current administrator under required policy", async () => {
+    vi.stubEnv("VITE_AUTH_APPLICATION_ACCESS_REQUIRED", "true");
+    renderRoute("/runners");
+    await expectText("linux-runner-1");
+    expect(screen.queryByText("Нет доступа")).not.toBeInTheDocument();
   });
 
   it("redirects an old project-members link to Projects", async () => {
