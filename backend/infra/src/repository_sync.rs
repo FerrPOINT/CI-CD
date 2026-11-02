@@ -349,9 +349,9 @@ impl PgSyncStore {
                         WHERE writer.repository_id=run.repository_id
                         AND writer.state IN ('running','stopping','reconciling')))
                     OR (run.state IN ('running','stopping','reconciling') AND run.lease_until<now())
-                ORDER BY run.repository_id,direction_order,run.created_at,run.id
+                ORDER BY run.repository_id,run.created_at,direction_order,run.id
             )
-            SELECT id,repository_id,storage_name FROM candidates ORDER BY direction_order,created_at,id LIMIT 100
+            SELECT id,repository_id,storage_name FROM candidates ORDER BY created_at,direction_order,id LIMIT 100
         "#).fetch_all(&self.pool).await.map_err(db)
     }
     pub async fn claim(&self, id: Uuid, owner: Uuid) -> Result<Option<(SyncRun, i64)>, Error> {

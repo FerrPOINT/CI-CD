@@ -121,6 +121,16 @@ async fn multiple_sync_hourly_ignores_dirty_and_pulls_before_pushes() {
     let push_run = store.run(repository, next[0].0).await.unwrap();
     assert_eq!(push_run.connection_id, push);
     assert_eq!(push_run.settings.direction, Direction::Push);
+    assert_eq!(
+        push_run.created_at, pull_run.created_at,
+        "paired runs share a transaction clock"
+    );
+    // A later incoming run cannot jump ahead of an older outgoing run.
+    sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id,created_at) VALUES($1,$2,$3,$4,'schedule','queued',$5,now()+interval '1 second')")
+        .bind(Uuid::new_v4()).bind(repository).bind(pull_run.connection_version)
+        .bind(serde_json::to_value(&pull_run.settings).unwrap()).bind(repository)
+        .execute(&pool).await.unwrap();
+    assert_eq!(store.candidates().await.unwrap()[0].0, push_run.id);
     // Completion/change does not schedule a second incoming run in the same hour.
     store.signal(repository).await.unwrap();
     store.schedule(false).await.unwrap();
@@ -130,7 +140,7 @@ async fn multiple_sync_hourly_ignores_dirty_and_pulls_before_pushes() {
             .await
             .unwrap()
             .1,
-        1
+        2
     );
     pool.close().await;
 }
