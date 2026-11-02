@@ -2314,3 +2314,41 @@ GET/list/save вычисляют его из полномочий текущег
 не знает нового поля, надо штатно вернуть blocked у изменённых подключений,
 дождаться завершения/остановки их runs и проверить readback. Старый parser
 нельзя запускать поверх сохранённых settings source_fast_forward.
+
+## Deployment request replay и подтверждённая отмена
+
+Создание `POST /api/v1/environments/{environment_id}/deployments` и rollback
+`POST /api/v1/deployments/{deployment_id}/rollback` принимают необязательный UUID
+`request_key`. Он хранится в существующем deployment store и уникален в пределах
+environment. Новый fingerprint связывает ключ с проверенным автором, типом
+операции, target и входными параметрами. Повтор возвращает исходную выкладку;
+иной payload/автор либо legacy key без доказанного fingerprint даёт `409`.
+Запись новой выкладки и audit event атомарны. Старые клиенты без ключа сохраняют
+прежнее создание отдельной записи. Pipeline publication использует прежний
+идемпотентный owner trigger, а не новый orchestrator.
+
+Исходный результат читается точно по ключу через
+`GET /api/v1/environments/{environment_id}/deployment-requests/{request_key}`
+либо по ID через `GET /api/v1/deployments/{deployment_id}`. Оба возвращают прежний
+Deployment DTO и применяют обычные app/role/project guards. Список последних
+50 выкладок не является подтверждением отсутствия старой операции.
+
+`POST /api/v1/deployments/{deployment_id}/cancel` атомарно сохраняет единственный
+`cancel_requested_at` и проверенного автора аудита. Повтор безопасен. Пока
+существующий pipeline/runner reconciler не подтвердил окончание исполнения,
+ответ — `202` с текущим Deployment. Подтверждённое terminal состояние возвращает
+`200`; успешная выкладка, успевшая завершиться, остаётся успешной. Отмена не
+запускает rollback. Новое создание/публикация pipeline и retry проверяют
+сохранённый запрет; один terminal status БД не заменяет physical custody proof.
+Откат на writer, игнорирующий cancel intent, запрещён при открытых отменах.
+
+Job status endpoint сохранён, но ручная metadata-команда не подтверждает
+завершение ещё исполняющегося worker. Job, attempt, queue, агрегаты родителей и
+событие изменяются одной transaction после проверки актуального состояния и
+custody. Ошибка outbox откатывает изменение; действующий terminal outcome не
+перезаписывается конкурентной командой.
+
+Job log SSE читает bounded cursor batches до 200 строк непосредственно при
+потреблении response. Disconnect прекращает SQL polling без detached worker;
+ошибка БД завершает stream ошибкой. После terminal attempt дочитывается хвост,
+затем отправляется `done`. Безлимитная очередь и повторный COUNT не используются.

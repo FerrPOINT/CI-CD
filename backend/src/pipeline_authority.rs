@@ -206,6 +206,14 @@ pub(crate) async fn retry_origin(
     tx: &mut Transaction<'_, Postgres>,
     pipeline: Uuid,
 ) -> Result<Option<(Origin, bool)>, ApiError> {
+    // Keep the deployment decision stable until retry publication commits.
+    let canceled: Vec<bool> = sqlx::query_scalar("SELECT cancel_requested_at IS NOT NULL FROM deployments WHERE pipeline_id=$1 ORDER BY id FOR SHARE")
+        .bind(pipeline).fetch_all(&mut **tx).await.map_err(ApiError::internal)?;
+    if canceled.into_iter().any(|value| value) {
+        return Err(ApiError::conflict(
+            "canceled deployment requires a new deployment operation",
+        ));
+    }
     let origin = require_creation(false)?;
     let Some(origin) = origin else {
         return Ok(None);

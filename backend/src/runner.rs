@@ -437,24 +437,19 @@ async fn complete_lease_by_id(
 ) -> Result<u64, sqlx::Error> {
     let lease_status = lease_status_for_terminal(terminal_status);
     let bounded_tail = error_tail.map(|value| truncate_error_tail(value.to_owned()));
-    let result = sqlx::query(
-        "UPDATE job_leases \
-         SET lease_status = $2, \
-             completed_at = COALESCE(completed_at, now()), \
-             terminal_status = $3, \
-             error_tail = COALESCE(error_tail, $4) \
-         WHERE id = $1 AND lease_status = 'active'",
-    )
-    .bind(lease_id)
-    .bind(lease_status)
-    .bind(terminal_status)
-    .bind(bounded_tail.as_deref())
-    .execute(pool)
-    .await?;
-    if result.rows_affected() > 0 {
-        crate::store::close_job_queue_for_lease(pool, lease_id, terminal_status).await?;
+    let recorded: Option<String> = sqlx::query_scalar(
+        "UPDATE job_leases SET lease_status=CASE WHEN lease_status='active' THEN $2 ELSE lease_status END,
+         completed_at=COALESCE(completed_at,now()),completion_received_at=COALESCE(completion_received_at,now()),
+         terminal_status=CASE WHEN lease_status='active' THEN $3 ELSE COALESCE(terminal_status,$3) END,
+         error_tail=COALESCE(error_tail,$4) WHERE id=$1 AND runner_id IS NULL RETURNING terminal_status")
+        .bind(lease_id).bind(lease_status).bind(terminal_status).bind(bounded_tail.as_deref())
+        .fetch_optional(pool).await?;
+    if let Some(status) = recorded {
+        crate::store::close_job_queue_for_lease(pool, lease_id, &status).await?;
+        Ok(1)
+    } else {
+        Ok(0)
     }
-    Ok(result.rows_affected())
 }
 
 pub async fn complete_active_lease_for_job(
@@ -2443,7 +2438,7 @@ pub async fn maintenance_loop_with_config(pool: PgPool, config: RuntimeRunnerCon
             tokio::time::sleep(Duration::from_secs(RUNNER_RECONCILE_INTERVAL_SECONDS)).await;
             continue;
         };
-        match reconcile_runtime_state_with_config(&pool, &config).await {
+        match reconcile_runtime_state_with_config(&pool, &config, None).await {
             Ok(()) => {}
             Err(error) => tracing::error!(%error, "runner maintenance failed"),
         }
@@ -2467,7 +2462,7 @@ async fn poll_and_dispatch_with_config(
     let Ok(_effect) = crate::quiescence::enter(false) else {
         return Ok(());
     };
-    reconcile_runtime_state_with_config(pool, config).await?;
+    reconcile_runtime_state_with_config(pool, config, Some(&running)).await?;
     if config.mode == RunnerMode::Kubernetes {
         kubernetes::reconcile_terminal(pool, &running, config).await?;
     }
@@ -2529,12 +2524,13 @@ async fn poll_and_dispatch_with_config(
 
 async fn reconcile_runtime_state(pool: &PgPool) -> Result<(), sqlx::Error> {
     let config = RuntimeRunnerConfig::from_env_lossy();
-    reconcile_runtime_state_with_config(pool, &config).await
+    reconcile_runtime_state_with_config(pool, &config, None).await
 }
 
 async fn reconcile_runtime_state_with_config(
     pool: &PgPool,
     config: &RuntimeRunnerConfig,
+    running: Option<&RunningJobs>,
 ) -> Result<(), sqlx::Error> {
     if config.mode == RunnerMode::Docker {
         crate::runner_docker::reconcile(pool).await?;
@@ -2587,7 +2583,7 @@ async fn reconcile_runtime_state_with_config(
     }
 
     cancel_jobs_for_canceled_pipelines(pool).await?;
-    crate::platform::reconcile_deployment_results(pool).await?;
+    crate::platform::reconcile_deployment_results(pool, running).await?;
     Ok(())
 }
 

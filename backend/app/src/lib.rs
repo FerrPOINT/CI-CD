@@ -863,6 +863,24 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     ),
     work(
         GET,
+        "/api/v1/environments/{environment_id}/deployment-requests/{request_key}",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(
+        GET,
+        "/api/v1/deployments/{deployment_id}",
+        Action::Read,
+        Role::Viewer,
+    ),
+    administration(
+        POST,
+        "/api/v1/deployments/{deployment_id}/cancel",
+        Action::Admin,
+        Role::Maintainer,
+    ),
+    work(
+        GET,
         "/api/v1/deployments/{deployment_id}/approvals",
         Action::Read,
         Role::Viewer,

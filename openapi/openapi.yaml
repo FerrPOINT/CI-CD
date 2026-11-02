@@ -1847,6 +1847,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeliveryConfig'
+  /api/v1/deployments/{deployment_id}:
+    get:
+      tags:
+      - environments
+      operationId: get_deployment
+      parameters:
+      - name: deployment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '404':
+          description: ''
   /api/v1/deployments/{deployment_id}/approvals:
     get:
       tags:
@@ -1896,6 +1917,35 @@ paths:
                 $ref: '#/components/schemas/Deployment'
         '400':
           description: ''
+        '404':
+          description: ''
+        '409':
+          description: ''
+  /api/v1/deployments/{deployment_id}/cancel:
+    post:
+      tags:
+      - environments
+      operationId: cancel_deployment
+      parameters:
+      - name: deployment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '202':
+          description: Cancellation accepted; execution termination is not yet confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
         '404':
           description: ''
         '409':
@@ -2123,6 +2173,33 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Environment'
+        '404':
+          description: ''
+  /api/v1/environments/{environment_id}/deployment-requests/{request_key}:
+    get:
+      tags:
+      - environments
+      operationId: get_deployment_request
+      parameters:
+      - name: environment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: request_key
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
         '404':
           description: ''
   /api/v1/environments/{environment_id}/deployments:
@@ -2698,6 +2775,8 @@ paths:
                 $ref: '#/components/schemas/Job'
         '404':
           description: ''
+        '409':
+          description: transition or execution custody conflict
   /api/v1/jobs/{job_id}/test-report:
     get:
       tags:
@@ -7369,6 +7448,12 @@ components:
           - string
           - 'null'
           format: uuid
+        request_key:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: Optional retry identity, scoped to this environment and bound to the verified actor and payload.
         status:
           type:
           - string
@@ -10683,6 +10768,11 @@ components:
           type:
           - string
           - 'null'
+        request_key:
+          type:
+          - string
+          - 'null'
+          format: uuid
     RollbackRelease:
       type: object
       required:

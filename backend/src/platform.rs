@@ -75,6 +75,15 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(list_deployments).post(create_deployment),
         )
         .route(
+            "/api/v1/environments/{environment_id}/deployment-requests/{request_key}",
+            get(get_deployment_request),
+        )
+        .route("/api/v1/deployments/{deployment_id}", get(get_deployment))
+        .route(
+            "/api/v1/deployments/{deployment_id}/cancel",
+            post(cancel_deployment),
+        )
+        .route(
             "/api/v1/deployments/{deployment_id}/approvals",
             get(list_deployment_approvals).post(record_deployment_approval),
         )
@@ -209,21 +218,27 @@ async fn list_runners(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Runne
 #[utoipa::path(post, path = "/api/v1/runners", tag = "runners", request_body = RegisterRunner, responses((status = 200, body = Runner), (status = 400)))]
 async fn register_runner(
     State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<RegisterRunner>,
 ) -> ApiResult<Runner> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
+    let actor = claims.sub.to_string();
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
     if input.name.trim().is_empty() {
         return Err(ApiError::bad_request("runner name is required"));
     }
     let runner = sqlx::query_as::<_, Runner>("INSERT INTO runners (id, name, tags) VALUES ($1, $2, $3) RETURNING id, name, tags, status, last_seen_at, created_at")
-        .bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.tags).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
-    audit(
-        pool(&state)?,
+        .bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.tags).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+    audit_with_refs_tx(
+        &mut tx,
         "runner.registered",
         "runner",
         runner.id,
-        None,
+        Some(&actor),
+        Some(serde_json::json!([{"kind":"local_user_id","alias":claims.sub}])),
     )
     .await?;
+    tx.commit().await.map_err(ApiError::internal)?;
     Ok(Json(runner))
 }
 #[utoipa::path(post, path = "/api/v1/runners/{runner_id}/heartbeat", tag = "runners", params(("runner_id" = Uuid, Path)), responses((status = 410, description = "Legacy heartbeat is disabled; use the credential-authenticated runner protocol")))]
@@ -236,14 +251,27 @@ async fn runner_heartbeat() -> Result<StatusCode, ApiError> {
 async fn delete_runner(
     State(state): State<Arc<AppState>>,
     Path(runner_id): Path<Uuid>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
 ) -> ApiResult<serde_json::Value> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
+    let actor = claims.sub.to_string();
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
     let id: Uuid = sqlx::query_scalar("DELETE FROM runners WHERE id = $1 RETURNING id")
         .bind(runner_id)
-        .fetch_optional(pool(&state)?)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(ApiError::not_found)?;
-    audit(pool(&state)?, "runner.deleted", "runner", id, None).await?;
+    audit_with_refs_tx(
+        &mut tx,
+        "runner.deleted",
+        "runner",
+        id,
+        Some(&actor),
+        Some(serde_json::json!([{"kind":"local_user_id","alias":claims.sub}])),
+    )
+    .await?;
+    tx.commit().await.map_err(ApiError::internal)?;
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
@@ -272,37 +300,56 @@ async fn list_secrets(
 async fn create_secret(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<CreateSecret>,
 ) -> ApiResult<SecretMetadata> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
+    let actor = claims.sub.to_string();
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
     if input.key.trim().is_empty() || input.value.is_empty() {
         return Err(ApiError::bad_request("secret key and value are required"));
     }
     let encrypted_value =
         encrypt_secret(&input.value, &state.config.secrets).map_err(ApiError::bad_request)?;
     let secret = sqlx::query_as::<_, SecretMetadata>("INSERT INTO project_secrets (id, project_id, key, encrypted_value) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, key) DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value, updated_at = now() RETURNING id, project_id, key, created_at, updated_at")
-        .bind(Uuid::new_v4()).bind(project_id).bind(input.key.trim()).bind(encrypted_value).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
-    audit(
-        pool(&state)?,
+        .bind(Uuid::new_v4()).bind(project_id).bind(input.key.trim()).bind(encrypted_value).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+    audit_with_refs_tx(
+        &mut tx,
         "secret.upserted",
         "project_secret",
         secret.id,
-        None,
+        Some(&actor),
+        Some(serde_json::json!([{"kind":"local_user_id","alias":claims.sub}])),
     )
     .await?;
+    tx.commit().await.map_err(ApiError::internal)?;
     Ok(Json(secret))
 }
 #[utoipa::path(delete, path = "/api/v1/secrets/{secret_id}", tag = "secrets", params(("secret_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_secret(
     State(state): State<Arc<AppState>>,
     Path(secret_id): Path<Uuid>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
 ) -> ApiResult<serde_json::Value> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
+    let actor = claims.sub.to_string();
+    let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
     let id: Uuid = sqlx::query_scalar("DELETE FROM project_secrets WHERE id = $1 RETURNING id")
         .bind(secret_id)
-        .fetch_optional(pool(&state)?)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(ApiError::not_found)?;
-    audit(pool(&state)?, "secret.deleted", "project_secret", id, None).await?;
+    audit_with_refs_tx(
+        &mut tx,
+        "secret.deleted",
+        "project_secret",
+        id,
+        Some(&actor),
+        Some(serde_json::json!([{"kind":"local_user_id","alias":claims.sub}])),
+    )
+    .await?;
+    tx.commit().await.map_err(ApiError::internal)?;
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
@@ -805,6 +852,8 @@ pub(crate) struct Deployment {
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct CreateDeployment {
+    /// Optional retry identity, scoped to this environment and bound to the verified actor and payload.
+    request_key: Option<Uuid>,
     git_ref: String,
     pipeline_id: Option<Uuid>,
     status: Option<String>,
@@ -826,68 +875,166 @@ async fn list_deployments(
             .map_err(ApiError::internal)?,
     ))
 }
+#[utoipa::path(get, path = "/api/v1/environments/{environment_id}/deployment-requests/{request_key}", tag = "environments", params(("environment_id" = Uuid, Path),("request_key" = Uuid,Path)),responses((status=200,body=Deployment),(status=404)))]
+async fn get_deployment_request(
+    State(state): State<Arc<AppState>>,
+    Path((environment, key)): Path<(Uuid, Uuid)>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> ApiResult<Deployment> {
+    let actor = claims.ok_or_else(ApiError::unauthorized)?.0.sub.to_string();
+    let db = pool(&state)?;
+    // The creation and verified-actor audit commit together. This lookup is
+    // for original-request recovery, not adoption of an unrelated/legacy key.
+    let id:Uuid=sqlx::query_scalar("SELECT d.id FROM deployments d WHERE d.environment_id=$1 AND d.request_key=$2 AND d.request_fingerprint IS NOT NULL AND EXISTS(SELECT 1 FROM audit_log a WHERE a.resource_type='deployment' AND a.resource_id=d.id AND a.actor=$3 AND a.action IN ('deployment.created','deployment.rollback.created'))")
+        .bind(environment).bind(key).bind(actor).fetch_optional(db).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+    Ok(Json(fetch_deployment(db, id).await?))
+}
+
+#[utoipa::path(get, path = "/api/v1/deployments/{deployment_id}", tag = "environments", params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 404)))]
+async fn get_deployment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Deployment> {
+    Ok(Json(fetch_deployment(pool(&state)?, id).await?))
+}
+
+#[utoipa::path(post, path = "/api/v1/deployments/{deployment_id}/cancel", tag = "environments", params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 202, body = Deployment, description = "Cancellation accepted; execution termination is not yet confirmed"), (status = 404), (status = 409)))]
+async fn cancel_deployment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> Result<(StatusCode, Json<Deployment>), ApiError> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
+    let db = pool(&state)?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    let (status, pipeline, requested): (String, Option<Uuid>, Option<DateTime<Utc>>) =
+        sqlx::query_as(
+            "SELECT status,pipeline_id,cancel_requested_at FROM deployments WHERE id=$1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    if matches!(status.as_str(), "pending" | "running") && requested.is_none() {
+        if let Some(pipeline) = pipeline {
+            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pipelines p JOIN pipeline_triggers t ON t.pipeline_id=p.id AND t.project_id=p.project_id WHERE p.id=$1 AND p.variables->>'deployment_id'=$2 AND t.source IN ('deployment-approval','deployment-rollback'))")
+                .bind(pipeline).bind(id.to_string()).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+            if !owned {
+                return Err(ApiError::conflict(
+                    "deployment pipeline ownership is unconfirmed",
+                ));
+            }
+        }
+        sqlx::query("UPDATE deployments SET cancel_requested_at=clock_timestamp(),status=CASE WHEN pipeline_id IS NULL THEN 'failed' ELSE status END WHERE id=$1")
+            .bind(id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+        let actor = claims.sub.to_string();
+        audit_with_refs_tx(
+            &mut tx,
+            "deployment.cancel.requested",
+            "deployment",
+            id,
+            Some(&actor),
+            Some(serde_json::json!([{"kind":"local_user_id","alias":claims.sub}])),
+        )
+        .await?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    // The existing runner reconciler owns dispatch cancellation and physical
+    // completion. An HTTP acceptance is never a fabricated exit/rollback.
+    let value = fetch_deployment(db, id).await?;
+    let status = if matches!(value.status.as_str(), "pending" | "running") {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(value)))
+}
+
 #[utoipa::path(post, path = "/api/v1/environments/{environment_id}/deployments", tag = "environments", request_body = CreateDeployment, params(("environment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 400)))]
 async fn create_deployment(
     State(state): State<Arc<AppState>>,
     Path(environment_id): Path<Uuid>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<CreateDeployment>,
 ) -> ApiResult<Deployment> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
     if input.git_ref.trim().is_empty() {
         return Err(ApiError::bad_request("git_ref is required"));
     }
     let db = pool(&state)?;
     let policy = fetch_environment_policy(db, environment_id).await?;
-    validate_pipeline_project(db, input.pipeline_id, policy.project_id).await?;
     let typed_target: bool =
         sqlx::query_scalar("SELECT kubernetes_target IS NOT NULL FROM environments WHERE id=$1")
             .bind(environment_id)
             .fetch_one(db)
             .await
             .map_err(ApiError::internal)?;
-    if typed_target
-        && (input.pipeline_id.is_some() || input.status.as_deref().is_some_and(|s| s != "pending"))
-    {
-        return Err(ApiError::bad_request(
-            "Kubernetes deployment status is owned by verified runtime execution",
-        ));
-    }
-    let approval_required = policy.requires_approval();
-    if approval_required && input.pipeline_id.is_some() {
-        return Err(ApiError::bad_request(
-            "protected environment deployment must be approved before pipeline execution",
-        ));
-    }
-    let status = input.status.unwrap_or_else(|| {
-        if approval_required || typed_target {
-            "pending".into()
-        } else {
-            "success".into()
+    let fingerprint=format!("{:x}",Sha256::digest(serde_json::json!({"kind":"deploy","environment_id":environment_id,"actor":claims.sub,"git_ref":input.git_ref.trim(),"pipeline_id":input.pipeline_id,"status":input.status}).to_string().as_bytes()));
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    let replay =
+        deployment_request_replay(&mut tx, environment_id, input.request_key, &fingerprint).await?;
+    let id = if let Some(id) = replay {
+        id
+    } else {
+        validate_pipeline_project(&mut tx, input.pipeline_id, policy.project_id).await?;
+        if typed_target
+            && (input.pipeline_id.is_some()
+                || input.status.as_deref().is_some_and(|s| s != "pending"))
+        {
+            return Err(ApiError::bad_request(
+                "Kubernetes deployment status is owned by verified runtime execution",
+            ));
         }
-    });
-    validate_deployment_status(&status)?;
-    if approval_required && status != "pending" {
-        return Err(ApiError::bad_request(
-            "protected environment deployment must start as pending approval",
-        ));
-    }
-    let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO deployments (id, environment_id, pipeline_id, git_ref, status) VALUES ($1, $2, $3, $4, $5)")
-        .bind(id)
-        .bind(environment_id)
-        .bind(input.pipeline_id)
-        .bind(input.git_ref.trim())
-        .bind(status)
-        .execute(db)
-        .await
-        .map_err(ApiError::internal)?;
-    if typed_target && !approval_required {
-        start_deployment_pipeline(
+        if policy.requires_approval() && input.pipeline_id.is_some() {
+            return Err(ApiError::bad_request(
+                "protected environment deployment must be approved before pipeline execution",
+            ));
+        }
+        let status =
+            input
+                .status
+                .as_deref()
+                .unwrap_or(if policy.requires_approval() || typed_target {
+                    "pending"
+                } else {
+                    "success"
+                });
+        validate_deployment_status(status)?;
+        if policy.requires_approval() && status != "pending" {
+            return Err(ApiError::bad_request(
+                "protected environment deployment must start as pending approval",
+            ));
+        }
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO deployments(id,environment_id,pipeline_id,git_ref,status,request_key,request_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7)")
+            .bind(id).bind(environment_id).bind(input.pipeline_id).bind(input.git_ref.trim()).bind(status).bind(input.request_key).bind(&fingerprint).execute(&mut *tx).await.map_err(ApiError::internal)?;
+        let actor = claims.sub.to_string();
+        audit_with_refs_tx(
+            &mut tx,
+            "deployment.created",
+            "deployment",
+            id,
+            Some(&actor),
+            Some(serde_json::json!([{"kind":"local_user_id","alias":claims.sub}])),
+        )
+        .await?;
+        id
+    };
+    tx.commit().await.map_err(ApiError::internal)?;
+    let current = fetch_deployment(db, id).await?;
+    if typed_target
+        && !policy.requires_approval()
+        && current.status == "pending"
+        && current.pipeline_id.is_none()
+    {
+        resume_deployment_pipeline(
             db,
             DeploymentPipelineStart {
                 deployment_id: id,
                 project_id: policy.project_id,
                 environment_id,
-                git_ref: input.git_ref.trim().into(),
+                git_ref: current.git_ref,
                 rollback_of_id: None,
                 source: "deployment-approval",
                 git_root: &state.config.git.root,
@@ -895,9 +1042,40 @@ async fn create_deployment(
         )
         .await?;
     }
-    audit(db, "deployment.created", "deployment", id, None).await?;
-    let value = fetch_deployment(db, id).await?;
-    Ok(Json(value))
+    Ok(Json(fetch_deployment(db, id).await?))
+}
+
+/// Same PostgreSQL advisory-key pattern as pipeline trigger replay; no second
+/// operation store. Legacy keys without a payload proof are never adopted.
+async fn deployment_request_replay(
+    connection: &mut sqlx::PgConnection,
+    environment: Uuid,
+    key: Option<Uuid>,
+    fingerprint: &str,
+) -> Result<Option<Uuid>, ApiError> {
+    let Some(key) = key else {
+        return Ok(None);
+    };
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(format!("deployment:{environment}:{key}"))
+        .execute(&mut *connection)
+        .await
+        .map_err(ApiError::internal)?;
+    let previous: Option<(Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT id,request_fingerprint FROM deployments WHERE environment_id=$1 AND request_key=$2",
+    )
+    .bind(environment)
+    .bind(key)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(ApiError::internal)?;
+    match previous {
+        Some((id, Some(proof))) if proof == fingerprint => Ok(Some(id)),
+        Some(_) => Err(ApiError::conflict(
+            "request_key was already used for a different or unconfirmed deployment request",
+        )),
+        None => Ok(None),
+    }
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
@@ -919,6 +1097,7 @@ pub(crate) struct RecordDeploymentApproval {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct RollbackDeployment {
+    request_key: Option<Uuid>,
     git_ref: Option<String>,
 }
 
@@ -980,10 +1159,44 @@ async fn record_deployment_approval(
 async fn rollback_deployment(
     State(state): State<Arc<AppState>>,
     Path(deployment_id): Path<Uuid>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<RollbackDeployment>,
 ) -> ApiResult<Deployment> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
     let db = pool(&state)?;
     let source = fetch_rollback_source(db, deployment_id).await?;
+    let fingerprint=format!("{:x}",Sha256::digest(serde_json::json!({"kind":"rollback","deployment_id":deployment_id,"actor":claims.sub,"git_ref":input.git_ref.as_deref().map(str::trim)}).to_string().as_bytes()));
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    if let Some(id) = deployment_request_replay(
+        &mut tx,
+        source.environment_id,
+        input.request_key,
+        &fingerprint,
+    )
+    .await?
+    {
+        tx.commit().await.map_err(ApiError::internal)?;
+        let current = fetch_deployment(db, id).await?;
+        if !source.requires_approval()
+            && current.status == "pending"
+            && current.pipeline_id.is_none()
+        {
+            resume_deployment_pipeline(
+                db,
+                DeploymentPipelineStart {
+                    deployment_id: id,
+                    project_id: source.project_id,
+                    environment_id: source.environment_id,
+                    git_ref: current.git_ref,
+                    rollback_of_id: Some(deployment_id),
+                    source: "deployment-rollback",
+                    git_root: &state.config.git.root,
+                },
+            )
+            .await?;
+        }
+        return Ok(Json(fetch_deployment(db, id).await?));
+    }
     if source.status != "success" {
         return Err(ApiError::conflict(
             "only successful deployments can be rollback targets",
@@ -1021,18 +1234,31 @@ async fn rollback_deployment(
         git_ref = snapshot.source_commit;
     }
     let new_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO deployments (id, environment_id, pipeline_id, rollback_of_id, git_ref, status) VALUES ($1, $2, $3, $4, $5, $6)")
+    sqlx::query("INSERT INTO deployments (id, environment_id, pipeline_id, rollback_of_id, git_ref, status,request_key,request_fingerprint) VALUES ($1, $2, $3, $4, $5, $6,$7,$8)")
         .bind(new_id)
         .bind(source.environment_id)
         .bind(None::<Uuid>)
         .bind(deployment_id)
         .bind(&git_ref)
         .bind("pending")
-        .execute(db)
+        .bind(input.request_key)
+        .bind(fingerprint)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
+    let actor = claims.sub.to_string();
+    audit_with_refs_tx(
+        &mut tx,
+        "deployment.rollback.created",
+        "deployment",
+        new_id,
+        Some(&actor),
+        Some(serde_json::json!([{"kind":"local_user_id","alias":claims.sub}])),
+    )
+    .await?;
+    tx.commit().await.map_err(ApiError::internal)?;
     if !source.requires_approval() {
-        start_deployment_pipeline(
+        resume_deployment_pipeline(
             db,
             DeploymentPipelineStart {
                 deployment_id: new_id,
@@ -1046,14 +1272,6 @@ async fn rollback_deployment(
         )
         .await?;
     }
-    audit(
-        db,
-        "deployment.rollback.created",
-        "deployment",
-        new_id,
-        None,
-    )
-    .await?;
     Ok(Json(fetch_deployment(db, new_id).await?))
 }
 
@@ -1141,7 +1359,7 @@ async fn fetch_environment_policy(
 }
 
 async fn validate_pipeline_project(
-    db: &PgPool,
+    db: &mut sqlx::PgConnection,
     pipeline_id: Option<Uuid>,
     project_id: Uuid,
 ) -> Result<(), ApiError> {
@@ -1303,6 +1521,24 @@ async fn record_approval_decision(
     })
 }
 
+async fn resume_deployment_pipeline(
+    db: &PgPool,
+    start: DeploymentPipelineStart<'_>,
+) -> Result<(), ApiError> {
+    let id = start.deployment_id;
+    if let Err(error) = start_deployment_pipeline(db, start).await {
+        let resolved:bool=sqlx::query_scalar("SELECT cancel_requested_at IS NOT NULL OR pipeline_id IS NOT NULL FROM deployments WHERE id=$1")
+            .bind(id).fetch_one(db).await.map_err(ApiError::internal)?;
+        if !resolved {
+            return Err(error);
+        }
+        // A concurrent identical creator may already have published the owner
+        // pipeline. Resolve that receipt, but never renew expired authority.
+        crate::pipeline_authority::require_creation(false)?;
+    }
+    Ok(())
+}
+
 async fn start_deployment_pipeline(
     db: &PgPool,
     start: DeploymentPipelineStart<'_>,
@@ -1325,7 +1561,7 @@ async fn start_deployment_pipeline(
     let deployment_status = deployment_status_from_pipeline(outcome.pipeline.status.as_str());
     sqlx::query(
         "UPDATE deployments SET pipeline_id = $2, status = $3 \
-         WHERE id = $1 AND pipeline_id IS NULL AND status = 'pending' \
+         WHERE id = $1 AND (pipeline_id IS NULL OR pipeline_id=$2) AND status = 'pending' AND cancel_requested_at IS NULL \
            AND NOT EXISTS (SELECT 1 FROM deployment_approvals WHERE deployment_id = $1 AND decision = 'rejected')",
     )
     .bind(deployment_id)
@@ -1401,7 +1637,15 @@ fn deployment_status_from_pipeline(status: &str) -> &'static str {
 
 /// Reconcile only owner-triggered, unfinished deployments. Manual records and
 /// terminal deployment history do not follow later pipeline retries.
-pub(crate) async fn reconcile_deployment_results(db: &PgPool) -> Result<u64, sqlx::Error> {
+pub(crate) async fn reconcile_deployment_results(
+    db: &PgPool,
+    running: Option<&crate::runner::RunningJobs>,
+) -> Result<u64, sqlx::Error> {
+    // Use the existing pipeline/runner cancellation path. The durable request
+    // is retried by this reconciler, including after a lost HTTP response.
+    sqlx::query("UPDATE pipelines p SET status='canceled',finished_at=COALESCE(finished_at,now()) FROM deployments d WHERE d.pipeline_id=p.id AND d.cancel_requested_at IS NOT NULL AND d.status IN ('pending','running') AND p.status IN ('queued','running')")
+        .execute(db).await?;
+
     sqlx::query(
         "UPDATE deployments d SET runtime_phase='held'
         WHERE d.runtime_phase IN ('prepared','running') AND NOT EXISTS(
@@ -1418,7 +1662,7 @@ pub(crate) async fn reconcile_deployment_results(db: &PgPool) -> Result<u64, sql
            JOIN pipelines p ON p.id=d.pipeline_id AND p.project_id=e.project_id \
            JOIN (VALUES ('queued',$1::text),('running',$2),('success',$3),('failed',$4),('canceled',$5)) \
              AS m(pipeline_status,deployment_status) ON m.pipeline_status=p.status \
-           WHERE d.status IN ('pending','running') AND d.runtime_phase IS NULL AND d.status<>m.deployment_status \
+           WHERE d.status IN ('pending','running') AND d.cancel_requested_at IS NULL AND d.runtime_phase IS NULL AND d.status<>m.deployment_status \
              AND p.variables->>'deployment_id'=d.id::text \
              AND EXISTS (SELECT 1 FROM pipeline_triggers t WHERE t.pipeline_id=p.id \
                AND t.project_id=p.project_id AND t.source IN ('deployment-approval','deployment-rollback')) \
@@ -1432,7 +1676,49 @@ pub(crate) async fn reconcile_deployment_results(db: &PgPool) -> Result<u64, sql
     .bind(deployment_status_from_pipeline("canceled"))
     .execute(db)
     .await?;
-    Ok(result.rows_affected())
+    let pending: Vec<(Uuid, Uuid)> = sqlx::query_as("SELECT d.id,d.pipeline_id FROM deployments d JOIN pipelines p ON p.id=d.pipeline_id WHERE d.cancel_requested_at IS NOT NULL AND d.status IN ('pending','running') AND p.status IN ('success','failed','canceled') AND (p.status<>'canceled' OR NOT EXISTS(SELECT 1 FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=p.id AND j.status IN ('queued','running'))) AND (d.runtime_phase IS NULL OR d.runtime_phase='finished') ORDER BY d.created_at,d.id LIMIT 100")
+        .fetch_all(db).await?;
+    let mut completed = 0;
+    for (deployment, pipeline) in pending {
+        let unconfirmed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 AND (l.lease_status='active' OR (l.runner_id IS NOT NULL AND l.acknowledged_at IS NOT NULL AND l.completion_received_at IS NULL) OR (l.runner_id IS NULL AND l.lease_status IN ('canceled','expired') AND l.completion_received_at IS NULL)))")
+            .bind(pipeline).fetch_one(db).await?;
+        if unconfirmed {
+            continue;
+        }
+        let jobs: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as("SELECT j.id,a.id FROM jobs j JOIN stages s ON s.id=j.stage_id LEFT JOIN execution_attempts a ON a.job_id=j.id WHERE s.pipeline_id=$1 ORDER BY j.id,a.attempt_no")
+            .bind(pipeline).fetch_all(db).await?;
+        if let Some(running) = running {
+            let reserved = running.lock().await;
+            if jobs.iter().any(|(job, _)| reserved.contains_key(job)) {
+                continue;
+            }
+        }
+        let mut held = false;
+        for (job, attempt) in jobs {
+            let Some(attempt) = attempt else {
+                continue;
+            };
+            let native = crate::execution::kubernetes::retry_unconfirmed(
+                std::path::Path::new("/workspaces"),
+                attempt,
+            )
+            .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?;
+            if native
+                || crate::runner_docker::retry_unconfirmed(job, attempt)
+                    .await
+                    .map_err(sqlx::Error::Io)?
+            {
+                held = true;
+                break;
+            }
+        }
+        if held {
+            continue;
+        }
+        completed += sqlx::query("UPDATE deployments d SET status=CASE WHEN p.status='success' THEN 'success' ELSE 'failed' END FROM pipelines p WHERE d.id=$1 AND p.id=d.pipeline_id AND d.cancel_requested_at IS NOT NULL AND d.status IN ('pending','running') AND p.status IN ('success','failed','canceled')")
+            .bind(deployment).execute(db).await?.rows_affected();
+    }
+    Ok(result.rows_affected() + completed)
 }
 
 fn normalize_approval_decision(raw: &str) -> Result<String, ApiError> {
@@ -2776,6 +3062,26 @@ async fn audit_with_refs(
     actor: Option<&str>,
     refs: Option<serde_json::Value>,
 ) -> Result<(), ApiError> {
+    let mut connection = db.acquire().await.map_err(ApiError::internal)?;
+    audit_with_refs_tx(
+        &mut connection,
+        action,
+        resource_type,
+        resource_id,
+        actor,
+        refs,
+    )
+    .await
+}
+
+async fn audit_with_refs_tx(
+    connection: &mut sqlx::PgConnection,
+    action: &str,
+    resource_type: &str,
+    resource_id: Uuid,
+    actor: Option<&str>,
+    refs: Option<serde_json::Value>,
+) -> Result<(), ApiError> {
     sqlx::query(
         "INSERT INTO audit_log (action, resource_type, resource_id, actor,identity_refs) VALUES ($1, $2, $3, $4,$5)",
     )
@@ -2784,7 +3090,7 @@ async fn audit_with_refs(
     .bind(resource_id)
     .bind(actor)
     .bind(refs)
-    .execute(db)
+    .execute(connection)
     .await
     .map_err(ApiError::internal)?;
     Ok(())

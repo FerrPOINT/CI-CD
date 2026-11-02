@@ -294,6 +294,23 @@ async fn create_pipeline_bound(
     // Git push keys already include the exact event SHA. Preserve the historical
     // fingerprint so recovery also replays receipts created before this release.
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    let deployment = if matches!(source, "deployment-approval" | "deployment-rollback") {
+        let id = variables
+            .get("deployment_id")
+            .and_then(|v| v.as_str())
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .ok_or_else(|| ApiError::conflict("deployment operation identity missing"))?;
+        let canceled: bool = sqlx::query_scalar("SELECT d.cancel_requested_at IS NOT NULL FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE d.id=$1 AND e.project_id=$2 FOR UPDATE OF d")
+            .bind(id).bind(project_id).fetch_optional(&mut *tx).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+        if canceled {
+            return Err(ApiError::conflict(
+                "deployment cancellation already accepted",
+            ));
+        }
+        Some(id)
+    } else {
+        None
+    };
 
     if let Some(idempotency_key) = idempotency_key {
         let lock_key = format!("pipeline-trigger:{project_id}:{source}:{idempotency_key}");
@@ -338,6 +355,15 @@ async fn create_pipeline_bound(
             .fetch_one(&mut *tx)
             .await
             .map_err(ApiError::internal)?;
+            if let Some(deployment) = deployment {
+                let linked = sqlx::query("UPDATE deployments SET pipeline_id=$2 WHERE id=$1 AND (pipeline_id IS NULL OR pipeline_id=$2) AND cancel_requested_at IS NULL")
+                    .bind(deployment).bind(pipeline.id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+                if linked.rows_affected() != 1 {
+                    return Err(ApiError::conflict(
+                        "deployment pipeline publication conflict",
+                    ));
+                }
+            }
             tx.commit().await.map_err(ApiError::internal)?;
             return Ok(PipelineTriggerOutcome {
                 pipeline,
@@ -479,6 +505,15 @@ async fn create_pipeline_bound(
         .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
+    }
+    if let Some(deployment) = deployment {
+        let linked = sqlx::query("UPDATE deployments SET pipeline_id=$2 WHERE id=$1 AND (pipeline_id IS NULL OR pipeline_id=$2) AND cancel_requested_at IS NULL")
+            .bind(deployment).bind(pipeline.id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+        if linked.rows_affected() != 1 {
+            return Err(ApiError::conflict(
+                "deployment pipeline publication conflict",
+            ));
+        }
     }
     if task_until.is_some_and(|until| std::time::Instant::now() >= until) {
         return Err(ApiError::conflict("Tracker lease истёк до enqueue commit"));
