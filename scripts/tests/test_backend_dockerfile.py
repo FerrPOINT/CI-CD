@@ -33,6 +33,18 @@ def staged_paths(
 
 
 class BackendDockerfileTests(unittest.TestCase):
+    def test_shared_migration_catalog_is_staged_in_both_build_recipes(self) -> None:
+        root = DOCKERFILE.parents[1]
+        source = (root / "backend/src/lib.rs").read_text(encoding="utf-8")
+        self.assertIn('#[path = "../migration/catalog.rs"]', source)
+        required = {"CI-CD/backend/migration/catalog.rs"}
+        destinations = {path: "migration/catalog.rs" for path in required}
+        for name in ("Dockerfile", "Dockerfile.umbrella"):
+            dockerfile = (root / "backend" / name).read_text(encoding="utf-8")
+            build = dockerfile.split("FROM debian:bookworm-slim", 1)[0]
+            with self.subTest(dockerfile=name):
+                self.assertEqual(staged_paths(build, required, destinations), required)
+
     def test_embedded_workspace_validators_are_staged_in_both_recipes(self) -> None:
         root = DOCKERFILE.parents[1]
         source = (root / "backend/src/runner_image_build/workspace_deploy.rs").read_text(encoding="utf-8")
