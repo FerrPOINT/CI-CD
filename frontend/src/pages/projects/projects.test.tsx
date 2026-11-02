@@ -1,4 +1,3 @@
-import.meta.env.VITE_AUTH_APPLICATION_ACCESS_REQUIRED = "true";
 import { applicationAccessFixture } from "@/test/application-access";
 const accessActor = vi.hoisted(() => ({
   role: "user" as "user" | "admin",
@@ -79,9 +78,11 @@ function mount() {
   );
 }
 beforeEach(() => {
+  vi.stubEnv("VITE_AUTH_APPLICATION_ACCESS_REQUIRED", "true");
   accessActor.role = "user";
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   cleanup();
   vi.resetAllMocks();
   vi.unstubAllGlobals();

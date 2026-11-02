@@ -1,4 +1,4 @@
-import.meta.env.VITE_AUTH_APPLICATION_ACCESS_REQUIRED = "true";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { applicationAccessFixture } from "@/test/application-access";
 const accessActor = vi.hoisted(() => ({
   role: "admin" as "user" | "admin",
@@ -61,7 +61,11 @@ vi.mock("@pdlc/ui/ui", async () => {
 import { AppShell } from "./app-shell";
 
 function renderShell(path = "/") {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   return render(
+    <QueryClientProvider client={client}>
     <ThemeProvider>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
@@ -70,17 +74,20 @@ function renderShell(path = "/") {
           </Route>
         </Routes>
       </MemoryRouter>
-    </ThemeProvider>,
+    </ThemeProvider>
+    </QueryClientProvider>,
   );
 }
 
 beforeEach(() => {
+  vi.stubEnv("VITE_AUTH_APPLICATION_ACCESS_REQUIRED", "true");
   authState.logout.mockReset();
   authState.logout.mockResolvedValue(undefined);
   authState.session.username = "admin";
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   cleanup();
   vi.unstubAllGlobals();
 });

@@ -1,4 +1,3 @@
-import.meta.env.VITE_AUTH_APPLICATION_ACCESS_REQUIRED = "true";
 import { ApplicationAccessProvider } from "@pdlc/ui/auth";
 import { setPlatformQueryClient } from "@pdlc/ui/platform";
 import {
@@ -72,6 +71,7 @@ async function mount(writable = true, role = "admin") {
   else await screen.findByText("Нет доступа");
 }
 beforeEach(() => {
+  vi.stubEnv("VITE_AUTH_APPLICATION_ACCESS_REQUIRED", "true");
   sessionStorage.clear();
   vi.mocked(api).mockImplementation(async (path) => {
     if (path.endsWith("/push-config")) return { configuration_id: "config" };
@@ -82,6 +82,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   cleanup();
   vi.resetAllMocks();
   vi.unstubAllGlobals();
