@@ -22,3 +22,10 @@ libc = "0.2"
 serde.workspace = true
 thiserror.workspace = true
 utoipa.workspace = true
+
+[features]
+postgres-integration = []
+
+[[test]]
+name = "repository_sync_schedule"
+required-features = ["postgres-integration"]

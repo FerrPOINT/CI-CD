@@ -182,6 +182,7 @@ pub struct GitSession {
     pub scratch: PathBuf,
     local: PathBuf,
     remote: Endpoint,
+    scope: Option<(String, cicd_domain::repository_sync::Direction)>,
     token: String,
     pub canceled: Arc<AtomicBool>,
     pub guard: Option<Arc<MutationGuard>>,
@@ -250,6 +251,10 @@ impl GitSession {
         let session = Self {
             scratch,
             local,
+            scope: settings
+                .branch
+                .clone()
+                .map(|branch| (branch, settings.direction)),
             remote: Endpoint::External(settings),
             token,
             canceled,
@@ -483,17 +488,16 @@ impl GitSession {
         } else {
             self.local.to_string_lossy().into_owned()
         };
-        let raw = self
-            .git(
-                remote,
-                vec![
-                    "ls-remote".into(),
-                    "--heads".into(),
-                    "--tags".into(),
-                    destination,
-                ],
-            )
-            .await?;
+        let mut args = vec![
+            "ls-remote".into(),
+            "--heads".into(),
+            "--tags".into(),
+            destination,
+        ];
+        if let Some((branch, _)) = &self.scope {
+            args.push(format!("refs/heads/{branch}"));
+        }
+        let raw = self.git(remote, args).await?;
         let text =
             String::from_utf8(raw).map_err(|_| Error::Unavailable("Некорректные Git refs"))?;
         let mut refs = BTreeMap::new();
@@ -510,7 +514,13 @@ impl GitSession {
             {
                 return Err(Error::Unavailable("Некорректные Git refs"));
             }
-            refs.insert(name.into(), sha.into());
+            if self
+                .scope
+                .as_ref()
+                .is_none_or(|(branch, _)| name == format!("refs/heads/{branch}"))
+            {
+                refs.insert(name.into(), sha.into());
+            }
         }
         Ok(refs)
     }
@@ -522,18 +532,30 @@ impl GitSession {
             } else {
                 self.local.to_string_lossy().into_owned()
             };
-            self.git(
-                remote,
-                vec![
-                    "fetch".into(),
-                    "--no-tags".into(),
-                    "--no-write-fetch-head".into(),
-                    destination,
-                    format!("refs/heads/*:refs/{prefix}/heads/*"),
-                    format!("refs/tags/*:refs/{prefix}/tags/*"),
-                ],
-            )
-            .await?;
+            let mut args = vec![
+                "fetch".into(),
+                "--no-tags".into(),
+                "--no-write-fetch-head".into(),
+                destination,
+            ];
+            if let Some((branch, direction)) = &self.scope {
+                if self.refs(remote).await?.is_empty() {
+                    use cicd_domain::repository_sync::Direction;
+                    if matches!(
+                        (direction, remote),
+                        (Direction::Pull, true) | (Direction::Push, false)
+                    ) {
+                        return Err(Error::Conflict("source_branch_missing"));
+                    }
+                    // An absent destination branch is a legitimate first publication.
+                    continue;
+                }
+                args.push(format!("refs/heads/{branch}:refs/{prefix}/heads/{branch}"));
+            } else {
+                args.push(format!("refs/heads/*:refs/{prefix}/heads/*"));
+                args.push(format!("refs/tags/*:refs/{prefix}/tags/*"));
+            }
+            self.git(remote, args).await?;
         }
         Ok(())
     }
@@ -557,6 +579,13 @@ impl GitSession {
         old: Option<&str>,
         new: &str,
     ) -> Result<(), Error> {
+        if self
+            .scope
+            .as_ref()
+            .is_some_and(|(branch, _)| reference != format!("refs/heads/{branch}"))
+        {
+            return Err(Error::Conflict("ref_outside_sync_scope"));
+        }
         let actual = self.refs(remote).await?;
         if actual.get(reference).map(String::as_str) != old {
             return Err(Error::Conflict("destination_changed"));
@@ -625,6 +654,128 @@ mod tests {
                 .unwrap()
                 .success()
         );
+    }
+    #[tokio::test]
+    async fn selected_branch_sync_preserves_other_refs_and_creates_missing_destination() {
+        use cicd_domain::repository_sync::Direction;
+        for branch in ["main", "master", "release/stable"] {
+            let root = std::env::temp_dir().join(format!("forge-selected-{}", Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            let work = root.join("work");
+            let local = root.join("local.git");
+            let remote = root.join("remote.git");
+            for path in [&local, &remote] {
+                git(&root, &["init", "--bare", path.to_str().unwrap()]).await;
+            }
+            git(
+                &root,
+                &["init", "--initial-branch", branch, work.to_str().unwrap()],
+            )
+            .await;
+            git(&work, &["config", "user.name", "Forge QA"]).await;
+            git(&work, &["config", "user.email", "qa@example.invalid"]).await;
+            git(&work, &["commit", "--allow-empty", "-m", "initial"]).await;
+            git(&work, &["branch", "secondary"]).await;
+            git(&work, &["tag", "-a", "v-preserved", "-m", "tag"]).await;
+            git(
+                &work,
+                &[
+                    "push",
+                    local.to_str().unwrap(),
+                    branch,
+                    "secondary",
+                    "--tags",
+                ],
+            )
+            .await;
+            // Destination has a secondary branch and a tag, but not the selected branch.
+            git(
+                &work,
+                &["push", remote.to_str().unwrap(), "secondary", "--tags"],
+            )
+            .await;
+            let settings = Settings {
+                provider: Provider::Github,
+                instance_url: "https://github.com".into(),
+                repository_path: "fixture/repository".into(),
+                direction: Direction::Push,
+                automatic: false,
+                branch: Some(branch.into()),
+                protected_branch_updates: Default::default(),
+            };
+            let mut session = GitSession::new(
+                &root,
+                local.clone(),
+                settings,
+                String::new(),
+                Uuid::new_v4(),
+                1,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+            session.remote = Endpoint::Local(remote.clone());
+            session.fetch().await.unwrap();
+            let reference = format!("refs/heads/{branch}");
+            let first = session.refs(false).await.unwrap();
+            assert_eq!(first.len(), 1);
+            assert!(session.refs(true).await.unwrap().is_empty());
+            let sha = &first[&reference];
+            session.apply(true, &reference, None, sha).await.unwrap();
+            assert_eq!(first, session.refs(true).await.unwrap());
+            assert!(matches!(
+                session
+                    .apply(true, "refs/heads/secondary", Some(sha), sha)
+                    .await,
+                Err(Error::Conflict("ref_outside_sync_scope"))
+            ));
+            assert!(matches!(
+                session.apply(true, "refs/tags/v-new", None, sha).await,
+                Err(Error::Conflict("ref_outside_sync_scope"))
+            ));
+            // Pull only the selected branch even when another branch advanced separately.
+            git(&work, &["commit", "--allow-empty", "-m", "advance"]).await;
+            git(&work, &["push", remote.to_str().unwrap(), branch]).await;
+            session.scope = Some((branch.into(), Direction::Pull));
+            session.fetch().await.unwrap();
+            let incoming = session.refs(true).await.unwrap();
+            session
+                .apply(false, &reference, Some(sha), &incoming[&reference])
+                .await
+                .unwrap();
+            assert_eq!(session.refs(false).await.unwrap(), incoming);
+            for path in [&local, &remote] {
+                let output = Command::new("git")
+                    .arg("--git-dir")
+                    .arg(path)
+                    .args(["show-ref", "--hash", "refs/heads/secondary"])
+                    .output()
+                    .await
+                    .unwrap();
+                assert!(output.status.success());
+                assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), sha);
+                let tag = Command::new("git")
+                    .arg("--git-dir")
+                    .arg(path)
+                    .args(["show-ref", "--verify", "refs/tags/v-preserved"])
+                    .status()
+                    .await
+                    .unwrap();
+                assert!(tag.success());
+            }
+            session.scope = Some(("absent".into(), Direction::Pull));
+            assert!(matches!(
+                session.fetch().await,
+                Err(Error::Conflict("source_branch_missing"))
+            ));
+            session.scope = Some(("absent".into(), Direction::Push));
+            assert!(matches!(
+                session.fetch().await,
+                Err(Error::Conflict("source_branch_missing"))
+            ));
+            drop(session);
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
     #[tokio::test]
     async fn sync_capacity_is_shared_by_repositories_and_releases_for_waiting_work() {
@@ -826,6 +977,7 @@ mod tests {
             repository_path: repository,
             direction: cicd_domain::repository_sync::Direction::Both,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         };
         let mut session = GitSession::new(
@@ -922,6 +1074,7 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Pull,
                 automatic: false,
+                branch: None,
                 protected_branch_updates:
                     cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
@@ -990,6 +1143,7 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Pull,
                 automatic: false,
+                branch: None,
                 protected_branch_updates:
                     cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
@@ -1131,6 +1285,7 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Both,
                 automatic: false,
+                branch: None,
                 protected_branch_updates:
                     cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
@@ -1231,6 +1386,7 @@ mod tests {
             repository_path: "fixture/repository".into(),
             direction: cicd_domain::repository_sync::Direction::Pull,
             automatic: false,
+            branch: None,
             protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         };
         let attempt = || {
@@ -1285,6 +1441,7 @@ mod tests {
                 repository_path: "fixture/repository".into(),
                 direction: cicd_domain::repository_sync::Direction::Both,
                 automatic: false,
+                branch: None,
                 protected_branch_updates:
                     cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
             },
@@ -1358,6 +1515,7 @@ mod tests {
             repository_path: "a/b".into(),
             direction: cicd_domain::repository_sync::Direction::Both,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         };
         let guard = MutationGuard::acquire(&root, Uuid::new_v4()).await.unwrap();

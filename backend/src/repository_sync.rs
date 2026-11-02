@@ -233,6 +233,7 @@ pub(crate) async fn get_connection(
                 repository_path: String::new(),
                 direction: Direction::Disabled,
                 automatic: false,
+                branch: None,
                 protected_branch_updates: Default::default(),
             },
             has_credential: false,

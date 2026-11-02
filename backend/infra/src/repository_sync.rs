@@ -279,13 +279,18 @@ impl PgSyncStore {
         sqlx::query("UPDATE repository_sync_connections SET dirty=true WHERE repository_id=$1 AND (settings->>'automatic')::boolean AND settings->>'direction'<>'disabled'").bind(repository).execute(&self.pool).await.map_err(db)?;
         Ok(())
     }
-    pub async fn schedule(&self) -> Result<(), Error> {
+    pub async fn schedule(&self, on_change: bool) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let rows=sqlx::query(r#"
             SELECT c.id,c.repository_id,c.settings,c.version,c.dirty,c.owner_subject
             FROM repository_sync_connections c JOIN repository_catalog r ON r.id=c.repository_id
             WHERE (c.settings->>'automatic')::boolean AND c.settings->>'direction'<>'disabled'
-                AND (c.dirty OR c.next_check_at<=now()) AND r.ready
+                AND (($1 AND c.dirty) OR c.next_check_at<=now()
+                    OR (NOT $1 AND EXISTS(SELECT 1 FROM repository_sync_connections due
+                        WHERE due.repository_id=c.repository_id
+                            AND (due.settings->>'automatic')::boolean
+                            AND due.settings->>'direction'<>'disabled' AND due.next_check_at<=now())))
+                AND r.ready
                 AND COALESCE(forge_effective_group_state(r.group_id),'active')='active'
                 AND NOT EXISTS(SELECT 1 FROM repository_sync_runs run WHERE run.connection_id=c.id
                     AND run.state IN ('queued','running','stopping','reconciling'))
@@ -295,14 +300,14 @@ impl PgSyncStore {
                         OR EXISTS(SELECT 1 FROM identity_deletion_operations f WHERE f.state='frozen'
                             AND f.issuer=ref.issuer AND f.subject=ref.subject))
             ORDER BY c.next_check_at NULLS FIRST,c.id LIMIT 100 FOR UPDATE OF c SKIP LOCKED
-        "#).fetch_all(&mut *tx).await.map_err(db)?;
+        "#).bind(on_change).fetch_all(&mut *tx).await.map_err(db)?;
         for row in rows {
             let id: Uuid = row.get("repository_id");
             let connection: Uuid = row.get("id");
             // Admission can reject one durable automation (e.g. an owner frozen
             // for deletion). Keep its signal and let independent work proceed.
             let mut item = tx.begin().await.map_err(db)?;
-            let inserted = sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id,owner_subject) VALUES($1,$2,$3,$4,$5,'queued',$6,$7)").bind(Uuid::new_v4()).bind(id).bind(row.get::<i64,_>("version")).bind(row.get::<serde_json::Value,_>("settings")).bind(if row.get::<bool,_>("dirty"){"git_change"}else{"schedule"}).bind(connection).bind(row.get::<Option<Uuid>,_>("owner_subject")).execute(&mut *item).await;
+            let inserted = sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id,owner_subject) VALUES($1,$2,$3,$4,$5,'queued',$6,$7)").bind(Uuid::new_v4()).bind(id).bind(row.get::<i64,_>("version")).bind(row.get::<serde_json::Value,_>("settings")).bind(if on_change && row.get::<bool,_>("dirty"){"git_change"}else{"schedule"}).bind(connection).bind(row.get::<Option<Uuid>,_>("owner_subject")).execute(&mut *item).await;
             if let Err(error) = inserted {
                 let admission_denied = error.as_database_error().is_some_and(|error| {
                     matches!(
@@ -335,7 +340,8 @@ impl PgSyncStore {
         // the whole batch and starve independent repositories.
         sqlx::query_as(r#"
             WITH candidates AS (
-                SELECT DISTINCT ON (run.repository_id) run.id,run.repository_id,r.storage_name,run.created_at
+                SELECT DISTINCT ON (run.repository_id) run.id,run.repository_id,r.storage_name,run.created_at,
+                    CASE WHEN run.settings->>'direction'='pull' THEN 0 ELSE 1 END AS direction_order
                 FROM repository_sync_runs run JOIN repository_catalog r ON r.id=run.repository_id
                 LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id
                 WHERE (run.state='queued' AND r.ready AND COALESCE(forge_effective_group_state(r.group_id),'active')='active'
@@ -343,9 +349,9 @@ impl PgSyncStore {
                         WHERE writer.repository_id=run.repository_id
                         AND writer.state IN ('running','stopping','reconciling')))
                     OR (run.state IN ('running','stopping','reconciling') AND run.lease_until<now())
-                ORDER BY run.repository_id,run.created_at,run.id
+                ORDER BY run.repository_id,direction_order,run.created_at,run.id
             )
-            SELECT id,repository_id,storage_name FROM candidates ORDER BY created_at,id LIMIT 100
+            SELECT id,repository_id,storage_name FROM candidates ORDER BY direction_order,created_at,id LIMIT 100
         "#).fetch_all(&self.pool).await.map_err(db)
     }
     pub async fn claim(&self, id: Uuid, owner: Uuid) -> Result<Option<(SyncRun, i64)>, Error> {

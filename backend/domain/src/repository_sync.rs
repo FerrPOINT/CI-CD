@@ -46,6 +46,9 @@ pub struct Settings {
     #[serde(default)]
     #[schema(required)]
     pub automatic: bool,
+    /// None preserves the legacy all-branches-and-tags scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "ProtectedBranchUpdates::is_blocked")]
     pub protected_branch_updates: ProtectedBranchUpdates,
 }
@@ -59,6 +62,24 @@ impl Settings {
             && self.direction != Direction::Pull
         {
             return Err("Обновление защищённых веток разрешено только из источника в Forge".into());
+        }
+        if let Some(branch) = &self.branch {
+            // Git check-ref-format --branch rules, without shelling out from the domain.
+            if branch.is_empty()
+                || branch.starts_with('-')
+                || branch == "@"
+                || branch.contains("..")
+                || branch.contains("@{")
+                || branch.ends_with('.')
+                || branch
+                    .bytes()
+                    .any(|b| b <= b' ' || b == 0x7f || b"~^:?*[\\".contains(&b))
+                || branch
+                    .split('/')
+                    .any(|part| part.is_empty() || part.starts_with('.') || part.ends_with(".lock"))
+            {
+                return Err("Некорректное имя ветки синхронизации".into());
+            }
         }
         // WHATWG accepts backslashes/control characters that Git/libcurl interprets differently.
         if self
@@ -460,6 +481,7 @@ mod tests {
             repository_path: "team/sub/repo.git".into(),
             direction: Direction::Both,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         };
         assert!(settings.validate(&[]).is_err());
@@ -504,6 +526,7 @@ mod tests {
                 repository_path: "team/repo".into(),
                 direction: Direction::Pull,
                 automatic: false,
+                branch: None,
                 protected_branch_updates: Default::default(),
             };
             assert!(
@@ -523,6 +546,7 @@ mod tests {
             repository_path: "team/repo.git".into(),
             direction: Direction::Pull,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         };
         settings
@@ -546,6 +570,7 @@ mod tests {
             repository_path: "team/repository".into(),
             direction: Direction::Both,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         };
         for raw in [
@@ -567,5 +592,25 @@ mod tests {
             settings.url(),
             "https://git.internal/gitlab/team/repository.git"
         );
+    }
+    #[test]
+    fn selected_branch_is_validated_and_legacy_json_stays_unchanged() {
+        let legacy = serde_json::json!({"provider":"github","instance_url":"https://github.com","repository_path":"team/repo","direction":"pull","automatic":true});
+        let mut settings: Settings = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&settings).unwrap(), legacy);
+        for branch in ["main", "master", "release/2026.11", "feature/Жуков"] {
+            settings.branch = Some(branch.into());
+            settings.validate(&[]).unwrap();
+            let roundtrip: Settings =
+                serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+            assert_eq!(roundtrip.branch.as_deref(), Some(branch));
+        }
+        for branch in [
+            "", "-main", "@", "a..b", "a@{b", ".main", "a/.b", "a.lock", "a/b.lock", "a/", "/a",
+            "a//b", "a.", "a b", "a\nb", "a*b", "a?b", "a:b", "a[b", "a\\b", "a~b", "a^b",
+        ] {
+            settings.branch = Some(branch.into());
+            assert!(settings.validate(&[]).is_err(), "accepted {branch:?}");
+        }
     }
 }

@@ -10531,6 +10531,11 @@ components:
       properties:
         automatic:
           type: boolean
+        branch:
+          type:
+          - string
+          - 'null'
+          description: None preserves the legacy all-branches-and-tags scope.
         direction:
           $ref: '#/components/schemas/RepositorySyncDirection'
         instance_url:

@@ -44,7 +44,7 @@ pub async fn supervisor(pool: PgPool, config: crate::config::RuntimeConfig) {
                 tracing::warn!(%error,"sync pipeline delivery pending");
             }
             if config.git_sync.enabled {
-                if let Err(error) = store.schedule().await {
+                if let Err(error) = store.schedule(config.git_sync.on_change).await {
                     tracing::warn!(%error,"sync scheduling unavailable");
                 }
             }

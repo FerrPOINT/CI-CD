@@ -4080,6 +4080,8 @@ export interface components {
         };
         RepositorySyncSettings: {
             automatic: boolean;
+            /** @description None preserves the legacy all-branches-and-tags scope. */
+            branch?: string | null;
             direction: components["schemas"]["RepositorySyncDirection"];
             instance_url: string;
             protected_branch_updates?: components["schemas"]["RepositorySyncProtectedBranchUpdates"];
