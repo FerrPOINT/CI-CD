@@ -248,7 +248,7 @@ describe("AppShell navigation", () => {
       [...header.querySelectorAll("[data-platform-header-slot]")].map((slot) =>
         slot.getAttribute("data-platform-header-slot"),
       ),
-    ).toEqual(["leading", "services", "namespace", "actions"]);
+    ).toEqual(["leading", "services", "context", "actions"]);
     expect(header.parentElement).toBe(container.firstElementChild);
     expect(
       within(header).getByRole("button", {
