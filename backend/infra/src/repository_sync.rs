@@ -7,6 +7,19 @@ use cicd_domain::repository_sync::{
 use sqlx::{Acquire, PgPool, Row};
 use uuid::Uuid;
 
+// Both periodic scheduling and global clock changes respect the same resource gates.
+pub(crate) const AUTOMATIC_CONNECTIONS: &str = r#"
+    (c.settings->>'automatic')::boolean AND c.settings->>'direction'<>'disabled'
+    AND r.ready AND COALESCE(forge_effective_group_state(r.group_id),'active')='active'
+    AND NOT EXISTS(SELECT 1 FROM git_groups g WHERE g.id=r.group_id AND g.namespace_managed
+        AND NOT EXISTS(SELECT 1 FROM forge_namespace_bindings b WHERE b.resource_id=g.id))
+    AND NOT EXISTS(
+        SELECT 1 FROM forge_identity_row_refs('repository_sync_connections',to_jsonb(c)) ref
+        WHERE (ref.unresolved AND EXISTS(SELECT 1 FROM identity_deletion_operations WHERE state='frozen'))
+            OR EXISTS(SELECT 1 FROM identity_deletion_operations f WHERE f.state='frozen'
+                AND f.issuer=ref.issuer AND f.subject=ref.subject))
+"#;
+
 #[derive(Clone)]
 pub struct PgSyncStore {
     pub pool: PgPool,
@@ -298,26 +311,26 @@ impl PgSyncStore {
         )
         .await?;
         let on_change = policy.settings.on_change;
-        let rows=sqlx::query(r#"
+        let query = format!(
+            r#"
             SELECT c.id,c.repository_id,c.settings,c.version,c.dirty,c.owner_subject
             FROM repository_sync_connections c JOIN repository_catalog r ON r.id=c.repository_id
-            WHERE (c.settings->>'automatic')::boolean AND c.settings->>'direction'<>'disabled'
+            WHERE {AUTOMATIC_CONNECTIONS}
                 AND (($1 AND c.dirty) OR c.next_check_at<=now()
                     OR (NOT $1 AND EXISTS(SELECT 1 FROM repository_sync_connections due
                         WHERE due.repository_id=c.repository_id
                             AND (due.settings->>'automatic')::boolean
                             AND due.settings->>'direction'<>'disabled' AND due.next_check_at<=now())))
-                AND r.ready
-                AND COALESCE(forge_effective_group_state(r.group_id),'active')='active'
                 AND NOT EXISTS(SELECT 1 FROM repository_sync_runs run WHERE run.connection_id=c.id
                     AND run.state IN ('queued','running','stopping','reconciling'))
-                AND NOT EXISTS(
-                    SELECT 1 FROM forge_identity_row_refs('repository_sync_connections',to_jsonb(c)) ref
-                    WHERE (ref.unresolved AND EXISTS(SELECT 1 FROM identity_deletion_operations WHERE state='frozen'))
-                        OR EXISTS(SELECT 1 FROM identity_deletion_operations f WHERE f.state='frozen'
-                            AND f.issuer=ref.issuer AND f.subject=ref.subject))
             ORDER BY c.next_check_at NULLS FIRST,c.id LIMIT 100 FOR UPDATE OF c SKIP LOCKED
-        "#).bind(on_change).fetch_all(&mut *tx).await.map_err(db)?;
+        "#
+        );
+        let rows = sqlx::query(&query)
+            .bind(on_change)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db)?;
         for row in rows {
             let id: Uuid = row.get("repository_id");
             let connection: Uuid = row.get("id");

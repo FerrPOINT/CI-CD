@@ -413,3 +413,100 @@ async fn global_sync_policy_updates_existing_worker_and_next_check_without_resta
     );
     pool.close().await;
 }
+
+#[tokio::test]
+async fn global_schedule_preserves_archived_and_disabled_connections() {
+    use cicd_domain::repository_sync::Schedule;
+    let (pool, store, active, access, secrets) = fixture().await;
+    administrator(&pool, access).await;
+    let archived = Uuid::new_v4();
+    let disabled = Uuid::new_v4();
+    for id in [archived, disabled] {
+        sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+            .bind(id)
+            .bind(format!("neighbor-{id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    for id in [active, archived, disabled] {
+        let mut input = command(Provider::Github, true);
+        if id == disabled {
+            input.settings.direction = Direction::Disabled;
+        }
+        app::save(&store, &secrets, id, Uuid::new_v4(), access, input, &[])
+            .await
+            .unwrap();
+    }
+    let group = Uuid::new_v4();
+    sqlx::query("INSERT INTO git_groups(id,slug,name,namespace_managed) VALUES($1,$2,'Archived project',true)")
+        .bind(group).bind(format!("project-{}", group.simple())).execute(&pool).await.unwrap();
+    let registry = Uuid::new_v4();
+    let namespace = Uuid::new_v4();
+    let mut binding = serde_json::json!({"schema_version":1,"namespace":{"registry_instance_id":registry,"namespace_id":namespace},"resource":{"instance_id":Uuid::new_v4(),"kind":"git_group","resource_id":group},"operation_id":Uuid::new_v4(),"generation":1,"state":"active","create_spec":null});
+    sqlx::query("INSERT INTO forge_namespace_bindings(resource_id,registry_instance_id,namespace_id,generation,state,command) VALUES($1,$2,$3,1,'active',$4)")
+        .bind(group).bind(registry).bind(namespace).bind(&binding).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE repository_catalog SET group_id=$2 WHERE id=$1")
+        .bind(archived)
+        .bind(group)
+        .execute(&pool)
+        .await
+        .unwrap();
+    binding["state"] = serde_json::json!("archived");
+    binding["generation"] = serde_json::json!(2);
+    binding["operation_id"] = serde_json::json!(Uuid::new_v4());
+    sqlx::query("UPDATE forge_namespace_bindings SET state='archived',generation=2,command=$2 WHERE resource_id=$1")
+        .bind(group).bind(binding).execute(&pool).await.unwrap();
+    let before: Vec<(Uuid, Option<chrono::DateTime<chrono::Utc>>)> =
+        sqlx::query_as("SELECT id,next_check_at FROM repository_sync_connections ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let guard =
+        sqlx::query("UPDATE repository_sync_connections SET next_check_at=now() WHERE id=$1")
+            .bind(archived)
+            .execute(&pool)
+            .await
+            .unwrap_err();
+    assert_eq!(
+        guard.as_database_error().unwrap().message(),
+        "namespace_resource_read_only"
+    );
+    let saved = app::save_schedule(
+        &store,
+        Uuid::new_v4(),
+        access,
+        policy(900, false, 0),
+        Schedule {
+            interval_seconds: 3600,
+            on_change: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(saved.version, 1);
+    let after: Vec<(Uuid, Option<chrono::DateTime<chrono::Utc>>)> =
+        sqlx::query_as("SELECT id,next_check_at FROM repository_sync_connections ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let time = |rows: &[(Uuid, Option<chrono::DateTime<chrono::Utc>>)], id| {
+        rows.iter().find(|row| row.0 == id).unwrap().1
+    };
+    assert_eq!(
+        time(&after, archived),
+        time(&before, archived),
+        "archive remains read-only"
+    );
+    assert_eq!(time(&before, disabled), None);
+    assert_eq!(
+        time(&after, disabled),
+        None,
+        "disabled connection has no next automatic check"
+    );
+    assert!(
+        time(&after, active).unwrap() < time(&before, active).unwrap(),
+        "healthy connection is rescheduled"
+    );
+    pool.close().await;
+}

@@ -1,5 +1,5 @@
 //! Global sync scheduling policy. The audit owner retains identity attribution.
-use crate::repository_sync::PgSyncStore;
+use crate::repository_sync::{AUTOMATIC_CONNECTIONS, PgSyncStore};
 use cicd_app::repository_sync::{Access, Error, ScheduleStore};
 use cicd_domain::repository_sync::{SaveSchedule, Schedule, ScheduleState};
 use sqlx::{PgConnection, Row};
@@ -91,8 +91,14 @@ impl ScheduleStore for PgSyncStore {
             .bind(serde_json::json!([{"kind":"local_principal_id","alias":access.actor_id}]))
             .execute(&mut *tx).await.map_err(db)?;
         // Keep manual runs independent. A period change reuses each connection's last automatic clock.
-        sqlx::query("UPDATE repository_sync_connections c SET next_check_at=COALESCE((SELECT max(r.created_at) FROM repository_sync_runs r WHERE r.connection_id=c.id AND r.source IN ('schedule','git_change'))+make_interval(secs=>$1::double precision),now()) WHERE (c.settings->>'automatic')::boolean")
-            .bind(input.settings.interval_seconds as f64).execute(&mut *tx).await.map_err(db)?;
+        let query = format!(
+            "UPDATE repository_sync_connections c SET next_check_at=COALESCE((SELECT max(run.created_at) FROM repository_sync_runs run WHERE run.connection_id=c.id AND run.source IN ('schedule','git_change'))+make_interval(secs=>$1::double precision),now()) FROM repository_catalog r WHERE r.id=c.repository_id AND {AUTOMATIC_CONNECTIONS}"
+        );
+        sqlx::query(&query)
+            .bind(input.settings.interval_seconds as f64)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
         tx.commit().await.map_err(db)?;
         Ok(ScheduleState {
             version,
