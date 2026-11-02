@@ -151,6 +151,37 @@ impl Settings {
     }
 }
 
+/// Installation-wide scheduling policy; execution capacity remains operator-owned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(as = RepositorySyncSchedule)]
+pub struct Schedule {
+    pub interval_seconds: i64,
+    pub on_change: bool,
+}
+impl Schedule {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=86400).contains(&self.interval_seconds) {
+            return Err("Период синхронизации должен быть от 1 до 86400 секунд".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(as = RepositorySyncScheduleState)]
+pub struct ScheduleState {
+    pub version: i64,
+    pub settings: Schedule,
+}
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(as = RepositorySyncSaveSchedule)]
+pub struct SaveSchedule {
+    pub expected_version: i64,
+    pub settings: Schedule,
+}
+
 #[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 #[schema(as = RepositorySyncSaveConnection)]
@@ -612,5 +643,29 @@ mod tests {
             settings.branch = Some(branch.into());
             assert!(settings.validate(&[]).is_err(), "accepted {branch:?}");
         }
+    }
+    #[test]
+    fn global_schedule_bounds_and_strict_payload() {
+        for interval_seconds in [1, 300, 3600, 86400] {
+            assert!(
+                Schedule {
+                    interval_seconds,
+                    on_change: false
+                }
+                .validate()
+                .is_ok()
+            );
+        }
+        for interval_seconds in [i64::MIN, -1, 0, 86401, i64::MAX] {
+            assert!(
+                Schedule {
+                    interval_seconds,
+                    on_change: true
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert!(serde_json::from_value::<SaveSchedule>(serde_json::json!({"expected_version":0,"settings":{"interval_seconds":3600,"on_change":false},"concurrency":99})).is_err());
     }
 }

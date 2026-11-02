@@ -1,4 +1,5 @@
 //! PostgreSQL synchronization journal and compare-and-swap operations.
+use crate::repository_sync_schedule::schedule_state;
 use cicd_app::repository_sync::{Access, Error, Store};
 use cicd_domain::repository_sync::{
     Connection, Direction, RefResult, SaveConnection, Settings, SyncRun,
@@ -281,6 +282,22 @@ impl PgSyncStore {
     }
     pub async fn schedule(&self, on_change: bool) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(db)?;
+        // Serialize policy changes with scheduling, including the bootstrap (no-row) state.
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('repository_sync_schedule',96))",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        let policy = schedule_state(
+            &mut tx,
+            cicd_domain::repository_sync::Schedule {
+                interval_seconds: self.interval_seconds,
+                on_change,
+            },
+        )
+        .await?;
+        let on_change = policy.settings.on_change;
         let rows=sqlx::query(r#"
             SELECT c.id,c.repository_id,c.settings,c.version,c.dirty,c.owner_subject
             FROM repository_sync_connections c JOIN repository_catalog r ON r.id=c.repository_id
@@ -327,7 +344,7 @@ impl PgSyncStore {
                 item.rollback().await.map_err(db)?;
                 continue;
             }
-            sqlx::query("UPDATE repository_sync_connections SET dirty=false,next_check_at=now()+make_interval(secs=>$2::double precision) WHERE id=$1").bind(connection).bind(self.interval_seconds as f64).execute(&mut *item).await.map_err(db)?;
+            sqlx::query("UPDATE repository_sync_connections SET dirty=false,next_check_at=now()+make_interval(secs=>$2::double precision) WHERE id=$1").bind(connection).bind(policy.settings.interval_seconds as f64).execute(&mut *item).await.map_err(db)?;
             item.commit().await.map_err(db)?;
         }
         tx.commit().await.map_err(db)?;
@@ -539,6 +556,20 @@ impl Store for ConnectionStore<'_> {
             return Err(Error::Invalid("Некорректный UUID подключения".into()));
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('repository_sync_schedule',96))",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        let policy = schedule_state(
+            &mut tx,
+            cicd_domain::repository_sync::Schedule {
+                interval_seconds: self.interval_seconds,
+                on_change: true,
+            },
+        )
+        .await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,93))")
             .bind(operation.to_string())
             .execute(&mut *tx)
@@ -604,7 +635,7 @@ impl Store for ConnectionStore<'_> {
             }
         }
         sqlx::query("INSERT INTO repository_sync_connections(repository_id,id,version,settings,encrypted_credential,next_check_at,owner_subject) VALUES($1,$6,1,$2,$3,CASE WHEN $4 THEN now()+make_interval(secs=>$5::double precision) ELSE NULL END,$7) ON CONFLICT(id) DO UPDATE SET version=repository_sync_connections.version+1,settings=EXCLUDED.settings,encrypted_credential=EXCLUDED.encrypted_credential,next_check_at=EXCLUDED.next_check_at,owner_subject=CASE WHEN $8 THEN repository_sync_connections.owner_subject ELSE EXCLUDED.owner_subject END,dirty=false,updated_at=now()")
-            .bind(repository).bind(json(&input.settings)?).bind(credential).bind(input.settings.automatic && input.settings.direction!=Direction::Disabled).bind(self.interval_seconds as f64).bind(self.id).bind(self.owner_subject).bind(active).execute(&mut *tx).await.map_err(db)?;
+            .bind(repository).bind(json(&input.settings)?).bind(credential).bind(input.settings.automatic && input.settings.direction!=Direction::Disabled).bind(policy.settings.interval_seconds as f64).bind(self.id).bind(self.owner_subject).bind(active).execute(&mut *tx).await.map_err(db)?;
         if input.settings.direction == Direction::Disabled {
             sqlx::query("UPDATE repository_sync_runs SET cancel_requested=true,state=CASE WHEN state='queued' THEN 'canceled' ELSE 'stopping' END,finished_at=CASE WHEN state='queued' THEN now() ELSE finished_at END WHERE repository_id=$1 AND connection_id=$2 AND state IN ('queued','running','stopping','reconciling')").bind(repository).bind(self.id).execute(&mut *tx).await.map_err(db)?;
         }

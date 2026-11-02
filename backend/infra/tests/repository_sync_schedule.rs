@@ -144,3 +144,272 @@ async fn multiple_sync_hourly_ignores_dirty_and_pulls_before_pushes() {
     );
     pool.close().await;
 }
+
+async fn administrator(pool: &sqlx::PgPool, access: Access) {
+    sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,'admin')")
+        .bind(access.actor_id)
+        .bind(format!("schedule-{}", access.actor_id))
+        .execute(pool)
+        .await
+        .unwrap();
+}
+fn policy(
+    seconds: i64,
+    on_change: bool,
+    expected_version: i64,
+) -> cicd_domain::repository_sync::SaveSchedule {
+    cicd_domain::repository_sync::SaveSchedule {
+        expected_version,
+        settings: cicd_domain::repository_sync::Schedule {
+            interval_seconds: seconds,
+            on_change,
+        },
+    }
+}
+#[tokio::test]
+async fn global_sync_policy_is_versioned_audited_replayable_and_role_checked() {
+    use cicd_app::repository_sync::{Error, ScheduleStore};
+    use cicd_domain::repository_sync::Schedule;
+    let (pool, store, _, access, _) = fixture().await;
+    administrator(&pool, access).await;
+    let defaults = Schedule {
+        interval_seconds: 300,
+        on_change: true,
+    };
+    let initial = store.read_schedule(defaults).await.unwrap();
+    assert_eq!(initial.version, 0);
+    assert_eq!(initial.settings, defaults);
+    for denied in [
+        Access {
+            admin: false,
+            ..access
+        },
+        Access {
+            machine: true,
+            ..access
+        },
+        Access {
+            project_id: Some(Uuid::new_v4()),
+            ..access
+        },
+        Access {
+            writable: false,
+            ..access
+        },
+    ] {
+        assert!(matches!(
+            app::save_schedule(
+                &store,
+                Uuid::new_v4(),
+                denied,
+                policy(3600, false, 0),
+                defaults
+            )
+            .await,
+            Err(Error::Forbidden)
+        ));
+    }
+    let key = Uuid::new_v4();
+    let first = app::save_schedule(&store, key, access, policy(3600, false, 0), defaults)
+        .await
+        .unwrap();
+    assert_eq!(first.version, 1);
+    let second = app::save_schedule(
+        &store,
+        Uuid::new_v4(),
+        access,
+        policy(7200, true, 1),
+        defaults,
+    )
+    .await
+    .unwrap();
+    assert_eq!(second.version, 2);
+    let replay = app::save_schedule(&store, key, access, policy(3600, false, 0), defaults)
+        .await
+        .unwrap();
+    assert_eq!(
+        replay, first,
+        "retry returns its original immutable result after later changes"
+    );
+    assert_eq!(store.read_schedule(defaults).await.unwrap(), second);
+    assert!(matches!(
+        app::save_schedule(&store, key, access, policy(1800, false, 0), defaults).await,
+        Err(Error::Conflict("idempotency_conflict"))
+    ));
+    assert!(matches!(
+        app::save_schedule(&store, key, access, policy(3600, false, i64::MAX), defaults).await,
+        Err(Error::Conflict("idempotency_conflict"))
+    ));
+    let a = app::save_schedule(
+        &store,
+        Uuid::new_v4(),
+        access,
+        policy(1800, false, 2),
+        defaults,
+    );
+    let b = app::save_schedule(
+        &store,
+        Uuid::new_v4(),
+        access,
+        policy(900, true, 2),
+        defaults,
+    );
+    let (a, b) = tokio::join!(a, b);
+    assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+    assert!(matches!(
+        a.as_ref().err().or_else(|| b.as_ref().err()),
+        Some(Error::Conflict("sync_schedule_version_conflict"))
+    ));
+    let audit:i64=sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action='repository_sync.schedule_updated' AND actor=$1")
+        .bind(access.actor_id.to_string()).fetch_one(&pool).await.unwrap();
+    assert_eq!(audit, 3);
+    let history: i64 = sqlx::query_scalar("SELECT count(*) FROM repository_sync_schedule")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(history, 3);
+    assert!(
+        sqlx::query("UPDATE repository_sync_schedule SET interval_seconds=1")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("DELETE FROM repository_sync_schedule")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    let restarted = PgSyncStore {
+        interval_seconds: 1,
+        ..store.clone()
+    };
+    let current = restarted
+        .read_schedule(Schedule {
+            interval_seconds: 1,
+            on_change: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        current.version, 3,
+        "saved policy survives restart and environment changes"
+    );
+    sqlx::query("UPDATE users SET role='viewer' WHERE id=$1")
+        .bind(access.actor_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            app::save_schedule(
+                &store,
+                Uuid::new_v4(),
+                access,
+                policy(3600, false, 3),
+                defaults
+            )
+            .await,
+            Err(Error::Forbidden)
+        ),
+        "stale admin claim cannot save"
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn global_sync_policy_updates_existing_worker_and_next_check_without_restart() {
+    use cicd_domain::repository_sync::Schedule;
+    let (pool, mut store, repository, access, secrets) = fixture().await;
+    administrator(&pool, access).await;
+    store.interval_seconds = 300;
+    app::save(
+        &store,
+        &secrets,
+        repository,
+        Uuid::new_v4(),
+        access,
+        command(Provider::Github, true),
+        &[],
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE repository_sync_connections SET next_check_at=now()-interval '1 second' WHERE id=$1")
+        .bind(repository).execute(&pool).await.unwrap();
+    store.schedule(false).await.unwrap();
+    let initial = store
+        .runs_at(repository, repository, 20, 0)
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(initial.len(), 1);
+    let owner = Uuid::new_v4();
+    let (_, generation) = store.claim(initial[0].id, owner).await.unwrap().unwrap();
+    store
+        .finish(initial[0].id, owner, generation, "success", None)
+        .await
+        .unwrap();
+    // A manual run must not move the automatic schedule's original clock.
+    sqlx::query("INSERT INTO repository_sync_runs(id,repository_id,connection_version,settings,source,state,connection_id,created_at,finished_at) VALUES($1,$2,1,$3,'manual','success',$2,$4+interval '30 minutes',$4+interval '30 minutes')")
+        .bind(Uuid::new_v4()).bind(repository).bind(serde_json::to_value(&initial[0].settings).unwrap()).bind(initial[0].created_at).execute(&pool).await.unwrap();
+    let defaults = Schedule {
+        interval_seconds: 300,
+        on_change: true,
+    };
+    app::save_schedule(
+        &store,
+        Uuid::new_v4(),
+        access,
+        policy(3600, false, 0),
+        defaults,
+    )
+    .await
+    .unwrap();
+    let difference:f64=sqlx::query_scalar("SELECT EXTRACT(EPOCH FROM(next_check_at-$2::timestamptz))::double precision FROM repository_sync_connections WHERE id=$1")
+        .bind(repository).bind(initial[0].created_at).fetch_one(&pool).await.unwrap();
+    assert_eq!(difference, 3600.0);
+    store.signal(repository).await.unwrap();
+    store.schedule(true).await.unwrap();
+    assert_eq!(
+        store
+            .runs_at(repository, repository, 20, 0)
+            .await
+            .unwrap()
+            .1,
+        2,
+        "saved on_change=false overrides startup true"
+    );
+    sqlx::query("UPDATE repository_sync_connections SET next_check_at=now()-interval '1 second' WHERE id=$1").bind(repository).execute(&pool).await.unwrap();
+    store.schedule(true).await.unwrap();
+    let latest = store
+        .runs_at(repository, repository, 20, 0)
+        .await
+        .unwrap()
+        .0;
+    let automatic = latest.iter().find(|r| r.state == "queued").unwrap();
+    assert_eq!(automatic.source, "schedule");
+    let seconds:f64=sqlx::query_scalar("SELECT EXTRACT(EPOCH FROM(next_check_at-now()))::double precision FROM repository_sync_connections WHERE id=$1").bind(repository).fetch_one(&pool).await.unwrap();
+    assert!(
+        seconds > 3590.0 && seconds <= 3600.0,
+        "worker uses live period, not its startup300"
+    );
+    let added = Uuid::new_v4();
+    app::save(
+        &store.scoped(added),
+        &secrets,
+        repository,
+        Uuid::new_v4(),
+        access,
+        command(Provider::Github, true),
+        &[],
+    )
+    .await
+    .unwrap();
+    let seconds:f64=sqlx::query_scalar("SELECT EXTRACT(EPOCH FROM(next_check_at-now()))::double precision FROM repository_sync_connections WHERE id=$1")
+        .bind(added).fetch_one(&pool).await.unwrap();
+    assert!(
+        seconds > 3590.0 && seconds <= 3600.0,
+        "new connections use saved period, not startup defaults"
+    );
+    pool.close().await;
+}

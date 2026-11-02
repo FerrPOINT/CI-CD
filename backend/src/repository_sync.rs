@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use cicd_app::repository_sync::{self as app, Access, Error};
+use cicd_app::repository_sync::{self as app, Access, Error, ScheduleStore};
 use cicd_domain::repository_sync::*;
 use cicd_infra::{
     repository_sync::PgSyncStore,
@@ -444,9 +444,82 @@ pub(crate) async fn refs(
         .map_err(api_error)?;
     Ok(Json(RefPage { items, total }))
 }
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = RepositorySyncScheduleStatus)]
+pub struct ScheduleStatus {
+    pub version: i64,
+    pub settings: Schedule,
+    pub worker_enabled: bool,
+    pub concurrency: usize,
+}
+fn schedule_defaults(state: &AppState) -> Schedule {
+    Schedule {
+        interval_seconds: state.config.git_sync.interval_seconds,
+        on_change: state.config.git_sync.on_change,
+    }
+}
+fn schedule_status(state: &AppState, policy: ScheduleState) -> ScheduleStatus {
+    ScheduleStatus {
+        version: policy.version,
+        settings: policy.settings,
+        worker_enabled: state.config.git_sync.enabled,
+        concurrency: state.config.git_sync.concurrency,
+    }
+}
+fn schedule_administrator(claims: &crate::auth::AccessClaims) -> Result<Access, ApiError> {
+    let access = access(claims);
+    if !access.can_manage_schedule() || claims.token_id.is_some() {
+        return Err(ApiError::forbidden());
+    }
+    Ok(access)
+}
+#[utoipa::path(get,operation_id="forge_repository_sync_schedule_get",path="/api/v1/repository-sync-schedule",tag="repository-sync",responses((status=200,body=ScheduleStatus),(status=403)))]
+pub(crate) async fn get_schedule(
+    State(state): State<Arc<AppState>>,
+    claims: Option<Extension<crate::auth::AccessClaims>>,
+) -> Result<Json<ScheduleStatus>, ApiError> {
+    let claims = claims.ok_or_else(ApiError::forbidden)?.0;
+    schedule_administrator(&claims)?;
+    let policy = store(&state)?
+        .read_schedule(schedule_defaults(&state))
+        .await
+        .map_err(api_error)?;
+    Ok(Json(schedule_status(&state, policy)))
+}
+#[utoipa::path(put,operation_id="forge_repository_sync_schedule_save",path="/api/v1/repository-sync-schedule",tag="repository-sync",params(("Idempotency-Key"=Uuid,Header)),request_body=SaveSchedule,responses((status=200,body=ScheduleStatus),(status=400),(status=403),(status=409)))]
+pub(crate) async fn save_schedule(
+    State(state): State<Arc<AppState>>,
+    claims: Option<Extension<crate::auth::AccessClaims>>,
+    headers: HeaderMap,
+    Json(input): Json<SaveSchedule>,
+) -> Result<Json<ScheduleStatus>, ApiError> {
+    let claims = claims.ok_or_else(ApiError::forbidden)?.0;
+    let access = schedule_administrator(&claims)?;
+    let sync_store = store(&state)?;
+    app::save_schedule(
+        &sync_store,
+        operation(&headers)?,
+        access,
+        input,
+        schedule_defaults(&state),
+    )
+    .await
+    .map_err(api_error)?;
+    // A replay confirms its original command, but the form must display the current policy.
+    let current = sync_store
+        .read_schedule(schedule_defaults(&state))
+        .await
+        .map_err(api_error)?;
+    Ok(Json(schedule_status(&state, current)))
+}
+
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/v1/repository-syncs", get(list))
+        .route(
+            "/api/v1/repository-sync-schedule",
+            get(get_schedule).put(save_schedule),
+        )
         .route(
             "/api/v1/catalog/repositories/{id}/sync",
             get(get_connection).put(save_connection),
