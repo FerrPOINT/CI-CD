@@ -515,7 +515,10 @@ mod tests {
         assert!(owner.request_exit(&fence, expected).is_err());
         drop(participant);
         assert!(gate.all_exited(expected).unwrap());
+        assert!(gate.register("server", "server", vec![]).is_err());
+        drop(fence);
         let (_replacement, _) = gate.register("server", "server", vec![]).unwrap();
+        let fence = owner.try_fence().unwrap().unwrap();
         assert!(gate.all_exited(expected).is_err());
         assert!(owner.request_exit(&fence, expected).is_err());
         drop(fence);

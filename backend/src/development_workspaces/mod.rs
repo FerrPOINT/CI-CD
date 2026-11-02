@@ -30,6 +30,7 @@ pub struct DevelopmentWorkspaceDetail {
     pub session: Option<Session>,
     pub latest_operation: Option<Operation>,
     pub actor_id: Uuid,
+    pub busy: bool,
     pub actions: Vec<ActionAvailability>,
 }
 
@@ -285,11 +286,13 @@ pub(crate) async fn detail(
         busy,
         jobs,
     );
+    let occupied = busy || jobs || session.is_some();
     Ok(Json(DevelopmentWorkspaceDetail {
         workspace,
         session,
         latest_operation,
         actor_id: identity.claims.sub,
+        busy: occupied,
         actions,
     }))
 }
