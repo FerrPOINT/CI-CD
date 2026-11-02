@@ -114,7 +114,9 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
         .await
         .unwrap();
     assert_eq!(
-        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null))
+            .await
+            .1["busy"],
         true
     );
     sqlx::query("UPDATE development_workspace_sessions SET ended_at=clock_timestamp() WHERE id=$1")
@@ -124,12 +126,14 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
         .unwrap();
     let pipeline = Uuid::new_v4();
     let deployment = Uuid::new_v4();
-    sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','failed')")
-        .bind(pipeline)
-        .bind(f.project)
-        .execute(&f.pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','failed')",
+    )
+    .bind(pipeline)
+    .bind(f.project)
+    .execute(&f.pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO deployments(id,environment_id,pipeline_id,git_ref,status) VALUES($1,$2,$3,'main','running')")
         .bind(deployment)
         .bind(f.environment)
@@ -138,7 +142,9 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
         .await
         .unwrap();
     assert_eq!(
-        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null))
+            .await
+            .1["busy"],
         true
     );
     sqlx::query("UPDATE deployments SET status='failed',runtime_phase='held' WHERE id=$1")
@@ -147,7 +153,9 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
         .await
         .unwrap();
     assert_eq!(
-        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null))
+            .await
+            .1["busy"],
         true
     );
     sqlx::query("UPDATE deployments SET runtime_phase='finished' WHERE id=$1")
@@ -156,7 +164,9 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
         .await
         .unwrap();
     assert_eq!(
-        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null))
+            .await
+            .1["busy"],
         false
     );
     for token in &tokens {
@@ -227,7 +237,9 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
     assert_eq!(original["id"], operation.to_string());
     assert_eq!(original["state"], "queued");
     assert_eq!(
-        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null))
+            .await
+            .1["busy"],
         true
     );
     assert!(original.get("execution_plan").is_none());
