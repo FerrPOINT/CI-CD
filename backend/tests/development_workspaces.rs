@@ -103,6 +103,62 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
     let (status, card) = http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(card["workspace"]["owner_name"], "workspace-developer");
+    assert_eq!(card["busy"], false);
+    let session = Uuid::new_v4();
+    sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref) VALUES($1,$2,$3,$3,$4,'DEV-1')")
+        .bind(session)
+        .bind(f.workspace)
+        .bind(f.actor)
+        .bind(Uuid::new_v4())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        true
+    );
+    sqlx::query("UPDATE development_workspace_sessions SET ended_at=clock_timestamp() WHERE id=$1")
+        .bind(session)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let pipeline = Uuid::new_v4();
+    let deployment = Uuid::new_v4();
+    sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','failed')")
+        .bind(pipeline)
+        .bind(f.project)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployments(id,environment_id,pipeline_id,git_ref,status) VALUES($1,$2,$3,'main','running')")
+        .bind(deployment)
+        .bind(f.environment)
+        .bind(pipeline)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        true
+    );
+    sqlx::query("UPDATE deployments SET status='failed',runtime_phase='held' WHERE id=$1")
+        .bind(deployment)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        true
+    );
+    sqlx::query("UPDATE deployments SET runtime_phase='finished' WHERE id=$1")
+        .bind(deployment)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        false
+    );
     for token in &tokens {
         let (status, _) = http(&app,"POST",&format!("/api/v1/projects/{}/development-workspaces",f.project),Some(token),
             json!({"id":Uuid::new_v4(),"operation_id":Uuid::new_v4(),"catalog_target_id":Uuid::new_v4(),"name":"No creator permission","create":false})).await;
@@ -170,6 +226,10 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
     assert_eq!(status, StatusCode::OK, "{original}");
     assert_eq!(original["id"], operation.to_string());
     assert_eq!(original["state"], "queued");
+    assert_eq!(
+        http(&app, "GET", &path, Some(&tokens[1]), json!(null)).await.1["busy"],
+        true
+    );
     assert!(original.get("execution_plan").is_none());
     assert_eq!(f.version().await, 2);
     let restarted = cicd::api::app_with_git_and_config(
