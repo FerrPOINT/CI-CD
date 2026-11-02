@@ -2,9 +2,13 @@
 
 Статус: реализация; квалификация и установка фиксируются отдельно.
 Решение: [ADR-0043](adr/0043-managed-development-workspaces.md).
-Общий контракт Base: [WORKSPACES](https://github.com/FerrPOINT/services-base/blob/67d3eb10d5f951178286cf52273d9b67a7e891b9/docs/platform/WORKSPACES.md)
-и [operator runbook](https://github.com/FerrPOINT/services-base/blob/67d3eb10d5f951178286cf52273d9b67a7e891b9/docs/platform/WORKSPACE_OPERATOR.md).
+Общий контракт Base: [WORKSPACES](https://github.com/FerrPOINT/services-base/blob/67c15a3090afb05a44994c386405b23612b220a8/docs/platform/WORKSPACES.md)
+и [operator runbook](https://github.com/FerrPOINT/services-base/blob/67c15a3090afb05a44994c386405b23612b220a8/docs/platform/WORKSPACE_OPERATOR.md).
 Профиль продукта R1: `deploy/pdlc/workspace.yaml`; инструкции рядом с ним.
+Пилот использует один существующий R1; creator принимается на disposable fixture
+без второго постоянного R1 или нового DNS. Оставшиеся обязательные работы:
+[план завершения R1](https://github.com/FerrPOINT/services-base/blob/67c15a3090afb05a44994c386405b23612b220a8/docs/plans/r1-managed-workspace-completion-20261101.md).
+Ссылки на документы не меняют SDK/UI/operator pins установленного продукта.
 
 ## Модель и права
 
@@ -118,3 +122,14 @@ instance. Ручной Helm не должен обходить допуск.
 После последней поставки собираются свежие source/image/API/runtime/data/IAB
 доказательства. Rollback приложения сохраняет новые записи и историю. Down
 migrations и удаление журналов/PVC/Secret для снятия блокировки исключены.
+
+## Локальные интеграционные проверки
+
+[Disposable fixture](../scripts/workspace_fixture/README.md) проверяет готовые
+Forge API/worker, PostgreSQL, CLI и Base operator без ожидания установки общего
+стенда. Дополнительный Windows сценарий подключает helper R1 и настоящий CLI,
+теряет ответ принятой команды и проверяет original-key readback/replay, один
+writer, busy Stop, Stop/Start и сохранность данных/container identity.
+Используются готовые образы, синтетические Auth/Tracker и свои volumes;
+production credentials и данные не нужны. Проверка Kubernetes/R1 и IAB остаётся
+отдельной обязательной приёмкой.

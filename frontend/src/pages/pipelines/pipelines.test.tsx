@@ -68,6 +68,22 @@ function setup() {
 afterEach(() => vi.clearAllMocks())
 
 describe('PipelinesPage', () => {
+  it.each([
+    ['queued', 'muted'],
+    ['running', 'warning'],
+    ['success', 'success'],
+    ['failed', 'danger'],
+    ['canceled', 'muted'],
+    ['future_state', 'neutral'],
+  ])('preserves %s while delegating its semantic tone to Base', (status, tone) => {
+    mocks.usePipelines.mockReturnValue({data:[{...pipeline(1),status}],isLoading:false,error:null,refetch:mocks.refetch});
+    setup();
+    const label = screen.getByText(`pipelines.${status}`);
+    expect(label).toHaveAttribute('data-tone', tone);
+    expect(label).toHaveAttribute('data-appearance', 'inline');
+    expect(label.closest('a')).toHaveAttribute('href', `/pipelines/${pipeline(1).id}`);
+    expect(mocks.trigger).not.toHaveBeenCalled();
+  });
   it('shows 20 runs and fetches the next server page', () => {
     mocks.usePipelines.mockImplementation((_projectId: string, page: number) => ({
       data:

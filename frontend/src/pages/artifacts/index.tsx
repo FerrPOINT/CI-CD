@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { Copy, Download, Package } from "lucide-react";
-import {
+import { ResourceListTitle, ResourceListDescription,
+  PageNavigation,
   PageHeader,
   CopyButton,
   toast,
@@ -151,17 +152,17 @@ export function ArtifactsPage() {
                               aria-hidden
                             />
                             <div className="min-w-0 flex-1">
-                              <p className="break-all text-sm font-medium">
+                              <ResourceListTitle asChild className="break-all"><p >
                                 {artifact.name}
-                              </p>
-                              <p className="break-all text-xs text-text-secondary">
+                              </p></ResourceListTitle>
+                              <ResourceListDescription asChild className="break-all"><p >
                                 {formatBytes(artifact.size_bytes)} /{" "}
                                 {artifact.content_type}
-                              </p>
+                              </p></ResourceListDescription>
                               {state !== "available" && (
-                                <p className="text-xs text-text-muted">
+                                <ResourceListDescription asChild><p >
                                   {t("artifacts." + state)}
-                                </p>
+                                </p></ResourceListDescription>
                               )}
                             </div>
                             {artifact.sha256 && (
@@ -207,7 +208,8 @@ export function ArtifactsPage() {
                                 })}
                                 aria-busy={downloadingId === artifact.id}
                                 disabled={downloadingId !== null}
-                                size="icon" className="shrink-0"
+                                size="icon"
+                                className="shrink-0"
                                 onClick={() => void handleDownload(artifact)}
                               >
                                 {downloadingId === artifact.id ? (
@@ -243,7 +245,7 @@ export function ArtifactsPage() {
                             </time>
                           </div>
                           {artifact.sha256 && (
-                            <p className="ml-6 min-w-0 text-xs text-text-muted">
+                            <ResourceListDescription asChild className="ml-6 min-w-0"><p >
                               SHA-256:{" "}
                               <code
                                 title={artifact.sha256}
@@ -251,7 +253,7 @@ export function ArtifactsPage() {
                               >
                                 {artifact.sha256.slice(0, 12)}...
                               </code>
-                            </p>
+                            </p></ResourceListDescription>
                           )}
                           {actionError?.id === artifact.id && (
                             <Notice
@@ -271,34 +273,14 @@ export function ArtifactsPage() {
               </ResourceList>
             )}
             {filtered.length > pageSize && (
-              <nav
-                aria-label={t("artifacts.pages")}
-                className="flex items-center justify-end gap-2"
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(currentPage - 1)}
-                >
-                  {t("artifacts.previous")}
-                </Button>
-                <span className="text-sm text-text-muted">
-                  {currentPage} / {totalPages}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage(currentPage + 1)}
-                >
-                  {t("artifacts.next")}
-                </Button>
-              </nav>
+              <PageNavigation
+                page={currentPage}
+                pageCount={totalPages}
+                onPageChange={setPage}
+                label={t("artifacts.pages")}
+                previousLabel={t("artifacts.previous")}
+                nextLabel={t("artifacts.next")}
+              />
             )}
           </section>
         )}

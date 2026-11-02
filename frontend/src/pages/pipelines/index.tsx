@@ -1,8 +1,12 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { Configuration } from "@/api/workspaces";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState, type ComponentProps } from "react";
 import {
+  Badge,
+  ResourceListDescription,
+  PageNavigation,
   PageHeader,
   NamespaceLink as Link,
   ResourceList,
@@ -12,6 +16,7 @@ import {
   Button,
   Input,
   Label,
+  TextLink,
 } from "@pdlc/ui/ui";
 
 import { useParams } from "react-router";
@@ -22,12 +27,12 @@ import { usePipelines, useTriggerPipeline } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
-const statusColors: Record<string, string> = {
-  queued: "text-text-muted",
-  running: "text-warning",
-  success: "text-success",
-  failed: "text-danger",
-  canceled: "text-text-muted",
+const statusTones: Record<string, ComponentProps<typeof Badge>["tone"]> = {
+  queued: "muted",
+  running: "warning",
+  success: "success",
+  failed: "danger",
+  canceled: "muted",
 };
 
 export function PipelinesPage() {
@@ -74,12 +79,11 @@ export function PipelinesPage() {
           aria-label={t("pipelines.title")}
           className="flex min-w-0 items-center gap-2 text-sm text-text-muted"
         >
-          <Link
-            to="/delivery-configs"
-            className="min-h-10 content-center hover:text-text-primary"
-          >
-            CI-конфигурации
-          </Link>
+          <TextLink asChild>
+            <Link to="/delivery-configs" className="min-h-10 content-center">
+              CI-конфигурации
+            </Link>
+          </TextLink>
           <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
           <span className="truncate">{project?.name ?? projectId}</span>
         </nav>
@@ -105,41 +109,43 @@ export function PipelinesPage() {
       </>
 
       {showForm && (
-        <form
-          id="pipeline-trigger-form"
-          aria-label={t("pipelines.run")}
-          onSubmit={handleSubmit}
-          className="flex flex-wrap items-end gap-3 border-y border-border py-3"
-        >
-          <div className="min-w-48 flex-1 space-y-1.5 sm:max-w-xs">
-            <Label htmlFor="git-ref">{t("pipelines.gitRef")}</Label>
-            <Input
-              id="git-ref"
+        <ContentSection asChild dividers="both" density="compact">
+          <form
+            id="pipeline-trigger-form"
+            aria-label={t("pipelines.run")}
+            onSubmit={handleSubmit}
+            className="flex flex-wrap items-end gap-3"
+          >
+            <div className="min-w-48 flex-1 space-y-1.5 sm:max-w-xs">
+              <Label htmlFor="git-ref">{t("pipelines.gitRef")}</Label>
+              <Input
+                id="git-ref"
 
-              required
-              placeholder="main"
-              value={gitRef}
-              onChange={(event) => setGitRef(event.target.value)}
+                required
+                placeholder="main"
+                value={gitRef}
+                onChange={(event) => setGitRef(event.target.value)}
+                disabled={trigger.isPending}
+              />
+            </div>
+            <Button
+              type="submit"
+
+              disabled={trigger.isPending || !gitRef.trim()}
+            >
+              {t("pipelines.run")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+
               disabled={trigger.isPending}
-            />
-          </div>
-          <Button
-            type="submit"
-
-            disabled={trigger.isPending || !gitRef.trim()}
-          >
-            {t("pipelines.run")}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-
-            disabled={trigger.isPending}
-            onClick={() => setShowForm(false)}
-          >
-            {t("common.cancel")}
-          </Button>
-        </form>
+              onClick={() => setShowForm(false)}
+            >
+              {t("common.cancel")}
+            </Button>
+          </form>
+        </ContentSection>
       )}
 
       <QueryState
@@ -166,19 +172,25 @@ export function PipelinesPage() {
                       <code className="min-w-0 break-all text-xs text-text-secondary">
                         {pipeline.git_ref}
                       </code>
-                      <span
-                        className={`text-sm font-medium ${statusColors[pipeline.status]}`}
+                      <Badge
+                        appearance="inline"
+                        tone={statusTones[pipeline.status] ?? "neutral"}
                       >
                         {t(`pipelines.${pipeline.status}`)}
+                      </Badge>
+                    </span>
+                    <ResourceListDescription
+                      asChild
+                      className="flex items-center gap-2"
+                    >
+                      <span>
+                        <Clock className="h-4 w-4" aria-hidden />
+                        <time dateTime={pipeline.created_at}>
+                          {new Date(pipeline.created_at).toLocaleString()}
+                        </time>
+                        <ChevronRight className="h-4 w-4" aria-hidden />
                       </span>
-                    </span>
-                    <span className="flex items-center gap-2 text-xs text-text-muted">
-                      <Clock className="h-4 w-4" aria-hidden />
-                      <time dateTime={pipeline.created_at}>
-                        {new Date(pipeline.created_at).toLocaleString()}
-                      </time>
-                      <ChevronRight className="h-4 w-4" aria-hidden />
-                    </span>
+                    </ResourceListDescription>
                   </Link>
                 </ResourceListRow>
               ))}
@@ -187,34 +199,16 @@ export function PipelinesPage() {
         )}
       </QueryState>
       {(page > 0 || hasNextPage) && !pipelinesQuery.isError && (
-        <nav
-          aria-label={t("pipelines.title")}
-          className="flex items-center justify-end gap-2"
-        >
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-
-            disabled={page === 0 || pipelinesQuery.isFetching}
-            onClick={() => setPage(page - 1)}
-          >
-            {t("projects.previous")}
-          </Button>
-          <span className="text-sm text-text-muted">
-            {t("pipelines.page", { page: page + 1 })}
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-
-            disabled={!hasNextPage || pipelinesQuery.isFetching}
-            onClick={() => setPage(page + 1)}
-          >
-            {t("projects.next")}
-          </Button>
-        </nav>
+        <PageNavigation
+          page={page + 1}
+          hasNext={hasNextPage && !pipelinesQuery.isFetching}
+          onPageChange={(nextPage) => setPage(nextPage - 1)}
+          label={t("pipelines.title")}
+          previousLabel={t("projects.previous")}
+          nextLabel={t("projects.next")}
+          pending={pipelinesQuery.isFetching}
+          summary={t("pipelines.page", { page: page + 1 })}
+        />
       )}
     </div>
   );

@@ -181,7 +181,7 @@ describe("AppShell navigation", () => {
     renderShell();
     expect(screen.queryByText("admin")).not.toBeInTheDocument();
     fireEvent.keyDown(
-      screen.getByRole("button", { name: "navigation.account" }),
+      screen.getByRole("button", { name: "Аккаунт" }),
       {
         key: "ArrowDown",
       },
@@ -190,7 +190,7 @@ describe("AppShell navigation", () => {
     expect(menu).toHaveAttribute("data-state", "open");
     expect(within(menu).getAllByText("admin")).toHaveLength(1);
     fireEvent.click(
-      within(menu).getByRole("menuitem", { name: "navigation.logout" }),
+      within(menu).getByRole("menuitem", { name: "Выйти" }),
     );
     expect(authState.logout).toHaveBeenCalledOnce();
   });
@@ -267,7 +267,7 @@ describe("AppShell navigation", () => {
       "long-account-name-that-must-not-expand-the-platform-header@example.test";
     renderShell();
     fireEvent.keyDown(
-      screen.getByRole("button", { name: "navigation.account" }),
+      screen.getByRole("button", { name: "Аккаунт" }),
       {
         key: "ArrowDown",
       },

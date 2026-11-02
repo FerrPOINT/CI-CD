@@ -1,3 +1,4 @@
+import { ContentSection } from "@pdlc/ui/ui";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
@@ -11,6 +12,10 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  DescriptionItem,
+  ResourceListTitle,
+  ActionGroup,
+  PageNavigation,
   PageHeader,
   toast,
   Button,
@@ -143,109 +148,111 @@ export function SecretsPage() {
         }
       />
 
-      <div className="flex items-start gap-2 border-y border-border py-3 text-xs text-text-secondary">
-        <ShieldCheck className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+      <Notice appearance="inline" separated icon={<ShieldCheck aria-hidden />}>
         <p>{t("secrets.encryptedNotice")}</p>
-      </div>
+      </Notice>
 
       {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          aria-label={t(
-            editingKey !== null ? "secrets.replace" : "secrets.add",
-          )}
-          aria-busy={upsert.isPending}
-          className="grid gap-3 border-b border-border pb-4 sm:grid-cols-2"
-        >
-          <div className="min-w-0 space-y-1.5">
-            {editingKey !== null ? (
-              <>
-                <span className="text-sm font-medium">{t("secrets.key")}</span>
-                <p className="flex min-h-10 min-w-0 items-center break-all border-b border-border py-2 font-mono text-sm">
-                  {form.key}
-                </p>
-              </>
-            ) : (
-              <>
-                <Label htmlFor="secret-key">{t("secrets.key")}</Label>
-                <Input
-                  id="secret-key"
-                  ref={keyRef}
-                  className="min-w-0"
-                  required
-                  disabled={upsert.isPending}
-                  autoComplete="off"
-                  placeholder="DATABASE_PASSWORD"
-                  value={form.key}
-                  onChange={(event) => {
-                    setForm({ ...form, key: event.target.value });
-                    setSaveError("");
-                  }}
-                />
-              </>
+        <ContentSection asChild dividers="end">
+          <form
+            onSubmit={handleSubmit}
+            aria-label={t(
+              editingKey !== null ? "secrets.replace" : "secrets.add",
             )}
-          </div>
-          <div className="min-w-0 space-y-1.5">
-            <Label htmlFor="secret-value">{t("secrets.value")}</Label>
-            <InputWithAction
-              id="secret-value"
-              ref={valueRef}
-              type={showValue ? "text" : "password"}
-              className="min-w-0"
-              required
-              disabled={upsert.isPending}
-              autoComplete="new-password"
-              value={form.value}
-              onChange={(event) => {
-                setForm({ ...form, value: event.target.value });
-                setSaveError("");
-              }}
-              action={{
-                label: t(showValue ? "secrets.hideValue" : "secrets.showValue"),
-                pressed: showValue,
-                onAction: () => setShowValue(!showValue),
-                icon: showValue ? (
-                  <EyeOff className="h-4 w-4" aria-hidden />
-                ) : (
-                  <Eye className="h-4 w-4" aria-hidden />
-                ),
-              }}
-            />
-          </div>
-          {isReplacing && (
-            <p className="text-xs text-text-secondary sm:col-span-2">
-              {t("secrets.replaceWarning")}
-            </p>
-          )}
-          {saveError && (
-            <Notice
-              role="alert"
-              className="sm:col-span-2"
-              tone="danger"
-              appearance="inline"
-            >
-              {saveError}
-            </Notice>
-          )}
-          <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
-            <Button
-              type="button"
-              variant="outline"
+            aria-busy={upsert.isPending}
+            className="grid gap-3 sm:grid-cols-2"
+          >
+            <div className="min-w-0 space-y-1.5">
+              {editingKey !== null ? (
+                <dl>
+                  <DescriptionItem label={t("secrets.key")} technical>
+                    {form.key}
+                  </DescriptionItem>
+                </dl>
+              ) : (
+                <>
+                  <Label htmlFor="secret-key">{t("secrets.key")}</Label>
+                  <Input
+                    id="secret-key"
+                    ref={keyRef}
+                    className="min-w-0"
+                    required
+                    disabled={upsert.isPending}
+                    autoComplete="off"
+                    placeholder="DATABASE_PASSWORD"
+                    value={form.key}
+                    onChange={(event) => {
+                      setForm({ ...form, key: event.target.value });
+                      setSaveError("");
+                    }}
+                  />
+                </>
+              )}
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor="secret-value">{t("secrets.value")}</Label>
+              <InputWithAction
+                id="secret-value"
+                ref={valueRef}
+                type={showValue ? "text" : "password"}
+                className="min-w-0"
+                required
+                disabled={upsert.isPending}
+                autoComplete="new-password"
+                value={form.value}
+                onChange={(event) => {
+                  setForm({ ...form, value: event.target.value });
+                  setSaveError("");
+                }}
+                action={{
+                  label: t(
+                    showValue ? "secrets.hideValue" : "secrets.showValue",
+                  ),
+                  pressed: showValue,
+                  onAction: () => setShowValue(!showValue),
+                  icon: showValue ? (
+                    <EyeOff className="h-4 w-4" aria-hidden />
+                  ) : (
+                    <Eye className="h-4 w-4" aria-hidden />
+                  ),
+                }}
+              />
+            </div>
+            {isReplacing && (
+              <p className="text-xs text-text-secondary sm:col-span-2">
+                {t("secrets.replaceWarning")}
+              </p>
+            )}
+            {saveError && (
+              <Notice
+                role="alert"
+                className="sm:col-span-2"
+                tone="danger"
+                appearance="inline"
+              >
+                {saveError}
+              </Notice>
+            )}
+            <ActionGroup align="end" className="sm:col-span-2">
+              <Button
+                type="button"
+                variant="outline"
 
-              disabled={upsert.isPending}
-              onClick={closeForm}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button
-              type="submit"
+                disabled={upsert.isPending}
+                onClick={closeForm}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="submit"
 
-              disabled={upsert.isPending || !form.key.trim() || !form.value}
-            >
-              {t(isReplacing ? "secrets.replace" : "secrets.save")}
-            </Button>
-          </div>
-        </form>
+                disabled={upsert.isPending || !form.key.trim() || !form.value}
+              >
+                {t(isReplacing ? "secrets.replace" : "secrets.save")}
+              </Button>
+            </ActionGroup>
+          </form>
+        </ContentSection>
       )}
 
       <QueryState
@@ -291,9 +298,9 @@ export function SecretsPage() {
                           aria-hidden
                         />
                         <div className="min-w-0 flex-1">
-                          <p className="break-all font-mono text-sm font-medium">
-                            {secret.key}
-                          </p>
+                          <ResourceListTitle asChild technical>
+                            <p className="break-all">{secret.key}</p>
+                          </ResourceListTitle>
                           <time
                             dateTime={secret.updated_at}
                             title={new Date(secret.updated_at).toLocaleString()}
@@ -316,7 +323,8 @@ export function SecretsPage() {
                           })}
                           title={t("secrets.replaceFor", { name: secret.key })}
                           disabled={upsert.isPending}
-                          size="icon" className="shrink-0"
+                          size="icon"
+                          className="shrink-0"
                           onClick={() => openReplaceForm(secret)}
                         >
                           <RotateCw className="h-4 w-4" aria-hidden />
@@ -345,34 +353,14 @@ export function SecretsPage() {
               </ResourceList>
             )}
             {filteredSecrets.length > pageSize && (
-              <nav
-                aria-label={t("secrets.pages")}
-                className="flex items-center justify-end gap-2"
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(currentPage - 1)}
-                >
-                  {t("secrets.previous")}
-                </Button>
-                <span className="text-sm text-text-muted">
-                  {currentPage} / {totalPages}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage(currentPage + 1)}
-                >
-                  {t("secrets.next")}
-                </Button>
-              </nav>
+              <PageNavigation
+                page={currentPage}
+                pageCount={totalPages}
+                onPageChange={setPage}
+                label={t("secrets.pages")}
+                previousLabel={t("secrets.previous")}
+                nextLabel={t("secrets.next")}
+              />
             )}
           </section>
         )}

@@ -1,4 +1,12 @@
-import { FormField } from "@pdlc/ui/ui";
+import { ContentSection } from "@pdlc/ui/ui";
+import {
+  ActionGroup,
+  ResourceStateView,
+  AutocompleteInput,
+  PageNavigation,
+  FormField,
+  TextLink,
+} from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 import {
   Select,
@@ -106,157 +114,149 @@ function CreatePullRequestForm({
   }
 
   return (
-    <form
-      aria-label={t("pulls.create")}
-      onSubmit={handleSubmit}
-      className="grid gap-4 border-y border-border py-4 sm:grid-cols-2"
-    >
-      <div className="sm:col-span-2">
-        <FormField id="pr-title" label={t("pulls.titleField")} required>
+    <ContentSection asChild dividers="both">
+      <form
+        aria-label={t("pulls.create")}
+        onSubmit={handleSubmit}
+        className="grid gap-4 sm:grid-cols-2"
+      >
+        <div className="sm:col-span-2">
+          <FormField id="pr-title" label={t("pulls.titleField")} required>
+            {(attrs) => (
+              <Input
+                {...attrs}
+                value={form.title}
+                onChange={(event) =>
+                  setForm({ ...form, title: event.target.value })
+                }
+              />
+            )}
+          </FormField>
+        </div>
+        <FormField id="pr-source" label={t("pulls.sourceBranch")} required>
           {(attrs) => (
-            <Input
+            <AutocompleteInput
               {...attrs}
-              value={form.title}
-              onChange={(event) =>
-                setForm({ ...form, title: event.target.value })
+              options={
+                sourceRefs.data
+                  ?.filter((ref) => ref.kind === "branch")
+                  .slice(0, 50)
+                  .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
               }
-            />
-          )}
-        </FormField>
-      </div>
-      <FormField id="pr-source" label={t("pulls.sourceBranch")} required>
-        {(attrs) => (
-          <>
-            <Input
-              {...attrs}
-              list="pr-source-refs"
               className="font-mono"
               value={form.source_branch}
-              onChange={(event) =>
-                setForm({ ...form, source_branch: event.target.value })
-              }
-            />
-            <datalist id="pr-source-refs">
-              {sourceRefs.data
-                ?.filter((ref) => ref.kind === "branch")
-                .slice(0, 50)
-                .map((ref) => (
-                  <option key={ref.name} value={ref.name} />
-                ))}
-            </datalist>
-          </>
-        )}
-      </FormField>
-      <FormField id="pr-target" label={t("pulls.targetBranch")} required>
-        {(attrs) => (
-          <>
-            <Input
-              {...attrs}
-              list="pr-target-refs"
-              className="font-mono"
-              value={form.target_branch}
-              onChange={(event) =>
-                setForm({ ...form, target_branch: event.target.value })
-              }
-            />
-            <datalist id="pr-target-refs">
-              {targetRefs.data
-                ?.filter((ref) => ref.kind === "branch")
-                .slice(0, 50)
-                .map((ref) => (
-                  <option key={ref.name} value={ref.name} />
-                ))}
-            </datalist>
-          </>
-        )}
-      </FormField>
-      {sameBranch && (
-        <Notice
-          role="alert"
-          tone="danger"
-          appearance="inline"
-          className="sm:col-span-2"
-        >
-          {t("pulls.branchesMustDiffer")}
-        </Notice>
-      )}
-      {refsLoading && (
-        <Notice
-          role="status"
-          tone="neutral"
-          appearance="inline"
-          className="sm:col-span-2"
-        >
-          {t("pulls.loadingRefs")}
-        </Notice>
-      )}
-      {((sourceRefs.data?.length ?? 0) > 50 ||
-        (targetRefs.data?.length ?? 0) > 50) && (
-        <Notice
-          role="status"
-          tone="neutral"
-          appearance="inline"
-          className="sm:col-span-2"
-        >
-          {t("pulls.refSuggestionsLimited")}
-        </Notice>
-      )}
-      {Boolean(refsError) && (
-        <Notice
-          tone="warning"
-          appearance="inline"
-          role="alert"
-          className="sm:col-span-2"
-          actions={
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-
-              onClick={() => {
-                if (sourceRefs.error) void sourceRefs.refetch();
-                if (targetRefs.error) void targetRefs.refetch();
-              }}
-            >
-              {t("common.retry")}
-            </Button>
-          }
-        >
-          {t("pulls.refsUnavailable")}
-        </Notice>
-      )}
-      <div className="sm:col-span-2">
-        <FormField id="pr-description" label={t("pulls.descriptionField")}>
-          {(attrs) => (
-            <Textarea
-              {...attrs}
-              rows={3}
-              value={form.description}
-              onChange={(event) =>
-                setForm({ ...form, description: event.target.value })
+              onValueChange={(nextValue) =>
+                setForm({ ...form, source_branch: nextValue })
               }
             />
           )}
         </FormField>
-      </div>
-      <div className="flex flex-wrap gap-2 sm:col-span-2">
-        <Button
-          type="submit"
+        <FormField id="pr-target" label={t("pulls.targetBranch")} required>
+          {(attrs) => (
+            <AutocompleteInput
+              {...attrs}
+              options={
+                targetRefs.data
+                  ?.filter((ref) => ref.kind === "branch")
+                  .slice(0, 50)
+                  .map((ref) => ({ value: ref.name, label: ref.name })) ?? []
+              }
+              className="font-mono"
+              value={form.target_branch}
+              onValueChange={(nextValue) =>
+                setForm({ ...form, target_branch: nextValue })
+              }
+            />
+          )}
+        </FormField>
+        {sameBranch && (
+          <Notice
+            role="alert"
+            tone="danger"
+            appearance="inline"
+            className="sm:col-span-2"
+          >
+            {t("pulls.branchesMustDiffer")}
+          </Notice>
+        )}
+        {refsLoading && (
+          <Notice
+            role="status"
+            tone="neutral"
+            appearance="inline"
+            className="sm:col-span-2"
+          >
+            {t("pulls.loadingRefs")}
+          </Notice>
+        )}
+        {((sourceRefs.data?.length ?? 0) > 50 ||
+          (targetRefs.data?.length ?? 0) > 50) && (
+          <Notice
+            role="status"
+            tone="neutral"
+            appearance="inline"
+            className="sm:col-span-2"
+          >
+            {t("pulls.refSuggestionsLimited")}
+          </Notice>
+        )}
+        {Boolean(refsError) && (
+          <Notice
+            tone="warning"
+            appearance="inline"
+            role="alert"
+            className="sm:col-span-2"
+            actions={
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
 
-          disabled={createPullRequest.isPending || sameBranch}
-        >
-          {t("pulls.create")}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
+                onClick={() => {
+                  if (sourceRefs.error) void sourceRefs.refetch();
+                  if (targetRefs.error) void targetRefs.refetch();
+                }}
+              >
+                {t("common.retry")}
+              </Button>
+            }
+          >
+            {t("pulls.refsUnavailable")}
+          </Notice>
+        )}
+        <div className="sm:col-span-2">
+          <FormField id="pr-description" label={t("pulls.descriptionField")}>
+            {(attrs) => (
+              <Textarea
+                {...attrs}
+                rows={3}
+                value={form.description}
+                onChange={(event) =>
+                  setForm({ ...form, description: event.target.value })
+                }
+              />
+            )}
+          </FormField>
+        </div>
+        <ActionGroup align="start" className="sm:col-span-2">
+          <Button
+            type="submit"
 
-          onClick={onClose}
-        >
-          {t("common.cancel")}
-        </Button>
-      </div>
-    </form>
+            disabled={createPullRequest.isPending || sameBranch}
+          >
+            {t("pulls.create")}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+
+            onClick={onClose}
+          >
+            {t("common.cancel")}
+          </Button>
+        </ActionGroup>
+      </form>
+    </ContentSection>
   );
 }
 
@@ -282,13 +282,15 @@ function PullRequestRow({
           />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              <Link
-                to={detailHref}
-                className="min-w-0 break-words text-sm font-medium hover:text-accent focus-visible:outline-2 focus-visible:outline-accent"
-              >
-                <span className="text-text-muted">#{pullRequest.number}</span>{" "}
-                {pullRequest.title}
-              </Link>
+              <TextLink asChild>
+                <Link
+                  to={detailHref}
+                  className="min-w-0 break-words text-sm font-medium"
+                >
+                  <span className="text-text-muted">#{pullRequest.number}</span>{" "}
+                  {pullRequest.title}
+                </Link>
+              </TextLink>
               <Badge tone={statusTones[pullRequest.status]}>
                 {t(`pulls.status_${pullRequest.status}`)}
               </Badge>
@@ -407,23 +409,32 @@ export function PullRequestsPage() {
 
   if (!repo)
     return (
-      <p className="text-sm text-text-muted">{t("repositories.notFound")}</p>
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("repositories.notFound"),
+          headingLevel: 1,
+        }}
+      />
     );
 
   return (
     <div className="space-y-5">
       <div>
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
-          <Link to="/repositories" className="hover:text-text-primary">
-            {t("navigation.repositories")}
-          </Link>
+          <TextLink asChild>
+            <Link to="/repositories">{t("navigation.repositories")}</Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" aria-hidden />
-          <Link
-            to={`/repositories/${encodeURIComponent(repo)}`}
-            className="break-all hover:text-text-primary"
-          >
-            {repo}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to={`/repositories/${encodeURIComponent(repo)}`}
+              className="break-all"
+            >
+              {repo}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" aria-hidden />
           <span>{t("repositoryBrowser.pullRequests")}</span>
         </div>
@@ -531,34 +542,15 @@ export function PullRequestsPage() {
                 </ResourceList>
               )}
               {result.total > pageSize && (
-                <nav
-                  aria-label={t("pulls.pages")}
-                  className="flex items-center justify-end gap-2"
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-
-                    disabled={page === 1 || isFetching}
-                    onClick={() => changePage(page - 1)}
-                  >
-                    {t("pulls.previous")}
-                  </Button>
-                  <span className="text-sm text-text-muted">
-                    {page} / {pageCount}
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-
-                    disabled={page === pageCount || isFetching}
-                    onClick={() => changePage(page + 1)}
-                  >
-                    {t("pulls.next")}
-                  </Button>
-                </nav>
+                <PageNavigation
+                  page={page}
+                  pageCount={pageCount}
+                  onPageChange={changePage}
+                  label={t("pulls.pages")}
+                  previousLabel={t("pulls.previous")}
+                  nextLabel={t("pulls.next")}
+                  pending={isFetching}
+                />
               )}
             </section>
           );

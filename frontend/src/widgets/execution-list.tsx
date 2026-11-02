@@ -3,6 +3,8 @@ import { useSearchParams } from "react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  ResourceListDescription,
+  PageNavigation,
   TextLink,
   EmptyState,
   Badge,
@@ -224,10 +226,7 @@ export function ExecutionList({
       {!!activeKeys.length && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {activeKeys.map((key) => (
-            <span
-              key={key}
-              className="max-w-full break-words rounded-md bg-surface-raised px-2 py-1"
-            >
+            <Badge key={key}>
               {key === "repository_id"
                 ? (selectedRepository.data ?? "Репозиторий недоступен")
                 : key === "configuration_id"
@@ -239,7 +238,7 @@ export function ExecutionList({
                       : key === "environment_id"
                         ? "Выбрано окружение"
                         : `${({ git_ref: "Git", since: "С", until: "По" } as Record<string, string>)[key]}: ${applied[key]}`}
-            </span>
+            </Badge>
           ))}
           <Button type="button" variant="ghost" onClick={reset}>
             Сбросить
@@ -371,39 +370,43 @@ export function ExecutionList({
                                 </Link>
                               </TextLink>
                             </div>
-                            <p className="mt-1 break-words text-sm text-text-muted">
-                              {row.git_ref} ·{" "}
-                              <time dateTime={row.created_at}>
-                                {new Date(row.created_at).toLocaleString()}
-                              </time>
-                              {row.environment_name
-                                ? ` · ${row.environment_name}`
-                                : ""}
-                              {seconds !== undefined ? ` · ${seconds} с` : ""}
-                            </p>
-                            {row.commit_sha && (
-                              <p className="mt-1 text-xs text-text-muted">
-                                Коммит{" "}
-                                <TextLink asChild>
-                                  <Link
-                                    className="font-mono"
-                                    to={withNamespaceLocation(
-                                      `/catalog/repositories/${row.repository_id}?tab=files&ref=${encodeURIComponent(row.commit_sha)}`,
-                                      row.namespace,
-                                    )}
-                                  >
-                                    {row.commit_sha.slice(0, 8)}
-                                  </Link>
-                                </TextLink>
+                            <ResourceListDescription asChild>
+                              <p className="mt-1 break-words">
+                                {row.git_ref} ·{" "}
+                                <time dateTime={row.created_at}>
+                                  {new Date(row.created_at).toLocaleString()}
+                                </time>
+                                {row.environment_name
+                                  ? ` · ${row.environment_name}`
+                                  : ""}
+                                {seconds !== undefined ? ` · ${seconds} с` : ""}
                               </p>
+                            </ResourceListDescription>
+                            {row.commit_sha && (
+                              <ResourceListDescription asChild className="mt-1">
+                                <p>
+                                  Коммит{" "}
+                                  <TextLink asChild>
+                                    <Link
+                                      className="font-mono"
+                                      to={withNamespaceLocation(
+                                        `/catalog/repositories/${row.repository_id}?tab=files&ref=${encodeURIComponent(row.commit_sha)}`,
+                                        row.namespace,
+                                      )}
+                                    >
+                                      {row.commit_sha.slice(0, 8)}
+                                    </Link>
+                                  </TextLink>
+                                </p>
+                              </ResourceListDescription>
                             )}
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={tone}>{statusLabel(row.status)}</Badge>
                             {row.approval_state && (
-                              <span className="text-sm text-text-muted">
-                                {approvalLabel(row.approval_state)}
-                              </span>
+                              <ResourceListDescription asChild>
+                                <span>{approvalLabel(row.approval_state)}</span>
+                              </ResourceListDescription>
                             )}
                             <Button asChild variant="link">
                               <Link
@@ -462,46 +465,33 @@ export function ExecutionList({
                     : "0 результатов"}
                 </p>
                 {display.total > pageSize && (
-                  <nav
-                    aria-label="Страницы запусков"
-                    className="flex items-center gap-2"
-                  >
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!offset}
-                      onClick={() =>
-                        setParams((current) => {
-                          const next = new URLSearchParams(current);
-                          next.set(
-                            "offset",
-                            String(Math.max(0, offset - pageSize)),
-                          );
-                          return next;
-                        })
-                      }
-                    >
-                      Назад
-                    </Button>
-                    <span className="text-sm">
-                      {Math.floor(offset / pageSize) + 1} /{" "}
-                      {Math.ceil(display.total / pageSize)}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={offset + pageSize >= display.total}
-                      onClick={() =>
-                        setParams((current) => {
-                          const next = new URLSearchParams(current);
-                          next.set("offset", String(offset + pageSize));
-                          return next;
-                        })
-                      }
-                    >
-                      Далее
-                    </Button>
-                  </nav>
+                  <PageNavigation
+                    page={Math.ceil(offset / pageSize) + 1}
+                    hasNext={offset + pageSize < display.total}
+                    onPageChange={(nextPage) =>
+                      setParams((current) => {
+                        const next = new URLSearchParams(current);
+                        next.set(
+                          "offset",
+                          String(
+                            nextPage < Math.ceil(offset / pageSize) + 1
+                              ? Math.max(0, offset - pageSize)
+                              : offset + pageSize,
+                          ),
+                        );
+                        return next;
+                      })
+                    }
+                    label="Страницы запусков"
+                    previousLabel="Назад"
+                    nextLabel="Далее"
+                    summary={
+                      <>
+                        {Math.floor(offset / pageSize) + 1} /{" "}
+                        {Math.ceil(display.total / pageSize)}
+                      </>
+                    }
+                  />
                 )}
               </div>
             )}

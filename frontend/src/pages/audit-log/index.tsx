@@ -1,11 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
-import { ChevronLeft, ChevronRight, History, Search } from "lucide-react";
+import { History, Search } from "lucide-react";
 
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
 import {
+  ResourceListDescription,
+  ResourceListTitle,
+  DescriptionItem,
+  PageNavigation,
   PageHeader,
   Select,
   InitialsAvatar as UserAvatar,
@@ -271,11 +275,11 @@ export function AuditLogPage() {
                         <ResourceListRow asChild key={event.id}>
                           <li className="min-w-0 space-y-2 text-sm">
                             <div className="flex min-w-0 items-start justify-between gap-3">
-                              <span className="min-w-0 break-words text-xs font-medium">
+                              <ResourceListTitle asChild className="min-w-0 break-words"><span >
                                 {t(`auditLog.actions.${event.action}`, {
                                   defaultValue: event.action,
                                 })}
-                              </span>
+                              </span></ResourceListTitle>
                               <time
                                 className="shrink-0 text-xs text-text-muted"
                                 dateTime={event.created_at}
@@ -286,27 +290,29 @@ export function AuditLogPage() {
                                 )}
                               </time>
                             </div>
-                            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                              <dt className="text-text-muted">
-                                {t("auditLog.resource")}
-                              </dt>
-                              <dd className="min-w-0 break-all">
+                            <dl className="min-w-0 space-y-1">
+                              <DescriptionItem
+                                label={<>{t("auditLog.resource")}</>}
+                                layout="inline"
+                              >
                                 {t(
                                   `auditLog.resources.${event.resource_type}`,
                                   { defaultValue: event.resource_type },
                                 )}
                                 {event.resource_id && (
-                                  <span className="ml-2 font-mono">
+                                  <ResourceListDescription asChild technical>
+                                    <span className="ml-2">
                                     {event.resource_id.slice(0, 8)}
                                   </span>
+                                  </ResourceListDescription>
                                 )}
-                              </dd>
-                              <dt className="text-text-muted">
-                                {t("auditLog.actor")}
-                              </dt>
-                              <dd className="min-w-0 break-words">
+                              </DescriptionItem>
+                              <DescriptionItem
+                                label={<>{t("auditLog.actor")}</>}
+                                layout="inline"
+                              >
                                 {event.actor || "—"}
-                              </dd>
+                              </DescriptionItem>
                             </dl>
                           </li>
                         </ResourceListRow>
@@ -326,12 +332,12 @@ export function AuditLogPage() {
                       <TableBody>
                         {result.items.map((event) => (
                           <TableRow key={event.id}>
-                            <TableCell className="text-xs">
+                            <TableCell size="sm">
                               {t(`auditLog.actions.${event.action}`, {
                                 defaultValue: event.action,
                               })}
                             </TableCell>
-                            <TableCell className="text-xs">
+                            <TableCell size="sm">
                               <span className="text-text-muted">
                                 {t(
                                   `auditLog.resources.${event.resource_type}`,
@@ -339,12 +345,12 @@ export function AuditLogPage() {
                                 )}
                               </span>
                               {event.resource_id && (
-                                <span className="ml-2 font-mono text-text-muted">
+                                <ResourceListDescription asChild technical><span className="ml-2">
                                   {event.resource_id.slice(0, 8)}
-                                </span>
+                                </span></ResourceListDescription>
                               )}
                             </TableCell>
-                            <TableCell className="text-xs text-text-muted">
+                            <TableCell className="text-text-muted" size="sm">
                               {event.actor ? (
                                 <span className="inline-flex min-w-0 items-center gap-1.5">
                                   <UserAvatar name={event.actor} size="xs" />
@@ -356,7 +362,7 @@ export function AuditLogPage() {
                                 "—"
                               )}
                             </TableCell>
-                            <TableCell className="text-xs text-text-muted">
+                            <TableCell className="text-text-muted" size="sm">
                               <time
                                 dateTime={event.created_at}
                                 title={event.created_at}
@@ -375,36 +381,15 @@ export function AuditLogPage() {
               )}
 
               {result.total > pageSize && (
-                <nav
-                  aria-label={t("auditLog.pages")}
-                  className="flex items-center justify-end gap-2"
-                >
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-
-                    disabled={page === 1 || auditQuery.isFetching}
-                    onClick={() => changePage(page - 1)}
-                  >
-                    <ChevronLeft className="h-4 w-4" aria-hidden />
-                    {t("auditLog.previous")}
-                  </Button>
-                  <span className="min-w-16 text-center text-sm tabular-nums text-text-muted">
-                    {page} / {pageCount}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-
-                    disabled={page === pageCount || auditQuery.isFetching}
-                    onClick={() => changePage(page + 1)}
-                  >
-                    {t("auditLog.next")}
-                    <ChevronRight className="h-4 w-4" aria-hidden />
-                  </Button>
-                </nav>
+                <PageNavigation
+                  page={page}
+                  pageCount={pageCount}
+                  onPageChange={changePage}
+                  label={t("auditLog.pages")}
+                  previousLabel={t("auditLog.previous")}
+                  nextLabel={t("auditLog.next")}
+                  pending={auditQuery.isFetching}
+                />
               )}
             </section>
           );

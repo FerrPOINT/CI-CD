@@ -14,6 +14,7 @@ import {
   ErrorState,
   LoadingState,
   Notice,
+  TextLink,
 } from "@pdlc/ui/ui";
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { useWorkspace, workspaceKey, workspacePath } from "@/api/workspaces";
@@ -97,9 +98,9 @@ export function WorkspacePage() {
   ];
   return (
     <div className="space-y-5">
-      <Link to="/projects?project_scope=all" className="text-accent">
-        Все проекты
-      </Link>
+      <TextLink asChild>
+        <Link to="/projects?project_scope=all">Все проекты</Link>
+      </TextLink>
       <PageHeader
         title={data.name}
         leading={
@@ -227,16 +228,17 @@ export function WorkspacePage() {
             title={<>Последние пайплайны</>}
             actions={
               <>
-                <Link
-                  className="text-accent underline"
-                  to={withNamespaceLocation(
-                    workspacePath(ref, "pipelines") +
-                      (all ? "?project_scope=all" : ""),
-                    ref,
-                  )}
-                >
-                  Все пайплайны
-                </Link>
+                <TextLink asChild>
+                  <Link
+                    to={withNamespaceLocation(
+                      workspacePath(ref, "pipelines") +
+                        (all ? "?project_scope=all" : ""),
+                      ref,
+                    )}
+                  >
+                    Все пайплайны
+                  </Link>
+                </TextLink>
               </>
             }
           />

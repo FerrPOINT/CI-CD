@@ -1,10 +1,16 @@
+import { InlineCode, ContentSection } from "@pdlc/ui/ui";
 import {
+  ActionGroup,
+  ResourceListDescription,
+  Prose,
+  ResourceStateView,
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
   DiffBlock,
   Button,
   InitialsAvatar as UserAvatar,
+  TextLink,
 } from "@pdlc/ui/ui";
 import {
   PageHeader,
@@ -86,13 +92,29 @@ export function PullRequestDetailPage() {
 
   if (!repo)
     return (
-      <p className="text-sm text-text-muted">{t("repositories.notFound")}</p>
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("repositories.notFound"),
+          headingLevel: 1,
+        }}
+      />
     );
   if (
     !pullRequestNumber ||
     (error instanceof ApiError && error.status === 404)
   ) {
-    return <p className="text-sm text-text-muted">{t("pulls.notFound")}</p>;
+    return (
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("pulls.notFound"),
+          headingLevel: 1,
+        }}
+      />
+    );
   }
   if (isLoading || error)
     return (
@@ -106,33 +128,48 @@ export function PullRequestDetailPage() {
       </QueryState>
     );
   if (!pr)
-    return <p className="text-sm text-text-muted">{t("pulls.notFound")}</p>;
+    return (
+      <ResourceStateView
+        scope="local"
+        state={{
+          kind: "not-found",
+          title: t("pulls.notFound"),
+          headingLevel: 1,
+        }}
+      />
+    );
 
   if (showDiff) {
     return (
       <div className="space-y-6">
         <div>
           <div className="flex flex-wrap items-center gap-2 text-sm text-text-muted">
-            <Link
-              to="/repositories"
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              {t("navigation.repositories")}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to="/repositories"
+                className="inline-flex min-h-10 items-center"
+              >
+                {t("navigation.repositories")}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
-            <Link
-              to={`/repositories/${encodeURIComponent(repo)}/pulls`}
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              {t("repositoryBrowser.pullRequests")}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to={`/repositories/${encodeURIComponent(repo)}/pulls`}
+                className="inline-flex min-h-10 items-center"
+              >
+                {t("repositoryBrowser.pullRequests")}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
-            <Link
-              to={`/repositories/${encodeURIComponent(repo)}/pulls/${pr.number}`}
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              #{pr.number}
-            </Link>
+            <TextLink asChild>
+              <Link
+                to={`/repositories/${encodeURIComponent(repo)}/pulls/${pr.number}`}
+                className="inline-flex min-h-10 items-center"
+              >
+                #{pr.number}
+              </Link>
+            </TextLink>
             <ChevronRight className="h-3 w-3" />
             <span>{t("pulls.viewDiff")}</span>
           </div>
@@ -179,32 +216,34 @@ export function PullRequestDetailPage() {
           <EmptyState message={t("compare.noChanges")} />
         ) : (
           <>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-y border-border py-3 text-sm">
-              <span className="text-text-muted">
-                {t("compare.mergeBase")}:{" "}
-              </span>
-              <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
-                {comparison.merge_base}
-              </code>
-              {comparison.files.some((file) => !file.binary) ? (
-                <>
-                  <span className="text-success">
-                    +
-                    {comparison.files.reduce(
-                      (sum, file) => sum + file.additions,
-                      0,
-                    )}
-                  </span>
-                  <span className="text-danger">
-                    −
-                    {comparison.files.reduce(
-                      (sum, file) => sum + file.deletions,
-                      0,
-                    )}
-                  </span>
-                </>
-              ) : null}
-            </div>
+            <ContentSection asChild dividers="both" density="compact">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="text-text-muted">
+                  {t("compare.mergeBase")}:{" "}
+                </span>
+                <InlineCode className="break-all">
+                  {comparison.merge_base}
+                </InlineCode>
+                {comparison.files.some((file) => !file.binary) ? (
+                  <>
+                    <span className="text-success">
+                      +
+                      {comparison.files.reduce(
+                        (sum, file) => sum + file.additions,
+                        0,
+                      )}
+                    </span>
+                    <span className="text-danger">
+                      −
+                      {comparison.files.reduce(
+                        (sum, file) => sum + file.deletions,
+                        0,
+                      )}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            </ContentSection>
             <div>
               <SectionHeader title={t("compare.filesChanged")} />
               <ResourceList asChild variant="bordered">
@@ -218,9 +257,9 @@ export function PullRequestDetailPage() {
                         />
                         <code className="flex-1 truncate">{file.path}</code>
                         {file.binary ? (
-                          <span className="text-text-muted">
-                            {t("compare.binaryFile")}
-                          </span>
+                          <ResourceListDescription asChild>
+                            <span>{t("compare.binaryFile")}</span>
+                          </ResourceListDescription>
                         ) : (
                           <>
                             <span className="text-success">
@@ -261,26 +300,32 @@ export function PullRequestDetailPage() {
     <div className="space-y-6">
       <div>
         <div className="flex flex-wrap items-center gap-2 text-sm text-text-muted">
-          <Link
-            to="/repositories"
-            className="inline-flex min-h-10 items-center hover:text-text-primary"
-          >
-            {t("navigation.repositories")}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to="/repositories"
+              className="inline-flex min-h-10 items-center"
+            >
+              {t("navigation.repositories")}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" />
-          <Link
-            to={`/repositories/${encodeURIComponent(repo)}`}
-            className="inline-flex min-h-10 items-center break-all hover:text-text-primary"
-          >
-            {repo}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to={`/repositories/${encodeURIComponent(repo)}`}
+              className="inline-flex min-h-10 items-center break-all"
+            >
+              {repo}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" />
-          <Link
-            to={`/repositories/${encodeURIComponent(repo)}/pulls`}
-            className="inline-flex min-h-10 items-center hover:text-text-primary"
-          >
-            {t("repositoryBrowser.pullRequests")}
-          </Link>
+          <TextLink asChild>
+            <Link
+              to={`/repositories/${encodeURIComponent(repo)}/pulls`}
+              className="inline-flex min-h-10 items-center"
+            >
+              {t("repositoryBrowser.pullRequests")}
+            </Link>
+          </TextLink>
           <ChevronRight className="h-3 w-3" />
           <span>#{pr.number}</span>
         </div>
@@ -304,26 +349,26 @@ export function PullRequestDetailPage() {
           <section>
             <CardContent>
               {pr.description && (
-                <p className="whitespace-pre-wrap text-sm text-text-secondary">
-                  {pr.description}
-                </p>
+                <Prose asChild>
+                  <p className="whitespace-pre-wrap">{pr.description}</p>
+                </Prose>
               )}
               <dl className="mt-4">
                 <DescriptionItem
                   layout="inline"
                   label={t("pulls.sourceBranch")}
                 >
-                  <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
+                  <InlineCode className="break-all">
                     {pr.source_branch}
-                  </code>
+                  </InlineCode>
                 </DescriptionItem>
                 <DescriptionItem
                   layout="inline"
                   label={t("pulls.targetBranch")}
                 >
-                  <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">
+                  <InlineCode className="break-all">
                     {pr.target_branch}
-                  </code>
+                  </InlineCode>
                 </DescriptionItem>
                 <DescriptionItem layout="inline" label={t("pulls.createdBy")}>
                   <UserAvatar name={pr.created_by} size="sm" withName />
@@ -341,9 +386,7 @@ export function PullRequestDetailPage() {
                     layout="inline"
                     label={t("pulls.mergeCommit")}
                   >
-                    <code className="rounded bg-surface-raised px-1.5 py-0.5">
-                      {pr.merge_commit_sha.slice(0, 7)}
-                    </code>
+                    <InlineCode>{pr.merge_commit_sha.slice(0, 7)}</InlineCode>
                   </DescriptionItem>
                 )}
               </dl>
@@ -356,14 +399,14 @@ export function PullRequestDetailPage() {
             headingId="pull-actions-title"
             title={t("pulls.actions")}
           />
-          <div className="mt-3 flex flex-col gap-2">
+          <ActionGroup orientation="vertical" className="mt-3">
             <Button asChild variant="outline" className="justify-start">
               <Link to={buildPrDiffHref(pr)}>
                 <FileDiff className="h-4 w-4" /> {t("pulls.viewDiff")}
               </Link>
             </Button>
             <PullRequestActions repo={repo} pullRequest={pr} />
-          </div>
+          </ActionGroup>
         </aside>
       </div>
     </div>
