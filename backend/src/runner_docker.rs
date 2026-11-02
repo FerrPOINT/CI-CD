@@ -1202,6 +1202,7 @@ impl RemoteJob {
     ) -> io::Result<Self> {
         let client = Client::from_env()?;
         client.verify().await?;
+        shared_sources(&client).await?;
         let root = PathBuf::from(
             std::env::var("CICD_RUNNER_WORKSPACE_ROOT").unwrap_or_else(|_| "/workspaces".into()),
         )
@@ -1557,20 +1558,8 @@ impl RemoteJob {
         args: &[String],
         envs: &[(String, String)],
     ) -> io::Result<Command> {
-        let source = std::env::var("CICD_RUNNER_SHARED_SOURCES_VOLUME").unwrap_or_default();
-        if source.is_empty() {
-            return Err(invalid("immutable source volume is required"));
-        }
-        let volume: Value =
-            serde_json::from_str(&self.client.run(&["volume", "inspect", &source]).await?)?;
-        let revision = std::env::var("CICD_RUNNER_BASE_REVISION").unwrap_or_default();
-        let workspace = std::env::var("CICD_RUNNER_WORKSPACE_PROJECT").unwrap_or_default();
-        if !source_provenance_matches(&volume, &revision, &workspace) {
-            return Err(invalid(
-                "source volume provenance differs from registered Base revision/workspace",
-            ));
-        }
-        let mut service = compose_job(args, envs)?;
+        let source = shared_sources(&self.client).await?;
+        let mut service = compose_job(args, envs, source.as_deref())?;
         service["image"] = json!(
             self.client
                 .image(service["image"].as_str().unwrap())
@@ -1581,7 +1570,9 @@ impl RemoteJob {
             service["cgroup_parent"] = json!(parent);
         }
         self.manifest["services"]["job"] = service;
-        self.manifest["volumes"]["sources"] = json!({"external":true,"name":source});
+        if let Some(source) = source {
+            self.manifest["volumes"]["sources"] = json!({"external":true,"name":source});
+        }
         self.save_manifest().await?;
         self.compose(&["config", "--quiet"]).await?;
         self.record("execution-started").await?;
@@ -1954,12 +1945,36 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+async fn shared_sources(client: &Client) -> io::Result<Option<String>> {
+    let source = std::env::var("CICD_RUNNER_SHARED_SOURCES_VOLUME").unwrap_or_default();
+    let source = source.trim();
+    if source.is_empty() {
+        return Ok(None);
+    }
+    let volume: Value = serde_json::from_str(&client.run(&["volume", "inspect", source]).await?)?;
+    let revision = std::env::var("CICD_RUNNER_BASE_REVISION").unwrap_or_default();
+    let workspace = std::env::var("CICD_RUNNER_WORKSPACE_PROJECT").unwrap_or_default();
+    if volume.as_array().map(Vec::len) != Some(1)
+        || volume[0]["Name"].as_str() != Some(source)
+        || !source_provenance_matches(&volume, &revision, &workspace)
+    {
+        return Err(invalid(
+            "source volume provenance differs from registered Base revision/workspace",
+        ));
+    }
+    Ok(Some(source.to_owned()))
+}
+
 /// The old argument builder is a declarative adapter only; never passed to Docker.
-fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> {
+fn compose_job(
+    args: &[String],
+    envs: &[(String, String)],
+    source: Option<&str>,
+) -> io::Result<Value> {
     let mut service = json!({"pull_policy":"never", "restart":"no", "networks":["job"], "volumes":[
         {"type":"volume","source":"workspace","target":"/workspace"},
-        {"type":"volume","source":"cargo","target":"/usr/local/cargo/registry"},
-        {"type":"volume","source":"sources","target":"/runner-sources","read_only":true}]});
+        {"type":"volume","source":"cargo","target":"/usr/local/cargo/registry"}]});
+    let mut source_mount = false;
     let mut index = 1;
     while index < args.len() && args[index].starts_with('-') {
         let flag = args[index].as_str();
@@ -1977,7 +1992,23 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
         index += 1;
         match flag {
             "--name" => service["container_name"] = json!(value),
-            "--network" | "--mount" => (),
+            "--network" => (),
+            "--mount" => {
+                if value
+                    .split(',')
+                    .any(|part| part == "dst=/runner-sources" || part == "target=/runner-sources")
+                {
+                    let expected = source.map(|source| {
+                        format!("type=volume,src={source},dst=/runner-sources,readonly")
+                    });
+                    if source_mount || expected.as_deref() != Some(value.as_str()) {
+                        return Err(invalid(
+                            "job source mount differs from configured source volume",
+                        ));
+                    }
+                    source_mount = true;
+                }
+            }
             "--cap-drop" => service["cap_drop"] = json!([value]),
             "--security-opt" => {
                 if service.get("security_opt").is_none() {
@@ -2002,6 +2033,16 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
             "--user" => service["user"] = json!(value),
             _ => return Err(invalid("unsupported declarative job adapter option")),
         }
+    }
+    if source.is_some() != source_mount {
+        return Err(invalid(
+            "job source mount differs from configured source volume",
+        ));
+    }
+    if source_mount {
+        service["volumes"].as_array_mut().unwrap().push(json!({
+            "type":"volume", "source":"sources", "target":"/runner-sources", "read_only":true
+        }));
     }
     service["image"] = json!(
         args.get(index)
@@ -2962,13 +3003,56 @@ mod tests {
                 ("DOCKER_HOST".into(), "secret".into()),
                 ("CICD_JOB_ID".into(), "test".into()),
             ],
+            None,
         )
         .unwrap();
         assert!(!value.to_string().contains("control"));
         assert!(!value.to_string().contains("secret"));
         assert_eq!(value["entrypoint"][2], "echo $CICD_JOB_ID");
-        assert_eq!(value["volumes"].as_array().unwrap().len(), 3);
+        assert_eq!(value["volumes"].as_array().unwrap().len(), 2);
     }
+
+    #[test]
+    fn ordinary_job_does_not_require_platform_sources() {
+        let args = [
+            "run",
+            "--rm",
+            "--name",
+            "ordinary-job",
+            "alpine:3.21",
+            "true",
+        ]
+        .map(String::from);
+        let value = compose_job(&args, &[], None).unwrap();
+        assert_eq!(value["volumes"].as_array().unwrap().len(), 2);
+        assert!(!value.to_string().contains("runner-sources"));
+    }
+
+    #[test]
+    fn configured_job_sources_remain_read_only_and_exact() {
+        let args = [
+            "run",
+            "--mount",
+            "type=volume,src=platform_sources,dst=/runner-sources,readonly",
+            "alpine:3.21",
+            "true",
+        ]
+        .map(String::from);
+        let value = compose_job(&args, &[], Some("platform_sources")).unwrap();
+        assert_eq!(value["volumes"].as_array().unwrap().len(), 3);
+        assert_eq!(value["volumes"][2]["read_only"], true);
+        assert!(compose_job(&args, &[], None).is_err());
+        assert!(compose_job(&args, &[], Some("foreign_sources")).is_err());
+        let missing = ["run", "alpine:3.21", "true"].map(String::from);
+        assert!(compose_job(&missing, &[], Some("platform_sources")).is_err());
+        let mut duplicate = args.to_vec();
+        duplicate.splice(1..1, args[1..3].iter().cloned());
+        assert!(compose_job(&duplicate, &[], Some("platform_sources")).is_err());
+        let mut writable = args.to_vec();
+        writable[2] = "type=volume,src=platform_sources,dst=/runner-sources".into();
+        assert!(compose_job(&writable, &[], Some("platform_sources")).is_err());
+    }
+
     #[test]
     fn compose_preserves_literal_dollars() {
         let mut value = json!({"command":"printf '%s' '${TOKEN}'"});
