@@ -11,6 +11,8 @@ ENV CI=true
 ENV SPEC=/workspace/openapi/openapi.yaml
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate && pnpm install --frozen-lockfile
 COPY CI-CD/frontend/ ./
+ARG VITE_APP_BASE_PATH="/"
+ENV VITE_APP_BASE_PATH=${VITE_APP_BASE_PATH}
 ARG VITE_NAMESPACE_ENABLED="false"
 ENV VITE_NAMESPACE_ENABLED=${VITE_NAMESPACE_ENABLED}
 ARG VITE_PLATFORM_BRANDING_URL=""
