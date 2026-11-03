@@ -208,6 +208,10 @@ migrations и удаление журналов/PVC/Secret для снятия �
 
 ## Локальные интеграционные проверки
 
+Итог текущего source gate и открытые установочные условия опубликованы в
+[evidence от 2026-11-03](evidence/developer-workspace-source-20261103.json).
+Пропущенные тесты не считаются успешными; source gate не заменяет приёмку R1.
+
 [Disposable fixture](../scripts/workspace_fixture/README.md) проверяет готовые
 Forge API/worker, PostgreSQL, CLI и Base operator без ожидания установки общего
 стенда. Дополнительный Windows сценарий подключает helper R1 и настоящий CLI,

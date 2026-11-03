@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-03",
+  "scope": "isolated local Docker/PostgreSQL source qualification",
+  "source": "6e6d655f590b740c8ec37735d0a4ffbb31ed0e30",
+  "sdk": "ed61ec63b58fe9b60d8669c85de5ac6b5bec872b",
+  "fmt": "passed",
+  "clippy": "passed: workspace/all-targets, warnings denied",
+  "tests": {
+    "passed": 820,
+    "ignored": 68,
+    "remainingFailures": 0,
+    "method": "full workspace run plus focused continuation; deduplicate by target and test name, keep the final outcome",
+    "continuation": "Two migration catalog assertions changed from113 to115; replayed those tests, ran the remaining server integration targets and workspace doctests. Earlier successful unchanged cases were reused.",
+    "requiredDeveloperCases": "Five public HTTP/worker scenarios, three native Git scenarios, three route regressions and22 CLI unit tests passed. The published-check case exercises the real runner protocol, not the R1 tools image."
+  },
+  "openapi": "canonical generation/check and compatibility passed",
+  "hostedCi": "not run: repository workflow is disabled; dispatch returned422",
+  "runtimeChanged": false,
+  "installedAcceptance": false,
+  "remainingGates": [
+    "release artifacts and Windows execution",
+    "compatible coordinated Forge installation and accepted runner resource profile",
+    "R1 backup/restore, registration and complete human CLI/UI/data acceptance",
+    "permanent default Developer configuration, packaged tools preflight and real initial/rework"
+  ]
+}
