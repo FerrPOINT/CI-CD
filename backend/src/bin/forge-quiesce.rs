@@ -56,6 +56,9 @@ enum Command {
         /// Preserve native never-prepared failed leases during a same-installation restart.
         #[arg(long)]
         preserve_terminal_unsubmitted: bool,
+        /// Full mount-identity views, supplied and verified by the native operator.
+        #[arg(long)]
+        custody_views: Option<PathBuf>,
     },
     /// Explicitly reopen admission after a completed/abandoned backup, exact operation only.
     Resume {
@@ -108,12 +111,22 @@ async fn main() -> anyhow::Result<()> {
             expected,
             require_recoverable_idle,
             preserve_terminal_unsubmitted,
+            custody_views,
         } => {
             ensure!(
                 std::fs::metadata(&expected)?.len() <= 32768,
                 "expected participant manifest exceeds bound"
             );
             let expected: Vec<Identity> = serde_json::from_slice(&std::fs::read(expected)?)?;
+            let views: Option<Vec<cicd::quiescence::RootView>> = custody_views
+                .map(|path| {
+                    ensure!(
+                        std::fs::metadata(&path)?.len() <= 32768,
+                        "root views exceed bound"
+                    );
+                    Ok::<_, anyhow::Error>(serde_json::from_slice(&std::fs::read(path)?)?)
+                })
+                .transpose()?;
             let owner = Coordinator::request(gate, operation)?;
             let config = cicd::config::RuntimeConfig::from_env()?;
             let pool = sqlx::postgres::PgPoolOptions::new()
@@ -121,12 +134,32 @@ async fn main() -> anyhow::Result<()> {
                 .acquire_timeout(std::time::Duration::from_secs(3))
                 .connect(&config.database.url)
                 .await?;
+            let mut control = read_command();
+            let mut reported_error = false;
             let fence = loop {
+                ensure!(
+                    matches!(
+                        control.try_recv(),
+                        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+                    ),
+                    "hold input closed before verified quiescence"
+                );
                 owner.gate().verify_participants(&expected)?;
                 if let Some(fence) = owner.try_fence()? {
                     owner.gate().verify_no_effect_records(&fence)?;
                     let check = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-                        if preserve_terminal_unsubmitted {
+                        if let Some(views) = &views {
+                            cicd::quiescence::verify_idle_at_views(
+                                &fence,
+                                &pool,
+                                &expected,
+                                owner.gate(),
+                                require_recoverable_idle,
+                                preserve_terminal_unsubmitted,
+                                views,
+                            )
+                            .await
+                        } else if preserve_terminal_unsubmitted {
                             cicd::quiescence::verify_idle_at_preserving_unsubmitted(
                                 &fence,
                                 &pool,
@@ -151,6 +184,14 @@ async fn main() -> anyhow::Result<()> {
                         owner.gate().verify_participants(&expected)?;
                         break fence;
                     }
+                    if !reported_error {
+                        match &check {
+                            Ok(Err(error)) => eprintln!("quiescence pending: {error:#}"),
+                            Err(_) => eprintln!("quiescence observation timed out"),
+                            _ => {}
+                        }
+                        reported_error = true;
+                    }
                     // Release promptly: existing execution ACK/reconciliation/cleanup must continue.
                     drop(fence);
                 }
@@ -164,7 +205,7 @@ async fn main() -> anyhow::Result<()> {
                 serde_json::json!({"schema":"forge/quiescence-held/v1","operationId":operation,"coordinatorPid":std::process::id(),"participants":expected,"backupAcknowledged":true,"recoverableIdleRequired":require_recoverable_idle,"preservedTerminalUnsubmitted":preserve_terminal_unsubmitted,"validity":"only while this exact foreground coordinator retains its kernel fence"})
             );
             std::io::stdout().flush()?;
-            let mut rx = read_command();
+            let mut rx = control;
             let mut exiting = false;
             let mut exited = false;
             loop {
