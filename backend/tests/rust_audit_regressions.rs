@@ -51,12 +51,14 @@ impl Fixture {
             .connect(&url)
             .await
             .unwrap();
-        cicd::migrations_from_path(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"))
-            .await
-            .unwrap()
-            .run(&pool)
-            .await
-            .unwrap();
+        cicd::migrations_from_path(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
+        )
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
         let mut config = cicd::config::RuntimeConfig::test_default();
         config.auth.secret = Some("rust-audit-owned-fixture-secret-only".into());
         config.secrets.key = Some([7; 32]);
