@@ -53,6 +53,9 @@ enum Command {
         expected: PathBuf,
         #[arg(long)]
         require_recoverable_idle: bool,
+        /// Preserve native never-prepared failed leases during a same-installation restart.
+        #[arg(long)]
+        preserve_terminal_unsubmitted: bool,
     },
     /// Explicitly reopen admission after a completed/abandoned backup, exact operation only.
     Resume {
@@ -104,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
             operation,
             expected,
             require_recoverable_idle,
+            preserve_terminal_unsubmitted,
         } => {
             ensure!(
                 std::fs::metadata(&expected)?.len() <= 32768,
@@ -122,14 +126,25 @@ async fn main() -> anyhow::Result<()> {
                 if let Some(fence) = owner.try_fence()? {
                     owner.gate().verify_no_effect_records(&fence)?;
                     let check = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-                        cicd::quiescence::verify_idle_at(
-                            &fence,
-                            &pool,
-                            &expected,
-                            owner.gate(),
-                            require_recoverable_idle,
-                        )
-                        .await
+                        if preserve_terminal_unsubmitted {
+                            cicd::quiescence::verify_idle_at_preserving_unsubmitted(
+                                &fence,
+                                &pool,
+                                &expected,
+                                owner.gate(),
+                                require_recoverable_idle,
+                            )
+                            .await
+                        } else {
+                            cicd::quiescence::verify_idle_at(
+                                &fence,
+                                &pool,
+                                &expected,
+                                owner.gate(),
+                                require_recoverable_idle,
+                            )
+                            .await
+                        }
                     })
                     .await;
                     if matches!(check, Ok(Ok(()))) {
@@ -146,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
             owner.publish_held(&fence, &expected)?;
             println!(
                 "{}",
-                serde_json::json!({"schema":"forge/quiescence-held/v1","operationId":operation,"coordinatorPid":std::process::id(),"participants":expected,"backupAcknowledged":true,"recoverableIdleRequired":require_recoverable_idle,"validity":"only while this exact foreground coordinator retains its kernel fence"})
+                serde_json::json!({"schema":"forge/quiescence-held/v1","operationId":operation,"coordinatorPid":std::process::id(),"participants":expected,"backupAcknowledged":true,"recoverableIdleRequired":require_recoverable_idle,"preservedTerminalUnsubmitted":preserve_terminal_unsubmitted,"validity":"only while this exact foreground coordinator retains its kernel fence"})
             );
             std::io::stdout().flush()?;
             let mut rx = read_command();
