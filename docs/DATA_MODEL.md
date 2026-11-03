@@ -1357,7 +1357,7 @@ checksums нет. Значение `forge.request_valid_until` задаётся 
 
 ## Deployment cancellation и request replay
 
-Аддитивная `0115_deployment_cancel_intent.sql` добавляет к существующим
+Аддитивная `0116_deployment_cancel_intent.sql` добавляет к существующим
 `deployments` только `cancel_requested_at` и `request_fingerprint`. Историческая
 0036 уже хранит UUID `request_key` и unique `(environment_id, request_key)`;
 второй реестр операций не вводится. Nullable fingerprint сохраняет старые
