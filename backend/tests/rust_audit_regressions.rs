@@ -51,7 +51,7 @@ impl Fixture {
             .connect(&url)
             .await
             .unwrap();
-        cicd::migrations_from_path(std::path::Path::new("/source/CI-CD/backend/migrations"))
+        cicd::migrations_from_path(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"))
             .await
             .unwrap()
             .run(&pool)
