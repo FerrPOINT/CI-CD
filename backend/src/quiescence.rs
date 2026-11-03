@@ -1332,3 +1332,17 @@ pub async fn verify_idle_at_views(
     let _ = fence;
     Ok(())
 }
+
+/// Diagnostic only: an observation is never a held or backup acknowledgement.
+pub async fn inspect_maintenance_idle(
+    pool: &sqlx::PgPool,
+    expected: &[Identity],
+    gate: &Gate,
+    views: &[RootView],
+) -> anyhow::Result<()> {
+    let mapped = root_views::map(expected, views)?;
+    verify_database_idle_with_retained(pool, Some(&mapped)).await?;
+    let retired = retired_compose_all(gate)?;
+    verify_roots(pool, &mapped, None, &retired, Some(views)).await?;
+    verify_no_pending_work(pool).await
+}

@@ -16,6 +16,13 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Read-only diagnostic; never requests a drain or acknowledges a backup.
+    InspectMaintenanceIdle {
+        #[arg(long)]
+        expected: PathBuf,
+        #[arg(long)]
+        custody_views: PathBuf,
+    },
     /// Read-only, challenged management observation. Never opens the quiescence gate.
     InspectKubernetesCustody {
         #[arg(long)]
@@ -84,6 +91,33 @@ async fn main() -> anyhow::Result<()> {
     }
     let gate = Gate::open(&args.directory)?;
     match args.command {
+        Command::InspectMaintenanceIdle {
+            expected,
+            custody_views,
+        } => {
+            ensure!(
+                std::fs::metadata(&expected)?.len() <= 32768
+                    && std::fs::metadata(&custody_views)?.len() <= 32768,
+                "diagnostic input exceeds bound"
+            );
+            let expected: Vec<Identity> = serde_json::from_slice(&std::fs::read(expected)?)?;
+            gate.verify_participants(&expected)?;
+            let views: Vec<cicd::quiescence::RootView> =
+                serde_json::from_slice(&std::fs::read(custody_views)?)?;
+            let config = cicd::config::RuntimeConfig::from_env()?;
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(std::time::Duration::from_secs(3))
+                .connect(&config.database.url)
+                .await?;
+            cicd::quiescence::inspect_maintenance_idle(&pool, &expected, &gate, &views).await?;
+            gate.verify_participants(&expected)?;
+            pool.close().await;
+            println!(
+                "{}",
+                serde_json::json!({"status":"OBSERVED_IDLE","backupAcknowledged":false,"admissionChanged":false})
+            );
+        }
         Command::InspectKubernetesCustody { .. } => {
             unreachable!("read-only branch handled before Gate::open")
         }
