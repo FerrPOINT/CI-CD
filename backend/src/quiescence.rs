@@ -605,6 +605,54 @@ mod tests {
         fs::remove_dir_all(path).unwrap();
     }
     #[test]
+    fn controller_shutdown_keeps_exact_boots_and_does_not_weaken_ordinary_exit() {
+        let (path, gate) = fixture();
+        let (participant, identity) = gate.register("server", "server", vec![]).unwrap();
+        let expected = std::slice::from_ref(&identity);
+        let owner = Coordinator::request(gate.clone(), Uuid::new_v4()).unwrap();
+        let fence = owner.try_fence().unwrap().unwrap();
+        owner.publish_held(&fence, expected).unwrap();
+        drop(participant);
+        assert!(owner.request_exit(&fence, expected).is_err());
+        owner.request_controller_exit(&fence, expected).unwrap();
+        assert!(gate.all_exited(expected).unwrap());
+        let mut foreign = identity.clone();
+        foreign.boot_id = Uuid::new_v4();
+        assert!(owner.request_controller_exit(&fence, &[foreign]).is_err());
+        drop(fence);
+        owner.resume().unwrap();
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn sealed_controller_exit_survives_holder_death_and_exact_cold_resume() {
+        let (path, gate) = fixture();
+        let (participant, identity) = gate.register("server", "server", vec![]).unwrap();
+        let expected = std::slice::from_ref(&identity);
+        let operation = Uuid::new_v4();
+        let owner = Coordinator::request(gate.clone(), operation).unwrap();
+        let fence = owner.try_fence().unwrap().unwrap();
+        owner.publish_held(&fence, expected).unwrap();
+        owner.request_controller_exit(&fence, expected).unwrap();
+        drop(participant);
+        assert!(gate.all_exited(expected).unwrap());
+        drop(fence);
+        drop(owner);
+        assert!(path.join("held.json").exists() && path.join("exit.json").exists());
+        let next = Coordinator::request(gate.clone(), operation).unwrap();
+        next.resume_closed().unwrap();
+        assert!(
+            !path.join("held.json").exists()
+                && !path.join("exit.json").exists()
+                && !path.join("request.json").exists()
+        );
+        let (_new, fresh) = gate.register("server", "server", vec![]).unwrap();
+        assert_ne!(fresh.boot_id, identity.boot_id);
+        assert!(gate.enter(true).is_ok());
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
     fn controlled_exit_process_fixture() {
         use std::io::Write;
         if std::env::var_os("FORGE_QUIESCENCE_EXIT_FIXTURE").is_none() {
