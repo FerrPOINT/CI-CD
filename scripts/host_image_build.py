@@ -99,6 +99,18 @@ def execute(data, key, value):
                     shutil.copyfileobj(source, child.stdin, 1024 * 1024)
                 child.stdin.close()
                 status = child.wait()
+            except BrokenPipeError as error:
+                # An early refusal closes stdin before its diagnostic reaches
+                # SSH stderr. Let that child finish before cleanup terminates it.
+                try:
+                    child.stdin.close()
+                except BrokenPipeError:
+                    pass
+                status = child.wait(timeout=15)
+                raise RuntimeError(
+                    f"Worker closed build input before accepting context (exit {status}); "
+                    "retain its receipt"
+                ) from error
             finally:
                 if child.poll() is None:
                     child.terminate()
