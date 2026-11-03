@@ -407,13 +407,6 @@ pub struct CandidateCheck {
     pub task_candidate: GitContext,
 }
 
-#[derive(Deserialize, utoipa::ToSchema)]
-#[serde(untagged)]
-pub enum CandidateCheckEnvelope {
-    Developer(crate::development_workspaces::machine_git::CandidateCheck),
-    Task(CandidateCheck),
-}
-
 pub enum PushRequest {
     Candidate(Box<CandidateCheck>),
     Legacy(crate::git_host::GitPushEvent),
@@ -458,20 +451,15 @@ pub struct CandidateCheckReadback {
 }
 
 #[utoipa::path(post,operation_id="forge_task_git_check",path="/api/v1/internal/task-git-check",tag="git",
-    request_body=CandidateCheckEnvelope,responses((status=200,body=CandidateCheckReadback),(status=400),(status=401),(status=403),(status=409),(status=422),(status=503)))]
+    request_body=CandidateCheck,responses((status=200,body=CandidateCheckReadback),(status=400),(status=401),(status=403),(status=409),(status=422),(status=503)))]
 pub async fn callback(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<AppState>>,
     headers: HeaderMap,
-    axum::Json(request): axum::Json<CandidateCheckEnvelope>,
+    axum::Json(request): axum::Json<CandidateCheck>,
 ) -> Result<axum::Json<CandidateCheckReadback>, ApiError> {
-    match request {
-        CandidateCheckEnvelope::Task(request) => check_callback(&state, &headers, request).await,
-        CandidateCheckEnvelope::Developer(request) => {
-            crate::development_workspaces::machine_git::check_callback(&state, &headers, request)
-                .await
-        }
-    }
-    .map(axum::Json)
+    check_callback(&state, &headers, request)
+        .await
+        .map(axum::Json)
 }
 
 pub(crate) async fn check_callback(

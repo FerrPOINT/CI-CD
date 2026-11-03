@@ -264,8 +264,13 @@ mod tests {
                     true,
                 )
                 .unwrap();
+                let callback = if developer {
+                    "development-workspace-git-check"
+                } else {
+                    "task-git-check"
+                };
                 let curl = format!(
-                    "#!/bin/sh\nfor last; do :; done\ntest \"$last\" = 'http://127.0.0.1:22801/api/v1/internal/task-git-check' || exit 1\ntest ! -e {} || exit 1\nprintf 'checked\\n' >> {}\n",
+                    "#!/bin/sh\nfor last; do :; done\ntest \"$last\" = 'http://127.0.0.1:22801/api/v1/internal/{callback}' || exit 1\ntest ! -e {} || exit 1\nprintf 'checked\\n' >> {}\n",
                     quote(&f.root.join("revoked")).unwrap(),
                     quote(&f.root.join("checks")).unwrap()
                 );

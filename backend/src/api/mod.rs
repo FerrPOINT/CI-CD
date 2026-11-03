@@ -229,6 +229,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::git_host::git_info_refs, crate::git_host::git_service_endpoint,
         crate::git_host::git_receive_pack_openapi, crate::git_host::internal_git_push,
         crate::task_git::callback,
+        crate::development_workspaces::machine_git::callback,
         crate::pulls::list_refs, crate::pulls::list_tree, crate::pulls::get_blob,
         crate::pulls::list_tags, crate::pulls::list_commits, crate::pulls::compare_refs,
         crate::pulls::list_pull_requests, crate::pulls::list_pull_request_page,
@@ -829,6 +830,13 @@ mod tests {
         );
         assert_eq!(
             rate_limit_rule(&Method::POST, "/api/v1/internal/task-git-check"),
+            rate_limit_rule(&Method::POST, "/api/v1/internal/git-push")
+        );
+        assert_eq!(
+            rate_limit_rule(
+                &Method::POST,
+                "/api/v1/internal/development-workspace-git-check"
+            ),
             rate_limit_rule(&Method::POST, "/api/v1/internal/git-push")
         );
         assert_eq!(

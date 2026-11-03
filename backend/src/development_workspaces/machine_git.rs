@@ -146,7 +146,19 @@ pub(crate) async fn admit(
     }))
 }
 
-pub(crate) async fn check_callback(
+#[utoipa::path(post,operation_id="forge_development_workspace_git_check",path="/api/v1/internal/development-workspace-git-check",tag="git",
+    request_body=CandidateCheck,responses((status=200,body=crate::task_git::CandidateCheckReadback),(status=400),(status=401),(status=403),(status=409),(status=422),(status=503)))]
+pub(crate) async fn callback(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<AppState>>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CandidateCheck>,
+) -> Result<axum::Json<crate::task_git::CandidateCheckReadback>, ApiError> {
+    check_callback(&state, &headers, request)
+        .await
+        .map(axum::Json)
+}
+
+async fn check_callback(
     state: &AppState,
     headers: &HeaderMap,
     request: CandidateCheck,
@@ -279,7 +291,7 @@ pub(crate) fn install(
     let pre = format!("#!/bin/sh\ndir={}\n{PRE_RECEIVE}", quote(directory)?);
     write(&directory.join("pre-receive"), pre.as_bytes(), true)?;
     let check = format!(
-        "#!/bin/sh\ndir={}\ncallback='http://127.0.0.1:{port}/api/v1/internal/task-git-check'\n{CHECK}",
+        "#!/bin/sh\ndir={}\ncallback='http://127.0.0.1:{port}/api/v1/internal/development-workspace-git-check'\n{CHECK}",
         quote(directory)?
     );
     write(&directory.join("task-check"), check.as_bytes(), true)?;
@@ -312,21 +324,15 @@ pub(crate) mod tests {
     #[test]
     fn private_git_check_cannot_fall_back_to_an_ordinary_pipeline_notification() {
         let body = serde_json::json!({"developer_workspace":"synthetic-ciphertext"});
-        assert!(matches!(
-            serde_json::from_value::<crate::task_git::CandidateCheckEnvelope>(body.clone())
-                .unwrap(),
-            crate::task_git::CandidateCheckEnvelope::Developer(_)
-        ));
+        assert!(serde_json::from_value::<CandidateCheck>(body.clone()).is_ok());
+        assert!(serde_json::from_value::<crate::task_git::CandidateCheck>(body.clone()).is_err());
         assert!(serde_json::from_value::<crate::task_git::PushRequest>(body).is_err());
         for body in [
             serde_json::json!({"developer_workspace":123}),
             serde_json::json!({"developer_workspace":"synthetic-ciphertext","task_candidate":{}}),
             serde_json::json!({"developer_workspace":"synthetic-ciphertext","ref":"main"}),
         ] {
-            assert!(
-                serde_json::from_value::<crate::task_git::CandidateCheckEnvelope>(body.clone())
-                    .is_err()
-            );
+            assert!(serde_json::from_value::<CandidateCheck>(body.clone()).is_err());
             assert!(serde_json::from_value::<crate::task_git::PushRequest>(body).is_err());
         }
     }

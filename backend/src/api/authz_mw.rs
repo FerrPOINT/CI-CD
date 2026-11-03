@@ -86,7 +86,9 @@ pub(crate) fn rate_limit_rule(method: &Method, path: &str) -> Option<RateLimitRu
     }
     if matches!(
         path,
-        "/api/v1/internal/git-push" | "/api/v1/internal/task-git-check"
+        "/api/v1/internal/git-push"
+            | "/api/v1/internal/task-git-check"
+            | "/api/v1/internal/development-workspace-git-check"
     ) {
         return Some(RateLimitRule {
             class: "internal-git-push",

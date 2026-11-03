@@ -80,6 +80,9 @@ CLI сохраняет его постоянное окружение и доб�
 `workspace-<workspace UUID>` для конкретного prepare.
 
 Git username выбирает окружение, но не является identity или разрешением.
+Workspace hooks используют отдельный внутренний callback
+`/internal/development-workspace-git-check`; прежний `/internal/task-git-check`
+сохраняет свой request contract и не принимает workspace credential.
 Сервер требует PAT текущего владельца живой сессии и заново читает назначение.
 Push допускает один fast-forward ref — `candidate_ref` из Tracker source binding,
 с сохранённым base ancestor. Проверка повторяется в native pre-receive и
