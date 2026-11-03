@@ -154,14 +154,13 @@ async fn enqueue(
         return Ok(original);
     }
     let mut plan = catalog::operation_plan(state, workspace, action)?;
-    if developer_authority.is_some() {
-        if let Some(jobs) = plan["pipeline"]["jobs"].as_object()
-            && jobs
-                .values()
-                .any(|job| job.get("image_publish").is_some() || job.get("helm_deploy").is_some())
-        {
-            return Err(ApiError::forbidden());
-        }
+    if developer_authority.is_some()
+        && let Some(jobs) = plan["pipeline"]["jobs"].as_object()
+        && jobs
+            .values()
+            .any(|job| job.get("image_publish").is_some() || job.get("helm_deploy").is_some())
+    {
+        return Err(ApiError::forbidden());
     }
     if !plan.as_object().is_some_and(|value| value.is_empty()) {
         let environment =

@@ -83,7 +83,7 @@ struct GitAccess {
 }
 
 enum TaskGitAuthorization {
-    Legacy(crate::task_git::Authorization),
+    Legacy(Box<crate::task_git::Authorization>),
     Developer(crate::development_workspaces::machine_git::Authorization),
 }
 
@@ -1071,7 +1071,7 @@ pub async fn git_service_endpoint(
         return ApiError::forbidden().into_response();
     }
     let task = match crate::task_git::admit(&state, &repo, &headers).await {
-        Ok(Some(task)) => Some(TaskGitAuthorization::Legacy(task)),
+        Ok(Some(task)) => Some(TaskGitAuthorization::Legacy(Box::new(task))),
         Ok(None) => match crate::development_workspaces::machine_git::admit(
             &state,
             &repo,
