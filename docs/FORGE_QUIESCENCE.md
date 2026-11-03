@@ -294,3 +294,9 @@ closed enrollment/release, strict Git fetch boundary с native Git IO тольк
 held fence, HTTP admission/continuation и реальный PostgreSQL
 unfinished SQL/running job. Native enrollment, Compose/Kubernetes executor и
 backup/restore integrity остаются owner gates.
+
+## Завершённые попытки без отправки
+
+Для перезапуска той же установки предусмотрен явный операторский профиль
+[сохранения terminal unsubmitted custody](adr/0046-retained-unsubmitted-maintenance.md).
+Он не выдаёт ACK и не меняет статус задания; стандартный режим остаётся строгим.

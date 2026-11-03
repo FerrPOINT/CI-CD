@@ -1,6 +1,8 @@
 //! Forge product-local admission and backup closure.
 #[path = "quiescence/kernel.rs"]
 mod kernel;
+#[path = "quiescence/retained_unsubmitted.rs"]
+mod retained_unsubmitted;
 use anyhow::{Context, ensure};
 pub use kernel::*;
 use std::{fs, path::Path};
@@ -884,19 +886,34 @@ pub async fn verify_idle(
     verify_roots(pool, expected, None, &[]).await
 }
 async fn verify_database_idle(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    verify_database_idle_with_retained(pool, None).await
+}
+async fn verify_database_idle_with_retained(
+    pool: &sqlx::PgPool,
+    retained: Option<&[Identity]>,
+) -> anyhow::Result<()> {
     let workspace_busy:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM development_workspace_operations WHERE state IN ('running','unknown'))").fetch_one(pool).await?;
     ensure!(
         !workspace_busy,
         "development workspace native outcome remains unconfirmed"
     );
     let (jobs,attempts,leases,leased_queue,unacked,sync_runs,unknown_refs,uploads):(i64,i64,i64,i64,i64,i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM jobs WHERE status='running'),(SELECT count(*) FROM execution_attempts WHERE status='running'),(SELECT count(*) FROM job_leases WHERE lease_status='active'),(SELECT count(*) FROM job_queue WHERE state='leased'),(SELECT count(*) FROM job_leases WHERE runner_id IS NOT NULL AND completion_received_at IS NULL),(SELECT count(*) FROM repository_sync_runs WHERE state IN ('running','stopping','reconciling')),(SELECT count(*) FROM repository_sync_refs WHERE state='unknown'),(SELECT count(*) FROM artifact_upload_sessions WHERE status='open')").fetch_one(pool).await?;
+    // Retain native submission locks until every database/activity check finishes.
+    // No completion timestamp, job outcome or receipt is written by this reader.
+    let unsubmitted = match retained {
+        Some(expected) => retained_unsubmitted::verify(pool, expected).await?,
+        None => Vec::new(),
+    };
+    ensure!(
+        unacked == unsubmitted.len() as i64,
+        "unconfirmed execution lacks native never-prepared closure"
+    );
     ensure!(
         [
             jobs,
             attempts,
             leases,
             leased_queue,
-            unacked,
             sync_runs,
             unknown_refs,
             uploads
@@ -1258,6 +1275,25 @@ pub async fn verify_idle_at(
     require_recoverable: bool,
 ) -> anyhow::Result<()> {
     verify_database_idle(pool).await?;
+    let retired = retired_compose_all(gate)?;
+    verify_roots(pool, expected, None, &retired).await?;
+    if require_recoverable {
+        verify_no_pending_work(pool).await?;
+    }
+    let _ = fence;
+    Ok(())
+}
+
+/// Same-installation restart only: preserve exact terminal never-prepared records.
+/// Generation adoption continues to use the strict reader above.
+pub async fn verify_idle_at_preserving_unsubmitted(
+    fence: &Fence,
+    pool: &sqlx::PgPool,
+    expected: &[Identity],
+    gate: &Gate,
+    require_recoverable: bool,
+) -> anyhow::Result<()> {
+    verify_database_idle_with_retained(pool, Some(expected)).await?;
     let retired = retired_compose_all(gate)?;
     verify_roots(pool, expected, None, &retired).await?;
     if require_recoverable {
