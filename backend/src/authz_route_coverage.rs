@@ -42,6 +42,11 @@ fn namespace_owner_and_reader_routes_never_grant_human_roles() {
             RouteAccess::System,
         ),
         (
+            "POST",
+            "/api/v1/internal/development-workspace-git-check",
+            RouteAccess::System,
+        ),
+        (
             "GET",
             "/api/v1/namespace-task-evidence/018f3c59-38f6-7c2a-bc55-081eb78cbf17/018f3c59-38f6-7c2a-bc55-081eb78cbf18",
             RouteAccess::NamespaceReader,

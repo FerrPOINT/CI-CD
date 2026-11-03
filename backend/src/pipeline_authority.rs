@@ -18,6 +18,7 @@ pub(crate) fn current_clock() -> Option<GitDeadline> {
         .try_with(|origin| origin.map(|origin| origin.clock))
         .ok()
         .flatten()
+        .or_else(crate::development_workspaces::machine::creation_clock)
 }
 impl Origin {
     pub(crate) fn from_identity(
@@ -136,6 +137,11 @@ pub(crate) async fn confirm(
     pipeline: Uuid,
     attempt: Uuid,
 ) -> Result<Option<GitDeadline>, ApiError> {
+    if let Some(clock) =
+        crate::development_workspaces::machine::pipeline_clock(pool, pipeline, attempt).await?
+    {
+        return Ok(Some(clock));
+    }
     if !crate::central_auth::application_policy_required()? {
         return Ok(None);
     }

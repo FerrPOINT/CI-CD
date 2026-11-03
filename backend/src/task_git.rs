@@ -426,6 +426,11 @@ impl PushRequest {
 impl<'de> Deserialize<'de> for PushRequest {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = Value::deserialize(deserializer)?;
+        if value.get("developer_workspace").is_some() {
+            return Err(serde::de::Error::custom(
+                "developer_workspace_requires_task_git_check",
+            ));
+        }
         // A malformed/mixed task variant must NEVER fall through to legacy auto-pipeline.
         if value.get("task_candidate").is_some() {
             serde_json::from_value(value)

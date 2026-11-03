@@ -28,6 +28,86 @@ environment проверяются по конфигурации, Tracker projec
 Service account не подменяет человека. Сохранённый владелец повторно проверяется
 перед исполнением; принятие команды не сохраняет его права навсегда.
 
+### Developer configured-cli-v1
+
+Адаптер постоянной machine identity добавлен в исходники; его локальная
+квалификация, поставка и настоящий initial/rework учитываются отдельно.
+Он использует те же API и `cicd-cli dev-workspace`. Старые task-workspace API
+и legacy delegated credentials сохраняют свой отдельный протокол.
+
+Developer получает Central PAT со scopes `ci-cd:read` / `ci-cd:write` и явное
+членство в нужной конфигурации Forge. Локальный профиль сохраняет тип
+`service_account`; он не становится human administrator. Собственное назначение
+проверяется через существующий registered namespace reader Tracker с
+`include_execution=true`: текущие configured-cli-v1 Development/Rework,
+InProgress, project/task, agent, machine subject, assignment/execution UUID,
+версия назначения и подтверждённые исходники. Tracker также перепроверяет
+актуальный доступ назначенного исполнителя к проекту.
+`source_binding.development_workspace_id` должен совпадать с UUID выбранного
+окружения. Owner выбирает эту optional ссылку в существующем source policy;
+Forge source reader проверяет реальный instance/repository/namespace перед
+подтверждением. Старые source receipts без поля сохраняют прежние hashes и
+человеческий сценарий, но не открывают Developer-доступ догадкой по проекту.
+Перед выдачей членства owner проверяет identity через существующий
+`GET /auth/principal`: ответ содержит только собственные local subject/scopes,
+не проектный доступ. Этот local subject передаётся существующему
+`cicd-cli member upsert --project ... --user ... --role developer` под owner
+credential. Сам вход с машинным PAT не выдаёт членства или иных прав.
+
+Доступны чтение проекта, своя сессия, prepare и опубликованные Forge-проверки
+без runtime-доставки. Create/register, Start/Stop, Build, recovery, reconcile,
+произвольные pipelines и выпуск этим доступом не разрешаются. Опубликованные
+рецепты агента не содержат `image_publish` / `helm_deploy`. Результаты jobs,
+логи и artifacts читаются только от его собственных workspace-операций.
+
+Сессия хранит неизменное назначение и source binding. Новая команда и worker
+сверяют его заново; перед runner-эффектами повторно проверяются исходная identity
+и то же назначение. В private execution plan хранится зашифрованная credential
+исходной операции; API её не возвращает. Смена назначения не переписывает старую
+сессию. Агент не завершает чужую или устаревшую сессию; explicit recovery остаётся
+у сопровождающего. Readback точной исходной операции доступен после смены
+назначения при сохранённом доступе к проекту и не повторяет эффект.
+
+Перед первым сообщением агенту устанавливаются CLI, Base source helper,
+постоянные secret references и обычный Git credential helper, читающий
+`CICD_API_TOKEN` из окружения процесса только для принятого Forge Git origin.
+Значение токена не записывается в URL, Git config, командные аргументы или задачу.
+Git redirects выключаются; настройки helper передаются через штатные
+`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, чтобы источник
+не зависел от пользовательского global config. Обычная подготовка человека
+по-прежнему удаляет API token из source helper. Для текущего configured агента
+CLI сохраняет его постоянное окружение и добавляет только nonsecret Git username
+`workspace-<workspace UUID>` для конкретного prepare.
+
+Git username выбирает окружение, но не является identity или разрешением.
+Workspace hooks используют отдельный внутренний callback
+`/internal/development-workspace-git-check`; прежний `/internal/task-git-check`
+сохраняет свой request contract и не принимает workspace credential.
+Сервер требует PAT текущего владельца живой сессии и заново читает назначение.
+Push допускает один fast-forward ref — `candidate_ref` из Tracker source binding,
+с сохранённым base ancestor. Проверка повторяется в native pre-receive и
+reference-transaction/prepared; protected/custom hooks сохраняют право отказа.
+Default/foreign refs, удаление, force push и автоматический запуск delivery
+через post-receive запрещены. Hook callback использует прежний private endpoint
+с отдельным зашифрованным purpose-bound ticket; это не агентский bootstrap.
+
+Перед каждым новым назначением UUID окружения берётся из актуальной задачи и
+сверяется с карточкой Forge, repository, установкой, branch и commit. Отсутствие
+этой привязки — ошибка входных данных; имя каталога и прежний чат её не заменяют.
+Windows checkout и постоянный checkout агента независимы; dirty-файлы между ними
+не переносятся. Обычный push остаётся обычным Git:
+
+```sh
+git -c credential.username="workspace-$WorkspaceId" push origin "HEAD:$CandidateRef"
+git -c credential.username="workspace-$WorkspaceId" ls-remote origin "$CandidateRef"
+```
+
+После commit/push, сверки remote SHA и terminal checks Developer завершает свою
+сессию с явным session UUID до смены назначения. Затем публикует принятый отчёт Workflow,
+обычный итоговый комментарий и typed result Tracker. Переход в Review выполняет
+сервер после подтверждённого завершения run. Reviewer, Tester и DevOps сохраняют
+свои обязанности; Developer не выполняет merge/deploy.
+
 Задача ручной сессии проверяется существующим registered namespace reader
 Tracker (`CICD_NAMESPACE__TRACKER_*`). Ключ разрешается в scoped catalog, затем
 UUID/project/namespace/state перечитываются через namespace task context.
@@ -127,6 +207,10 @@ instance. Ручной Helm не должен обходить допуск.
 migrations и удаление журналов/PVC/Secret для снятия блокировки исключены.
 
 ## Локальные интеграционные проверки
+
+Итог текущего source gate и открытые установочные условия опубликованы в
+[evidence от 2026-11-03](evidence/developer-workspace-source-20261103.json).
+Пропущенные тесты не считаются успешными; source gate не заменяет приёмку R1.
 
 [Disposable fixture](../scripts/workspace_fixture/README.md) проверяет готовые
 Forge API/worker, PostgreSQL, CLI и Base operator без ожидания установки общего

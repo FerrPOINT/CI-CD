@@ -202,6 +202,7 @@ fn configuration_readback_requires_exact_project_and_repository() {
     let (query, _, receipt) = fixture();
     let repository = receipt.request.repository_id;
     let mut source = VerifiedSource {
+        development_workspace_id: None,
         namespace: query.source_query().unwrap().namespace(),
         forge_instance_id: Uuid::new_v4(),
         repository_id: repository,

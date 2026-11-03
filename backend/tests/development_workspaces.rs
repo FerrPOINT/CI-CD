@@ -15,6 +15,9 @@ use std::str::FromStr;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+#[path = "support/development_workspace_developer.rs"]
+mod developer;
+
 struct Fixture {
     pool: PgPool,
     admin: PgPool,
