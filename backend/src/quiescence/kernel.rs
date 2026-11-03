@@ -164,7 +164,7 @@ struct ControlOwner {
     operation_id: Uuid,
     coordinator_id: Uuid,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Held {
     schema_version: u32,
@@ -667,8 +667,20 @@ impl Coordinator {
         )?;
         Ok(())
     }
-    pub fn request_exit(&self, _fence: &Fence, expected: &[Identity]) -> anyhow::Result<()> {
+    pub fn request_exit(&self, fence: &Fence, expected: &[Identity]) -> anyhow::Result<()> {
         self.gate.verify_participants(expected)?;
+        self.write_exit(fence, expected)
+    }
+    /// The same pinned cohort may already be exiting after its owned controller stop.
+    pub fn request_controller_exit(
+        &self,
+        fence: &Fence,
+        expected: &[Identity],
+    ) -> anyhow::Result<()> {
+        self.gate.all_exited(expected)?; // validates every original boot and rejects new writers
+        self.write_exit(fence, expected)
+    }
+    fn write_exit(&self, _fence: &Fence, expected: &[Identity]) -> anyhow::Result<()> {
         self.gate.verify_no_effect_records(_fence)?;
         ensure!(
             expected.iter().all(|i| matches!(
@@ -697,6 +709,29 @@ impl Coordinator {
     /// Only the live coordinator, after dropping its fence, can explicitly resume its own operation.
     pub fn resume(self) -> anyhow::Result<()> {
         generation::standalone_resume(&self.gate)?;
+        self.remove_request()
+    }
+    /// Cold restart only; no active boot or unsealed exit may be reopened.
+    pub fn resume_closed(self) -> anyhow::Result<()> {
+        generation::standalone_resume(&self.gate)?;
+        let held: Held = read(&self.gate.root.join("held.json"))?;
+        let exit: Held = read(&self.gate.root.join("exit.json"))?;
+        ensure!(
+            held == exit
+                && held.operation_id == self.operation
+                && !held.coordinator_id.is_nil()
+                && !held.acknowledgement_id.is_nil()
+                && self.gate.all_exited(&held.participants)?,
+            "cold resume lacks the exact closed original cohort"
+        );
+        let fence = self
+            .try_fence()?
+            .context("cold source still has an effect owner")?;
+        self.gate.verify_no_effect_records(&fence)?;
+        fs::remove_file(self.gate.root.join("exit.json"))?;
+        fs::remove_file(self.gate.root.join("held.json"))?;
+        File::open(&self.gate.root)?.sync_all()?;
+        drop(fence);
         self.remove_request()
     }
     fn remove_request(self) -> anyhow::Result<()> {
@@ -839,7 +874,13 @@ impl Drop for Coordinator {
         let path = self.gate.root.join("held.json");
         if let Ok(held) = read::<Held>(&path) {
             if held.coordinator_id == self.nonce {
-                let _ = fs::remove_file(path);
+                let closed = read::<Held>(&self.gate.root.join("exit.json"))
+                    .is_ok_and(|exit| exit == held)
+                    && self.gate.all_exited(&held.participants).unwrap_or(false);
+                // A closed seal is historical evidence, never a live-fence acknowledgement.
+                if !closed {
+                    let _ = fs::remove_file(path);
+                }
             }
         }
     }
