@@ -583,10 +583,33 @@ pub(crate) async fn start_manual_job(
         return start_manual_job_admitted(&state, job_id).await;
     }
     let pool = pool(&state)?;
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    let pipeline: Uuid = sqlx::query_scalar(
+        "SELECT s.pipeline_id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE j.id=$1",
+    )
+    .bind(job_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    let parent: String = sqlx::query_scalar("SELECT status FROM pipelines WHERE id=$1 FOR UPDATE")
+        .bind(pipeline)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    if !matches!(parent.as_str(), "queued" | "running") {
+        return Err(ApiError::conflict("pipeline is not active"));
+    }
+    // Use the same queue-before-job order as status changes and queue claims.
+    sqlx::query("SELECT id FROM job_queue WHERE job_id=$1 ORDER BY id FOR UPDATE")
+        .bind(job_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
     let manual_job: Option<(bool, String)> =
-        sqlx::query_as("SELECT manual, status FROM jobs WHERE id = $1")
+        sqlx::query_as("SELECT manual,status FROM jobs WHERE id=$1 FOR UPDATE")
             .bind(job_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(ApiError::internal)?;
     match manual_job {
@@ -595,19 +618,29 @@ pub(crate) async fn start_manual_job(
         Some((false, _)) => return Err(ApiError::conflict("job is not manual")),
         None => return Err(ApiError::not_found()),
     }
-    let updated = sqlx::query_scalar::<_, bool>(
-        "UPDATE jobs SET manual = false WHERE id = $1 AND manual AND status = 'queued' RETURNING TRUE",
+    let _ = crate::pipeline_authority::retry_origin(&mut tx, pipeline).await?;
+    let attempt: Uuid = sqlx::query_scalar(
+        "SELECT id FROM execution_attempts WHERE job_id=$1 AND status='queued' ORDER BY attempt_no DESC LIMIT 1 FOR UPDATE",
     )
+    .bind(job_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::conflict("manual job has no queued attempt"))?;
+    sqlx::query("UPDATE jobs SET manual=false WHERE id=$1")
         .bind(job_id)
-        .fetch_optional(pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
-    if !updated.unwrap_or(false) {
-        return Err(ApiError::conflict("job already started"));
+    if crate::store::enqueue_job_attempt_tx(&mut tx, job_id, attempt)
+        .await
+        .map_err(ApiError::internal)?
+        != 1
+    {
+        return Err(ApiError::conflict("manual job dispatch was not confirmed"));
     }
-    crate::store::enqueue_current_job_attempt(pool, job_id)
-        .await
-        .map_err(ApiError::internal)?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    crate::dispatch_signal::notify_runner_work_available();
     crate::metrics::PIPELINES_CREATED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Ok(Json(ManualJobStartResult { started: true }))
 }

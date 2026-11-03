@@ -192,6 +192,158 @@ async fn body(response: axum::response::Response) -> Value {
 
 #[tokio::test]
 #[ignore = "manual owned PostgreSQL regression"]
+async fn legacy_manual_start_is_atomic_and_preserves_the_original_attempt() {
+    let f = Fixture::new().await;
+    let project = f.project().await;
+    let (pipeline, job, attempt) = f.pipeline(project).await;
+    sqlx::query("DELETE FROM job_queue WHERE job_id=$1")
+        .bind(job)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET manual=true WHERE id=$1")
+        .bind(job)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "ALTER TABLE job_queue ADD CONSTRAINT qa_reject_manual_queue CHECK(job_id<>'{job}'::uuid)"
+    ))
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    let response = f
+        .request(0, "POST", &format!("/api/v1/jobs/{job}/start"), json!({}))
+        .await;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT manual FROM jobs WHERE id=$1")
+            .bind(job)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        "queue failure must roll back release of the manual gate"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM job_queue WHERE job_id=$1")
+            .bind(job)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM execution_attempts WHERE job_id=$1")
+            .bind(job)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    sqlx::query("ALTER TABLE job_queue DROP CONSTRAINT qa_reject_manual_queue")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+
+    let path = format!("/api/v1/jobs/{job}/start");
+    let (first, second) = tokio::join!(
+        f.request(0, "POST", &path, json!({})),
+        f.request(0, "POST", &path, json!({})),
+    );
+    let mut statuses = [first.status().as_u16(), second.status().as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [200, 409], "concurrent starts publish only once");
+    let response = if first.status() == StatusCode::OK {
+        first
+    } else {
+        second
+    };
+    assert_eq!(body(response).await, json!({"started":true}));
+    let queued: (Uuid, bool) = sqlx::query_as(
+        "SELECT q.attempt_id,j.manual FROM job_queue q JOIN jobs j ON j.id=q.job_id WHERE j.id=$1",
+    )
+    .bind(job)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        queued,
+        (attempt, false),
+        "legacy start preserves the original attempt ID"
+    );
+    assert_eq!(
+        f.request(0, "POST", &format!("/api/v1/jobs/{job}/start"), json!({}))
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+
+    sqlx::query("UPDATE jobs SET manual=true WHERE id=$1")
+        .bind(job)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE pipelines SET status='canceled' WHERE id=$1")
+        .bind(pipeline)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.request(0, "POST", &format!("/api/v1/jobs/{job}/start"), json!({}))
+            .await
+            .status(),
+        StatusCode::CONFLICT,
+        "terminal parent cannot publish new dispatch"
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT manual FROM jobs WHERE id=$1")
+            .bind(job)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap()
+    );
+
+    let (_, missing_job, _) = f.pipeline(project).await;
+    sqlx::query("DELETE FROM job_queue WHERE job_id=$1")
+        .bind(missing_job)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM execution_attempts WHERE job_id=$1")
+        .bind(missing_job)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET manual=true WHERE id=$1")
+        .bind(missing_job)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.request(
+            0,
+            "POST",
+            &format!("/api/v1/jobs/{missing_job}/start"),
+            json!({})
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT,
+        "missing attempt cannot be acknowledged as a started job"
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT manual FROM jobs WHERE id=$1")
+            .bind(missing_job)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap()
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "manual owned PostgreSQL regression"]
 async fn sensitive_mutation_and_verified_actor_audit_are_atomic() {
     let f = Fixture::new().await;
     let project = f.project().await;
