@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 pub mod deployment;
 pub mod inspection;
+mod native_closure;
 
 pub const FINALIZER: &str = "forge.pdlc.acm-ai.ru/execution-custody";
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
@@ -804,6 +805,15 @@ impl Execution {
         )?;
         Ok(true)
     }
+    fn observed_terminal(&self, pod: &Value, uid: &str) -> anyhow::Result<Option<Terminal>> {
+        match terminal(pod, uid) {
+            Ok(value) => Ok(value),
+            Err(original) => match native_closure::observe(pod, uid, &self.config)? {
+                Some(value) => Ok(Some(value)),
+                None => Err(original),
+            },
+        }
+    }
     pub async fn observe(&self) -> anyhow::Result<Option<Terminal>> {
         self.identities().await.map_err(|_| Held)?;
         let value = self
@@ -812,7 +822,7 @@ impl Execution {
             .map_err(|_| Held)?
             .ok_or(Held)?;
         let uid = self.identity(&value).map_err(|_| Held)?;
-        let terminal = terminal(&value, &uid)?;
+        let terminal = self.observed_terminal(&value, &uid)?;
         if let Some(proof) = &terminal {
             write_once(
                 &self.directory.join("terminal.json"),
@@ -925,7 +935,7 @@ impl Execution {
         };
         let uid = self.identity(&value)?;
         ensure!(
-            terminal(&value, &uid)? == Some(previous.clone()),
+            self.observed_terminal(&value, &uid)? == Some(previous.clone()),
             "terminal proof changed"
         );
         write_once(
