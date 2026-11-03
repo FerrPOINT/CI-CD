@@ -38,6 +38,7 @@ fn command(provider: Provider, automatic: bool) -> SaveConnection {
             repository_path: "fixture/service".into(),
             direction: Direction::Both,
             automatic,
+            branch: None,
             protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         },
         token: Some("synthetic-multiple-sync-credential".into()),
@@ -352,7 +353,7 @@ async fn multiple_sync_connections_schedule_independently_and_serialize_claims()
         .unwrap();
     }
     store.signal(repository).await.unwrap();
-    let (s1, s2) = tokio::join!(store.schedule(), store.schedule());
+    let (s1, s2) = tokio::join!(store.schedule(true), store.schedule(true));
     s1.unwrap();
     s2.unwrap();
     let a = store.runs_at(repository, ids[0], 20, 0).await.unwrap().0;
@@ -400,7 +401,7 @@ async fn multiple_sync_connections_schedule_independently_and_serialize_claims()
             .unwrap()
     );
     store.signal(repository).await.unwrap();
-    store.schedule().await.unwrap();
+    store.schedule(true).await.unwrap();
     // Repeated signals during a run do not create another active run per connection.
     assert_eq!(store.runs_at(repository, ids[0], 20, 0).await.unwrap().1, 1);
     store
@@ -408,7 +409,7 @@ async fn multiple_sync_connections_schedule_independently_and_serialize_claims()
         .await
         .unwrap();
     assert!(store.claim(pending, owner).await.unwrap().is_some());
-    store.schedule().await.unwrap();
+    store.schedule(true).await.unwrap();
     assert_eq!(
         store
             .runs_at(repository, running.connection_id, 20, 0)
@@ -819,7 +820,7 @@ async fn multiple_sync_stopping_one_connection_preserves_the_other_queue_and_int
             .unwrap()
     );
     store.signal(repository).await.unwrap();
-    store.schedule().await.unwrap();
+    store.schedule(true).await.unwrap();
     assert_eq!(store.runs(repository, 20, 0).await.unwrap().1, 1);
     pool.close().await;
 }
@@ -977,7 +978,7 @@ async fn multiple_sync_archived_v2_space_does_not_block_healthy_schedule() {
         .unwrap();
     assert_eq!(state, "archived");
     for _ in 0..2 {
-        store.schedule().await.unwrap();
+        store.schedule(true).await.unwrap();
         assert_eq!(store.runs(foreign, 20, 0).await.unwrap().1, 1);
         assert_eq!(store.runs(repository, 20, 0).await.unwrap().1, 0);
         let connection = store.connection(repository, access).await.unwrap().unwrap();
@@ -1245,7 +1246,7 @@ async fn multiple_sync_owner_snapshot_survives_settings_takeover_and_active_reau
     .await
     .unwrap();
     store.signal(repository).await.unwrap();
-    store.schedule().await.unwrap();
+    store.schedule(true).await.unwrap();
     let run = store.runs(repository, 20, 0).await.unwrap().0.remove(0);
     assert_eq!(store.event_owner(run.id).await.unwrap(), Some(first));
     let owner = Uuid::new_v4();
@@ -1367,7 +1368,7 @@ async fn multiple_sync_owner_snapshot_survives_settings_takeover_and_active_reau
             "identity_deletion_fenced"
         );
     }
-    store.schedule().await.unwrap();
+    store.schedule(true).await.unwrap();
     assert_eq!(store.runs(healthy, 20, 0).await.unwrap().1, 1);
     assert_eq!(store.runs(repository, 20, 0).await.unwrap().1, 2);
     pool.close().await;
@@ -1461,7 +1462,7 @@ async fn multiple_sync_scheduler_admission_race_does_not_poison_other_connection
     // A savepoint must preserve the other connection and the rejected signal.
     sqlx::raw_sql(&format!("CREATE FUNCTION fixture_scheduler_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.repository_id='{repository}'::uuid THEN RAISE EXCEPTION 'namespace_resource_read_only' USING ERRCODE='42501'; END IF; RETURN NEW; END; $$; CREATE TRIGGER z_fixture_scheduler_guard BEFORE INSERT ON repository_sync_runs FOR EACH ROW EXECUTE FUNCTION fixture_scheduler_guard();"))
         .execute(&pool).await.unwrap();
-    store.schedule().await.unwrap();
+    store.schedule(true).await.unwrap();
     assert_eq!(store.runs(repository, 20, 0).await.unwrap().1, 0);
     assert_eq!(store.runs(healthy, 20, 0).await.unwrap().1, 1);
     let dirty: bool =
@@ -1475,7 +1476,7 @@ async fn multiple_sync_scheduler_admission_race_does_not_poison_other_connection
     sqlx::raw_sql("CREATE OR REPLACE FUNCTION fixture_scheduler_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture_storage_failure' USING ERRCODE='XX000'; END; $$;")
         .execute(&pool).await.unwrap();
     assert!(matches!(
-        store.schedule().await,
+        store.schedule(true).await,
         Err(app::Error::Unavailable(_))
     ));
     assert_eq!(store.runs(healthy, 20, 0).await.unwrap().1, 1);

@@ -11,6 +11,7 @@ import {
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Settings } from "lucide-react";
+import { SyncSchedulePanel } from "./sync-schedule";
 
 const configGroups = [
   {
@@ -110,6 +111,8 @@ export function SettingsPage() {
           </>
         }
       />
+      <SyncSchedulePanel />
+
       <p className="text-sm text-text-muted">{t("settings.description")}</p>
 
       <section aria-labelledby="defaults-heading">

@@ -11,11 +11,18 @@ export interface Page<T> {
   total: number
 }
 export type SaveSync = components['schemas']['RepositorySyncSaveConnection']
+export type SyncSchedule = components['schemas']['RepositorySyncScheduleStatus']
+export type SaveSyncSchedule = components['schemas']['RepositorySyncSaveSchedule']
+export const syncScheduleKey = (subject?: string) => ['repository-sync-schedule', subject ?? null] as const
 const path = (id: string) =>
   `/catalog/repositories/${encodeURIComponent(id)}/sync`
 const selected = (url: string, connection?: string) =>
   connection !== undefined ? `${url}${url.includes('?') ? '&' : '?'}connection_id=${encodeURIComponent(connection)}` : url
 export const repositorySync = {
+  schedule: (signal?: AbortSignal) => api<SyncSchedule>('/repository-sync-schedule', { signal }),
+  saveSchedule: (payload: SaveSyncSchedule, operation: string) => api<SyncSchedule>('/repository-sync-schedule', {
+    method: 'PUT', headers: { 'Idempotency-Key': operation }, body: JSON.stringify(payload),
+  }),
   list: (query: URLSearchParams, signal?: AbortSignal) =>
     api<Page<SyncConnection>>(`/repository-syncs?${query}`, { signal }),
   get: (id: string, signal?: AbortSignal, connection?: string) =>

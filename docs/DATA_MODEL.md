@@ -1348,7 +1348,7 @@ checksums нет. Значение `forge.request_valid_until` задаётся 
 
 ## Deployment cancellation и request replay
 
-Аддитивная `0114_deployment_cancel_intent.sql` добавляет к существующим
+Аддитивная `0115_deployment_cancel_intent.sql` добавляет к существующим
 `deployments` только `cancel_requested_at` и `request_fingerprint`. Историческая
 0036 уже хранит UUID `request_key` и unique `(environment_id, request_key)`;
 второй реестр операций не вводится. Nullable fingerprint сохраняет старые
@@ -1362,4 +1362,21 @@ Cancel timestamp является намерением, а не physical complet
 Pipeline publication берёт блокировку исходной deployment row; принятая отмена
 закрывает запуск и retry. Существующий runner ledger и custody подтверждают
 окончание работы. Не удаляются deployment history, данные, pipeline или
-репозитории. Совместимость и порядок rollback: [ADR-0045](adr/0045-deployment-request-lifecycle.md).
+репозитории. Совместимость и порядок rollback: [ADR-0046](adr/0046-deployment-request-lifecycle.md).
+
+### Общее расписание синхронизаций
+
+Миграция 0114 добавляет append-only `repository_sync_schedule`: UUID команды,
+уникальная последовательная `version`, `interval_seconds`, `on_change`, `created_at`.
+Последняя версия — единственный источник сохранённой политики; пустая таблица
+означает прежние env defaults. UPDATE/DELETE запрещены. Отдельной копии текущего
+состояния и второго хранилища идемпотентности нет. Авторство принадлежит существующему
+identity-fenced `audit_log`: `repository_sync.schedule_updated`, ресурс — UUID команды.
+
+Общий advisory lock сериализует CAS, первое сохранение и пересчёт `next_check_at`.
+Worker и сохранение подключения используют shared lock и одну актуальную политику.
+Пересчёт next_check_at выполняется только для доступных автоматических подключений
+по общему предикату планировщика; архивные/отключённые записи остаются неизменными.
+Сроки считаются по последнему `schedule/git_change` run; ручной run не меняет период.
+Миграция подключает таблицу к существующему original-request commit clock.
+Исторические миграции, подключения, credentials и run snapshots сохраняются.

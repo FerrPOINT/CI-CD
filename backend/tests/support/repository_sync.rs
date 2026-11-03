@@ -125,6 +125,7 @@ async fn postgres_restart_preserves_unknown_intent_and_idempotency() {
             repository_path: "fixture/repository".into(),
             direction: Direction::Both,
             automatic: false,
+            branch: None,
             protected_branch_updates: cicd_domain::repository_sync::ProtectedBranchUpdates::Blocked,
         },
         token: Some("fictional-restart-credential".into()),
@@ -849,6 +850,7 @@ async fn incoming_event_ci_uses_exact_sha_and_shared_push_receipt() {
                 repository_path: "a/b".into(),
                 direction: Direction::Pull,
                 automatic: false,
+                branch: None,
                 protected_branch_updates: Default::default(),
             },
             token: Some("unused-test-token".into()),
@@ -1037,6 +1039,7 @@ async fn live_provider_worker_protection_automatic_and_lost_ack_recovery() {
             repository_path: path,
             direction: Direction::Pull,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         },
         token: Some(token),
@@ -1218,6 +1221,7 @@ async fn durable_sync_cas_idempotency_coalescing_and_fencing() {
         repository_path: "example/disposable".into(),
         direction: Direction::Both,
         automatic: true,
+        branch: None,
         protected_branch_updates: Default::default(),
     };
     let command = SaveConnection {
@@ -1313,7 +1317,7 @@ async fn durable_sync_cas_idempotency_coalescing_and_fencing() {
     assert_eq!(run.id, b.unwrap().id);
     store.signal(repository).await.unwrap();
     store.signal(repository).await.unwrap();
-    store.schedule().await.unwrap();
+    store.schedule(true).await.unwrap();
     assert_eq!(store.runs(repository, 20, 0).await.unwrap().1, 1);
     let owner = Uuid::new_v4();
     let (claimed, generation) = store.claim(run.id, owner).await.unwrap().unwrap();
@@ -1431,8 +1435,8 @@ async fn durable_sync_cas_idempotency_coalescing_and_fencing() {
     .await
     .unwrap();
     store.signal(repository).await.unwrap();
-    store.schedule().await.unwrap();
-    store.schedule().await.unwrap();
+    store.schedule(true).await.unwrap();
+    store.schedule(true).await.unwrap();
     assert_eq!(store.runs(repository, 20, 0).await.unwrap().1, 2);
     assert_eq!(
         store
@@ -1481,6 +1485,7 @@ async fn queued_disable_keeps_history_and_manual_mode_ignores_automatic_signals(
             repository_path: "a/b".into(),
             direction: Direction::Pull,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         },
         token: Some("test-only".into()),
@@ -1497,7 +1502,7 @@ async fn queued_disable_keeps_history_and_manual_mode_ignores_automatic_signals(
     .await
     .unwrap();
     store.signal(repository).await.unwrap();
-    store.schedule().await.unwrap();
+    store.schedule(true).await.unwrap();
     assert_eq!(store.runs(repository, 20, 0).await.unwrap().1, 0);
     let run = store.enqueue(repository, "manual", None).await.unwrap();
     command.expected_version = 1;
@@ -1597,6 +1602,7 @@ async fn namespace_archive_pauses_queued_and_blocks_commands_without_losing_hist
             repository_path: "a/b".into(),
             direction: Direction::Pull,
             automatic: true,
+            branch: None,
             protected_branch_updates: Default::default(),
         },
         token: Some("test-only".into()),
@@ -1983,6 +1989,7 @@ async fn automatic_signals_cover_all_enabled_directions_and_coalesce() {
                 repository_path: "fixture/repository".into(),
                 direction,
                 automatic: true,
+                branch: None,
                 protected_branch_updates: Default::default(),
             },
             token: Some("fictional-signal-fixture".into()),
@@ -1998,7 +2005,7 @@ async fn automatic_signals_cover_all_enabled_directions_and_coalesce() {
         )
         .await
         .unwrap();
-        store.schedule().await.unwrap();
+        store.schedule(true).await.unwrap();
         assert_eq!(
             store.runs(repository, 10, 0).await.unwrap().1,
             0,
@@ -2007,7 +2014,7 @@ async fn automatic_signals_cover_all_enabled_directions_and_coalesce() {
         for _ in 0..3 {
             store.signal(repository).await.unwrap();
         }
-        store.schedule().await.unwrap();
+        store.schedule(true).await.unwrap();
         let (runs, total) = store.runs(repository, 10, 0).await.unwrap();
         assert_eq!(
             total,
@@ -2023,7 +2030,7 @@ async fn automatic_signals_cover_all_enabled_directions_and_coalesce() {
         assert_eq!(runs[0].source, "git_change");
         for _ in 0..3 {
             store.signal(repository).await.unwrap();
-            store.schedule().await.unwrap();
+            store.schedule(true).await.unwrap();
         }
         assert_eq!(
             store.runs(repository, 10, 0).await.unwrap().1,
@@ -2036,7 +2043,7 @@ async fn automatic_signals_cover_all_enabled_directions_and_coalesce() {
             .finish(runs[0].id, owner, generation, "success", None)
             .await
             .unwrap();
-        store.schedule().await.unwrap();
+        store.schedule(true).await.unwrap();
         assert_eq!(
             store.runs(repository, 10, 0).await.unwrap().1,
             2,
@@ -2085,6 +2092,7 @@ async fn sync_server_pages_large_lists_history_and_refs() {
             repository_path: format!("fixture/page-{i:03}"),
             direction: Direction::Disabled,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         };
         app::save(
@@ -2253,6 +2261,7 @@ async fn busy_repository_guards_do_not_starve_other_queued_work() {
                     repository_path: "fixture/repository".into(),
                     direction: Direction::Pull,
                     automatic: false,
+                    branch: None,
                     protected_branch_updates: Default::default(),
                 },
                 token: Some("fictional-fairness-fixture".into()),
@@ -2395,6 +2404,7 @@ async fn source_fast_forward_save_requires_human_admin_and_revocation_fences_run
         repository_path: "example/disposable".into(),
         direction: Direction::Pull,
         automatic: false,
+        branch: None,
         protected_branch_updates: ProtectedBranchUpdates::SourceFastForward,
     };
     let command = SaveConnection {
