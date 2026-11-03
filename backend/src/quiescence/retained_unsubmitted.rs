@@ -16,6 +16,7 @@ fn documents(
     attempt: Uuid,
     generation: i64,
     completed: chrono::DateTime<chrono::Utc>,
+    seen: &mut BTreeSet<(u64, u64)>,
 ) -> anyhow::Result<Option<File>> {
     let directory = root
         .join(".kubernetes-control")
@@ -24,6 +25,12 @@ fn documents(
         return Ok(None);
     }
     super::plain(&directory, true)?;
+    use std::os::unix::fs::MetadataExt;
+    let metadata = directory.metadata()?;
+    // A nested PVC mount can expose the very same custody through two valid roots.
+    if !seen.insert((metadata.dev(), metadata.ino())) {
+        return Ok(None);
+    }
     let names: BTreeSet<_> = std::fs::read_dir(&directory)?
         .map(|v| v.map(|v| v.file_name().to_string_lossy().into_owned()))
         .collect::<Result<_, _>>()?;
@@ -132,8 +139,9 @@ pub(super) async fn verify(pool: &PgPool, expected: &[Identity]) -> anyhow::Resu
     let mut locks = Vec::new();
     for (lease, attempt, generation, completed) in rows {
         let mut found = None;
+        let mut seen = BTreeSet::new();
         for root in &roots {
-            if let Some(lock) = documents(root, lease, attempt, generation, completed)? {
+            if let Some(lock) = documents(root, lease, attempt, generation, completed, &mut seen)? {
                 ensure!(found.is_none(), "duplicate unprepared source custody");
                 found = Some(lock);
             }
@@ -190,5 +198,38 @@ mod tests {
         let (mut p, r, l, a, t) = fixture();
         p["submitted"] = true.into();
         assert!(validate(&p, &r, l, a, 1, t).is_err());
+    }
+    #[test]
+    fn same_nested_custody_inode_is_not_locked_twice() {
+        let (pending, observed, lease, attempt, completed) = fixture();
+        let root = std::env::temp_dir().join(format!("forge-unprepared-alias-{}", Uuid::new_v4()));
+        let directory = root
+            .join(".kubernetes-control")
+            .join(format!("forge-{}-g1", attempt.simple()));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("not-submitted.json"),
+            serde_json::to_vec(&pending).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("not-submitted-owner-readback.json"),
+            serde_json::to_vec(&observed).unwrap(),
+        )
+        .unwrap();
+        File::create(directory.join(".submission.lock")).unwrap();
+        let mut seen = BTreeSet::new();
+        let held = documents(&root, lease, attempt, 1, completed, &mut seen)
+            .unwrap()
+            .unwrap();
+        assert!(
+            documents(&root, lease, attempt, 1, completed, &mut seen)
+                .unwrap()
+                .is_none()
+        );
+        // Another verifier must still see the real original lock.
+        assert!(documents(&root, lease, attempt, 1, completed, &mut BTreeSet::new()).is_err());
+        drop(held);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
