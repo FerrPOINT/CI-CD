@@ -95,6 +95,7 @@ fn default_source_response_is_byte_identical_and_only_optin_adds_four_fields() {
         observed_at: DateTime<Utc>,
     }
     let mut source = VerifiedSource {
+        development_workspace_id: None,
         namespace: query().namespace(),
         forge_instance_id: Uuid::from_u128(6),
         repository_id: Uuid::from_u128(3),

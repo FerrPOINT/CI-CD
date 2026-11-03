@@ -158,6 +158,7 @@ fn old_catalog_wire_shape_is_unchanged_and_source_has_no_git_grant() {
             "repository_id":old.repository_id,"public_name":old.public_name,"kind":"hosted"})
     );
     let source = VerifiedSource {
+        development_workspace_id: None,
         namespace: query().namespace(),
         forge_instance_id: Uuid::new_v4(),
         repository_id: Uuid::new_v4(),
@@ -282,7 +283,8 @@ async fn native_detached_head_is_not_a_guessed_default() {
             &fixture.0,
             &ExpectedSource {
                 reference: "refs/heads/main".into(),
-                commit
+                commit,
+                workspace: None,
             }
         )
         .await
@@ -304,7 +306,8 @@ async fn native_branch_must_be_a_commit_not_just_a_known_object_sha() {
             &fixture.0,
             &ExpectedSource {
                 reference: "refs/heads/not-a-commit".into(),
-                commit: blob
+                commit: blob,
+                workspace: None,
             }
         )
         .await
