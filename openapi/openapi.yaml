@@ -1935,7 +1935,7 @@ paths:
           format: uuid
       responses:
         '200':
-          description: ''
+          description: Terminal result confirmed; a failed deployment without a pipeline confirms a previously accepted cancellation
           content:
             application/json:
               schema:
@@ -1949,7 +1949,7 @@ paths:
         '404':
           description: ''
         '409':
-          description: ''
+          description: Already failed without an accepted cancellation, or pipeline ownership is unconfirmed
   /api/v1/deployments/{deployment_id}/rollback:
     post:
       tags:

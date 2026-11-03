@@ -467,10 +467,42 @@ pub(crate) async fn store_job_artifact_with_config(
     if let Some(clock) = clock {
         clock.require()?;
     }
+    let id = Uuid::new_v4();
+    let expires_at = artifact_expires_at(artifacts);
+    let storage = artifacts.clone();
+    let size_bytes = body.len() as i64;
+    // The blocking operation owns the file guard, even if its HTTP caller is
+    // cancelled. No SQL locks are held while writing or syncing the payload.
+    let (mut staged, artifact_sha256) = tokio::task::spawn_blocking(move || {
+        if let Some(clock) = clock {
+            clock.require()?;
+        }
+        let path = new_artifact_path(&storage, id)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(io_error)?;
+        let staged = UnpublishedArtifactFile {
+            path,
+            retain: false,
+        };
+        std::io::Write::write_all(&mut file, &body).map_err(io_error)?;
+        file.sync_all().map_err(io_error)?;
+        let checksum = sha256_bytes(body.as_ref());
+        if let Some(clock) = clock {
+            clock.require()?;
+        }
+        Ok::<_, ApiError>((staged, checksum))
+    })
+    .await
+    .map_err(|error| io_error(std::io::Error::other(error)))??;
+    let path = staged.path.clone();
     let mut tx = db.begin().await.map_err(ApiError::internal)?;
     if let Some(clock) = clock {
         clock.bind_commit_clock(&mut tx).await?;
     }
+    lock_artifact_publication_owner(&mut tx, job_id, attempt_id).await?;
     if let Some(session) = publication.session {
         let row:Option<(String,Option<Uuid>)>=sqlx::query_as("SELECT status,artifact_id FROM artifact_upload_sessions WHERE id=$1 AND attempt_id=$2 FOR UPDATE")
             .bind(session).bind(attempt_id).fetch_optional(&mut *tx).await.map_err(ApiError::internal)?;
@@ -489,29 +521,11 @@ pub(crate) async fn store_job_artifact_with_config(
             _ => return Err(ApiError::conflict("Artifact upload session is not open")),
         }
     }
-    let id = Uuid::new_v4();
-    let artifact_sha256 = sha256_bytes(body.as_ref());
-    let expires_at = artifact_expires_at(artifacts);
-    let path = new_artifact_path(artifacts, id)?;
-    if let Some(clock) = clock {
-        clock.require()?;
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(io_error)?;
-    let mut staged = UnpublishedArtifactFile {
-        path: path.clone(),
-        retain: false,
-    };
-    std::io::Write::write_all(&mut file, &body).map_err(io_error)?;
-    file.sync_all().map_err(io_error)?;
     if let Some(clock) = clock {
         clock.require()?;
     }
     let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, sha256, size_bytes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at, expires_at, purged_at")
-        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).bind(expires_at).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(size_bytes).bind(expires_at).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
     sqlx::query("INSERT INTO audit_log(action,resource_type,resource_id) VALUES('artifact.uploaded','artifact',$1)").bind(id).execute(&mut *tx).await.map_err(ApiError::internal)?;
     if let Some(session) = publication.session {
         let changed=sqlx::query("UPDATE artifact_upload_sessions SET status='completed',artifact_id=$2,updated_at=clock_timestamp() WHERE id=$1 AND status='open' AND attempt_id=$3").bind(session).bind(id).bind(attempt_id).execute(&mut *tx).await.map_err(ApiError::internal)?;
@@ -526,19 +540,80 @@ pub(crate) async fn store_job_artifact_with_config(
     // readback proves no metadata committed; never delete a committed artifact.
     staged.retain = true;
     if let Err(error) = tx.commit().await {
-        if matches!(
-            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM artifacts WHERE id=$1)")
+        let resolved = async {
+            let fresh = db
+                .options()
+                .clone()
+                .max_connections(1)
+                .min_connections(0)
+                .connect_with((*db.connect_options()).clone())
+                .await
+                .map_err(ApiError::internal)?;
+            let result = async {
+                let mut readback = fresh.begin().await.map_err(ApiError::internal)?;
+                sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                    .execute(&mut *readback)
+                    .await
+                    .map_err(ApiError::internal)?;
+                // Wait for the original transaction, including an in-flight COMMIT,
+                // before taking the absence snapshot. Any failed barrier retains bytes.
+                lock_artifact_publication_owner(&mut readback, job_id, attempt_id).await?;
+                let exists = sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM artifacts WHERE id=$1)",
+                )
                 .bind(id)
-                .fetch_one(db)
-                .await,
-            Ok(false)
-        ) {
+                .fetch_one(&mut *readback)
+                .await
+                .map_err(ApiError::internal)?;
+                readback.rollback().await.map_err(ApiError::internal)?;
+                Ok::<_, ApiError>(exists)
+            }
+            .await;
+            fresh.close().await;
+            result
+        }
+        .await;
+        if matches!(resolved, Ok(false)) {
             staged.retain = false;
         }
         return Err(crate::git_host::GitDeadline::commit_error(error));
     }
     Ok(artifact)
 }
+// Match job retry/cancel ordering: pipeline -> job -> attempt -> upload session.
+// This is a publication/COMMIT barrier, not a new status or execution authority.
+async fn lock_artifact_publication_owner(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    job_id: Uuid,
+    attempt_id: Uuid,
+) -> Result<(), ApiError> {
+    let pipeline: Uuid = sqlx::query_scalar(
+        "SELECT s.pipeline_id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE j.id=$1",
+    )
+    .bind(job_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    sqlx::query("SELECT id FROM pipelines WHERE id=$1 FOR UPDATE")
+        .bind(pipeline)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    sqlx::query("SELECT j.id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE j.id=$1 AND s.pipeline_id=$2 FOR UPDATE OF j")
+        .bind(job_id).bind(pipeline).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    sqlx::query("SELECT id FROM execution_attempts WHERE id=$1 AND job_id=$2 FOR UPDATE")
+        .bind(attempt_id)
+        .bind(job_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(())
+}
+
 #[utoipa::path(get, path = "/api/v1/artifacts/{artifact_id}/download", tag = "artifacts", params(("artifact_id" = Uuid, Path)), responses((status = 200, description = "Artifact download"), (status = 404)))]
 async fn download_artifact(
     State(state): State<Arc<AppState>>,
@@ -552,14 +627,21 @@ async fn download_artifact(
     .await
     .map_err(ApiError::internal)?
     .ok_or_else(ApiError::not_found)?;
-    let path = contained_artifact_path(&state.config.artifacts, &row.0)?;
-    let bytes = std::fs::read(path).map_err(|_| ApiError::not_found())?;
-    if let Some(expected) = row.3.as_deref() {
-        let actual = sha256_bytes(&bytes);
-        if actual != expected {
-            return Err(ApiError::conflict("artifact checksum mismatch"));
+    let storage = state.config.artifacts.clone();
+    let raw_path = row.0;
+    let expected = row.3;
+    let bytes = tokio::task::spawn_blocking(move || {
+        let path = contained_artifact_path(&storage, &raw_path)?;
+        let bytes = std::fs::read(path).map_err(|_| ApiError::not_found())?;
+        if let Some(expected) = expected.as_deref() {
+            if sha256_bytes(&bytes) != expected {
+                return Err(ApiError::conflict("artifact checksum mismatch"));
+            }
         }
-    }
+        Ok::<_, ApiError>(bytes)
+    })
+    .await
+    .map_err(|error| io_error(std::io::Error::other(error)))??;
     Ok((
         [
             ("content-type", row.2),
@@ -898,7 +980,7 @@ async fn get_deployment(
     Ok(Json(fetch_deployment(pool(&state)?, id).await?))
 }
 
-#[utoipa::path(post, path = "/api/v1/deployments/{deployment_id}/cancel", tag = "environments", params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 202, body = Deployment, description = "Cancellation accepted; execution termination is not yet confirmed"), (status = 404), (status = 409)))]
+#[utoipa::path(post, path = "/api/v1/deployments/{deployment_id}/cancel", tag = "environments", params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment, description = "Terminal result confirmed; a failed deployment without a pipeline confirms a previously accepted cancellation"), (status = 202, body = Deployment, description = "Cancellation accepted; execution termination is not yet confirmed"), (status = 404), (status = 409, description = "Already failed without an accepted cancellation, or pipeline ownership is unconfirmed")))]
 async fn cancel_deployment(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -916,6 +998,11 @@ async fn cancel_deployment(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(ApiError::not_found)?;
+    if status == "failed" && requested.is_none() {
+        return Err(ApiError::conflict(
+            "deployment failed before cancellation was accepted",
+        ));
+    }
     if matches!(status.as_str(), "pending" | "running") && requested.is_none() {
         if let Some(pipeline) = pipeline {
             let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pipelines p JOIN pipeline_triggers t ON t.pipeline_id=p.id AND t.project_id=p.project_id WHERE p.id=$1 AND p.variables->>'deployment_id'=$2 AND t.source IN ('deployment-approval','deployment-rollback'))")
@@ -3164,20 +3251,30 @@ async fn list_users(
                 .await
                 .map_err(|_| ApiError::service_unavailable("Central Auth directory is invalid"))?;
             let count = batch.len();
+            let batch: Vec<_> = batch
+                .into_iter()
+                .filter(|entry| entry.status != "disabled")
+                .collect();
+            let subjects: Vec<_> = batch.iter().map(|entry| entry.id.clone()).collect();
+            let projections =
+                crate::store::central_directory::project_directory_users(pool(&state)?, &subjects)
+                    .await
+                    .map_err(ApiError::internal)?;
+            let mut projections: std::collections::HashMap<_, _> = projections
+                .into_iter()
+                .map(|user| (user.central_sub.clone(), user))
+                .collect();
             for entry in batch {
-                if entry.status == "disabled" {
-                    continue;
-                }
-                let id = Uuid::new_v4();
-                let mut user: User = sqlx::query_as(
-                    "INSERT INTO users (id, username, role, enabled, central_sub) \
-                     VALUES ($1, $2, 'developer', true, $3) \
-                     ON CONFLICT (central_sub) WHERE central_sub IS NOT NULL DO UPDATE SET enabled = true \
-                     RETURNING id, username, role, enabled, created_at"
-                ).bind(id).bind(format!("central-{}", id.simple())).bind(&entry.id)
-                    .fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
-                user.username = entry.email;
-                users.push(user);
+                let projection = projections.remove(&entry.id).ok_or_else(|| {
+                    ApiError::service_unavailable("Central Auth projection is unavailable")
+                })?;
+                users.push(User {
+                    id: projection.id,
+                    username: entry.email,
+                    role: projection.role,
+                    enabled: projection.enabled,
+                    created_at: projection.created_at,
+                });
             }
             if count < 100 {
                 return Ok(Json(users));

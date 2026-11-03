@@ -6399,6 +6399,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Terminal result confirmed; a failed deployment without a pipeline confirms a previously accepted cancellation */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6422,6 +6423,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Already failed without an accepted cancellation, or pipeline ownership is unconfirmed */
             409: {
                 headers: {
                     [name: string]: unknown;

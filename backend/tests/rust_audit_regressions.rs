@@ -539,6 +539,63 @@ async fn log_stream_drains_terminal_tail_stops_on_disconnect_and_exposes_db_erro
 }
 
 #[tokio::test]
+#[ignore = "manual owned PostgreSQL cancellation contract regression"]
+async fn already_failed_deployment_does_not_confirm_a_new_cancel_request() {
+    let f = Fixture::new().await;
+    let project = f.project().await;
+    let response = f
+        .request(
+            0,
+            "POST",
+            &format!("/api/v1/projects/{project}/environments"),
+            json!({"name":"failed-before-cancel","protected":true,"required_approvals":1}),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let environment = body(response).await["id"].as_str().unwrap().to_owned();
+    let response = f
+        .request(
+            0,
+            "POST",
+            &format!("/api/v1/environments/{environment}/deployments"),
+            json!({"git_ref":"main"}),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = Uuid::parse_str(body(response).await["id"].as_str().unwrap()).unwrap();
+    sqlx::query("UPDATE deployments SET status='failed' WHERE id=$1")
+        .bind(id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            f.request(
+                0,
+                "POST",
+                &format!("/api/v1/deployments/{id}/cancel"),
+                Value::Null
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+    }
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT cancel_requested_at IS NULL FROM deployments WHERE id=$1"
+        )
+        .bind(id)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap()
+    );
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM audit_log WHERE action='deployment.cancel.requested' AND resource_id=$1")
+        .bind(id).fetch_one(&f.pool).await.unwrap(),0);
+    f.close().await;
+}
+
+#[tokio::test]
 #[ignore = "manual owned PostgreSQL cancellation/reconciliation regression"]
 async fn deployment_cancel_is_idempotent_and_waits_for_confirmed_execution() {
     let f = Fixture::new().await;
@@ -975,4 +1032,265 @@ async fn deployment_request_key_replays_original_identity_and_rejects_payload_re
         1
     );
     f.close().await;
+}
+
+#[path = "support/early_commit_loss.rs"]
+mod early_commit_loss;
+
+#[tokio::test]
+#[ignore = "manual owned PostgreSQL wire-fault regression"]
+async fn artifact_negative_readback_waits_for_the_inflight_commit() {
+    use std::sync::atomic::Ordering;
+    let f = Fixture::new().await;
+    let project = f.project().await;
+    let (_, job, _) = f.pipeline(project).await;
+    sqlx::raw_sql("CREATE SEQUENCE qa_artifact_commit_witness;
+        CREATE FUNCTION qa_artifact_commit_pause() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN PERFORM nextval('qa_artifact_commit_witness'); PERFORM pg_sleep(1); RETURN NEW; END $$;
+        CREATE CONSTRAINT TRIGGER qa_artifact_commit_pause AFTER INSERT ON artifacts
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION qa_artifact_commit_pause();")
+        .execute(&f.pool).await.unwrap();
+    let socket = std::env::var("FORGE_TEST_POSTGRES_SOCKET").expect("owned fixture socket")
+        + "/.s.PGSQL.5432";
+    let proxy = early_commit_loss::EarlyCommitLoss::start(socket).await;
+    let url = format!(
+        "postgres://qa@127.0.0.1:{}/forge_space_test?sslmode=disable",
+        proxy.port
+    );
+    let own = f.schema.clone();
+    let proxied = PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(3))
+        .after_connect(move |connection, _| {
+            let own = own.clone();
+            Box::pin(async move {
+                sqlx::query("SELECT set_config('search_path',$1,false),set_config('default_transaction_isolation','repeatable read',false)")
+                    .bind(own)
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+    let root = std::env::temp_dir().join(format!("forge-artifact-{}", Uuid::new_v4().simple()));
+    let mut config = cicd::config::RuntimeConfig::test_default();
+    config.auth.secret = Some("rust-audit-owned-fixture-secret-only".into());
+    config.secrets.key = Some([7; 32]);
+    config.artifacts.root = root.clone();
+    let app = cicd::api::app_with_git_and_config(
+        Some(proxied.clone()),
+        cicd::git_host::GitConfig::default(),
+        None,
+        config,
+    )
+    .unwrap();
+    proxy.armed.store(true, Ordering::SeqCst);
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        app.oneshot(
+            Request::post(format!("/api/v1/jobs/{job}/artifacts"))
+                .header("authorization", format!("Bearer {}", f.tokens[0]))
+                .header("x-artifact-name", "fixture.txt")
+                .header("content-type", "text/plain")
+                .body(Body::from("committed artifact bytes"))
+                .unwrap(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        proxy.lost.load(Ordering::SeqCst),
+        "the real COMMIT must be interrupted before its acknowledgement"
+    );
+    assert!(
+        response.status().is_server_error(),
+        "lost publication reply keeps its existing error contract"
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if sqlx::query_scalar::<_, i64>("SELECT count(*) FROM artifacts WHERE job_id=$1")
+                .bind(job)
+                .fetch_one(&f.pool)
+                .await
+                .unwrap()
+                == 1
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the original transaction must really COMMIT");
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT is_called FROM qa_artifact_commit_witness")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap()
+    );
+    let path: String = sqlx::query_scalar("SELECT storage_path FROM artifacts WHERE job_id=$1")
+        .bind(job)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        tokio::fs::read(&path).await.unwrap(),
+        b"committed artifact bytes",
+        "a negative snapshot before COMMIT is not permission to delete the file"
+    );
+    proxied.close().await;
+    drop(proxy);
+    // Neighboring success/checksum and confirmed rollback retain the same HTTP contract.
+    let mut config = cicd::config::RuntimeConfig::test_default();
+    config.auth.secret = Some("rust-audit-owned-fixture-secret-only".into());
+    config.secrets.key = Some([7; 32]);
+    config.artifacts.root = root.clone();
+    let app = cicd::api::app_with_git_and_config(
+        Some(f.pool.clone()),
+        cicd::git_host::GitConfig::default(),
+        None,
+        config,
+    )
+    .unwrap();
+    let request = || {
+        Request::post(format!("/api/v1/jobs/{job}/artifacts"))
+            .header("authorization", format!("Bearer {}", f.tokens[0]))
+            .header("x-artifact-name", "normal.txt")
+            .header("content-type", "text/plain")
+            .body(Body::from("normal artifact"))
+            .unwrap()
+    };
+    let response = app.clone().oneshot(request()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = body(response).await["id"].as_str().unwrap().to_owned();
+    let download = || {
+        Request::get(format!("/api/v1/artifacts/{id}/download"))
+            .header("authorization", format!("Bearer {}", f.tokens[0]))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let response = app.clone().oneshot(download()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap(),
+        "normal artifact"
+    );
+    let path: String = sqlx::query_scalar("SELECT storage_path FROM artifacts WHERE id=$1")
+        .bind(id.parse::<Uuid>().unwrap())
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    tokio::fs::write(path, b"tampered").await.unwrap();
+    assert_eq!(
+        app.clone().oneshot(download()).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    sqlx::query("ALTER TABLE audit_log ADD CONSTRAINT qa_reject_artifact_audit CHECK(action<>'artifact.uploaded') NOT VALID")
+        .execute(&f.pool).await.unwrap();
+    let count = std::fs::read_dir(&root).unwrap().count();
+    assert!(
+        app.oneshot(request())
+            .await
+            .unwrap()
+            .status()
+            .is_server_error()
+    );
+    assert_eq!(
+        std::fs::read_dir(&root).unwrap().count(),
+        count,
+        "confirmed pre-COMMIT failure removes only its owned staged file"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+    f.close().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "manual Unix FIFO/owned PostgreSQL async-executor boundary"]
+async fn slow_artifact_read_does_not_stall_neighboring_async_work() {
+    use std::{
+        io::Write,
+        time::{Duration, Instant},
+    };
+    let f = Fixture::new().await;
+    let project = f.project().await;
+    let (_, job, _) = f.pipeline(project).await;
+    let root = std::env::temp_dir().join(format!("forge-slow-io-{}", Uuid::new_v4()));
+    let mut config = cicd::config::RuntimeConfig::test_default();
+    config.auth.secret = Some("rust-audit-owned-fixture-secret-only".into());
+    config.secrets.key = Some([7; 32]);
+    config.artifacts.root = root.clone();
+    let app = cicd::api::app_with_git_and_config(
+        Some(f.pool.clone()),
+        cicd::git_host::GitConfig::default(),
+        None,
+        config,
+    )
+    .unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/jobs/{job}/artifacts"))
+                .header("authorization", format!("Bearer {}", f.tokens[0]))
+                .header("x-artifact-name", "slow.txt")
+                .header("content-type", "text/plain")
+                .body(Body::from("slow fixture bytes"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = Uuid::parse_str(body(response).await["id"].as_str().unwrap()).unwrap();
+    let path: String = sqlx::query_scalar("SELECT storage_path FROM artifacts WHERE id=$1")
+        .bind(id)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        let _ = ready_tx.send(());
+        // This thread always releases the read, even on a failed assertion.
+        let _ = release_rx.recv_timeout(Duration::from_secs(2));
+        file.write_all(b"slow fixture bytes").unwrap();
+    });
+    let request = Request::get(format!("/api/v1/artifacts/{id}/download"))
+        .header("authorization", format!("Bearer {}", f.tokens[0]))
+        .body(Body::empty())
+        .unwrap();
+    let start = Instant::now();
+    let download = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
+    ready_rx.await.unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let heartbeat_elapsed = start.elapsed();
+    let read_was_pending = !download.is_finished();
+    let _ = release_tx.send(());
+    let response = download.await.unwrap();
+    writer.join().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap(),
+        "slow fixture bytes"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+    f.close().await;
+    assert!(
+        read_was_pending,
+        "heartbeat must run while the real filesystem read is blocked"
+    );
+    assert!(
+        heartbeat_elapsed < Duration::from_millis(500),
+        "single-thread async executor stalled for {heartbeat_elapsed:?}"
+    );
 }
