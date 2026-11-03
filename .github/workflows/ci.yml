@@ -146,6 +146,9 @@ jobs:
           else
             cargo test --locked --features integration --test integration_db -- --test-threads=1
           fi
+      - name: Managed workspace and Developer PostgreSQL regressions
+        if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
+        run: cargo test --locked --features integration --test development_workspaces -- --test-threads=1
       - name: Task credential renewal PostgreSQL regressions
         if: github.event_name == 'workflow_dispatch' && (!inputs.git_receive_only)
         run: |

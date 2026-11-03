@@ -1,6 +1,9 @@
 //! Human-managed project environments over existing identity and Forge execution.
 
+mod assignment;
 mod catalog;
+pub(crate) mod machine;
+pub(crate) mod machine_git;
 mod native;
 mod tracker;
 pub mod worker;
@@ -15,6 +18,7 @@ pub use catalog::{SourceRepository, TargetChoice};
 use cicd_domain::development_workspace::WorkspaceAction;
 use cicd_infra::development_workspace::{self as store, Operation, Session, Workspace};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -100,8 +104,10 @@ fn pool(state: &AppState) -> Result<&sqlx::PgPool, ApiError> {
     state.pool.as_ref().ok_or_else(ApiError::unavailable)
 }
 
-fn human(identity: &VerifiedRequestIdentity, write: bool) -> Result<(), ApiError> {
-    if identity.claims.service_account_name.is_some() || identity.claims.role == "service_account" {
+fn principal_access(identity: &VerifiedRequestIdentity, write: bool) -> Result<(), ApiError> {
+    if (identity.claims.service_account_name.is_some() || identity.claims.role == "service_account")
+        && !machine::principal(identity)
+    {
         return Err(ApiError::forbidden());
     }
     identity.require_scope(if write { "ci-cd:write" } else { "ci-cd:read" })
@@ -134,6 +140,7 @@ async fn enqueue(
     owner: Uuid,
     version: i64,
     action: &WorkspaceAction,
+    developer_authority: Option<Value>,
 ) -> Result<Operation, ApiError> {
     let request = serde_json::to_value(action)
         .map_err(|_| ApiError::bad_request("invalid_workspace_command"))?;
@@ -147,6 +154,15 @@ async fn enqueue(
         return Ok(original);
     }
     let mut plan = catalog::operation_plan(state, workspace, action)?;
+    if developer_authority.is_some() {
+        if let Some(jobs) = plan["pipeline"]["jobs"].as_object()
+            && jobs
+                .values()
+                .any(|job| job.get("image_publish").is_some() || job.get("helm_deploy").is_some())
+        {
+            return Err(ApiError::forbidden());
+        }
+    }
     if !plan.as_object().is_some_and(|value| value.is_empty()) {
         let environment =
             catalog::execution_target(&mut **tx, workspace.environment_id, workspace.project_id)
@@ -156,6 +172,9 @@ async fn enqueue(
         }
         plan["environment"] = environment;
         plan["environmentHash"] = serde_json::json!(workspace.environment_hash);
+    }
+    if let Some(authority) = developer_authority {
+        plan["developerAuthority"] = authority;
     }
     store::enqueue(tx, workspace.id, id, actor, owner, version, action, &plan)
         .await
@@ -214,7 +233,7 @@ pub(crate) async fn list(
     Query(page): Query<Page>,
     Extension(identity): Extension<VerifiedRequestIdentity>,
 ) -> Result<Json<DevelopmentWorkspacePage>, ApiError> {
-    human(&identity, false)?;
+    principal_access(&identity, false)?;
     let (limit, offset) = page.bounds()?;
     let (items, total) = store::list(pool(&state)?, project, limit, offset)
         .await
@@ -228,14 +247,27 @@ pub(crate) async fn profiles(
     Path(project): Path<Uuid>,
     Extension(identity): Extension<VerifiedRequestIdentity>,
 ) -> Result<Json<DevelopmentWorkspaceTargets>, ApiError> {
-    human(&identity, false)?;
-    let can_register = can_maintain(pool(&state)?, &identity, project).await?;
+    principal_access(&identity, false)?;
+    let can_register =
+        !machine::principal(&identity) && can_maintain(pool(&state)?, &identity, project).await?;
+    let mut items = catalog::choices(
+        &state,
+        configuration_repository(&state, project).await?,
+        project,
+    )?;
+    if machine::principal(&identity) {
+        // A machine uses Forge's registered Git endpoint, not the upstream
+        // account/SSH key that an existing human checkout may use.
+        for item in &mut items {
+            for repository in &mut item.repositories {
+                let (group,slug):(String,String)=sqlx::query_as("SELECT g.slug,r.slug FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id WHERE r.id=$1 AND r.kind='hosted'")
+                    .bind(repository.repository_id).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::forbidden)?;
+                repository.clone_url = crate::repository_catalog::public_git_url(&group, &slug)?;
+            }
+        }
+    }
     Ok(Json(DevelopmentWorkspaceTargets {
-        items: catalog::choices(
-            &state,
-            configuration_repository(&state, project).await?,
-            project,
-        )?,
+        items,
         can_register,
         denied_reason: (!can_register)
             .then(|| "Требуются права сопровождающего проекта".to_owned()),
@@ -248,7 +280,7 @@ pub(crate) async fn detail(
     Path(id): Path<Uuid>,
     Extension(identity): Extension<VerifiedRequestIdentity>,
 ) -> Result<Json<DevelopmentWorkspaceDetail>, ApiError> {
-    human(&identity, false)?;
+    principal_access(&identity, false)?;
     let latest_operation = sqlx::query_as("SELECT * FROM development_workspace_operations WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1")
         .bind(id).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?;
     let workspace = store::workspace(pool(&state)?, id).await.map_err(error)?;
@@ -277,7 +309,7 @@ pub(crate) async fn detail(
         .is_some_and(|operation: &Operation| {
             matches!(operation.state.as_str(), "queued" | "running" | "unknown")
         });
-    let actions = action_availability(
+    let mut actions = action_availability(
         &workspace,
         session.as_ref(),
         identity.claims.sub,
@@ -286,6 +318,17 @@ pub(crate) async fn detail(
         busy,
         jobs,
     );
+    if machine::principal(&identity) {
+        for action in &mut actions {
+            if !matches!(
+                action.action.as_str(),
+                "begin_session" | "end_session" | "prepare" | "check"
+            ) {
+                action.allowed = false;
+                action.reason = Some("Действие не входит в полномочия Developer".into());
+            }
+        }
+    }
     let occupied = busy || jobs || session.is_some();
     Ok(Json(DevelopmentWorkspaceDetail {
         workspace,
@@ -305,7 +348,7 @@ pub(crate) async fn register(
     permit: Option<Extension<RepositoryWrite>>,
     Json(input): Json<RegisterWorkspace>,
 ) -> Result<Json<Operation>, ApiError> {
-    human(&identity, true)?;
+    principal_access(&identity, true)?;
     if input.id.is_nil()
         || input.operation_id.is_nil()
         || input.catalog_target_id.is_nil()
@@ -402,6 +445,7 @@ pub(crate) async fn register(
         owner,
         1,
         &action,
+        None,
     )
     .await?;
     if let Some(permit) = &permit {
@@ -419,7 +463,7 @@ pub(crate) async fn submit(
     permit: Option<Extension<RepositoryWrite>>,
     Json(input): Json<OperationRequest>,
 ) -> Result<Json<Operation>, ApiError> {
-    human(&identity, true)?;
+    principal_access(&identity, true)?;
     if input.operation_id.is_nil()
         || input.expected_version < 1
         || matches!(
@@ -439,15 +483,73 @@ pub(crate) async fn submit(
         )
         .await?;
     }
+    let developer = machine::principal(&identity);
+    let origin = if developer {
+        None
+    } else {
+        crate::pipeline_authority::require_creation(false)?
+    };
+    let owner = if developer {
+        identity
+            .central
+            .as_ref()
+            .ok_or_else(ApiError::forbidden)?
+            .context
+            .user_id
+            .parse()
+            .map_err(|_| ApiError::forbidden())?
+    } else {
+        origin
+            .map(|origin| origin.subject())
+            .unwrap_or(identity.claims.sub)
+    };
+    let developer_authority = if developer {
+        let request = serde_json::to_value(&input.command)
+            .map_err(|_| ApiError::bad_request("invalid_workspace_command"))?;
+        let hash = store::request_hash(
+            &json!({"action":request,"expected_version":input.expected_version}),
+        )
+        .map_err(error)?;
+        let mut replay = pool(&state)?.begin().await.map_err(ApiError::internal)?;
+        let original = store::original(
+            &mut replay,
+            workspace.id,
+            input.operation_id,
+            identity.claims.sub,
+            owner,
+            &hash,
+        )
+        .await
+        .map_err(error)?;
+        replay.commit().await.map_err(ApiError::internal)?;
+        if let Some(original) = original {
+            return Ok(Json(original));
+        }
+        Some(
+            machine::seal(
+                &state,
+                &workspace,
+                input.operation_id,
+                &identity,
+                &input.command,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     let mut tx =
         crate::repository_catalog::catalog_write_lease(&state, workspace.repository_id).await?;
     if let Some(permit) = &permit {
         permit.lock(&mut tx).await?;
     }
-    let origin = crate::pipeline_authority::require_creation(false)?;
-    let owner = origin
-        .map(|origin| origin.subject())
-        .unwrap_or(identity.claims.sub);
+    if developer {
+        crate::git_host::GitDeadline::identity(
+            identity.central.as_ref().ok_or_else(ApiError::forbidden)?,
+        )
+        .bind_commit_clock(&mut tx)
+        .await?;
+    }
     if let Some(origin) = origin {
         origin.bind(&mut tx).await?;
     }
@@ -460,6 +562,7 @@ pub(crate) async fn submit(
         owner,
         input.expected_version,
         &input.command,
+        developer_authority,
     )
     .await?;
     if let Some(permit) = &permit {
@@ -475,7 +578,7 @@ pub(crate) async fn operation(
     Path((id, operation)): Path<(Uuid, Uuid)>,
     Extension(identity): Extension<VerifiedRequestIdentity>,
 ) -> Result<Json<Operation>, ApiError> {
-    human(&identity, false)?;
+    principal_access(&identity, false)?;
     store::operation(pool(&state)?, id, operation)
         .await
         .map(Json)
@@ -489,7 +592,7 @@ pub(crate) async fn operations(
     Query(page): Query<Page>,
     Extension(identity): Extension<VerifiedRequestIdentity>,
 ) -> Result<Json<Vec<Operation>>, ApiError> {
-    human(&identity, false)?;
+    principal_access(&identity, false)?;
     let (limit, offset) = page.bounds()?;
     sqlx::query_as("SELECT * FROM development_workspace_operations WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3")
         .bind(id).bind(limit).bind(offset).fetch_all(pool(&state)?).await.map(Json).map_err(ApiError::internal)
@@ -502,7 +605,7 @@ pub(crate) async fn reconcile(
     Extension(identity): Extension<VerifiedRequestIdentity>,
     permit: Option<Extension<RepositoryWrite>>,
 ) -> Result<Json<Operation>, ApiError> {
-    human(&identity, true)?;
+    principal_access(&identity, true)?;
     let workspace = store::workspace(pool(&state)?, id).await.map_err(error)?;
     let mut tx =
         crate::repository_catalog::catalog_write_lease(&state, workspace.repository_id).await?;

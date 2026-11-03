@@ -81,6 +81,20 @@ struct GitAccess {
     deadline: Option<deadline::GitDeadline>,
     origin: Option<crate::pipeline_authority::Origin>,
 }
+
+enum TaskGitAuthorization {
+    Legacy(crate::task_git::Authorization),
+    Developer(crate::development_workspaces::machine_git::Authorization),
+}
+
+impl TaskGitAuthorization {
+    fn deadline(&self) -> GitDeadline {
+        match self {
+            Self::Legacy(a) => a.deadline,
+            Self::Developer(a) => a.deadline,
+        }
+    }
+}
 impl GitAccess {
     fn response(self, response: Response) -> Response {
         match self.deadline {
@@ -697,9 +711,27 @@ pub async fn git_info_refs(
             ..GitAccess::default()
         },
         Ok(None) => {
-            match check_repo_access(&state, &repo, &headers, operation, admission_active).await {
-                Ok(access) => access,
-                Err(e) => return git_access_error(e),
+            match crate::development_workspaces::machine_git::admit(
+                &state,
+                &repo,
+                &headers,
+                operation == GitOperation::Write,
+            )
+            .await
+            {
+                Ok(Some(developer)) => GitAccess {
+                    deadline: Some(developer.deadline),
+                    ..GitAccess::default()
+                },
+                Ok(None) => {
+                    match check_repo_access(&state, &repo, &headers, operation, admission_active)
+                        .await
+                    {
+                        Ok(access) => access,
+                        Err(e) => return git_access_error(e),
+                    }
+                }
+                Err(error) => return git_access_error(error),
             }
         }
     };
@@ -783,7 +815,7 @@ async fn run_git_service(
     body: Bytes,
     storage: Option<String>,
     access: GitAccess,
-    task: Option<crate::task_git::Authorization>,
+    task: Option<TaskGitAuthorization>,
 ) -> Result<std::fs::File, ApiError> {
     // The owner waiter retains the guard until native Git exits, even if HTTP is cancelled.
     let path = path.to_owned();
@@ -843,11 +875,15 @@ async fn run_git_service(
                     .map(|address| address.port())
                     .map_err(|_| ApiError::service_unavailable("Git callback bind unavailable"));
                 let installed = configured.and_then(|port| {
-                    hooks.task_candidate(
-                        task,
-                        state.git.internal_token.as_deref().unwrap_or(""),
-                        port,
-                    )
+                    let internal = state.git.internal_token.as_deref().unwrap_or("");
+                    match task {
+                        TaskGitAuthorization::Legacy(task) => {
+                            hooks.task_candidate(task, internal, port)
+                        }
+                        TaskGitAuthorization::Developer(task) => {
+                            hooks.developer_candidate(task, internal, port)
+                        }
+                    }
                 });
                 if let Err(error) = installed {
                     hooks.cleanup();
@@ -1035,12 +1071,23 @@ pub async fn git_service_endpoint(
         return ApiError::forbidden().into_response();
     }
     let task = match crate::task_git::admit(&state, &repo, &headers).await {
-        Ok(task) => task,
+        Ok(Some(task)) => Some(TaskGitAuthorization::Legacy(task)),
+        Ok(None) => match crate::development_workspaces::machine_git::admit(
+            &state,
+            &repo,
+            &headers,
+            operation == GitOperation::Write,
+        )
+        .await
+        {
+            Ok(task) => task.map(TaskGitAuthorization::Developer),
+            Err(e) => return git_access_error(e),
+        },
         Err(e) => return git_access_error(e),
     };
     let access = if let Some(task) = task.as_ref() {
         GitAccess {
-            deadline: Some(task.deadline),
+            deadline: Some(task.deadline()),
             ..GitAccess::default()
         }
     } else {

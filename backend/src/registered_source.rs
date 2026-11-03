@@ -11,6 +11,7 @@ use uuid::Uuid;
 #[derive(Deserialize, utoipa::IntoParams)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryQuery {
+    pub development_workspace_id: Option<Uuid>,
     pub registry_instance_id: Uuid,
     pub namespace_id: Uuid,
     pub base_ref: String,
@@ -32,8 +33,12 @@ impl RepositoryQuery {
         {
             return Err(ApiError::bad_request("invalid_delivery_configuration_name"));
         }
-        if full_branch(&self.base_ref) && sha1(&self.base_commit) {
+        if full_branch(&self.base_ref)
+            && sha1(&self.base_commit)
+            && !self.development_workspace_id.is_some_and(|id| id.is_nil())
+        {
             Ok(ExpectedSource {
+                workspace: self.development_workspace_id,
                 reference: self.base_ref.clone(),
                 commit: self.base_commit.clone(),
             })
@@ -52,6 +57,7 @@ impl RepositoryQuery {
 }
 
 pub struct ExpectedSource {
+    workspace: Option<Uuid>,
     reference: String,
     commit: String,
 }
@@ -59,6 +65,8 @@ pub struct ExpectedSource {
 #[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VerifiedSource {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub development_workspace_id: Option<Uuid>,
     pub namespace: NamespaceRef,
     pub forge_instance_id: Uuid,
     pub repository_id: Uuid,
@@ -117,7 +125,7 @@ fn sha1(value: &str) -> bool {
 }
 
 // Matches Tracker's portable input contract; native Git still validates/resolves the branch.
-fn full_branch(value: &str) -> bool {
+pub(crate) fn full_branch(value: &str) -> bool {
     value.starts_with("refs/heads/")
         && value.len() <= 255
         && !value.ends_with(['/', '.'])
@@ -316,6 +324,14 @@ pub(crate) async fn observe_on(
         .bind(repository).fetch_all(&mut *connection).await.map_err(ApiError::internal)?;
     let (commit, default) = native_source(&path, &expected).await?;
     let protected_refs = protected_refs(&default, policies)?;
+    if let Some(workspace) = expected.workspace {
+        let matches:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM development_workspaces w JOIN forge_workspace_projects p ON p.tracker_instance_id=w.tracker_instance_id AND p.tracker_project_id=w.tracker_project_id WHERE w.id=$1 AND w.repository_id=$2 AND p.registry_instance_id=$3 AND p.namespace_id=$4 AND p.state='active')")
+            .bind(workspace).bind(repository).bind(namespace.registry_instance_id).bind(namespace.namespace_id)
+            .fetch_one(&mut *connection).await.map_err(ApiError::internal)?;
+        if !matches {
+            return Err(ApiError::forbidden());
+        }
+    }
     // Same catalog/namespace fence, exact repo and name; never a human catalog listing.
     let delivery_configuration = if let Some(name) = delivery_configuration_name {
         let rows = sqlx::query_as::<_, (Uuid, String, Uuid)>(
@@ -336,6 +352,7 @@ pub(crate) async fn observe_on(
         None
     };
     let observation = VerifiedSource {
+        development_workspace_id: expected.workspace,
         namespace,
         forge_instance_id: command.resource.instance_id,
         repository_id: repository,

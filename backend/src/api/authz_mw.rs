@@ -205,6 +205,30 @@ pub(crate) async fn require_auth(
             req.extensions_mut().insert(identity);
             return Ok(next.run(req).await);
         }
+        if verified.subject_role.as_deref() == Some("service_account")
+            && crate::development_workspaces::machine::handles(method.as_str(), req.uri().path())
+        {
+            let identity = crate::development_workspaces::machine::authenticate(
+                pool,
+                verified,
+                method.as_str(),
+                req.uri().path(),
+            )
+            .await?;
+            let authority = req
+                .extensions()
+                .get::<pdlc_auth_core::http_authority::RequestAuthority>()
+                .ok_or_else(|| ApiError::service_unavailable("Request authority guard missing"))?;
+            authority.restrict_to(
+                identity
+                    .original_deadline()?
+                    .ok_or_else(ApiError::forbidden)?,
+            );
+            let mut req = req;
+            req.extensions_mut().insert(identity.claims.clone());
+            req.extensions_mut().insert(identity);
+            return Ok(next.run(req).await);
+        }
         checked_central = Some(VerifiedRequestIdentity {
             claims: central_identity(pool, &verified).await?,
             central: Some(verified),

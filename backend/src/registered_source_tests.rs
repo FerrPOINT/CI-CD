@@ -226,6 +226,7 @@ async fn native_exact_branch_ignores_same_named_tag_and_does_not_change_refs() {
     fixture.git(&["update-ref", "refs/tags/main", &other]);
     let before = fixture.git(&["for-each-ref", "--format=%(refname) %(objectname)"]);
     let expected = ExpectedSource {
+        workspace: None,
         reference: "refs/heads/main".into(),
         commit: commit.clone(),
     };
@@ -248,6 +249,7 @@ async fn native_missing_branch_or_wrong_sha_has_no_head_tag_fallback() {
         native_source(
             &fixture.0,
             &ExpectedSource {
+                workspace: None,
                 reference: "refs/heads/release".into(),
                 commit: commit.clone()
             }
@@ -258,6 +260,7 @@ async fn native_missing_branch_or_wrong_sha_has_no_head_tag_fallback() {
     let error = native_source(
         &fixture.0,
         &ExpectedSource {
+            workspace: None,
             reference: "refs/heads/main".into(),
             commit: "f".repeat(40),
         },

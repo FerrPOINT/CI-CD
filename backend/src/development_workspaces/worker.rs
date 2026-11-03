@@ -165,10 +165,27 @@ async fn execute(
             .await
             .map_err(ApiError::internal)?;
     let (enabled, local_role, central) = user.ok_or_else(ApiError::forbidden)?;
-    if !enabled || local_role == "service_account" {
+    let developer = if local_role == "service_account" && !work.reconcile_only {
+        Some(
+            super::machine::verify(
+                pool,
+                &workspace,
+                work.id,
+                actor,
+                subject,
+                &action,
+                &work.execution_plan["developerAuthority"],
+                &state.config.secrets,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    if !enabled || (local_role == "service_account" && developer.is_none()) {
         return Err(ApiError::forbidden());
     }
-    let owner = if crate::central_auth::application_policy_required()? {
+    let owner = if developer.is_none() && crate::central_auth::application_policy_required()? {
         if central.as_deref() != Some(subject.to_string().as_str()) {
             return Err(ApiError::forbidden());
         }
@@ -218,13 +235,17 @@ async fn execute(
     {
         return Err(ApiError::forbidden());
     }
-    let permit =
+    let permit = if developer.is_some() {
+        None
+    } else {
         crate::space_admission::saved_repository(pool, &storage, actor, owner.as_ref(), minimum)
-            .await?;
+            .await?
+    };
     pipeline_authority::with_origin(origin,async {
         let mut tx=crate::repository_catalog::catalog_write_lease(state,workspace.repository_id).await?;
         if let Some(permit)=&permit {permit.lock(&mut tx).await?;}
         if let Some(origin)=origin {origin.bind(&mut tx).await?;}
+        if let Some(proof)=&developer {proof.clock.bind_commit_clock(&mut tx).await?;}
         sqlx::query("SELECT id FROM development_workspaces WHERE id=$1 FOR UPDATE").bind(workspace.id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
         if work.reconcile_only && matches!(action,WorkspaceAction::Prepare{..}|WorkspaceAction::Check{..}|WorkspaceAction::Build{..}) {
             let key=format!("pipeline-trigger:{}:development-workspace:{}",workspace.project_id,work.id);
@@ -257,8 +278,10 @@ async fn execute(
                     .bind(workspace.tracker_instance_id).bind(workspace.tracker_project_id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
                 let namespace=pdlc_shared::resource_context::NamespaceRef{registry_instance_id,namespace_id};
                 let (task_id,task_ref)=super::tracker::read_task(&namespace,workspace.tracker_instance_id,workspace.tracker_project_id,task).await?;
-                sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,sources) VALUES($1,$2,$3,$4,$5,$6,$7)")
-                    .bind(work.id).bind(workspace.id).bind(work.actor_id).bind(work.owner_subject).bind(task_id).bind(task_ref).bind(&workspace.sources).execute(&mut *tx).await.map_err(ApiError::internal)?;
+                let machine_assignment=developer.as_ref().map(|proof|serde_json::to_value(&proof.assignment))
+                    .transpose().map_err(|_|ApiError::forbidden())?;
+                sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,sources,machine_assignment) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+                    .bind(work.id).bind(workspace.id).bind(work.actor_id).bind(work.owner_subject).bind(task_id).bind(task_ref).bind(&workspace.sources).bind(machine_assignment).execute(&mut *tx).await.map_err(ApiError::internal)?;
                 json!({"state":"succeeded","sessionId":work.id})
             }
             WorkspaceAction::EndSession{session_id}|WorkspaceAction::RecoverSession{session_id} => {
@@ -350,8 +373,34 @@ async fn launch_pipeline(
     let pipeline = &work.execution_plan["pipeline"];
     let raw = serde_json::to_string(pipeline)
         .map_err(|_| ApiError::conflict("workspace_pipeline_invalid"))?;
-    let outcome=crate::api::pipelines_routes::create_development_pipeline(pool,workspace.project_id,commit,&raw,
-        json!({"development_workspace_id":workspace.id,"development_workspace_operation_id":work.id,"development_workspace_profile_hash":workspace.profile_hash}),&work.id.to_string(),&state.git.root).await?;
+    let key = work.id.to_string();
+    let creation = crate::api::pipelines_routes::create_development_pipeline(
+        pool,
+        workspace.project_id,
+        commit,
+        &raw,
+        json!({"development_workspace_id":workspace.id,"development_workspace_operation_id":work.id,"development_workspace_profile_hash":workspace.profile_hash}),
+        &key,
+        &state.git.root,
+    );
+    let outcome = if work.execution_plan.get("developerAuthority").is_some() {
+        let action =
+            serde_json::from_value(work.request.clone()).map_err(|_| ApiError::forbidden())?;
+        let proof = super::machine::verify(
+            pool,
+            workspace,
+            work.id,
+            work.actor_id,
+            work.owner_subject,
+            &action,
+            &work.execution_plan["developerAuthority"],
+            &state.config.secrets,
+        )
+        .await?;
+        super::machine::with_creation(work.id, proof.clock, creation).await?
+    } else {
+        creation.await?
+    };
     sqlx::query("UPDATE development_workspace_operations SET pipeline_id=$2 WHERE id=$1 AND state='running'")
         .bind(work.id).bind(outcome.pipeline.id).execute(pool).await.map_err(ApiError::internal)?;
     Ok(None)

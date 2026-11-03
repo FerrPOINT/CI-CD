@@ -407,6 +407,13 @@ pub struct CandidateCheck {
     pub task_candidate: GitContext,
 }
 
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum CandidateCheckEnvelope {
+    Developer(crate::development_workspaces::machine_git::CandidateCheck),
+    Task(CandidateCheck),
+}
+
 pub enum PushRequest {
     Candidate(Box<CandidateCheck>),
     Legacy(crate::git_host::GitPushEvent),
@@ -426,6 +433,11 @@ impl PushRequest {
 impl<'de> Deserialize<'de> for PushRequest {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = Value::deserialize(deserializer)?;
+        if value.get("developer_workspace").is_some() {
+            return Err(serde::de::Error::custom(
+                "developer_workspace_requires_task_git_check",
+            ));
+        }
         // A malformed/mixed task variant must NEVER fall through to legacy auto-pipeline.
         if value.get("task_candidate").is_some() {
             serde_json::from_value(value)
@@ -446,15 +458,20 @@ pub struct CandidateCheckReadback {
 }
 
 #[utoipa::path(post,operation_id="forge_task_git_check",path="/api/v1/internal/task-git-check",tag="git",
-    request_body=CandidateCheck,responses((status=200,body=CandidateCheckReadback),(status=400),(status=401),(status=403),(status=409),(status=422),(status=503)))]
+    request_body=CandidateCheckEnvelope,responses((status=200,body=CandidateCheckReadback),(status=400),(status=401),(status=403),(status=409),(status=422),(status=503)))]
 pub async fn callback(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<AppState>>,
     headers: HeaderMap,
-    axum::Json(request): axum::Json<CandidateCheck>,
+    axum::Json(request): axum::Json<CandidateCheckEnvelope>,
 ) -> Result<axum::Json<CandidateCheckReadback>, ApiError> {
-    check_callback(&state, &headers, request)
-        .await
-        .map(axum::Json)
+    match request {
+        CandidateCheckEnvelope::Task(request) => check_callback(&state, &headers, request).await,
+        CandidateCheckEnvelope::Developer(request) => {
+            crate::development_workspaces::machine_git::check_callback(&state, &headers, request)
+                .await
+        }
+    }
+    .map(axum::Json)
 }
 
 pub(crate) async fn check_callback(
