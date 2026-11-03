@@ -14,6 +14,9 @@ const CHILD: &str = "FORGE_WORKSPACE_DEVELOPER_TEST";
 const SELECTOR: &str =
     "developer::configured_developer_is_fenced_by_assignment_and_keeps_humans_separate";
 
+#[path = "development_workspace_developer_checks.rs"]
+mod checks;
+
 #[derive(Clone)]
 struct Owner {
     context: serde_json::Value,
@@ -53,6 +56,21 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
     .execute(&f.pool)
     .await
     .unwrap();
+    // Hosted creation also publishes the public alias; storage names alone do
+    // not become canonical Git URLs when a repository joins a namespace.
+    let public_name: String = sqlx::query_scalar(
+        "SELECT g.slug||'/'||r.slug FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id WHERE r.id=$1",
+    )
+    .bind(workspace.repository_id)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO repository_aliases(alias,repository_id) VALUES($1,$2)")
+        .bind(&public_name)
+        .bind(workspace.repository_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
     let native = tempfile::tempdir().unwrap();
     let checkout = native.path().join("checkout");
     let git_root = native.path().join("repositories");
@@ -144,7 +162,7 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
     use std::io::Write;
     reader.write_all(b"workspace-reader-fixture").unwrap();
     let data = json!({"database":f.database,"workspace":f.workspace,"other_workspace":f.other_workspace,"project":f.project,"subject":subject,"task":task,"origin":origin,
-        "git_root":git_root,"checkout":checkout,"repository":format!("workspace-{}/{storage}",group.simple()),
+        "git_root":git_root,"checkout":checkout,"repository":public_name,
         "registry":registry,"namespace":namespace["namespace_id"],"repository_id":workspace.repository_id,"base_commit":base});
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(90),
@@ -162,6 +180,10 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
             .env("CICD_NAMESPACE__TRACKER_TOKEN_FILE", reader.path())
             .env("CICD_NAMESPACE__READER_SUBJECTS", source_reader.to_string())
             .env("CICD_NAMESPACE__INSTANCE_ID", forge_instance.to_string())
+            .env(
+                "CICD_SECRETS_KEY",
+                "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+            )
             .env("NO_PROXY", "127.0.0.1,localhost")
             .env("no_proxy", "127.0.0.1,localhost")
             .kill_on_drop(true)
@@ -197,6 +219,7 @@ async fn child(data: serde_json::Value) {
         .await
         .unwrap();
     let catalog = tempfile::tempdir().unwrap();
+    checks::publish(&pool, catalog.path(), workspace).await;
     let mut config = cicd::config::RuntimeConfig::from_env_source(|_| None, false)
         .unwrap()
         .with_auth_secret(Some("workspace-developer-fixture-only".into()));
@@ -205,6 +228,7 @@ async fn child(data: serde_json::Value) {
     config.http.bind = listener.local_addr().unwrap().to_string();
     config.git.root = data["git_root"].as_str().unwrap().into();
     config.git.internal_token = Some("workspace-fixture-internal".into());
+    config.runner.registration_token = Some("workspace-runner-fixture".into());
     let git_url = format!(
         "http://{}/git/{}.git",
         config.http.bind,
@@ -440,6 +464,7 @@ async fn child(data: serde_json::Value) {
         pipelines, 0,
         "Developer Git must not invoke ordinary delivery"
     );
+    checks::exercise(&app, &pool, workspace, &data).await;
     let version: i64 = sqlx::query_scalar("SELECT version FROM development_workspaces WHERE id=$1")
         .bind(workspace)
         .fetch_one(&pool)
