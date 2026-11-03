@@ -2343,6 +2343,36 @@ paths:
       responses:
         '200':
           description: Liveness
+  /api/v1/internal/development-workspace-git-check:
+    post:
+      tags:
+      - git
+      operationId: forge_development_workspace_git_check
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentWorkspaceGitCheck'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidateCheckReadback'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '409':
+          description: ''
+        '422':
+          description: ''
+        '503':
+          description: ''
   /api/v1/internal/git-push:
     post:
       tags:
@@ -3120,6 +3150,14 @@ paths:
         required: true
         schema:
           type: string
+          format: uuid
+      - name: development_workspace_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
           format: uuid
       - name: registry_instance_id
         in: query
@@ -8378,6 +8416,14 @@ components:
           - $ref: '#/components/schemas/DevelopmentWorkspaceSession'
         workspace:
           $ref: '#/components/schemas/DevelopmentWorkspace'
+    DevelopmentWorkspaceGitCheck:
+      type: object
+      required:
+      - developer_workspace
+      properties:
+        developer_workspace:
+          type: string
+      additionalProperties: false
     DevelopmentWorkspaceOperation:
       type: object
       required:
@@ -8473,6 +8519,7 @@ components:
         id:
           type: string
           format: uuid
+        machine_assignment: {}
         owner_subject:
           type: string
           format: uuid
@@ -12257,6 +12304,11 @@ components:
           oneOf:
           - type: 'null'
           - $ref: '#/components/schemas/DeliveryConfigurationReadback'
+        development_workspace_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         forge_instance_id:
           type: string
           format: uuid

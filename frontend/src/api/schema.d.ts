@@ -820,6 +820,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/development-workspace-git-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["forge_development_workspace_git_check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/internal/git-push": {
         parameters: {
             query?: never;
@@ -3240,6 +3256,9 @@ export interface components {
             session?: null | components["schemas"]["DevelopmentWorkspaceSession"];
             workspace: components["schemas"]["DevelopmentWorkspace"];
         };
+        DevelopmentWorkspaceGitCheck: {
+            developer_workspace: string;
+        };
         DevelopmentWorkspaceOperation: {
             /** Format: uuid */
             actor_id: string;
@@ -3278,6 +3297,7 @@ export interface components {
             ended_at?: string | null;
             /** Format: uuid */
             id: string;
+            machine_assignment?: unknown;
             /** Format: uuid */
             owner_subject: string;
             sources: unknown;
@@ -4811,6 +4831,8 @@ export interface components {
             base_ref: string;
             default_ref: string;
             delivery_configuration?: null | components["schemas"]["DeliveryConfigurationReadback"];
+            /** Format: uuid */
+            development_workspace_id?: string | null;
             /** Format: uuid */
             forge_instance_id: string;
             namespace: components["schemas"]["NamespaceRef"];
@@ -6829,6 +6851,65 @@ export interface operations {
             };
         };
     };
+    forge_development_workspace_git_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DevelopmentWorkspaceGitCheck"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateCheckReadback"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     internal_git_push: {
         parameters: {
             query?: never;
@@ -7572,6 +7653,7 @@ export interface operations {
     forge_namespace_repository_source: {
         parameters: {
             query: {
+                development_workspace_id?: string | null;
                 registry_instance_id: string;
                 namespace_id: string;
                 base_ref: string;

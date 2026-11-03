@@ -62,6 +62,9 @@ pub struct Session {
     pub task_id: Uuid,
     pub task_ref: String,
     pub sources: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[sqlx(default)]
+    pub machine_assignment: Option<Value>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
 }

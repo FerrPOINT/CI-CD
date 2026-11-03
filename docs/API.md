@@ -3,6 +3,10 @@
 Отдельное семейство `/development-workspaces`: реестр, сессии, именованные
 проверки и original-key async lifecycle. [Контракт и recovery](DEVELOPMENT_WORKSPACES.md).
 Существующие project/task workspace routes и identifiers сохраняются.
+Постоянная configured-cli-v1 machine identity Developer получает только scoped
+read/session/prepare/check adapter; регистрация, recovery, lifecycle и выпуск
+им не разрешаются. Карточка сессии аддитивно возвращает optional
+`machine_assignment` без credentials. [Назначение, Git и границы роли](DEVELOPMENT_WORKSPACES.md#developer-configured-cli-v1).
 Ответ карточки содержит вычисляемый `busy: boolean`: сессия, операция либо
 незавершённая проверка/сборка/delivery удерживают окружение. Новое поле не
 добавляет сохранённого состояния; разрешения действий возвращаются отдельно.

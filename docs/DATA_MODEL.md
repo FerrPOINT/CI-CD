@@ -8,6 +8,15 @@ queued/running/unknown операцию на instance. История и termina
 Настоящий Tracker project, Forge repository/configuration и execution environment
 сохраняются отдельно. [Контракт](DEVELOPMENT_WORKSPACES.md).
 
+Аддитивная 0115 разрешает явный профиль `users.role=service_account` для
+постоянной Central machine identity и добавляет nullable JSONB
+`development_workspace_sessions.machine_assignment`. Старые человеческие сессии
+сохраняют NULL; назначение машины записывается при создании сессии и защищено
+от изменения SQL trigger. Оно содержит task/agent/assignment/execution/version
+и замороженный source binding, без credential. Зашифрованная credential исходной
+операции остаётся в существующем private `execution_plan`; публичный Operation
+его не сериализует. Новых таблиц и destructive down migration нет.
+
 Две выпущенные SQLx histories сходятся через явные migration directories: [ADR-0042](adr/0042-native-main-migration-lineages.md). Канонические 0108–0111 добавляют native Kubernetes target/execution, push refs и internal outbox channel. Общая 0112 устанавливает request clocks на добавленные таблицы, сохраняет owner_subject merge attempt и расширяет identity deletion fencing на попытки и владельца internal outbox. Исторические SQL/checksums не меняются.
 
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и

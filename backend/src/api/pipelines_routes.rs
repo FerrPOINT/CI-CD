@@ -211,7 +211,11 @@ async fn create_pipeline_bound(
     expected_commit: Option<&str>,
     workspace_recipe: Option<&str>,
 ) -> Result<PipelineTriggerOutcome, ApiError> {
-    let human_origin = crate::pipeline_authority::require_creation(task.is_some())?;
+    let developer_origin = workspace_recipe.is_some()
+        && source == "development-workspace"
+        && crate::development_workspaces::machine::creation_allowed(&variables);
+    let human_origin =
+        crate::pipeline_authority::require_creation(task.is_some() || developer_origin)?;
     crate::repository_catalog::require_project_writable(pool, project_id).await?;
     let storage_name =
         crate::repository_catalog::local_storage_for_project(pool, project_id).await?;
@@ -425,6 +429,10 @@ async fn create_pipeline_bound(
         source.starts_with("deployment-") || source == super::PIPELINE_TRIGGER_SOURCE_SCHEDULE,
     )
     .await?;
+    if developer_origin {
+        crate::development_workspaces::machine::bind_pipeline(&mut tx, &variables, pipeline.id)
+            .await?;
+    }
     sqlx::query(
         "INSERT INTO pipeline_plans \
          (pipeline_id, config_source, parser_version, git_ref, resolved_commit_sha, config_sha256, plan_sha256, raw_config, plan) \

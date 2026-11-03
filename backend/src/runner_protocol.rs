@@ -2769,11 +2769,16 @@ async fn lease_owner_clock(
     token_hash: &str,
     generation: i64,
 ) -> Result<Option<crate::git_host::GitDeadline>, ApiError> {
-    if !crate::central_auth::application_policy_required()? {
-        return Ok(None);
-    }
-    let (pipeline,attempt):(Uuid,Uuid)=sqlx::query_as("SELECT s.pipeline_id,l.attempt_id FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id WHERE l.id=$1 AND l.runner_id=$2 AND l.lease_token_hash=$3 AND l.generation=$4 AND l.lease_status='active' AND l.lease_expires_at>clock_timestamp()")
-        .bind(lease_id).bind(runner).bind(token_hash).bind(generation).fetch_optional(db).await.map_err(ApiError::internal)?.ok_or_else(||ApiError::gone("lease is no longer active"))?;
+    let selected:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT s.pipeline_id,l.attempt_id FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id WHERE l.id=$1 AND l.runner_id=$2 AND l.lease_token_hash=$3 AND l.generation=$4 AND l.lease_status='active' AND l.lease_expires_at>clock_timestamp()")
+        .bind(lease_id).bind(runner).bind(token_hash).bind(generation).fetch_optional(db).await.map_err(ApiError::internal)?;
+    let Some((pipeline, attempt)) = selected else {
+        // Preserve the legacy mutation's own invalid-lease status. Valid machine
+        // leases still re-confirm their assignment even without human policy.
+        if !crate::central_auth::application_policy_required()? {
+            return Ok(None);
+        }
+        return Err(ApiError::gone("lease is no longer active"));
+    };
     crate::pipeline_authority::confirm(db, pipeline, attempt).await
 }
 

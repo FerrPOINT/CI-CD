@@ -357,6 +357,10 @@ pub(crate) fn build_router_with_cors(
             "/api/v1/internal/task-git-check",
             post(crate::task_git::callback),
         )
+        .route(
+            "/api/v1/internal/development-workspace-git-check",
+            post(crate::development_workspaces::machine_git::callback),
+        )
         .route("/api/v1/repos/{repo}/refs", get(list_refs))
         .route("/api/v1/repos/{repo}/tree", get(crate::pulls::list_tree))
         .route("/api/v1/repos/{repo}/blob", get(crate::pulls::get_blob))
