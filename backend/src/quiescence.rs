@@ -3,8 +3,11 @@
 mod kernel;
 #[path = "quiescence/retained_unsubmitted.rs"]
 mod retained_unsubmitted;
+#[path = "quiescence/root_views.rs"]
+mod root_views;
 use anyhow::{Context, ensure};
 pub use kernel::*;
+pub use root_views::RootView;
 use std::{fs, path::Path};
 use uuid::Uuid;
 /// Admit every request before auth/cache DB effects; only exact existing-execution continuations survive drain.
@@ -883,7 +886,7 @@ pub async fn verify_idle(
     expected: &[Identity],
 ) -> anyhow::Result<()> {
     verify_database_idle(pool).await?;
-    verify_roots(pool, expected, None, &[]).await
+    verify_roots(pool, expected, None, &[], None).await
 }
 async fn verify_database_idle(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     verify_database_idle_with_retained(pool, None).await
@@ -936,6 +939,7 @@ async fn verify_roots(
     expected: &[Identity],
     adoption: Option<&AdoptionHandoff>,
     retired: &[RetiredCompose],
+    views: Option<&[RootView]>,
 ) -> anyhow::Result<()> {
     let mut roots = std::collections::BTreeSet::new();
     for identity in expected {
@@ -957,7 +961,11 @@ async fn verify_roots(
                                 retired,
                             )?;
                         } else {
-                            workspace_idle_bound(&root.path, &root.path, None, None, retired)?;
+                            let recorded = match views {
+                                Some(views) => root_views::recorded(identity, root, views)?,
+                                None => root,
+                            };
+                            workspace_idle_bound(&root.path, &recorded.path, None, None, retired)?;
                         }
                     }
                     "local-delivery" => delivery_idle(&root.path)?,
@@ -1207,7 +1215,7 @@ pub async fn adoption_preflight(
         })
         .collect();
     let inherited = inherited_compose(gate, handoff)?;
-    verify_roots(pool, &mapped, Some(handoff), &inherited).await?;
+    verify_roots(pool, &mapped, Some(handoff), &inherited, None).await?;
     let mut seals = vec![];
     for binding in bindings
         .iter()
@@ -1276,7 +1284,7 @@ pub async fn verify_idle_at(
 ) -> anyhow::Result<()> {
     verify_database_idle(pool).await?;
     let retired = retired_compose_all(gate)?;
-    verify_roots(pool, expected, None, &retired).await?;
+    verify_roots(pool, expected, None, &retired, None).await?;
     if require_recoverable {
         verify_no_pending_work(pool).await?;
     }
@@ -1295,7 +1303,29 @@ pub async fn verify_idle_at_preserving_unsubmitted(
 ) -> anyhow::Result<()> {
     verify_database_idle_with_retained(pool, Some(expected)).await?;
     let retired = retired_compose_all(gate)?;
-    verify_roots(pool, expected, None, &retired).await?;
+    verify_roots(pool, expected, None, &retired, None).await?;
+    if require_recoverable {
+        verify_no_pending_work(pool).await?;
+    }
+    let _ = fence;
+    Ok(())
+}
+
+/// The owner must verify every view against the actual participant mount namespace.
+pub async fn verify_idle_at_views(
+    fence: &Fence,
+    pool: &sqlx::PgPool,
+    expected: &[Identity],
+    gate: &Gate,
+    require_recoverable: bool,
+    preserve_unsubmitted: bool,
+    views: &[RootView],
+) -> anyhow::Result<()> {
+    let mapped = root_views::map(expected, views)?;
+    verify_database_idle_with_retained(pool, preserve_unsubmitted.then_some(mapped.as_slice()))
+        .await?;
+    let retired = retired_compose_all(gate)?;
+    verify_roots(pool, &mapped, None, &retired, Some(views)).await?;
     if require_recoverable {
         verify_no_pending_work(pool).await?;
     }
