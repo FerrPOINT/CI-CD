@@ -275,6 +275,28 @@ it("shows the named session owner and opens its real Tracker task", async () => 
   expect(screen.getByText(/Владелец: session-developer/)).toBeVisible();
 });
 
+it("hides cached registration controls when profile access is revoked", async () => {
+  const cache = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  mount(cache);
+  await screen.findByLabelText("Название окружения");
+  vi.mocked(service.targets).mockRejectedValue(
+    new ApiError({ kind: "api", status: 403, message: "Доступ отозван" }),
+  );
+  await act(async () => {
+    await cache.invalidateQueries({ queryKey: keys.targets(configuration) });
+  });
+  await screen.findByText("Профили недоступны: Доступ отозван");
+  expect(screen.queryByLabelText("Название окружения")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Создать окружение" }),
+  ).not.toBeInTheDocument();
+  // Losing catalog access does not erase a separately authorized workspace.
+  expect(screen.getByRole("button", { name: "Включить" })).toBeVisible();
+  cache.clear();
+});
+
 it("retains the exact UUID, version and payload after a lost reply", async () => {
   const submit = vi
     .spyOn(service, "submit")

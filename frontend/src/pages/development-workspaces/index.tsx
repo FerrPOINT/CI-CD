@@ -291,7 +291,7 @@ function Registration({
           Профили недоступны: {message(targets.error)}
         </Notice>
       )}
-      {targets.data && (
+      {!targets.isError && targets.data && (
         <>
           <Label htmlFor="workspace-target">Профиль и место размещения</Label>
           <Select
