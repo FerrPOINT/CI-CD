@@ -5266,6 +5266,50 @@ paths:
           description: Resource retained by immutable SDLC workspace history
         '503':
           description: ''
+  /api/v1/repository-sync-schedule:
+    get:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_schedule_get
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositorySyncScheduleStatus'
+        '403':
+          description: ''
+    put:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_schedule_save
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositorySyncSaveSchedule'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositorySyncScheduleStatus'
+        '400':
+          description: ''
+        '403':
+          description: ''
+        '409':
+          description: ''
   /api/v1/repository-syncs:
     get:
       tags:
@@ -10523,6 +10567,49 @@ components:
           description: Write-only. Omission retains the existing credential.
           writeOnly: true
       additionalProperties: false
+    RepositorySyncSaveSchedule:
+      type: object
+      required:
+      - expected_version
+      - settings
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+        settings:
+          $ref: '#/components/schemas/RepositorySyncSchedule'
+      additionalProperties: false
+    RepositorySyncSchedule:
+      type: object
+      description: Installation-wide scheduling policy; execution capacity remains operator-owned.
+      required:
+      - interval_seconds
+      - on_change
+      properties:
+        interval_seconds:
+          type: integer
+          format: int64
+        on_change:
+          type: boolean
+      additionalProperties: false
+    RepositorySyncScheduleStatus:
+      type: object
+      required:
+      - version
+      - settings
+      - worker_enabled
+      - concurrency
+      properties:
+        concurrency:
+          type: integer
+          minimum: 0
+        settings:
+          $ref: '#/components/schemas/RepositorySyncSchedule'
+        version:
+          type: integer
+          format: int64
+        worker_enabled:
+          type: boolean
     RepositorySyncSettings:
       type: object
       required:
@@ -10534,6 +10621,11 @@ components:
       properties:
         automatic:
           type: boolean
+        branch:
+          type:
+          - string
+          - 'null'
+          description: None preserves the legacy all-branches-and-tags scope.
         direction:
           $ref: '#/components/schemas/RepositorySyncDirection'
         instance_url:

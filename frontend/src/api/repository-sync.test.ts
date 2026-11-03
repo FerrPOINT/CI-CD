@@ -49,6 +49,20 @@ afterEach(() => {
 })
 
 describe('repository synchronization HTTP boundary', () => {
+  it('gets and saves the global schedule using a typed version and stable operation header', async () => {
+    const schedule={version:3,settings:{interval_seconds:3600,on_change:false},worker_enabled:true,concurrency:1}
+    const fetchMock=vi.fn<Fetch>().mockImplementation(async () => json(schedule));vi.stubGlobal('fetch',fetchMock)
+    expect(await repositorySync.schedule()).toEqual(schedule)
+    const command={expected_version:3,settings:{interval_seconds:7200,on_change:false}}
+    await repositorySync.saveSchedule(command,'schedule-operation')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/repository-sync-schedule')
+    const [url,init]=fetchMock.mock.calls[1]
+    expect(url).toBe('/api/v1/repository-sync-schedule')
+    expect(init?.method).toBe('PUT')
+    expect(JSON.parse(String(init?.body))).toEqual(command)
+    expect(new Headers(init?.headers).get('Idempotency-Key')).toBe('schedule-operation')
+  })
+
   it('does not turn an explicitly empty connection selector into the legacy connection', async () => {
     const fetchMock=vi.fn<Fetch>().mockResolvedValue(json({message:'invalid selector'},422))
     vi.stubGlobal('fetch',fetchMock)

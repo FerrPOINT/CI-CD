@@ -46,6 +46,9 @@ pub struct Settings {
     #[serde(default)]
     #[schema(required)]
     pub automatic: bool,
+    /// None preserves the legacy all-branches-and-tags scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "ProtectedBranchUpdates::is_blocked")]
     pub protected_branch_updates: ProtectedBranchUpdates,
 }
@@ -59,6 +62,24 @@ impl Settings {
             && self.direction != Direction::Pull
         {
             return Err("Обновление защищённых веток разрешено только из источника в Forge".into());
+        }
+        if let Some(branch) = &self.branch {
+            // Git check-ref-format --branch rules, without shelling out from the domain.
+            if branch.is_empty()
+                || branch.starts_with('-')
+                || branch == "@"
+                || branch.contains("..")
+                || branch.contains("@{")
+                || branch.ends_with('.')
+                || branch
+                    .bytes()
+                    .any(|b| b <= b' ' || b == 0x7f || b"~^:?*[\\".contains(&b))
+                || branch
+                    .split('/')
+                    .any(|part| part.is_empty() || part.starts_with('.') || part.ends_with(".lock"))
+            {
+                return Err("Некорректное имя ветки синхронизации".into());
+            }
         }
         // WHATWG accepts backslashes/control characters that Git/libcurl interprets differently.
         if self
@@ -128,6 +149,37 @@ impl Settings {
     pub fn same_endpoint(&self, other: &Self) -> bool {
         self.provider == other.provider && self.instance_url == other.instance_url
     }
+}
+
+/// Installation-wide scheduling policy; execution capacity remains operator-owned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(as = RepositorySyncSchedule)]
+pub struct Schedule {
+    pub interval_seconds: i64,
+    pub on_change: bool,
+}
+impl Schedule {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=86400).contains(&self.interval_seconds) {
+            return Err("Период синхронизации должен быть от 1 до 86400 секунд".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(as = RepositorySyncScheduleState)]
+pub struct ScheduleState {
+    pub version: i64,
+    pub settings: Schedule,
+}
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(as = RepositorySyncSaveSchedule)]
+pub struct SaveSchedule {
+    pub expected_version: i64,
+    pub settings: Schedule,
 }
 
 #[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -460,6 +512,7 @@ mod tests {
             repository_path: "team/sub/repo.git".into(),
             direction: Direction::Both,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         };
         assert!(settings.validate(&[]).is_err());
@@ -504,6 +557,7 @@ mod tests {
                 repository_path: "team/repo".into(),
                 direction: Direction::Pull,
                 automatic: false,
+                branch: None,
                 protected_branch_updates: Default::default(),
             };
             assert!(
@@ -523,6 +577,7 @@ mod tests {
             repository_path: "team/repo.git".into(),
             direction: Direction::Pull,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         };
         settings
@@ -546,6 +601,7 @@ mod tests {
             repository_path: "team/repository".into(),
             direction: Direction::Both,
             automatic: false,
+            branch: None,
             protected_branch_updates: Default::default(),
         };
         for raw in [
@@ -567,5 +623,49 @@ mod tests {
             settings.url(),
             "https://git.internal/gitlab/team/repository.git"
         );
+    }
+    #[test]
+    fn selected_branch_is_validated_and_legacy_json_stays_unchanged() {
+        let legacy = serde_json::json!({"provider":"github","instance_url":"https://github.com","repository_path":"team/repo","direction":"pull","automatic":true});
+        let mut settings: Settings = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&settings).unwrap(), legacy);
+        for branch in ["main", "master", "release/2026.11", "feature/Жуков"] {
+            settings.branch = Some(branch.into());
+            settings.validate(&[]).unwrap();
+            let roundtrip: Settings =
+                serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+            assert_eq!(roundtrip.branch.as_deref(), Some(branch));
+        }
+        for branch in [
+            "", "-main", "@", "a..b", "a@{b", ".main", "a/.b", "a.lock", "a/b.lock", "a/", "/a",
+            "a//b", "a.", "a b", "a\nb", "a*b", "a?b", "a:b", "a[b", "a\\b", "a~b", "a^b",
+        ] {
+            settings.branch = Some(branch.into());
+            assert!(settings.validate(&[]).is_err(), "accepted {branch:?}");
+        }
+    }
+    #[test]
+    fn global_schedule_bounds_and_strict_payload() {
+        for interval_seconds in [1, 300, 3600, 86400] {
+            assert!(
+                Schedule {
+                    interval_seconds,
+                    on_change: false
+                }
+                .validate()
+                .is_ok()
+            );
+        }
+        for interval_seconds in [i64::MIN, -1, 0, 86401, i64::MAX] {
+            assert!(
+                Schedule {
+                    interval_seconds,
+                    on_change: true
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert!(serde_json::from_value::<SaveSchedule>(serde_json::json!({"expected_version":0,"settings":{"interval_seconds":3600,"on_change":false},"concurrency":99})).is_err());
     }
 }

@@ -150,6 +150,20 @@ describe('production repository synchronization', () => {
     expect(url.searchParams.get('connection_id')).not.toBe(connection.id)
     expect(url.searchParams.get('project_scope')).toBe('all')
   })
+  it('preserves a selected primary branch through edits and can return to the legacy scope', async () => {
+    const selected = { ...connection, settings: { ...connection.settings, branch: 'master' } }
+    const save = vi.spyOn(repositorySync, 'save').mockImplementation(async (_id, payload) => ({ ...selected, version: 2, settings: payload.settings }))
+    mount(<RepositorySyncEditor connection={selected} reload={async () => undefined} />)
+    expect(screen.getByLabelText('Одна ветка')).toHaveValue('master')
+    fireEvent.change(screen.getByLabelText('Владелец / репозиторий'), { target: { value: 'team/updated' } })
+    fireEvent.click(screen.getByText('Сохранить подключение'))
+    await screen.findByText('Подключение сохранено')
+    expect(save.mock.calls[0][1].settings.branch).toBe('master')
+    fireEvent.change(screen.getByLabelText('Одна ветка'), { target: { value: '' } })
+    fireEvent.click(screen.getByText('Сохранить подключение'))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[1][1].settings.branch).toBeUndefined()
+  })
   it('does not carry credentials, drafts or an uncertain save operation into another connection', async () => {
     const second: SyncConnection = {
       ...connection,

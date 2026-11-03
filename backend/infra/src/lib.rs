@@ -4,6 +4,7 @@ use uuid::Uuid;
 pub mod development_workspace;
 pub mod pull_merge;
 pub mod repository_sync;
+mod repository_sync_schedule;
 pub mod sdlc_workspace;
 pub mod secrets;
 pub mod sync_git;

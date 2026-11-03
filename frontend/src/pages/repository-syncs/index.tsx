@@ -990,6 +990,14 @@ export function RepositorySyncEditor({
                 ))}
               </div>
             </Fieldset>
+            <Fieldset disabled={!writable || !!connection.active_run} legend="Ветки синхронизации">
+              <FormField id="sync-branch" label="Одна ветка" hint="Укажите основную ветку, например main или master. Пустое поле — все ветки и теги.">
+                {(baseFieldAttrs) => (
+                  <Input {...baseFieldAttrs} value={draft.branch ?? ""}
+                    onChange={(event) => patch({ branch: event.target.value || undefined })} />
+                )}
+              </FormField>
+            </Fieldset>
             {connection.can_manage_protected_branch_updates === true && (
               <Fieldset disabled={!writable || !!connection.active_run || draft.direction !== "pull"}
                 legend="Ветки проекта">
@@ -1023,7 +1031,7 @@ export function RepositorySyncEditor({
                       </strong>
                       <span className="text-xs text-text-secondary">
                         {automatic
-                          ? "После изменений в Forge и периодическая сверка."
+                          ? "По расписанию сервера; запуск после изменений зависит от настроек сервера."
                           : "По кнопке «Синхронизировать сейчас»."}
                       </span>
                     </span>

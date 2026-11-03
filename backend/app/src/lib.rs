@@ -212,6 +212,18 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     administration(GET, "/api/v1/repository-syncs", Action::Read, Role::Viewer),
     administration(
         GET,
+        "/api/v1/repository-sync-schedule",
+        Action::Read,
+        Role::Admin,
+    ),
+    administration(
+        PUT,
+        "/api/v1/repository-sync-schedule",
+        Action::Admin,
+        Role::Admin,
+    ),
+    administration(
+        GET,
         "/api/v1/catalog/repositories/{id}/sync",
         Action::Read,
         Role::Viewer,

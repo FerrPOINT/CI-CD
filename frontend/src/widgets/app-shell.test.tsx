@@ -80,6 +80,7 @@ function renderShell(path = "/") {
 }
 
 beforeEach(() => {
+  vi.stubEnv("VITE_NAMESPACE_ENABLED", "false");
   vi.stubEnv("VITE_AUTH_APPLICATION_ACCESS_REQUIRED", "true");
   authState.logout.mockReset();
   authState.logout.mockResolvedValue(undefined);
@@ -264,6 +265,17 @@ describe("AppShell navigation", () => {
     ).toHaveAttribute("href", "/");
     expect(container.querySelector("aside")).not.toContainElement(header);
     expect(container.querySelector("aside")).not.toHaveTextContent("admin");
+  });
+
+  it("adds namespace context to the same global header when enabled", () => {
+    vi.stubEnv("VITE_NAMESPACE_ENABLED", "true");
+    const { container } = renderShell();
+    const header = screen.getByRole("banner");
+    expect(container.querySelectorAll("[data-platform-header]")).toHaveLength(1);
+    expect([...header.querySelectorAll("[data-platform-header-slot]")].map((slot) =>
+      slot.getAttribute("data-platform-header-slot"),
+    )).toEqual(["leading", "services", "context", "actions"]);
+    expect(container.querySelector("aside")).not.toContainElement(header);
   });
 
   it("keeps a long identity outside header layout and closes the account menu with Escape", () => {

@@ -7,6 +7,8 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
+vi.mock("./sync-schedule", () => ({ SyncSchedulePanel: () => null }));
+
 afterEach(cleanup);
 
 describe("SettingsPage", () => {

@@ -1983,6 +1983,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/repository-sync-schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_repository_sync_schedule_get"];
+        put: operations["forge_repository_sync_schedule_save"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/repository-syncs": {
         parameters: {
             query?: never;
@@ -4079,8 +4095,28 @@ export interface components {
             /** @description Write-only. Omission retains the existing credential. */
             token?: string | null;
         };
+        RepositorySyncSaveSchedule: {
+            /** Format: int64 */
+            expected_version: number;
+            settings: components["schemas"]["RepositorySyncSchedule"];
+        };
+        /** @description Installation-wide scheduling policy; execution capacity remains operator-owned. */
+        RepositorySyncSchedule: {
+            /** Format: int64 */
+            interval_seconds: number;
+            on_change: boolean;
+        };
+        RepositorySyncScheduleStatus: {
+            concurrency: number;
+            settings: components["schemas"]["RepositorySyncSchedule"];
+            /** Format: int64 */
+            version: number;
+            worker_enabled: boolean;
+        };
         RepositorySyncSettings: {
             automatic: boolean;
+            /** @description None preserves the legacy all-branches-and-tags scope. */
+            branch?: string | null;
             direction: components["schemas"]["RepositorySyncDirection"];
             instance_url: string;
             protected_branch_updates?: components["schemas"]["RepositorySyncProtectedBranchUpdates"];
@@ -9762,6 +9798,74 @@ export interface operations {
                 content?: never;
             };
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_repository_sync_schedule_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositorySyncScheduleStatus"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_repository_sync_schedule_save: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepositorySyncSaveSchedule"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositorySyncScheduleStatus"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -87,6 +87,7 @@ pub struct DevelopmentWorkspacesConfig {
 pub struct GitSyncConfig {
     pub enabled: bool,
     pub interval_seconds: i64,
+    pub on_change: bool,
     pub concurrency: usize,
     pub allowed_gitlab_origins: Vec<String>,
 }
@@ -95,6 +96,7 @@ impl Default for GitSyncConfig {
         Self {
             enabled: false,
             interval_seconds: 300,
+            on_change: true,
             concurrency: 2,
             allowed_gitlab_origins: Vec::new(),
         }
@@ -149,6 +151,11 @@ impl GitSyncConfig {
         }
         Ok(Self {
             enabled: bool_from_env("CICD_GIT_SYNC_ENABLED", get("CICD_GIT_SYNC_ENABLED"), false)?,
+            on_change: bool_from_env(
+                "CICD_GIT_SYNC_ON_CHANGE",
+                get("CICD_GIT_SYNC_ON_CHANGE"),
+                true,
+            )?,
             interval_seconds: number(
                 get("CICD_GIT_SYNC_INTERVAL_SECONDS"),
                 "CICD_GIT_SYNC_INTERVAL_SECONDS",
@@ -791,6 +798,7 @@ mod tests {
         assert_eq!(config.git_sync, GitSyncConfig::default());
         for (name, value) in [
             ("CICD_GIT_SYNC_ENABLED", "maybe"),
+            ("CICD_GIT_SYNC_ON_CHANGE", "maybe"),
             ("CICD_GIT_SYNC_INTERVAL_SECONDS", "0"),
             ("CICD_GIT_SYNC_CONCURRENCY", "33"),
             ("CICD_GIT_SYNC_GITLAB_ORIGINS", "http://git.internal"),
@@ -804,6 +812,9 @@ mod tests {
         let config = RuntimeConfig::from_env_source(
             |key| match key {
                 "CICD_GIT_SYNC_ENABLED" => Some("true".into()),
+                "CICD_GIT_SYNC_ON_CHANGE" => Some("false".into()),
+                "CICD_GIT_SYNC_INTERVAL_SECONDS" => Some("3600".into()),
+                "CICD_GIT_SYNC_CONCURRENCY" => Some("1".into()),
                 "CICD_GIT_SYNC_GITLAB_ORIGINS" => {
                     Some("https://git.internal,https://git.internal/".into())
                 }
@@ -813,6 +824,9 @@ mod tests {
         )
         .unwrap();
         assert!(config.git_sync.enabled);
+        assert!(!config.git_sync.on_change);
+        assert_eq!(config.git_sync.interval_seconds, 3600);
+        assert_eq!(config.git_sync.concurrency, 1);
         assert_eq!(
             config.git_sync.allowed_gitlab_origins,
             vec!["https://git.internal"]
