@@ -16,6 +16,13 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Read-only diagnostic; never requests a drain or acknowledges a backup.
+    InspectMaintenanceIdle {
+        #[arg(long)]
+        expected: PathBuf,
+        #[arg(long)]
+        custody_views: PathBuf,
+    },
     /// Read-only, challenged management observation. Never opens the quiescence gate.
     InspectKubernetesCustody {
         #[arg(long)]
@@ -53,9 +60,23 @@ enum Command {
         expected: PathBuf,
         #[arg(long)]
         require_recoverable_idle: bool,
+        /// Preserve native never-prepared failed leases during a same-installation restart.
+        #[arg(long)]
+        preserve_terminal_unsubmitted: bool,
+        /// Full mount-identity views, supplied and verified by the native operator.
+        #[arg(long)]
+        custody_views: Option<PathBuf>,
+        /// Foreground operator runs outside the participant container lifetime.
+        #[arg(long)]
+        external_controller: bool,
     },
     /// Explicitly reopen admission after a completed/abandoned backup, exact operation only.
     Resume {
+        #[arg(long)]
+        operation: Uuid,
+    },
+    /// Reopen an exactly sealed, fully exited same-installation cohort.
+    ResumeClosed {
         #[arg(long)]
         operation: Uuid,
     },
@@ -78,6 +99,34 @@ async fn main() -> anyhow::Result<()> {
     }
     let gate = Gate::open(&args.directory)?;
     match args.command {
+        Command::InspectMaintenanceIdle {
+            expected,
+            custody_views,
+        } => {
+            ensure!(
+                std::fs::metadata(&expected)?.len() <= 32768
+                    && std::fs::metadata(&custody_views)?.len() <= 32768,
+                "diagnostic input exceeds bound"
+            );
+            let expected: Vec<Identity> = serde_json::from_slice(&std::fs::read(expected)?)?;
+            gate.verify_participants(&expected)?;
+            let views: Vec<cicd::quiescence::RootView> =
+                serde_json::from_slice(&std::fs::read(custody_views)?)?;
+            let database_url = std::env::var("CICD_DATABASE_URL")
+                .context("operator control requires the explicit source database URL")?;
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(std::time::Duration::from_secs(3))
+                .connect(&database_url)
+                .await?;
+            cicd::quiescence::inspect_maintenance_idle(&pool, &expected, &gate, &views).await?;
+            gate.verify_participants(&expected)?;
+            pool.close().await;
+            println!(
+                "{}",
+                serde_json::json!({"status":"OBSERVED_IDLE","backupAcknowledged":false,"admissionChanged":false})
+            );
+        }
         Command::InspectKubernetesCustody { .. } => {
             unreachable!("read-only branch handled before Gate::open")
         }
@@ -100,41 +149,96 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         Command::Resume { operation } => Coordinator::request(gate, operation)?.resume()?,
+        Command::ResumeClosed { operation } => {
+            Coordinator::request(gate, operation)?.resume_closed()?
+        }
         Command::Hold {
             operation,
             expected,
             require_recoverable_idle,
+            preserve_terminal_unsubmitted,
+            custody_views,
+            external_controller,
         } => {
             ensure!(
                 std::fs::metadata(&expected)?.len() <= 32768,
                 "expected participant manifest exceeds bound"
             );
             let expected: Vec<Identity> = serde_json::from_slice(&std::fs::read(expected)?)?;
+            let views: Option<Vec<cicd::quiescence::RootView>> = custody_views
+                .map(|path| {
+                    ensure!(
+                        std::fs::metadata(&path)?.len() <= 32768,
+                        "root views exceed bound"
+                    );
+                    Ok::<_, anyhow::Error>(serde_json::from_slice(&std::fs::read(path)?)?)
+                })
+                .transpose()?;
             let owner = Coordinator::request(gate, operation)?;
-            let config = cicd::config::RuntimeConfig::from_env()?;
+            let database_url = std::env::var("CICD_DATABASE_URL")
+                .context("operator control requires the explicit source database URL")?;
             let pool = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(1)
                 .acquire_timeout(std::time::Duration::from_secs(3))
-                .connect(&config.database.url)
+                .connect(&database_url)
                 .await?;
+            let mut control = read_command();
+            let mut reported_error = false;
             let fence = loop {
+                ensure!(
+                    matches!(
+                        control.try_recv(),
+                        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+                    ),
+                    "hold input closed before verified quiescence"
+                );
                 owner.gate().verify_participants(&expected)?;
                 if let Some(fence) = owner.try_fence()? {
                     owner.gate().verify_no_effect_records(&fence)?;
                     let check = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-                        cicd::quiescence::verify_idle_at(
-                            &fence,
-                            &pool,
-                            &expected,
-                            owner.gate(),
-                            require_recoverable_idle,
-                        )
-                        .await
+                        if let Some(views) = &views {
+                            cicd::quiescence::verify_idle_at_views(
+                                &fence,
+                                &pool,
+                                &expected,
+                                owner.gate(),
+                                require_recoverable_idle,
+                                preserve_terminal_unsubmitted,
+                                views,
+                            )
+                            .await
+                        } else if preserve_terminal_unsubmitted {
+                            cicd::quiescence::verify_idle_at_preserving_unsubmitted(
+                                &fence,
+                                &pool,
+                                &expected,
+                                owner.gate(),
+                                require_recoverable_idle,
+                            )
+                            .await
+                        } else {
+                            cicd::quiescence::verify_idle_at(
+                                &fence,
+                                &pool,
+                                &expected,
+                                owner.gate(),
+                                require_recoverable_idle,
+                            )
+                            .await
+                        }
                     })
                     .await;
                     if matches!(check, Ok(Ok(()))) {
                         owner.gate().verify_participants(&expected)?;
                         break fence;
+                    }
+                    if !reported_error {
+                        match &check {
+                            Ok(Err(error)) => eprintln!("quiescence pending: {error:#}"),
+                            Err(_) => eprintln!("quiescence observation timed out"),
+                            _ => {}
+                        }
+                        reported_error = true;
                     }
                     // Release promptly: existing execution ACK/reconciliation/cleanup must continue.
                     drop(fence);
@@ -146,18 +250,30 @@ async fn main() -> anyhow::Result<()> {
             owner.publish_held(&fence, &expected)?;
             println!(
                 "{}",
-                serde_json::json!({"schema":"forge/quiescence-held/v1","operationId":operation,"coordinatorPid":std::process::id(),"participants":expected,"backupAcknowledged":true,"recoverableIdleRequired":require_recoverable_idle,"validity":"only while this exact foreground coordinator retains its kernel fence"})
+                serde_json::json!({"schema":"forge/quiescence-held/v1","operationId":operation,"coordinatorPid":std::process::id(),"participants":expected,"backupAcknowledged":true,"recoverableIdleRequired":require_recoverable_idle,"preservedTerminalUnsubmitted":preserve_terminal_unsubmitted,"controllerShutdownSupported":external_controller,"validity":"only while this exact foreground coordinator retains its kernel fence"})
             );
             std::io::stdout().flush()?;
-            let mut rx = read_command();
+            let mut rx = control;
             let mut exiting = false;
             let mut exited = false;
+            let mut controller_stopping = false;
             loop {
                 tokio::select! {
                     line=&mut rx=>{
                         let line=line.context("control stdin worker unavailable")??;
-                        if line.trim()==format!("exit {operation}") && !exiting {
-                            owner.request_exit(&fence,&expected)?;exiting=true;rx=read_command();
+                        if line.trim()==format!("controller-stop {operation}") && !exiting && !controller_stopping {
+                            ensure!(external_controller, "container-local holder cannot outlive controller shutdown");
+                            owner.gate().verify_participants(&expected)?;
+                            owner.gate().verify_no_effect_records(&fence)?;
+                            controller_stopping=true;
+                            println!("{}",serde_json::json!({"schema":"forge/quiescence-controller-stop/v1",
+                                "operationId":operation,"participants":expected,"exclusiveFenceStillHeld":true}));
+                            std::io::stdout().flush()?;
+                            rx=read_command();
+                        } else if line.trim()==format!("exit {operation}") && !exiting {
+                            if controller_stopping { owner.request_controller_exit(&fence,&expected)?; }
+                            else { owner.request_exit(&fence,&expected)?; }
+                            exiting=true;rx=read_command();
                         } else {
                             ensure!(line.trim()==format!("resume {operation}") && (!exiting || exited),"fence ended without authorized completed resume; admission remains closed");
                             owner.verify_adoption_seals()?;owner.resume_enrolled(&fence,&expected)?;drop(fence);break;
@@ -171,6 +287,8 @@ async fn main() -> anyhow::Result<()> {
                                 println!("{}",serde_json::json!({"schema":"forge/quiescence-exited/v1","operationId":operation,"participants":expected,"allPinnedKernelOwnersExited":true,"exclusiveFenceStillHeld":true}));
                                 std::io::stdout().flush()?;
                             }
+                        } else if controller_stopping {
+                            owner.gate().all_exited(&expected)?; // observation only, not an exited ACK
                         } else {owner.gate().verify_participants(&expected)?;}
                     }
                 }
@@ -211,11 +329,12 @@ async fn adopt(
         "old local kernel owners remain; HOLD"
     );
     owner.gate().verify_no_effect_records(&fence)?;
-    let config = cicd::config::RuntimeConfig::from_env()?;
+    let database_url = std::env::var("CICD_DATABASE_URL")
+        .context("operator control requires the explicit source database URL")?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(std::time::Duration::from_secs(3))
-        .connect(&config.database.url)
+        .connect(&database_url)
         .await?;
     let seals =
         cicd::quiescence::adoption_preflight(&fence, &pool, &handoff, &old, owner.gate()).await?;

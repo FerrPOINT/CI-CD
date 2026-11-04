@@ -115,7 +115,9 @@ policy. Новый boot, потеря coordinator или stale ACK запрещ�
     resume <тот же operation UUID>
 
 EOF/crash снимает kernel fence, но admission остаётся закрытым. Прежний ACK
-невалиден; получить новый hold с тем же operation. После прерванного coordinator
+невалиден. Для ещё живых исходных participants получить новый hold с тем же
+operation. Для полностью закрытого контроллером cohort применять resume-closed
+после native readback, как описано ниже. После прерванного coordinator
 explicit recovery:
 
     forge-quiesce --directory /workspaces/.quiescence-control resume --operation "$OPERATION"
@@ -294,3 +296,37 @@ closed enrollment/release, strict Git fetch boundary с native Git IO тольк
 held fence, HTTP admission/continuation и реальный PostgreSQL
 unfinished SQL/running job. Native enrollment, Compose/Kubernetes executor и
 backup/restore integrity остаются owner gates.
+
+## Завершённые попытки без отправки
+
+Для перезапуска той же установки предусмотрен явный операторский профиль
+[сохранения terminal unsubmitted custody](adr/0046-retained-unsubmitted-maintenance.md).
+Он не выдаёт ACK и не меняет статус задания; стандартный режим остаётся строгим.
+
+
+## Controller-driven Kubernetes shutdown
+
+For normal Kubernetes maintenance, the foreground holder must outlive the Pods
+being stopped. The native deployment adapter may run the exact qualified private
+CLI outside their PID/cgroup lifetimes, under the application UID without
+capabilities. It supplies pinned views of all owned custody roots and the
+explicit source database URL. This changes neither ordinary Compose defaults
+nor the runner protocol.
+
+With the explicit hold --external-controller option, the owner first prepares
+all source controllers, then sends controller-stop OP and requires
+the matching handshake before scaling them to zero. The same holder keeps its
+exclusive kernel fence. It continues to require the exact original boot
+receipts and rejects replacement or unknown writers; original participants may
+now exit as their controllers stop. The owner then sends exit OP.
+Only actual disappearance of every pinned lease produces the exited reply.
+No Kubernetes object deletion or missing completion timestamp substitutes for
+native execution closure.
+
+After every original participant exits, matching held/exit seals survive holder
+EOF as historical evidence. They are not a live fence acknowledgement.
+The resume-closed command is restricted to the exact fully exited cohort and
+an exclusive empty-effects fence. The deployment adapter keeps external admission
+closed and all application controllers stopped until this cold reopening succeeds.
+A lost response is resolved by actual state readback; it never grants permission
+to repeat unknown execution or start old writers.
