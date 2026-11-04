@@ -412,6 +412,10 @@ pub(crate) async fn repository_request_storage(
     {
         return Ok(None);
     }
+    // Native configurations may be unbound; common repository proof is opt-in.
+    if route == "/api/v1/delivery-configurations/{id}" && !active(pool).await? {
+        return Ok(None);
+    }
     use axum::extract::FromRequestParts;
     let params = axum::extract::RawPathParams::from_request_parts(parts, &())
         .await
