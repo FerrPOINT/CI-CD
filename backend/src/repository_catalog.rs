@@ -746,7 +746,7 @@ pub async fn connect_delivery(
     axum::Extension(claims): axum::Extension<crate::auth::AccessClaims>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    if !crate::delivery_configs::configuration_visible(pool, project, &claims).await? {
+    if !crate::delivery_configs::configuration_visible(pool, project, &claims, false).await? {
         return Err(ApiError::not_found());
     }
     let mut tx = catalog_write_lease(&state, id).await?;

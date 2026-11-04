@@ -405,9 +405,10 @@ pub(crate) async fn repository_request_storage(
     let route = parts
         .extensions
         .get::<axum::extract::MatchedPath>()
-        .map(|path| path.as_str())
-        .unwrap_or("");
-    if !repository_read_route(&parts.method, route) && !repository_write_route(&parts.method, route)
+        .map(|path| path.as_str().to_owned())
+        .unwrap_or_default();
+    if !repository_read_route(&parts.method, &route)
+        && !repository_write_route(&parts.method, &route)
     {
         return Ok(None);
     }
