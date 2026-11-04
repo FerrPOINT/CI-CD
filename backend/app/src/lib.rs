@@ -463,7 +463,7 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Action::Read,
         Role::Viewer,
     ),
-    administration(
+    work(
         GET,
         "/api/v1/catalog/repositories/{id}/delivery-configs",
         Action::Read,
@@ -475,7 +475,7 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Action::Write,
         Role::Developer,
     ),
-    administration(
+    work(
         GET,
         "/api/v1/catalog/repositories/{id}/push-config",
         Action::Read,
@@ -1322,6 +1322,8 @@ mod tests {
         for (method, path) in [
             ("GET", "/api/v1/delivery-configurations"),
             ("GET", "/api/v1/delivery-configurations/configuration-id"),
+            ("GET", "/api/v1/catalog/repositories/r/delivery-configs"),
+            ("GET", "/api/v1/catalog/repositories/r/push-config"),
             ("POST", "/api/v1/projects/p/pipelines"),
             ("POST", "/api/v1/pipelines/p/retry"),
             ("GET", "/api/v1/jobs/j/logs"),

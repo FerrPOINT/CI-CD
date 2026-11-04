@@ -601,7 +601,7 @@ pub(crate) fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
                 return None;
             }
             let id = segments.next()?.parse().ok()?;
-            if segments.next()? != "sync" {
+            if !matches!(segments.next()?, "sync" | "push-config") {
                 return None;
             }
             Some(ProjectScopeRef::CatalogRepository(id))

@@ -224,6 +224,7 @@ pub(crate) fn repository_read_route(method: &axum::http::Method, route: &str) ->
             route,
             "/api/v1/projects/{project_id}/development-workspaces"
                 | "/api/v1/delivery-configurations/{id}"
+                | "/api/v1/catalog/repositories/{id}/push-config"
                 | "/api/v1/projects/{project_id}/development-workspace-profiles"
                 | "/api/v1/development-workspaces/{workspace_id}"
                 | "/api/v1/development-workspaces/{workspace_id}/operations"

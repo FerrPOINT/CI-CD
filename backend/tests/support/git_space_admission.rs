@@ -690,6 +690,15 @@ pub(super) async fn verify(
         )
         .await;
     }
+    for (repository, expected) in [repository, other_repo.id].into_iter().zip([200, 403]) {
+        repository_read(
+            &http,
+            origin,
+            &format!("/api/v1/catalog/repositories/{repository}/push-config"),
+            expected,
+        )
+        .await;
+    }
     let page = catalog(&http, origin, "?limit=1").await;
     assert_eq!(
         page.total, 1,
