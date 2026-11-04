@@ -1,0 +1,20 @@
+{
+  "dev_runtime_touched": false,
+  "empty_execution_tables": true,
+  "fixture_cid": "1f5bf00638b89efd3620f3860d475a335a1859167dd9b469f357d20e1b13638a",
+  "fixture_only_kill_cleanup": true,
+  "image": "sha256:74ebfbde36d881352a5925c9a039fdaa131a7574ff22416c762f60a5abc656db",
+  "ordinary_shutdown_qualified": false,
+  "signal_target": "only owned disposable fixture",
+  "single_process": true,
+  "source": "c637f7130e6f91ada8eefca38fff0db9290dbd54",
+  "term_exited_within_5_seconds": false,
+  "schema": "forge/exact-old-idle-shutdown-observation/v1",
+  "fixture_kind": "isolated Compose; synthetic empty database, no external network or Docker socket",
+  "not_covered": [
+    "live owner write fences",
+    "live source shutdown",
+    "coherent live backup",
+    "destination activation"
+  ]
+}

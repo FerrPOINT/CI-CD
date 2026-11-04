@@ -60,3 +60,14 @@ native номеров main не используются. Backup/recovery gate �
 сохранять выбранный каталог при последующих обновлениях. Отдельные проверки
 покрывают fresh main и populated native upgrade, отказ неверной истории,
 приёмку Kubernetes и Compose, права и восстановление merge/outbox.
+
+## Git-blob source transport
+
+PDLC4 restores SQL Git blobs after archive extraction to preserve its installed
+LF history (with the separately pinned migration38 bytes). Docker packaging uses
+the explicit --input-format git-blob projection mode. Only a uniform LF input
+may be reconstructed as CRLF when the resulting SHA384 exactly equals the
+existing released manifest. Ordinary checkout mode remains strict. Changed SQL,
+unknown formats and undeclared byte variants fail; no manifest or applied ledger
+is rewritten. This affects the Kubernetes projection only; the source migration
+directory used by the installation retains its qualified bytes.

@@ -16,7 +16,8 @@ COPY CI-CD/backend/infra/Cargo.toml infra/Cargo.toml
 COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
 COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
-RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
+# Cargo validates declared test paths while resolving the dependency-only stage.
+RUN mkdir -p src/bin domain/src app/src infra/src infra/tests api/src cli/src migration/src \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
  && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs \
  && printf 'fn main() {}\n' > src/bin/forge-quiesce.rs \
@@ -24,6 +25,7 @@ RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src 
  && printf '\n' > domain/src/lib.rs \
  && printf '\n' > app/src/lib.rs \
  && printf '\n' > infra/src/lib.rs \
+ && printf '\n' > infra/tests/repository_sync_schedule.rs \
  && printf '\n' > api/src/lib.rs \
  && printf 'fn main() {}\n' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs \
@@ -100,7 +102,7 @@ COPY --from=build /app/migrations /app/migrations
 COPY CI-CD/backend/migration-lineages /tmp/forge-lineages/backend/migration-lineages
 COPY CI-CD/scripts/migration_lineages.py /tmp/forge-lineages/scripts/migration_lineages.py
 RUN ln -s /app/migrations /tmp/forge-lineages/backend/migrations \
- && python3 /tmp/forge-lineages/scripts/migration_lineages.py --output /app/migrations-kubernetes-v1 \
+ && python3 /tmp/forge-lineages/scripts/migration_lineages.py --input-format git-blob --output /app/migrations-kubernetes-v1 \
  && rm -r /tmp/forge-lineages
 RUN mkdir -p /var/lib/forge/git /var/lib/forge/artifacts /workspaces \
  && chown -R cicd:cicd /var/lib/forge /workspaces

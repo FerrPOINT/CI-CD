@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
 
+mod body;
 mod deadline;
 pub(crate) use deadline::GitDeadline;
 mod receive_hooks;
@@ -786,7 +787,11 @@ pub async fn git_info_refs(
     )
 }
 
-fn maybe_gunzip(headers: &HeaderMap, body: Bytes) -> Result<Bytes, ApiError> {
+// Decoding is CPU work with up to the admitted decoded-body limit per worker.
+// The permit stays with the blocking task if the HTTP future is cancelled.
+static GIT_RPC_DECODE_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+async fn maybe_gunzip(headers: &HeaderMap, body: Bytes) -> Result<Bytes, ApiError> {
     let gzipped = headers
         .get(header::CONTENT_ENCODING)
         .and_then(|v| v.to_str().ok())
@@ -794,18 +799,22 @@ fn maybe_gunzip(headers: &HeaderMap, body: Bytes) -> Result<Bytes, ApiError> {
     if !gzipped {
         return Ok(body);
     }
-    use std::io::Read;
-    let mut decoder = flate2::read::GzDecoder::new(&body[..]);
-    let mut out = Vec::new();
-    decoder
-        .read_to_end(&mut out)
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if out.len() > crate::body_limits::GIT_SMART_HTTP_RPC_BYTES {
-        return Err(ApiError::payload_too_large(
-            "git rpc body exceeds 100 MiB limit",
-        ));
-    }
-    Ok(out.into())
+    let permit = GIT_RPC_DECODE_SLOTS
+        .acquire()
+        .await
+        .map_err(|_| ApiError::service_unavailable("Git body decoder unavailable"))?;
+    let decoded = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        body::decode_gzip(&body[..], crate::body_limits::GIT_SMART_HTTP_RPC_BYTES)
+    })
+    .await
+    .map_err(|error| ApiError::internal(sqlx::Error::Io(std::io::Error::other(error))))?;
+    decoded.map(Bytes::from).map_err(|error| match error {
+        body::DecodeError::TooLarge => {
+            ApiError::payload_too_large("git rpc body exceeds 100 MiB limit")
+        }
+        body::DecodeError::Invalid(error) => ApiError::internal(sqlx::Error::Io(error)),
+    })
 }
 
 async fn run_git_service(
@@ -1113,7 +1122,7 @@ pub async fn git_service_endpoint(
     } else {
         None
     };
-    let body = match maybe_gunzip(&headers, body) {
+    let body = match maybe_gunzip(&headers, body).await {
         Ok(body) => body,
         Err(e) => return e.into_response(),
     };
