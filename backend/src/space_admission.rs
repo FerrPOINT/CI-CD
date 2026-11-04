@@ -223,6 +223,7 @@ pub(crate) fn repository_read_route(method: &axum::http::Method, route: &str) ->
         && matches!(
             route,
             "/api/v1/projects/{project_id}/development-workspaces"
+                | "/api/v1/delivery-configurations/{id}"
                 | "/api/v1/projects/{project_id}/development-workspace-profiles"
                 | "/api/v1/development-workspaces/{workspace_id}"
                 | "/api/v1/development-workspaces/{workspace_id}/operations"
@@ -421,7 +422,9 @@ pub(crate) async fn repository_request_storage(
         sqlx::query_scalar::<_, Option<String>>(
             "SELECT r.storage_name FROM repository_aliases a JOIN repository_catalog r ON r.id=a.repository_id WHERE a.alias=$1",
         ).bind(repo.trim_end_matches(".git")).fetch_optional(pool).await.map_err(ApiError::internal)?.flatten()
-    } else if let Some((_, project)) = params.iter().find(|(key, _)| *key == "project_id") {
+    } else if let Some((_, project)) = params.iter().find(|(key, _)| {
+        *key == "project_id" || (route == "/api/v1/delivery-configurations/{id}" && *key == "id")
+    }) {
         let project = uuid::Uuid::parse_str(project)
             .map_err(|_| ApiError::bad_request("invalid_configuration_id"))?;
         sqlx::query_scalar::<_, Option<String>>(

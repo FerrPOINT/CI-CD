@@ -3,6 +3,7 @@ use crate::api::{ApiError, AppState};
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
+    response::IntoResponse,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -83,21 +84,28 @@ pub async fn push_decision_for_ref(
     .map_err(ApiError::internal)
     .map(Option::flatten)
 }
-pub async fn configuration_visible(
+async fn configuration_visible(
     pool: &sqlx::PgPool,
     id: Uuid,
     claims: &crate::auth::AccessClaims,
+    common_read: bool,
 ) -> Result<bool, ApiError> {
-    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects p WHERE p.id=$1 AND ($2 OR EXISTS(SELECT 1 FROM project_memberships m WHERE m.project_id=p.id AND m.user_id=$3) OR EXISTS(SELECT 1 FROM tenant_memberships tm JOIN tenants t ON t.id=tm.tenant_id WHERE tm.tenant_id=p.tenant_id AND tm.user_id=$3 AND t.status='active') OR EXISTS(SELECT 1 FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=p.repository_id)))").bind(id).bind(claims.role=="admin").bind(claims.sub).fetch_one(pool).await.map_err(ApiError::internal)
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects p WHERE p.id=$1 AND ($2 OR $4 OR EXISTS(SELECT 1 FROM project_memberships m WHERE m.project_id=p.id AND m.user_id=$3) OR EXISTS(SELECT 1 FROM tenant_memberships tm JOIN tenants t ON t.id=tm.tenant_id WHERE tm.tenant_id=p.tenant_id AND tm.user_id=$3 AND t.status='active')))").bind(id).bind(claims.role=="admin").bind(claims.sub).bind(common_read).fetch_one(pool).await.map_err(ApiError::internal)
 }
 #[utoipa::path(get,operation_id="forge_delivery_get",path="/api/v1/delivery-configurations/{id}",tag="delivery-configurations",params(("id"=Uuid,Path)),responses((status=200,body=DeliveryConfig)))]
 pub async fn get(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
+    request: axum::extract::Request,
 ) -> Result<Json<DeliveryConfig>, ApiError> {
+    let common_read = request
+        .extensions()
+        .get::<crate::space_admission::RepositoryRead>()
+        .is_some();
+    drop(request);
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    if !configuration_visible(pool, id, &claims).await? {
+    if !configuration_visible(pool, id, &claims, common_read).await? {
         return Err(ApiError::not_found());
     }
     sqlx::query_as("SELECT p.id,p.name,p.repository_id,p.repository_url,p.default_branch,p.max_running_jobs,p.created_at,COALESCE(g.slug||'/'||r.slug,r.slug) AS repository_name FROM projects p LEFT JOIN repository_catalog r ON r.id=p.repository_id LEFT JOIN git_groups g ON g.id=r.group_id WHERE p.id=$1")
@@ -119,7 +127,10 @@ async fn read_configs(
     repo: Option<Uuid>,
     query: ConfigQuery,
     claims: Option<&crate::auth::AccessClaims>,
-) -> Result<ConfigPage, ApiError> {
+    identity: Option<crate::api::authz_mw::VerifiedRequestIdentity>,
+) -> Result<axum::response::Response, ApiError> {
+    let admission = crate::space_admission::catalog_read(pool, identity).await?;
+    let groups = admission.as_ref().map(|scope| scope.groups.clone());
     let user = claims.map(|c| c.sub);
     let admin = claims.is_some_and(|c| c.role == "admin");
     if !query.unbound.unwrap_or(false) {
@@ -128,7 +139,7 @@ async fn read_configs(
     if query.registry_instance_id.is_some() != query.namespace_id.is_some() {
         return Err(ApiError::bad_request("invalid_namespace_ref"));
     }
-    let filter = " WHERE ($1::uuid IS NULL OR p.repository_id=$1) AND (NOT $2 OR p.repository_id IS NULL) AND position(lower($3) in lower(p.name))>0 AND ($4 OR EXISTS(SELECT 1 FROM project_memberships m WHERE m.project_id=p.id AND m.user_id=$5) OR EXISTS(SELECT 1 FROM tenant_memberships tm JOIN tenants t ON t.id=tm.tenant_id WHERE tm.tenant_id=p.tenant_id AND tm.user_id=$5 AND t.status='active') OR EXISTS(SELECT 1 FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=p.repository_id))";
+    let filter = " WHERE ($1::uuid IS NULL OR p.repository_id=$1) AND (NOT $2 OR p.repository_id IS NULL) AND position(lower($3) in lower(p.name))>0 AND (CASE WHEN $9::uuid[] IS NULL THEN ($4 OR EXISTS(SELECT 1 FROM project_memberships m WHERE m.project_id=p.id AND m.user_id=$5) OR EXISTS(SELECT 1 FROM tenant_memberships tm JOIN tenants t ON t.id=tm.tenant_id WHERE tm.tenant_id=p.tenant_id AND tm.user_id=$5 AND t.status='active')) ELSE EXISTS(SELECT 1 FROM repository_catalog r WHERE r.id=p.repository_id AND r.group_id=ANY($9)) END)";
     let search = query.search.unwrap_or_default();
     let unbound = query.unbound.unwrap_or(false);
     let filter = format!(
@@ -143,11 +154,12 @@ async fn read_configs(
         .bind(query.registry_instance_id)
         .bind(query.namespace_id)
         .bind(query.managed.unwrap_or(false))
+        .bind(groups.clone())
         .fetch_one(pool)
         .await
         .map_err(ApiError::internal)?;
     let sql = format!(
-        "SELECT p.id,p.name,p.repository_id,p.repository_url,p.default_branch,p.max_running_jobs,p.created_at,COALESCE(display_group.slug||'/'||display_repo.slug,display_repo.slug) AS repository_name FROM projects p LEFT JOIN repository_catalog display_repo ON display_repo.id=p.repository_id LEFT JOIN git_groups display_group ON display_group.id=display_repo.group_id{filter} ORDER BY p.name,p.id LIMIT $9 OFFSET $10"
+        "SELECT p.id,p.name,p.repository_id,p.repository_url,p.default_branch,p.max_running_jobs,p.created_at,COALESCE(display_group.slug||'/'||display_repo.slug,display_repo.slug) AS repository_name FROM projects p LEFT JOIN repository_catalog display_repo ON display_repo.id=p.repository_id LEFT JOIN git_groups display_group ON display_group.id=display_repo.group_id{filter} ORDER BY p.name,p.id LIMIT $10 OFFSET $11"
     );
     let items = sqlx::query_as(&sql)
         .bind(repo)
@@ -158,27 +170,38 @@ async fn read_configs(
         .bind(query.registry_instance_id)
         .bind(query.namespace_id)
         .bind(query.managed.unwrap_or(false))
+        .bind(groups)
         .bind(query.limit.unwrap_or(50).clamp(1, 100))
         .bind(query.offset.unwrap_or(0).max(0))
         .fetch_all(pool)
         .await
         .map_err(ApiError::internal)?;
-    Ok(ConfigPage { items, total })
+    let response = Json(ConfigPage { items, total }).into_response();
+    match admission {
+        Some(scope) => scope.response(response),
+        None => Ok(response),
+    }
 }
 #[utoipa::path(get,operation_id="forge_delivery_unbound",path="/api/v1/delivery-configurations",tag="delivery-configurations",params(ConfigQuery),responses((status=200,body=ConfigPage)))]
 pub async fn unbound(
     State(state): State<Arc<AppState>>,
     claims: Option<Extension<crate::auth::AccessClaims>>,
     Query(query): Query<ConfigQuery>,
-) -> Result<Json<ConfigPage>, ApiError> {
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ApiError> {
+    let identity = request
+        .extensions()
+        .get::<crate::api::authz_mw::VerifiedRequestIdentity>()
+        .cloned();
+    drop(request);
     read_configs(
         state.pool.as_ref().ok_or_else(ApiError::unavailable)?,
         None,
         query,
         claims.as_ref().map(|c| &c.0),
+        identity,
     )
     .await
-    .map(Json)
 }
 #[utoipa::path(get,operation_id="forge_delivery_list",path="/api/v1/catalog/repositories/{id}/delivery-configs",tag="delivery-configurations",params(("id"=Uuid,Path),ConfigQuery),responses((status=200,body=ConfigPage)))]
 pub async fn list(
@@ -186,11 +209,22 @@ pub async fn list(
     Path(id): Path<Uuid>,
     claims: Option<Extension<crate::auth::AccessClaims>>,
     Query(query): Query<ConfigQuery>,
-) -> Result<Json<ConfigPage>, ApiError> {
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ApiError> {
+    let identity = request
+        .extensions()
+        .get::<crate::api::authz_mw::VerifiedRequestIdentity>()
+        .cloned();
+    drop(request);
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    read_configs(pool, Some(id), query, claims.as_ref().map(|c| &c.0))
-        .await
-        .map(Json)
+    read_configs(
+        pool,
+        Some(id),
+        query,
+        claims.as_ref().map(|c| &c.0),
+        identity,
+    )
+    .await
 }
 #[utoipa::path(post,operation_id="forge_delivery_create",path="/api/v1/catalog/repositories/{id}/delivery-configs",tag="delivery-configurations",params(("id"=Uuid,Path)),request_body=CreateConfig,responses((status=200,body=DeliveryConfig),(status=409,description="Original operation conflict")))]
 pub async fn create(

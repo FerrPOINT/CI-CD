@@ -427,7 +427,7 @@ Machine reader не получает доступа к human routes. Проек�
 | `GET/POST /api/v1/catalog/repositories/{id}/delivery-configs` | Конфигурации и атомарное создание с `operation_id` |
 | `GET /api/v1/catalog/repositories/{id}/delivery-config-operations/{operation}` | Readback исходной операции, только её actor |
 | `GET/PUT /api/v1/catalog/repositories/{id}/push-config` | Явный выбор nullable `configuration_id` для push |
-| `GET /api/v1/delivery-configurations`, `GET .../{id}` | Настройки конфигураций; `unbound=true` для диагностики legacy |
+| `GET /api/v1/delivery-configurations`, `GET .../{id}` | Метаданные доступных конфигураций; проектные/tenant права или подтверждённая общая видимость репозитория; `unbound=true` для диагностики legacy |
 
 Execution lists возвращают `{items,total}` после серверных фильтров:
 `repository_id`, `configuration_id`, `status`, `git_ref`, ISO `since`/`until`,

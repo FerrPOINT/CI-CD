@@ -134,6 +134,21 @@ async fn catalog(
     serde_json::from_str(&text).unwrap()
 }
 
+async fn configuration_page(http: &reqwest::Client, origin: &str, query: &str) -> serde_json::Value {
+    let response = http
+        .get(format!("{origin}/api/v1/delivery-configurations?{query}"))
+        .bearer_auth("sdlc_pat_fixture_product_roles")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.headers()["cache-control"],
+        "private, no-store, no-transform"
+    );
+    response.json().await.unwrap()
+}
+
 async fn detail(
     http: &reqwest::Client,
     origin: &str,
@@ -650,6 +665,31 @@ pub(super) async fn verify(
         403,
         "V1 task context cannot borrow human admission"
     );
+    let configuration_prefix = format!("workspace-common-{}", Uuid::new_v4());
+    let common_configurations = [Uuid::new_v4(), Uuid::new_v4()];
+    for (id, repository) in common_configurations.into_iter().zip([repository, other_repo.id]) {
+        sqlx::query("INSERT INTO projects(id,name,repository_id,repository_url) VALUES($1,$2,$3,'https://fixture.invalid/source.git')")
+            .bind(id).bind(format!("{configuration_prefix}-{id}")).bind(repository).execute(pool).await.unwrap();
+    }
+    let configuration_query = format!("search={configuration_prefix}&limit=1");
+    let configurations = configuration_page(&http, origin, &configuration_query).await;
+    assert_eq!(configurations["total"], 1);
+    assert_eq!(
+        configurations["items"][0]["id"],
+        common_configurations[0].to_string()
+    );
+    let next = configuration_page(&http, origin, &format!("{configuration_query}&offset=1")).await;
+    assert_eq!(next["total"], 1);
+    assert!(next["items"].as_array().unwrap().is_empty());
+    for (configuration, expected) in common_configurations.into_iter().zip([200, 403]) {
+        repository_read(
+            &http,
+            origin,
+            &format!("/api/v1/delivery-configurations/{configuration}"),
+            expected,
+        )
+        .await;
+    }
     let page = catalog(&http, origin, "?limit=1").await;
     assert_eq!(
         page.total, 1,
@@ -838,6 +878,9 @@ pub(super) async fn verify(
     // Different immutable identity has no policy; cached selected access is not transferable.
     profile.write().unwrap().subject = Uuid::new_v4();
     let empty = catalog(&http, origin, "?limit=1").await;
+    let configurations = configuration_page(&http, origin, &configuration_query).await;
+    assert_eq!(configurations["total"], 0);
+    assert!(configurations["items"].as_array().unwrap().is_empty());
     assert_eq!(empty.total, 0);
     assert!(
         empty.items.is_empty(),
@@ -1140,6 +1183,11 @@ pub(super) async fn verify(
         "REST catalog count/page, selected/all/future/empty, literal search and archived read: PASS"
     );
     println!("Git common admitted push and actual owner archive preserve read-only access: PASS");
+    sqlx::query("DELETE FROM projects WHERE id=ANY($1)")
+        .bind(common_configurations.to_vec())
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query("UPDATE forge_space_admission_state SET active=false")
         .execute(pool)
         .await

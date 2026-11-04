@@ -451,13 +451,13 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Action::Read,
         Role::Viewer,
     ),
-    administration(
+    work(
         GET,
         "/api/v1/delivery-configurations",
         Action::Read,
         Role::Viewer,
     ),
-    administration(
+    work(
         GET,
         "/api/v1/delivery-configurations/{id}",
         Action::Read,
@@ -1320,6 +1320,8 @@ mod tests {
     #[test]
     fn human_work_never_grants_configuration_or_administration() {
         for (method, path) in [
+            ("GET", "/api/v1/delivery-configurations"),
+            ("GET", "/api/v1/delivery-configurations/configuration-id"),
             ("POST", "/api/v1/projects/p/pipelines"),
             ("POST", "/api/v1/pipelines/p/retry"),
             ("GET", "/api/v1/jobs/j/logs"),
