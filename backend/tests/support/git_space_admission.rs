@@ -134,7 +134,11 @@ async fn catalog(
     serde_json::from_str(&text).unwrap()
 }
 
-async fn configuration_page(http: &reqwest::Client, origin: &str, query: &str) -> serde_json::Value {
+async fn configuration_page(
+    http: &reqwest::Client,
+    origin: &str,
+    query: &str,
+) -> serde_json::Value {
     let response = http
         .get(format!("{origin}/api/v1/delivery-configurations?{query}"))
         .bearer_auth("sdlc_pat_fixture_product_roles")
@@ -667,7 +671,10 @@ pub(super) async fn verify(
     );
     let configuration_prefix = format!("workspace-common-{}", Uuid::new_v4());
     let common_configurations = [Uuid::new_v4(), Uuid::new_v4()];
-    for (id, repository) in common_configurations.into_iter().zip([repository, other_repo.id]) {
+    for (id, repository) in common_configurations
+        .into_iter()
+        .zip([repository, other_repo.id])
+    {
         sqlx::query("INSERT INTO projects(id,name,repository_id,repository_url) VALUES($1,$2,$3,'https://fixture.invalid/source.git')")
             .bind(id).bind(format!("{configuration_prefix}-{id}")).bind(repository).execute(pool).await.unwrap();
     }
