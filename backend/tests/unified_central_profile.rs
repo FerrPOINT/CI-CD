@@ -9,6 +9,8 @@ mod git_space_admission;
 mod group_drain;
 #[path = "support/space_owner.rs"]
 mod space_owner;
+#[path = "support/workspace_configuration_reads.rs"]
+mod workspace_configuration_reads;
 use axum::{Json, Router, routing::get};
 use cicd::central_auth::{link_central_user, try_verified_central};
 use sqlx::PgPool;
@@ -114,6 +116,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
                 .unwrap();
         assert_eq!(stored, ("Preserved user".into(), role.into()));
     }
+    workspace_configuration_reads::verify(&pool, local).await;
     let row_lock = pool.begin().await.unwrap();
     let mut row_lock = row_lock;
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")

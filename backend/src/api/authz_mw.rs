@@ -587,6 +587,7 @@ pub(crate) fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
             let id = segments.next().and_then(|raw| Uuid::parse_str(raw).ok())?;
             match resource {
                 "projects" => Some(ProjectScopeRef::Project(id)),
+                "delivery-configurations" => Some(ProjectScopeRef::Project(id)),
                 "pipelines" => Some(ProjectScopeRef::Pipeline(id)),
                 "jobs" => Some(ProjectScopeRef::Job(id)),
                 "artifacts" => Some(ProjectScopeRef::Artifact(id)),
