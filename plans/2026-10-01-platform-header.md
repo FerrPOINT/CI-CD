@@ -16,9 +16,7 @@
 - Mobile drawer закрывается по ссылке, Escape и переходу на desktop breakpoint;
   focus возвращается trigger, body не остаётся заблокированным. Header controls
   44 px на mobile / 40 px на desktop, close drawer 44 px.
-- Стандартный каталог остаётся шестью UI и двумя API-only. Pulse не добавляется
-  в общий Header и внешний GitHub-репозиторий не создаётся.
-
+- Стандартный каталог остаётся шестью UI и двумя API-only.
 ## Приёмка
 
 - Unit проверяет slots/ownership, активный раздел, semantic working modes,

@@ -55,12 +55,6 @@ Compose manifest. Автоматического replay нет. Повтор т�
 Чужие labels, foreign volume users/network members или неправильный daemon
 блокируют stop/cleanup и dispatch до первой операции с ресурсами.
 
-Pulse размещается только в приватном Git/project CI/CD `sdlc1`. При импорте
-сначала передаются проверенные commits и tags, затем регистрируется project:
-`main`, владелец — администратор `sdlc1`, `max_running_jobs=1`. Pipeline проверяет
-Rust 1.88, frontend, OpenAPI и browser tests с mock API/Auth и собственным
-webServer. Sources Base экспортируются из точного commit штатным Base CLI.
-
 Локальные shell helpers требуют явные `SDLC_WORKSPACE_DIR`,
 `SDLC_DOCKER_CONTEXT` и `SDLC_TASK`. Backup wrapper дополнительно требует
 `SDLC_PROJECT`, сохранённый `SDLC_SIGNING_KEY` и защищённый output archive;
@@ -70,10 +64,6 @@ Retention или удаление старых данных wrapper не вып�
 Backend gate и Trivy scanner используют отдельную временную сеть для загрузки
 Rust-компонентов, зависимостей и базы уязвимостей. Сеть принадлежит QA-проекту
 и удаляется при cleanup; к постоянным сетям workspace helpers не подключаются.
-
-Лимит проекта проверяется до резервирования lease в SERIALIZABLE transaction.
-Встроенный и внешний runner учитывают активные leases, включая подготовку.
-Serialization conflict оставляет job queued без запуска; лимит Pulse равен одному.
 
 ## Native QA Compose transport
 

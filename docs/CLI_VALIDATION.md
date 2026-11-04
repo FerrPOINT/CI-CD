@@ -17,21 +17,6 @@ repository/Git/PR, linked/unlinked merge, protected branch и Git conflict, vari
 
 ### Каталог миграций и опубликованные проверки
 
-Каталог 1–38 совпал с ledger fresh copy, включая точные исторические 36/37 и
-CRLF bytes migration 38 (SHA-384
-`875f127c9f0c51477f61cee89816edea0168d5cf842f3bdbfce5d683df033af224f5619035439f84359f671aee2981ce`).
-[PR #83](https://github.com/FerrPOINT/CI-CD/pull/83), merge
-`32e33aaf268df14111ef9f1df1b0c4846aa7c6b2`;
-[точный post-merge CI](https://github.com/FerrPOINT/CI-CD/actions/runs/37126708145)
-— docs/backend/frontend/minimum-rust 4/4 PASS. Отказ VersionMissing(38)
-воспроизведён до исправления. Fresh/upgrade/replay/invalid checksum и чтение
-historical deployment/plan проверены без изменения ledger/data. Только точная
-SQL compatibility migration и тесты опубликованы; Messaging SDK/полный Pulse
-deployment код не переносились. Local: focused 5, workspace 164, server
-PostgreSQL integration 63, target policy 4, CLI real API 2 в отдельной
-forge_test_cli, integration Clippy, release/fmt/MSRV/OpenAPI, frontend 196,
-contracts/compat/lint/build/packed Base/themes, docs 6 и secret scan — PASS.
-
 ### Сохранность, откат и границы
 
 По отдельному решению пользователя принят новый чистый sdlc1, подготовленный
@@ -49,15 +34,6 @@ images не восстановлены этой поставкой. Baseline о�
 baseline; сохранность файлов дополнительно подтверждена fixture upload/Git/
 artifact/download сценариями, а не восстановлением потерянных старых файлов.
 
-На копии запуск кандидатов, затем точных прежних images не изменил исходные
-данные и схему. Старые images проходят 114 проверок и сохраняют четыре известные
-ограничения: Task read/restore по ключу, Wiki legacy multipart replay и старое
-CI/CD ограничение generic deployment только для Pulse. Поэтому откат возвращает
-прежнее поведение, а не гарантирует исправленные CLI-сценарии. Неожиданных
-отказов финальной репетиции нет. Первый rollout откатился из-за преждевременной
-проверки Docker health `starting`; после исправления локального readiness wait
-второй rollout принят. Рабочие данные не восстанавливались и ledger не правился.
-
 Под workspace lock атомарно заменены только три image pins, затем последовательно
 Task → Wiki → CI/CD через Compose `up --no-deps --no-build --pull never`.
 Readiness: HTTP и Docker healthy, deadline 180 секунд на сервис. Откат: под тем же
@@ -72,30 +48,9 @@ admin-api/admin-web/ai-runtime sdlc2; их images сверены с её build/a
 mounts сохранены. Это отражено отдельно, глобальная неизменность sdlc2 за весь
 интервал не заявляется. Наши keys/runtime fingerprints остались неизменными.
 
-QA-кандидаты: 123 основных + 10 дополнительных проверок — PASS. Live: 123
-успешные проверки и 6 focused checks — PASS. Отдельная ранняя попытка template
-`type=page` получила корректный validation 400: ошибка fixture, исправлена на
-поддерживаемый `release_note`; успешный повтор записан отдельно, исходный отказ
-не скрыт. JSON/204, confirmations, stdin, access/validation/conflict, redaction,
-transport timeout, no-clobber и cleanup проверены регрессиями и CLI-приёмкой.
-Execution states задавались собственными fixtures/API; production runner и
-внешний deploy не сертифицируются. Pulse — обычный тестовый repository/PR/pipeline
-в CI/CD, отдельного постоянного стенда нет. Собственные PAT отозваны, QA Compose
-ресурсы и временные keys удалены; принятые и прежние backend images сохранены.
-
 ## Исторические проверки
 
 ## Каталог исторических миграций — 2026-10-03
-
-Baseline опубликованного main: `6fc5c6677ceeca86b7a7a35138844c3423fa18eb`;
-чистый Base pin `9408802dfa978cba2f67162a49adca6f65851b01`, Rust 1.88.0.
-PostgreSQL 17.6 прочитал защищённый исторический backup от 2026-10-01:
-все 37 checksums совпали с исходниками с учётом неизменных `.gitattributes`
-(часть ранее применённых SQL-файлов сохраняет CRLF). Migration 36/37 взяты
-байт-в-байт из существующего коммита, без переноса Pulse deployment/runner API.
-Подтверждены request_key UUID, unique index и historical config_source.
-Найдены 12 deployment plans; активных Pulse deployments, jobs, queue entries
-или leases в этой копии нет. Это не инвентаризация текущего sdlc1.
 
 Четыре новые PostgreSQL regression tests сначала упали на каталоге 1–35,
 включая `VersionMissing(36)`; после добавления 36/37 — 4/4 PASS. Проверены
@@ -116,11 +71,6 @@ Docs regression tests 6, docs validator и secret scan — PASS.
 и остановки все 44 таблицы, sequences, schema, owners/grants неизменны.
 Runner, SMTP и внешние deploy targets отключены. Это не проверка прежних
 runtime image IDs и не рабочий rollout.
-
-CLI/API/roles и generic deployment сценарии сохранены. Pulse остаётся
-тестовым репозиторием/pipeline внутри CI/CD; отдельный постоянный Pulse-стенд
-и специальный deploy runner не создавались. Rollout по-прежнему требует
-восстановленного sdlc1, свежего backup и проверенного previous-image rollback.
 
 ## Исходная CLI-приёмка — 2026-10-02
 

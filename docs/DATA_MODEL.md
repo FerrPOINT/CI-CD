@@ -531,8 +531,6 @@ Base pin в восстановление каталога не входят. С�
 | `plan` | JSONB | NOT NULL | — | Normalised plan: stages, jobs, node keys, `needs` и dependency edges |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время фиксации snapshot |
 
-**CHECK constraints:** `config_source IN ('repository','legacy_template','deployment')`, `parser_version` длиной `1..64`, hash-поля соответствуют `^[0-9a-f]{64}$`. Migration 37 восстанавливает ранее применённый каталог; обычный API продолжает создавать прежние repository/template планы, специальный Pulse runner не добавляется.
-
 **Индексы:**
 - `pipeline_plans_pkey` — PRIMARY KEY (`pipeline_id`)
 - `idx_pipeline_plans_plan_sha256` — диагностика одинаковых normalised plans.
