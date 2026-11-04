@@ -378,10 +378,14 @@ impl Gate {
         match self.requested_operation()? {
             None => self.enter(true),
             Some(request) => {
-                ensure!(request == operation, "Forge startup belongs to another drain operation");
+                ensure!(
+                    request == operation,
+                    "Forge startup belongs to another drain operation"
+                );
                 let lease = self.enter(false)?;
                 ensure!(
-                    self.requested_operation()?.is_none_or(|request| request == operation),
+                    self.requested_operation()?
+                        .is_none_or(|request| request == operation),
                     "Forge startup drain operation changed"
                 );
                 Ok(lease)
@@ -578,7 +582,10 @@ fn enter_effect(new_work: bool, startup: Option<Uuid>) -> anyhow::Result<Lease> 
             Ok(lease)
         }
         None => {
-            ensure!(startup.is_none(), "Forge startup operation requires a quiescence directory");
+            ensure!(
+                startup.is_none(),
+                "Forge startup operation requires a quiescence directory"
+            );
             Ok(Lease {
                 _file: None,
                 record: None,
@@ -874,8 +881,13 @@ mod closed_startup_tests {
     fn request(gate: &Gate, operation_id: Uuid) {
         replace(
             &gate.root.join("request.json"),
-            &serde_json::to_vec(&Request { schema_version: 1, operation_id }).unwrap(),
-        ).unwrap();
+            &serde_json::to_vec(&Request {
+                schema_version: 1,
+                operation_id,
+            })
+            .unwrap(),
+        )
+        .unwrap();
     }
     #[test]
     fn matching_startup_keeps_new_work_closed() {
@@ -912,10 +924,17 @@ mod closed_startup_tests {
     #[test]
     fn startup_operation_requires_exact_nonnil_uuid() {
         let operation = Uuid::new_v4();
-        assert_eq!(startup_operation(&operation.to_string()).unwrap(), operation);
-        for value in [String::new(), operation.simple().to_string(),
-                      operation.to_string().to_uppercase(),
-                      Uuid::nil().to_string(), format!(" {operation}")] {
+        assert_eq!(
+            startup_operation(&operation.to_string()).unwrap(),
+            operation
+        );
+        for value in [
+            String::new(),
+            operation.simple().to_string(),
+            operation.to_string().to_uppercase(),
+            Uuid::nil().to_string(),
+            format!(" {operation}"),
+        ] {
             assert!(startup_operation(&value).is_err());
         }
     }
