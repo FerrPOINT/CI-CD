@@ -9168,7 +9168,7 @@ async fn migration_catalog_accepts_historical_data_and_rejects_missing_versions(
     let pipeline = Uuid::new_v4();
     let deployment = Uuid::new_v4();
     let request_key = Uuid::new_v4();
-    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, 'catalog-history', 'http://localhost/git/service-pulse.git')")
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, 'catalog-history', 'http://localhost/git/fixture-project.git')")
         .bind(project).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO environments (id, project_id, name) VALUES ($1, $2, 'history')")
         .bind(environment)
