@@ -195,6 +195,11 @@ async fn workspace(api: &ApiClient, command: WorkspaceCommand) -> Result<Value> 
 }
 #[derive(Subcommand)]
 pub enum RepositoryCommand {
+    /// Read metadata for one repository UUID within the credential's project.
+    Get {
+        #[arg(long)]
+        id: uuid::Uuid,
+    },
     /// Prepare an own-task checkout using the private run-bound Fleet request child.
     PrepareCheckout {
         #[arg(long)]
@@ -251,7 +256,7 @@ pub enum RepositoryCommand {
         offset: Option<u32>,
     },
     Tree {
-        #[arg(long)]
+        #[arg(long, help = "Qualified public_name returned by repository get")]
         repo: String,
         #[arg(long)]
         git_ref: Option<String>,
@@ -261,7 +266,7 @@ pub enum RepositoryCommand {
         page: Page,
     },
     Blob {
-        #[arg(long)]
+        #[arg(long, help = "Qualified public_name returned by repository get")]
         repo: String,
         #[arg(long)]
         git_ref: Option<String>,
@@ -346,16 +351,17 @@ pub async fn execute(api: &ApiClient, command: WorkCommand) -> Result<Value> {
     match command {
         WorkCommand::Workspace { command } => workspace(api, command).await,
         WorkCommand::Repository {command}=>match command {
+            RepositoryCommand::Get {id}=>api.json(api.get(&format!("/catalog/repositories/{id}"))).await,
             RepositoryCommand::PrepareCheckout {..}|RepositoryCommand::PrepareCandidate {..}|RepositoryCommand::PushCandidate {..}=>bail!("Task Git requires private child dispatch"),
             RepositoryCommand::List=>api.json(api.get("/repositories")).await,
             RepositoryCommand::Create {name,visibility}=>api.json(api.post("/repositories").json(&json!({"name":name,"visibility":visibility}))).await,
             RepositoryCommand::Delete {name}=>api.json(api.delete(&format!("/repositories/{}",enc(&name)))).await,
-            RepositoryCommand::Refs {repo,page,kind}=>{let mut pairs=page.pairs();pairs.push(("kind",kind));get(api,&format!("/repos/{}/refs",enc(&repo)),pairs).await},
-            RepositoryCommand::Commits {repo,branch,limit,offset}=>get(api,&format!("/repos/{}/commits",enc(&repo)),vec![("branch",branch),("limit",limit.map(|v|v.to_string())),("offset",offset.map(|v|v.to_string()))]).await,
-            RepositoryCommand::Tree {repo,git_ref,path,page}=>{let mut pairs=page.pairs();pairs.extend([("ref",git_ref),("path",path)]);get(api,&format!("/repos/{}/tree",enc(&repo)),pairs).await},
-            RepositoryCommand::Blob {repo,git_ref,path}=>get(api,&format!("/repos/{}/blob",enc(&repo)),vec![("ref",git_ref),("path",Some(path))]).await,
-            RepositoryCommand::Tags {repo,page}=>get(api,&format!("/repos/{}/tags",enc(&repo)),page.pairs()).await,
-            RepositoryCommand::Compare {repo,from,to}=>get(api,&format!("/repos/{}/compare",enc(&repo)),vec![("from",Some(from)),("to",Some(to))]).await,
+            RepositoryCommand::Refs {repo,page,kind}=>{let mut pairs=page.pairs();pairs.push(("kind",kind));api.json(api.get_segments(&["repos",&repo,"refs"],&pairs)?).await},
+            RepositoryCommand::Commits {repo,branch,limit,offset}=>api.json(api.get_segments(&["repos",&repo,"commits"],&[("branch",branch),("limit",limit.map(|v|v.to_string())),("offset",offset.map(|v|v.to_string()))])?).await,
+            RepositoryCommand::Tree {repo,git_ref,path,page}=>{let mut pairs=page.pairs();pairs.extend([("ref",git_ref),("path",path)]);api.json(api.get_segments(&["repos",&repo,"tree"],&pairs)?).await},
+            RepositoryCommand::Blob {repo,git_ref,path}=>api.json(api.get_segments(&["repos",&repo,"blob"],&[("ref",git_ref),("path",Some(path))])?).await,
+            RepositoryCommand::Tags {repo,page}=>api.json(api.get_segments(&["repos",&repo,"tags"],&page.pairs())?).await,
+            RepositoryCommand::Compare {repo,from,to}=>api.json(api.get_segments(&["repos",&repo,"compare"],&[("from",Some(from)),("to",Some(to))])?).await,
         },
         WorkCommand::Pr {command}=>match command {
             PrCommand::List {repo,page,status}=>{let mut pairs=page.pairs();pairs.push(("status",status));get(api,&format!("/repos/{}/pulls/page",enc(&repo)),pairs).await},

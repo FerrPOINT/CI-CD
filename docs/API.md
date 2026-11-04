@@ -408,6 +408,13 @@ sync_available и его total используют тот же lifecycle до p
 Machine reader не получает доступа к human routes. Проект Tracker, репозиторий
 и CI-конфигурация имеют отдельные DTO; строгие SDLC owner envelopes не меняются.
 
+Project-bound service account с `api:read` может прочитать точный
+`GET /api/v1/catalog/repositories/{id}` для связанного с его проектом репозитория.
+Этот UUID route проходит существующую проверку project scope; коллекция каталога,
+чужой репозиторий и изменения метаданных не получают такого разрешения.
+CLI: `cicd-cli repository get --id <uuid>`; возвращённый `public_name` используется
+как единое значение `--repo` в Tree/Blob вместе с закреплённым commit.
+
 | Endpoint | Назначение |
 | --- | --- |
 | `GET /api/v1/workspace-projects` | Каталог Tracker-проектов с подтверждённым Namespace, `search`, `limit`, `offset` |
@@ -416,6 +423,7 @@ Machine reader не получает доступа к human routes. Проек�
 | `GET .../pipelines`, `GET .../deployments` | Общие списки проекта |
 | `GET /api/v1/workspace-summary`, `GET /api/v1/workspace-pipelines` | Общая сводка и список для дашборда |
 | `GET /api/v1/catalog/repositories` | UUID-каталог hosted/external, `search`, `group_id`, `limit`, `offset` |
+| `GET /api/v1/catalog/repositories/{id}` | Метаданные точного UUID; ограниченное чтение service account по связи с проектом |
 | `GET /api/v1/catalog/repositories/{id}/pipelines`, `.../deployments` | Отдельные списки репозитория |
 | `GET/POST /api/v1/catalog/repositories/{id}/delivery-configs` | Конфигурации и атомарное создание с `operation_id` |
 | `GET /api/v1/catalog/repositories/{id}/delivery-config-operations/{operation}` | Readback исходной операции, только её actor |

@@ -797,7 +797,17 @@ pub async fn get(
         .get::<crate::api::authz_mw::VerifiedRequestIdentity>()
         .cloned();
     drop(request);
-    let admission = crate::space_admission::catalog_read(pool, identity).await?;
+    // Native credentials reached this handler only after the middleware checked
+    // the exact repository against token_project_id and api:read. They do not
+    // borrow a human catalog policy or obtain access to the catalog collection.
+    let admission = if identity
+        .as_ref()
+        .is_some_and(|identity| identity.claims.role == "service_account")
+    {
+        None
+    } else {
+        crate::space_admission::catalog_read(pool, identity).await?
+    };
     let groups = admission.as_ref().map(|scope| scope.groups.clone());
     use axum::response::IntoResponse;
     let Some(repository) = get_core(&state, id, groups).await? else {

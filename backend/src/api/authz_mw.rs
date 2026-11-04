@@ -243,13 +243,17 @@ pub(crate) async fn require_auth(
     // developer class; token scopes still constrain every route.
     let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
     let path = req.uri().path().to_string();
+    let native_repository = if claims.role == "service_account" {
+        native_repository_ref(&method, &path)
+    } else {
+        None
+    };
     if claims.role == "service_account"
         && (path.starts_with("/api/v1/development-workspaces/")
             || path.contains("/development-workspaces")
             || path.contains("/development-workspace-profiles")
             || path.starts_with("/api/v1/git-groups/")
-            || (path.starts_with("/api/v1/catalog/repositories")
-                && !repository_sync_route(&method, &path))
+            || (path.starts_with("/api/v1/catalog/repositories") && native_repository.is_none())
             || path.starts_with("/api/v1/namespace-contexts")
             || path.starts_with("/api/v1/workspace-")
             || path.starts_with("/api/v1/delivery-configurations"))
@@ -263,10 +267,9 @@ pub(crate) async fn require_auth(
         return Err(ApiError::forbidden());
     }
     let (mut parts, body) = req.into_parts();
-    // Sync SATs retain their own project/scopes boundary. Human sync requests
-    // consume the same common admission as the repository browser and PRs.
-    let read_storage = if claims.role == "service_account" && repository_sync_route(&method, &path)
-    {
+    // Native repository metadata and sync retain their project/scopes boundary.
+    // Human requests consume common admission through their existing adapters.
+    let read_storage = if native_repository.is_some() {
         None
     } else {
         crate::space_admission::repository_request_storage(pool, &mut parts).await?
@@ -316,6 +319,7 @@ pub(crate) async fn require_auth(
     let scope_ref = read_storage
         .as_ref()
         .map(|storage| ProjectScopeRef::Repository(storage.clone()))
+        .or(native_repository)
         .or_else(|| project_scope_ref(&path));
     let scope_allowed = if read_proof.is_some() {
         // Confirmed common visibility replaces legacy read membership, not
@@ -403,18 +407,12 @@ pub(crate) async fn require_auth(
 }
 
 // This exception reaches the existing project/token checks, never the wider catalog API.
-fn repository_sync_route(method: &str, path: &str) -> bool {
-    let Some(tail) = path.strip_prefix("/api/v1/catalog/repositories/") else {
-        return false;
-    };
+fn native_repository_ref(method: &str, path: &str) -> Option<ProjectScopeRef> {
+    let tail = path.strip_prefix("/api/v1/catalog/repositories/")?;
     let parts: Vec<_> = tail.split('/').collect();
-    let Some(repository) = parts.first() else {
-        return false;
-    };
-    if Uuid::parse_str(repository).is_err() {
-        return false;
-    }
-    match (method, &parts[1..]) {
+    let repository = Uuid::parse_str(parts.first()?).ok()?;
+    let allowed = match (method, &parts[1..]) {
+        ("GET", []) => true,
         ("GET" | "PUT", ["sync"])
         | ("POST", ["sync", "check"])
         | ("GET" | "POST", ["sync", "runs"]) => true,
@@ -422,6 +420,40 @@ fn repository_sync_route(method: &str, path: &str) -> bool {
             Uuid::parse_str(run).is_ok()
         }
         _ => false,
+    };
+    allowed.then_some(ProjectScopeRef::CatalogRepository(repository))
+}
+
+#[cfg(test)]
+mod native_repository_tests {
+    use super::{ProjectScopeRef, native_repository_ref};
+
+    #[test]
+    fn metadata_is_one_repository_read_without_catalog_or_write_access() {
+        let id = uuid::Uuid::new_v4();
+        let path = format!("/api/v1/catalog/repositories/{id}");
+        assert_eq!(
+            native_repository_ref("GET", &path),
+            Some(ProjectScopeRef::CatalogRepository(id))
+        );
+        assert_eq!(
+            native_repository_ref("GET", &format!("{path}/sync")),
+            Some(ProjectScopeRef::CatalogRepository(id))
+        );
+        for (method, path) in [
+            ("POST", path.clone()),
+            ("PUT", path.clone()),
+            ("DELETE", path.clone()),
+            ("GET", format!("{path}/pulls")),
+            ("GET", format!("{path}/group")),
+            ("GET", "/api/v1/catalog/repositories".into()),
+            ("GET", "/api/v1/catalog/repositories/not-a-uuid".into()),
+        ] {
+            assert!(
+                native_repository_ref(method, &path).is_none(),
+                "{method} {path}"
+            );
+        }
     }
 }
 
