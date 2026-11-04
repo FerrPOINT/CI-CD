@@ -84,7 +84,7 @@ pub async fn push_decision_for_ref(
     .map_err(ApiError::internal)
     .map(Option::flatten)
 }
-async fn configuration_visible(
+pub(crate) async fn configuration_visible(
     pool: &sqlx::PgPool,
     id: Uuid,
     claims: &crate::auth::AccessClaims,
