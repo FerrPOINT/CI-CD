@@ -336,8 +336,10 @@ impl Fixture {
                     let log=fs::read(self.root.join("runner.stderr.private.log"))?;
                     ensure!(log.len()<=1024*1024,"registration log bound");
                     let text=std::str::from_utf8(&log)?;
-                    let credentials:Vec<_>=text.lines().filter_map(|l|l.strip_prefix("runner credential: ")).collect();
-                    if credentials.len()==1 && hash(credentials[0].as_bytes())==*digest
+                    // Heartbeats are authenticated with the process-local registration credential.
+                    // The CLI intentionally never prints that credential.
+                    if text.contains(&format!("registered runner {id}."))
+                        && digest.len()==64 && digest.bytes().all(|v|v.is_ascii_hexdigit())
                         && payload["capacity"]["busySlots"]==0 && payload["activeLeaseIds"]==json!([])
                         && payload["capabilities"]["executorKinds"]==json!(["kubernetes"]) {
                         let count:i64=sqlx::query_scalar("SELECT count(*) FROM runners").fetch_one(&self.pool).await?;
