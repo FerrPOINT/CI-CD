@@ -47,18 +47,28 @@ pub(crate) async fn prepare(
         if blocked {
             return Err(ApiError::conflict("workspace_operation_blocks_delivery"));
         }
-        // Workspace pipelines retain their original owner in the workspace
-        // operation, including when request-scoped central policy is optional.
-        // A repository pipeline instead belongs to its human pipeline owner.
+        // The original workspace operation binds the session epoch. A manual
+        // retry has its own human attempt owner; it does not reopen that receipt.
         let owner_matches: bool = match plan["config_source"].as_str() {
             Some("development_workspace") => sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM development_workspace_sessions s
                  JOIN development_workspace_operations o ON o.workspace_id=s.workspace_id
                     AND o.actor_id=s.actor_id AND o.owner_subject=s.owner_subject
+                 JOIN development_workspace_operations started ON started.id=s.id
+                    AND started.workspace_id=s.workspace_id AND started.state='succeeded'
+                    AND started.request->>'action'='begin_session'
+                    AND o.expected_version>started.expected_version
+                 JOIN execution_attempts a ON a.id=$3
+                 JOIN jobs j ON j.id=a.job_id
+                 JOIN stages stage ON stage.id=j.stage_id AND stage.pipeline_id=o.pipeline_id
+                 LEFT JOIN execution_attempt_human_owners retry ON retry.attempt_id=a.id
                  JOIN users u ON u.id=o.actor_id
                  WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND o.pipeline_id=$2
-                    AND o.state='running' AND u.enabled AND u.role<>'service_account')",
-            ).bind(workspace).bind(pipeline_id).fetch_one(&mut **tx).await.map_err(ApiError::internal)?,
+                    AND o.state IN ('running','failed') AND u.enabled AND u.role<>'service_account'
+                    AND o.request->>'source_commit'=$4
+                    AND ((a.attempt_no=1 AND o.state='running')
+                        OR (a.attempt_no>1 AND retry.owner_subject=s.owner_subject)))",
+            ).bind(workspace).bind(pipeline_id).bind(attempt_id).bind(commit).fetch_one(&mut **tx).await.map_err(ApiError::internal)?,
             Some("repository") => sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM development_workspace_sessions s JOIN pipeline_human_owners p
                  ON p.owner_subject=s.owner_subject WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND p.pipeline_id=$2)",
@@ -69,6 +79,21 @@ pub(crate) async fn prepare(
             return Err(ApiError::conflict(
                 "workspace_delivery_requires_session_owner",
             ));
+        }
+        if plan["config_source"] == "development_workspace" {
+            let prepared: bool = sqlx::query_scalar(
+                "SELECT preparation='prepared' AND sources @> jsonb_build_array(
+                   jsonb_build_object('repository_id',repository_id::text,'commit',$2::text))
+                 FROM development_workspaces WHERE id=$1",
+            )
+            .bind(workspace)
+            .bind(commit)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(ApiError::internal)?;
+            if !prepared {
+                return Err(ApiError::conflict("workspace_selected_source_not_prepared"));
+            }
         }
     }
 

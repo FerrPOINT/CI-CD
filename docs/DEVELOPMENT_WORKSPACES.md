@@ -71,7 +71,11 @@ Typed jobs `image_publish` и `helm_deploy` исполняют закреплё�
 уже сохранённый план и не требует повторной отправки pipeline.
 
 Владельца workspace delivery определяет исходная операция, связанная с этим
-pipeline: её workspace, actor и subject должны совпадать с активной сессией.
+pipeline: её workspace, actor и subject должны совпадать с активной сессией;
+version исходной команды должна принадлежать этой сессии, а source оставаться
+подготовленным. Штатный `job retry` сохраняет успешные producer jobs и проверяет
+владельца нового attempt. Завершённая квитанция исходной workspace-команды не
+переписывается: текущий результат retry читается у pipeline и attempt.
 Для обычного repository pipeline используется его human owner. Эти источники
 не подменяют друг друга; отключённый владелец workspace не получает новый
 deployment offer. Runtime, занятость и environment binding проверяются отдельно.
