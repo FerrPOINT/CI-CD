@@ -41,11 +41,11 @@ pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
 
 pub(super) async fn exercise(app: &Router, pool: &PgPool, workspace: Uuid, data: &Value) {
     let (status, registered) = http(app,"POST","/api/v1/runner/register",None,
-        json!({"protocolVersion":1,"registrationToken":"workspace-runner-fixture","name":"workspace-checks","capabilities":{"executorKinds":["shell"]}})).await;
+        json!({"protocolVersion":1,"registrationToken":"workspace-runner-fixture","name":"workspace-checks","capabilities":{"executorKinds":["shell"],"pipelineVariables":true}})).await;
     assert_eq!(status, StatusCode::CREATED, "{registered}");
     let runner = registered["credential"].as_str().unwrap();
     let (status, response) = http(app,"POST","/api/v1/runner/heartbeat",Some(runner),
-        json!({"protocolVersion":1,"status":"online","capacity":{"totalSlots":1,"busySlots":0},"capabilities":{"executorKinds":["shell"]}})).await;
+        json!({"protocolVersion":1,"status":"online","capacity":{"totalSlots":1,"busySlots":0},"capabilities":{"executorKinds":["shell"],"pipelineVariables":true}})).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{response}");
     let current = store::workspace(pool, workspace).await.unwrap();
     let checkout = std::path::Path::new(data["checkout"].as_str().unwrap());
@@ -109,6 +109,10 @@ pub(super) async fn exercise(app: &Router, pool: &PgPool, workspace: Uuid, data:
         assert_eq!(status, StatusCode::OK, "{offer}");
         assert_eq!(offer["attempt"]["pipelineId"], pipeline.to_string());
         assert_eq!(offer["attempt"]["commitSha"], commit);
+        assert_eq!(
+            offer["attempt"]["environment"]["CICD_VAR_DEVELOPMENT_WORKSPACE_ID"],
+            workspace.to_string()
+        );
         assert!(!offer.to_string().contains(TOKEN));
         let control = json!({"protocolVersion":1,"leaseToken":offer["leaseToken"],"fencingToken":offer["fencingToken"]});
         let lease = offer["leaseId"].as_str().unwrap();
