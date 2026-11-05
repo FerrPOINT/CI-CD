@@ -154,7 +154,6 @@ struct Fixture {
     unknown_probe: Mutex<Option<Child>>,
     runner_id: Mutex<Option<Uuid>>,
     registration_token: String,
-    git_token: String,
     pid: u32,
     start: Option<String>,
     success: String,
@@ -234,7 +233,7 @@ impl Fixture {
             }
         }).await.context("bound lease ACK/workspace cleanup deadline")?
     }
-    async fn start_external(&self) -> Result<()> {
+    async fn start_external(&self, git_token: &str) -> Result<()> {
         if self.input.runner_profile != RunnerProfile::External {
             return Ok(());
         }
@@ -282,7 +281,7 @@ impl Fixture {
                 ("CICD_RUNNER_TAGS", "linux,kubernetes".into()),
                 ("GIT_CONFIG_COUNT", "1".into()),
                 ("GIT_CONFIG_KEY_0", "http.http://127.0.0.1:22801/.extraheader".into()),
-                ("GIT_CONFIG_VALUE_0", format!("Authorization: Bearer {}",self.git_token)),
+                ("GIT_CONFIG_VALUE_0", format!("Authorization: Bearer {git_token}")),
                 ("CICD_RUNNER_TOTAL_SLOTS", "1".into()),
                 ("CICD_RUNNER_POLL_INTERVAL_SECONDS", "1".into()),
                 ("CICD_RUNNER_WORK_DIR", "/workspaces".into()),
@@ -703,7 +702,6 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
     })
     .await
     .context("main readiness deadline")??;
-    f.start_external().await?;
     let user = Uuid::new_v4();
     let password = Uuid::new_v4().to_string();
     let username = format!("canary-{user}");
@@ -758,6 +756,7 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
         .await?;
     sqlx::query("INSERT INTO projects(id,name,repository_url,repository_id) VALUES($1,'native-canary','http://127.0.0.1:22801/git/canary.git',$2)")
         .bind(project).bind(repo).execute(&f.pool).await?;
+    f.start_external(token).await?;
     let mut receipts = Vec::new();
     for (branch, pin) in [("success", &f.success), ("cancel", &f.cancel)] {
         let created = f
@@ -1056,7 +1055,6 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
     drop(reserve);
     let secret = Uuid::new_v4().to_string();
     let registration_token = Uuid::new_v4().to_string();
-    let git_token = Uuid::new_v4().to_string();
     let stdout = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1093,7 +1091,6 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
             ("CICD_BIND", "127.0.0.1:22801".into()),
             ("CICD_ROLES", "api,runner".into()),
             ("CICD_AUTH_SECRET", secret),
-            ("CICD_GIT_TOKEN", git_token.clone()),
             ("CICD_GIT_ROOT", root.join("git").display().to_string()),
             ("CICD_GIT_INTERNAL_TOKEN", Uuid::new_v4().to_string()),
             (
@@ -1153,7 +1150,6 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
         unknown_probe: Mutex::new(None),
         runner_id: Mutex::new(None),
         registration_token,
-        git_token,
         pid,
         start,
         success,
