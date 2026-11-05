@@ -154,6 +154,7 @@ struct Fixture {
     unknown_probe: Mutex<Option<Child>>,
     runner_id: Mutex<Option<Uuid>>,
     registration_token: String,
+    git_token: String,
     pid: u32,
     start: Option<String>,
     success: String,
@@ -279,6 +280,9 @@ impl Fixture {
                     self.registration_token.clone(),
                 ),
                 ("CICD_RUNNER_TAGS", "linux,kubernetes".into()),
+                ("GIT_CONFIG_COUNT", "1".into()),
+                ("GIT_CONFIG_KEY_0", "http.http://127.0.0.1:22801/.extraheader".into()),
+                ("GIT_CONFIG_VALUE_0", format!("Authorization: Bearer {}",self.git_token)),
                 ("CICD_RUNNER_TOTAL_SLOTS", "1".into()),
                 ("CICD_RUNNER_POLL_INTERVAL_SECONDS", "1".into()),
                 ("CICD_RUNNER_WORK_DIR", "/workspaces".into()),
@@ -629,11 +633,11 @@ fn source(root: &Path, image: &str, op: Uuid) -> Result<(String, String)> {
         }
         let command = if branch == "success" {
             format!(
-                "test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/product.txt; printf 'main-canary:%s\\n' '{op}'"
+                "test \"$(cat source.txt)\" = '{op}'; test \"$CICD_VAR_QUALIFICATION\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/product.txt; printf 'main-canary:%s\\n' '{op}'"
             )
         } else {
             format!(
-                "test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/started; exec sleep 90"
+                "test \"$(cat source.txt)\" = '{op}'; test \"$CICD_VAR_QUALIFICATION\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/started; exec sleep 90"
             )
         };
         let mut job = json!({"image":image,"commands":[command],"timeout":"120s"});
@@ -761,7 +765,7 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
                 Method::POST,
                 &format!("/api/v1/projects/{project}/pipelines"),
                 token,
-                json!({"git_ref":branch}),
+                json!({"git_ref":branch,"variables":{"qualification":f.input.operation_id.to_string()}}),
             )
             .await?;
         let pipeline: Uuid = serde_json::from_value(created["pipeline"]["id"].clone())?;
@@ -1052,6 +1056,7 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
     drop(reserve);
     let secret = Uuid::new_v4().to_string();
     let registration_token = Uuid::new_v4().to_string();
+    let git_token = Uuid::new_v4().to_string();
     let stdout = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1088,6 +1093,7 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
             ("CICD_BIND", "127.0.0.1:22801".into()),
             ("CICD_ROLES", "api,runner".into()),
             ("CICD_AUTH_SECRET", secret),
+            ("CICD_GIT_TOKEN", git_token.clone()),
             ("CICD_GIT_ROOT", root.join("git").display().to_string()),
             ("CICD_GIT_INTERNAL_TOKEN", Uuid::new_v4().to_string()),
             (
@@ -1147,6 +1153,7 @@ async fn actual_main_http_current_ci_canary() -> Result<()> {
         unknown_probe: Mutex::new(None),
         runner_id: Mutex::new(None),
         registration_token,
+        git_token,
         pid,
         start,
         success,
@@ -1257,4 +1264,63 @@ fn external_profile_requires_exact_cli_binary_and_explicit_selection() {
         )
         .is_err()
     );
+}
+
+// Owner recovery is limited to this disposable fixture's failed, never-submitted checkout.
+async fn close_fixture_failed_checkout(input: &Input, root: &Path, pool: &PgPool) -> Result<()> {
+    let registration: Value = serde_json::from_slice(&private(&root.join("runner-registration.json"))?)?;
+    let runner: Uuid = serde_json::from_value(registration["runnerId"].clone())?;
+    for record in OwnedWorkspace::inventory(Path::new("/workspaces"))? {
+        ensure!(!kubernetes::external_marker(Path::new("/workspaces"), record.attempt_id, record.generation)?,
+                "issued execution requires its original reconciliation owner");
+        let receipt: Value = sqlx::query_scalar(
+            "SELECT jsonb_build_object('protocolVersion',1,'leaseId',l.id,'attemptId',l.attempt_id,'fencingToken',l.generation,'leaseStatus',l.lease_status,'terminalStatus',l.terminal_status,'completedAt',l.completed_at,'terminalAcknowledged',COALESCE(l.lease_status='completed' AND l.terminal_status='failed' AND l.completed_at IS NOT NULL AND l.completion_received_at IS NOT NULL AND a.status='failed' AND a.finished_at IS NOT NULL,false)) FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id WHERE l.id=$1 AND l.attempt_id=$2 AND l.generation=$3 AND l.runner_id=$4")
+            .bind(record.lease_id).bind(record.attempt_id).bind(record.generation).bind(runner)
+            .fetch_one(pool).await?;
+        ensure!(receipt["terminalAcknowledged"]==true, "failed checkout lacks its exact canonical terminal acknowledgement");
+        let workspace = OwnedWorkspace::reopen(Path::new("/workspaces"), &record.workspace_id)?;
+        workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
+        let directory=kubernetes::close_unprepared(&input.expected_config, Path::new("/workspaces"),
+            record.attempt_id, record.lease_id, record.generation, workspace.checkout()).await?
+            .context("fixture checkout already has execution custody; no automatic cleanup")?;
+        kubernetes::write_not_submitted_readback(&directory,&serde_json::to_vec(&receipt)?)?;
+        workspace.record_completion("failed")?;
+        workspace.acknowledge_completion("failed")?;
+        workspace.cleanup_after_ack().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "explicit owner recovery of a retained disposable canary; never production"]
+async fn owner_close_failed_main_canary() -> Result<()> {
+    let path = PathBuf::from(std::env::var("FORGE_MAIN_CANARY_INPUT")?);
+    let bytes = private(&path)?;
+    ensure!(hash(&bytes)==std::env::var("FORGE_MAIN_CANARY_INPUT_SHA256")?, "fixture input changed");
+    let input: Input = serde_json::from_slice(&bytes)?;
+    let root = PathBuf::from(format!("/qualification/main-canary-{}",input.operation_id));
+    let held: Value = serde_json::from_slice(&private(&root.join("HOLD.json"))?)?;
+    ensure!(held["operationId"]==input.operation_id.to_string() && held["status"]=="HOLD", "not the retained failed fixture");
+    let expected: Vec<Identity> = ["canary","canary-external"].iter().map(|name|
+        private(&root.join(format!("control/participants/{name}.json"))).and_then(|b|Ok(serde_json::from_slice(&b)?)))
+        .collect::<Result<_>>()?;
+    let owner = Coordinator::request(Gate::open(&root.join("control"))?,input.operation_id)?;
+    owner.gate().verify_participants(&expected)?;
+    let fence=owner.try_fence()?.context("fixture effects are not quiescent")?;
+    owner.gate().verify_no_effect_records(&fence)?;
+    let dsn=String::from_utf8(pinned(&input.database)?)?;
+    ensure!(reqwest::Url::parse(dsn.trim())?.path().starts_with("/forge_test_"),"disposable database required");
+    let pool=PgPoolOptions::new().max_connections(1).connect(dsn.trim()).await?;
+    close_fixture_failed_checkout(&input,&root,&pool).await?;
+    cicd::quiescence::verify_recoverable_idle(&fence,&pool,&expected).await?;
+    pool.close().await;
+    owner.publish_held(&fence,&expected)?;
+    owner.request_exit(&fence,&expected)?;
+    timeout(Duration::from_secs(30),async {
+        while !owner.gate().all_exited(&expected)? {sleep(Duration::from_millis(100)).await;}
+        Ok::<_,anyhow::Error>(())
+    }).await??;
+    evidence(&root,"owner-recovered-exit.json",&json!({"operationId":input.operation_id,
+        "allPinnedKernelOwnersExited":true,"canonicalFailedCheckoutAcknowledged":true,"noExecutionRepeated":true}))?;
+    Ok(())
 }
