@@ -159,3 +159,30 @@ fn forge_runner_inspection_is_offline_and_unresolved_startup_never_polls() {
     assert!(workspace.checkout().exists());
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn inspection_never_enrolls_a_writer_or_contacts_the_api() {
+    let root = std::env::temp_dir().join(format!("forge-inspect-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let work = root.join("workspaces");
+    let custody = root.join("quiescence");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_forge-runner"))
+        .args(["--inspect-workspaces", "--work-dir", work.to_str().unwrap()])
+        .env("CICD_QUIESCENCE_DIR", &custody)
+        .env("CICD_API_URL", "http://127.0.0.1:1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let inventory: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(inventory, serde_json::json!([]));
+    assert!(
+        !custody.exists(),
+        "Read-only inspection enrolled a participant"
+    );
+    assert!(!work.exists(), "Read-only inspection created a workspace");
+    std::fs::remove_dir(root).unwrap();
+}

@@ -843,6 +843,8 @@ pub async fn reconcile_queue_timeouts_with_config(
                    AND NOT r.draining \
                    AND r.credential_hash IS NOT NULL \
                    AND (r.credential_expires_at IS NULL OR r.credential_expires_at > now()) \
+                   AND (p.variables IS NULL OR p.variables IN ('null'::jsonb, '{}'::jsonb) OR \
+                        r.capabilities->'pipelineVariables' = 'true'::jsonb) \
                    AND q.required_tags <@ r.tags \
                    AND (j.command <> 'forge:image-publish' OR \
                         r.capabilities->'jobKinds' @> '[\"image-publish-v1\"]'::jsonb AND r.capabilities->'executorKinds' @> '[\"kubernetes\"]'::jsonb) \
@@ -1375,18 +1377,16 @@ async fn run_job_inner(
 
     let command_shell = shell_capture_command(&job.command);
 
-    // P1-8: pipeline run variables -> CICD_VAR_<KEY>.
-    let run_vars: serde_json::Map<String, serde_json::Value> =
-        sqlx::query_scalar::<_, Option<serde_json::Value>>(
-            "SELECT variables FROM pipelines WHERE id = $1",
-        )
-        .bind(job.pipeline_id)
-        .fetch_one(&pool)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
+    let variables = sqlx::query_scalar::<_, Option<serde_json::Value>>(
+        "SELECT variables FROM pipelines WHERE id = $1",
+    )
+    .bind(job.pipeline_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(ApiError::internal)?;
+    let run_vars =
+        cicd_domain::pipeline_variables::from_variables(variables.as_ref(), &job.required_secrets)
+            .map_err(ApiError::bad_request)?;
 
     // P0-1: GitLab/Jenkins-style CI variables, CICD_-prefixed.
     let mut envs: Vec<(String, String)> = vec![
@@ -1410,15 +1410,7 @@ async fn run_job_inner(
             pipeline_artifacts.display().to_string(),
         ),
     ];
-    for (key, value) in &run_vars {
-        if let Ok(s) = serde_json::to_string(value) {
-            let trimmed = s.trim_matches('"').to_string();
-            envs.push((
-                format!("CICD_VAR_{}", key.to_uppercase().replace('-', "_")),
-                trimmed,
-            ));
-        }
-    }
+    envs.extend(run_vars);
     envs.extend(secrets.iter().cloned());
 
     let deployment = crate::runner_image_build::workspace_deploy::prepare_requested(
