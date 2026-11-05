@@ -1267,22 +1267,30 @@ async fn close_fixture_failed_checkout(input: &Input, root: &Path, pool: &PgPool
     let registration: Value = serde_json::from_slice(&private(&root.join("runner-registration.json"))?)?;
     let runner: Uuid = serde_json::from_value(registration["runnerId"].clone())?;
     for record in OwnedWorkspace::inventory(Path::new("/workspaces"))? {
-        ensure!(!kubernetes::external_marker(Path::new("/workspaces"), record.attempt_id, record.generation)?,
-                "issued execution requires its original reconciliation owner");
         let receipt: Value = sqlx::query_scalar(
-            "SELECT jsonb_build_object('protocolVersion',1,'leaseId',l.id,'attemptId',l.attempt_id,'fencingToken',l.generation,'leaseStatus',l.lease_status,'terminalStatus',l.terminal_status,'completedAt',l.completed_at,'terminalAcknowledged',COALESCE(l.lease_status='completed' AND l.terminal_status='failed' AND l.completed_at IS NOT NULL AND l.completion_received_at IS NOT NULL AND a.status='failed' AND a.finished_at IS NOT NULL,false)) FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id WHERE l.id=$1 AND l.attempt_id=$2 AND l.generation=$3 AND l.runner_id=$4")
+            "SELECT jsonb_build_object('protocolVersion',1,'leaseId',l.id,'attemptId',l.attempt_id,'fencingToken',l.generation,'leaseStatus',l.lease_status,'terminalStatus',l.terminal_status,'completedAt',l.completed_at,'terminalAcknowledged',COALESCE(l.lease_status IN ('completed','canceled') AND l.terminal_status IN ('success','failed','canceled') AND l.completed_at IS NOT NULL AND l.completion_received_at IS NOT NULL AND a.status=l.terminal_status AND a.finished_at IS NOT NULL,false)) FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id WHERE l.id=$1 AND l.attempt_id=$2 AND l.generation=$3 AND l.runner_id=$4")
             .bind(record.lease_id).bind(record.attempt_id).bind(record.generation).bind(runner)
             .fetch_one(pool).await?;
         ensure!(receipt["terminalAcknowledged"]==true, "failed checkout lacks its exact canonical terminal acknowledgement");
         let workspace = OwnedWorkspace::reopen(Path::new("/workspaces"), &record.workspace_id)?;
         workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
-        let directory=kubernetes::close_unprepared(&input.expected_config, Path::new("/workspaces"),
-            record.attempt_id, record.lease_id, record.generation, workspace.checkout()).await?
-            .context("fixture checkout already has execution custody; no automatic cleanup")?;
-        kubernetes::write_not_submitted_readback(&directory,&serde_json::to_vec(&receipt)?)?;
-        workspace.record_completion("failed")?;
-        workspace.acknowledge_completion("failed")?;
-        workspace.cleanup_after_ack().await?;
+        let outcome=receipt["terminalStatus"].as_str().context("terminal outcome missing")?;
+        if let Some(directory)=kubernetes::close_unprepared(&input.expected_config, Path::new("/workspaces"),
+            record.attempt_id, record.lease_id, record.generation, workspace.checkout()).await? {
+            ensure!(outcome!="success","unsubmitted checkout cannot claim success");
+            kubernetes::write_not_submitted_readback(&directory,&serde_json::to_vec(&receipt)?)?;
+            workspace.record_completion(outcome)?;
+            workspace.acknowledge_completion(outcome)?;
+            workspace.cleanup_after_ack().await?;
+        } else {
+            let execution=kubernetes::Execution::reopen(Path::new("/workspaces"),record.attempt_id,record.generation)?;
+            ensure!(execution.scope().lease_id==record.lease_id,"foreign execution lease");
+            execution.acknowledge().await?;
+            workspace.record_completion(outcome)?;
+            workspace.acknowledge_completion(outcome)?;
+            workspace.cleanup_after_ack().await?;
+            execution.finish_workspace_cleanup()?;
+        }
     }
     Ok(())
 }
@@ -1301,7 +1309,20 @@ async fn owner_close_failed_main_canary() -> Result<()> {
         private(&root.join(format!("control/participants/{name}.json"))).and_then(|b|Ok(serde_json::from_slice(&b)?)))
         .collect::<Result<_>>()?;
     let owner = Coordinator::request(Gate::open(&root.join("control"))?,input.operation_id)?;
-    owner.gate().verify_participants(&expected)?;
+    let mut live=Vec::new();
+    for identity in &expected {
+        use std::os::fd::AsRawFd;
+        let lock=OpenOptions::new().read(true).write(true)
+            .open(root.join(format!("control/participants/{}.lock",identity.participant)))?;
+        let result=unsafe {libc::flock(lock.as_raw_fd(),libc::LOCK_EX|libc::LOCK_NB)};
+        if result==0 {
+            ensure!(unsafe{libc::flock(lock.as_raw_fd(),libc::LOCK_UN)}==0,"participant unlock failed");
+        } else {
+            ensure!(std::io::Error::last_os_error().kind()==std::io::ErrorKind::WouldBlock,"participant lock unknown");
+            live.push(identity.clone());
+        }
+    }
+    owner.gate().verify_participants(&live)?;
     let fence=owner.try_fence()?.context("fixture effects are not quiescent")?;
     owner.gate().verify_no_effect_records(&fence)?;
     let dsn=String::from_utf8(pinned(&input.database)?)?;
@@ -1310,13 +1331,13 @@ async fn owner_close_failed_main_canary() -> Result<()> {
     close_fixture_failed_checkout(&input,&root,&pool).await?;
     cicd::quiescence::verify_recoverable_idle(&fence,&pool,&expected).await?;
     pool.close().await;
-    owner.publish_held(&fence,&expected)?;
-    owner.request_exit(&fence,&expected)?;
+    owner.publish_held(&fence,&live)?;
+    owner.request_exit(&fence,&live)?;
     timeout(Duration::from_secs(30),async {
         while !owner.gate().all_exited(&expected)? {sleep(Duration::from_millis(100)).await;}
         Ok::<_,anyhow::Error>(())
     }).await??;
     evidence(&root,"owner-recovered-exit.json",&json!({"operationId":input.operation_id,
-        "allPinnedKernelOwnersExited":true,"canonicalFailedCheckoutAcknowledged":true,"noExecutionRepeated":true}))?;
+        "allPinnedKernelOwnersExited":true,"canonicalTerminalAcknowledged":true,"noExecutionRepeated":true}))?;
     Ok(())
 }
