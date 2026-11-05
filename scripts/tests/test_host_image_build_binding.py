@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("transport", Path(__file__).parents[1] / "host_image_build.py")
 transport = importlib.util.module_from_spec(spec)
@@ -48,6 +49,25 @@ class BuildBindingTests(unittest.TestCase):
         metadata = json.loads((self.binding / "binding.json").read_text())
         self.assertEqual(metadata["hostId"], "builder-a")
         self.assertEqual(metadata["endpoint"], ["192.0.2.10", 22, "root"])
+
+    def test_projection_rotation_cannot_mix_endpoint_and_configuration_hash(self):
+        original = self.source.read_bytes()
+        expected = hashlib.sha256(original).hexdigest()
+        read_bytes = Path.read_bytes
+        reads = []
+        def rotating_read(path):
+            value = read_bytes(path)
+            if path == self.source:
+                reads.append(path)
+                self.data.update(id="builder-b", host="192.0.2.20")
+                self.write_source()
+            return value
+        with patch.object(Path, "read_bytes", rotating_read):
+            selected = transport.pin_connection(self.source, self.binding, expected)
+        self.assertEqual(reads, [self.source])
+        self.assertEqual(selected["host"], "192.0.2.10")
+        self.assertEqual(json.loads((self.binding/"binding.json").read_text())["configurationSha256"],
+                         expected)
 
     def test_selected_config_hash_is_checked_before_any_binding(self):
         with self.assertRaisesRegex(ValueError, "operator intent"):

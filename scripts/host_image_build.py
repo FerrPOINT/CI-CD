@@ -17,8 +17,8 @@ MAX_CONTEXT = 512 * 1024**2
 MAX_RESULT = 2 * 1024**2
 
 
-def connection(path):
-    data = json.loads(path.read_text())
+def connection(path, *, raw=None):
+    data = json.loads(path.read_bytes() if raw is None else raw)
     fields = {"schema", "host", "port", "user", "identityFile", "knownHostsFile"}
     version = data.get("schema")
     required = fields if version == "forge/build-host-connection/v1" else fields | {"id", "hostKeySha256"}
@@ -96,8 +96,8 @@ def pin_connection(source, directory, expected=None):
             raise ValueError("Retained build connection differs from original intent")
         return data
     private_directory(directory.parent)
-    data = connection(source)
     raw = source.read_bytes()
+    data = connection(source, raw=raw)
     if expected and hashlib.sha256(raw).hexdigest() != expected:
         raise ValueError("Selected build connection differs from operator intent")
     if len(raw) > 65536:
