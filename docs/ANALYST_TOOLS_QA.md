@@ -36,6 +36,12 @@ cicd-cli repository blob --repo "$REPOSITORY" --git-ref "$COMMIT" --path docs/we
 записи. Исправность CLI отдельно от версии установленного сервера и прав.
 Сборка нового CLI не означает обновление Fleet или установленной платформы.
 
-Общий воспроизводимый runner принадлежит Base:
-`scripts/analyst_tools_qa.py`, фаза `products`. Фактические результаты
-фиксируются в отчёте конкретного QA-прогона, а не подразумеваются этим документом.
+Воспроизводимая подготовка принадлежит Base: `scripts/analyst_qa.py` создаёт
+изолированные источники и назначения, а `scripts/analyst_tools_qa.py products`
+проверяет CLI. QA не вызывает Workflow, Fleet, typed proposal или Complete.
+
+Приёмка 2026-11-05 подтвердила metadata по UUID из Tracker, дерево и содержимое
+закреплённого commit после обновления `main`, отказ настоящему чужому репозиторию,
+глобальному каталогу и записи. Команды, runtime/CLI hashes и доказательства —
+в [сводке Base](https://github.com/FerrPOINT/services-base/blob/e147727ae53b8752ea09edf70233e5d9f8f07a0a/docs/plans/analyst-tools-standalone-20261104.md).
+Эта проверка не означает обновления установленной платформы или готовности Fleet.
