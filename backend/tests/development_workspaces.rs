@@ -158,15 +158,40 @@ async fn typed_publication_claims_frozen_workspace_and_repository_plans_only() {
 #[tokio::test]
 async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
     use sha2::{Digest, Sha256};
-    for (source, operation_owner_matches, human_owner, enabled, machine, allowed) in [
-        ("development_workspace", true, false, true, false, true),
-        ("development_workspace", false, true, true, false, false),
-        ("repository", true, false, true, false, false),
-        ("repository", false, true, true, false, true),
-        ("development_workspace", true, false, false, false, false),
-        ("development_workspace", true, false, true, true, false),
+    for (source, binding, human_owner, enabled, machine, allowed) in [
+        ("development_workspace", "current", false, true, false, true),
+        (
+            "development_workspace",
+            "other-actor",
+            true,
+            true,
+            false,
+            false,
+        ),
+        (
+            "development_workspace",
+            "other-subject",
+            true,
+            true,
+            false,
+            false,
+        ),
+        ("repository", "current", false, true, false, false),
+        ("repository", "other-actor", true, true, false, true),
+        (
+            "development_workspace",
+            "current",
+            false,
+            false,
+            false,
+            false,
+        ),
+        ("development_workspace", "current", false, true, true, false),
     ] {
         let f = Fixture::new().await;
+        // A local user UUID and its central owner subject are distinct identities.
+        let owner_subject = Uuid::new_v4();
+        let other_subject = Uuid::new_v4();
         sqlx::query("UPDATE users SET enabled=$2 WHERE id=$1")
             .bind(f.actor)
             .bind(enabled)
@@ -204,8 +229,8 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             .unwrap();
         sqlx::query("UPDATE development_workspaces SET desired_runtime='running',runtime='running',environment_hash=$2 WHERE id=$1")
             .bind(f.workspace).bind(store::request_hash(&target).unwrap()).execute(&f.pool).await.unwrap();
-        sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,machine_assignment) VALUES($1,$2,$3,$3,$4,'DEV-1',$5)")
-            .bind(Uuid::new_v4()).bind(f.workspace).bind(f.actor).bind(Uuid::new_v4())
+        sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,machine_assignment) VALUES($1,$2,$3,$4,$5,'DEV-1',$6)")
+            .bind(Uuid::new_v4()).bind(f.workspace).bind(f.actor).bind(owner_subject).bind(Uuid::new_v4())
             .bind(machine.then(||json!({"machine_subject":Uuid::new_v4()}))).execute(&f.pool).await.unwrap();
         let commit = "a".repeat(40);
         let pipeline = Uuid::new_v4();
@@ -229,18 +254,23 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
                 "INSERT INTO pipeline_human_owners(pipeline_id,owner_subject) VALUES($1,$2)",
             )
             .bind(pipeline)
-            .bind(f.actor)
+            .bind(owner_subject)
             .execute(&f.pool)
             .await
             .unwrap();
         }
-        let actor = if operation_owner_matches {
-            f.actor
-        } else {
+        let actor = if binding == "other-actor" {
             f.other_actor
+        } else {
+            f.actor
         };
-        sqlx::query("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,state,pipeline_id) VALUES($1,$2,$3,$3,$4,'{\"action\":\"check\"}',1,'running',$5)")
-            .bind(Uuid::new_v4()).bind(f.workspace).bind(actor).bind("b".repeat(64)).bind(pipeline).execute(&f.pool).await.unwrap();
+        let subject = if binding == "other-subject" {
+            other_subject
+        } else {
+            owner_subject
+        };
+        sqlx::query("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,state,pipeline_id) VALUES($1,$2,$3,$4,$5,'{\"action\":\"check\"}',1,'running',$6)")
+            .bind(Uuid::new_v4()).bind(f.workspace).bind(actor).bind(subject).bind("b".repeat(64)).bind(pipeline).execute(&f.pool).await.unwrap();
         sqlx::query("INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'delivery',0,'queued')")
             .bind(stage).bind(pipeline).execute(&f.pool).await.unwrap();
         for (id, name, image, command, position, status, attempt_id) in [
@@ -298,7 +328,7 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             } else {
                 StatusCode::CONFLICT
             },
-            "source={source},operation_owner_matches={operation_owner_matches},human_owner={human_owner},enabled={enabled},machine={machine}: {offer}"
+            "source={source},binding={binding},human_owner={human_owner},enabled={enabled},machine={machine}: {offer}"
         );
         let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM job_leases WHERE attempt_id=$1")
             .bind(attempt)
