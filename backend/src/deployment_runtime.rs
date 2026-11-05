@@ -47,10 +47,24 @@ pub(crate) async fn prepare(
         if blocked {
             return Err(ApiError::conflict("workspace_operation_blocks_delivery"));
         }
-        let owner_matches: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM development_workspace_sessions s JOIN pipeline_human_owners p
-             ON p.owner_subject=s.owner_subject WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND p.pipeline_id=$2)",
-        ).bind(workspace).bind(pipeline_id).fetch_one(&mut **tx).await.map_err(ApiError::internal)?;
+        // Workspace pipelines retain their original owner in the workspace
+        // operation, including when request-scoped central policy is optional.
+        // A repository pipeline instead belongs to its human pipeline owner.
+        let owner_matches: bool = match plan["config_source"].as_str() {
+            Some("development_workspace") => sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM development_workspace_sessions s
+                 JOIN development_workspace_operations o ON o.workspace_id=s.workspace_id
+                    AND o.actor_id=s.actor_id AND o.owner_subject=s.owner_subject
+                 JOIN users u ON u.id=o.actor_id
+                 WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND o.pipeline_id=$2
+                    AND o.state='running' AND u.enabled AND u.role<>'service_account')",
+            ).bind(workspace).bind(pipeline_id).fetch_one(&mut **tx).await.map_err(ApiError::internal)?,
+            Some("repository") => sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM development_workspace_sessions s JOIN pipeline_human_owners p
+                 ON p.owner_subject=s.owner_subject WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND p.pipeline_id=$2)",
+            ).bind(workspace).bind(pipeline_id).fetch_one(&mut **tx).await.map_err(ApiError::internal)?,
+            _ => false,
+        };
         if !owner_matches {
             return Err(ApiError::conflict(
                 "workspace_delivery_requires_session_owner",
