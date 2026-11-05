@@ -154,6 +154,12 @@ Typed jobs `image_publish` и `helm_deploy` исполняют закреплё�
 `legacy_template` не допускается к typed jobs. Изменение каталога не меняет
 уже сохранённый план и не требует повторной отправки pipeline.
 
+Владельца workspace delivery определяет исходная операция, связанная с этим
+pipeline: её workspace, actor и subject должны совпадать с активной сессией.
+Для обычного repository pipeline используется его human owner. Эти источники
+не подменяют друг друга; отключённый владелец workspace не получает новый
+deployment offer. Runtime, занятость и environment binding проверяются отдельно.
+
 ## CLI и интерфейс
 
 ```sh

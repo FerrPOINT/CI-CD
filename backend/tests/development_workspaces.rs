@@ -156,6 +156,163 @@ async fn typed_publication_claims_frozen_workspace_and_repository_plans_only() {
 }
 
 #[tokio::test]
+async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
+    use sha2::{Digest, Sha256};
+    for (source, operation_owner_matches, human_owner, enabled, allowed) in [
+        ("development_workspace", true, false, true, true),
+        ("development_workspace", false, true, true, false),
+        ("repository", true, false, true, false),
+        ("repository", false, true, true, true),
+        ("development_workspace", true, false, false, false),
+    ] {
+        let f = Fixture::new().await;
+        sqlx::query("UPDATE users SET enabled=$2 WHERE id=$1")
+            .bind(f.actor)
+            .bind(enabled)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        let files = tempfile::tempdir().unwrap();
+        let registration = Uuid::new_v4().to_string();
+        let mut config = cicd::config::RuntimeConfig::from_env_source(
+            |name| (name == "CICD_RUNNER_REGISTRATION_TOKEN").then(|| registration.clone()),
+            false,
+        )
+        .unwrap();
+        config.artifacts.root = files.path().to_path_buf();
+        let app = cicd::api::app_with_git_and_config(
+            Some(f.pool.clone()),
+            config.git.to_git_config(),
+            None,
+            config,
+        )
+        .unwrap();
+        let capabilities = json!({"executorKinds":["kubernetes"],"jobKinds":["helm-deploy-v1"],"helmTargets":[f.environment]});
+        let (status, registered) = http(&app,"POST","/api/v1/runner/register",None,
+            json!({"protocolVersion":1,"registrationToken":registration,"name":"delivery-owner-fixture","tags":["linux"],"capabilities":capabilities})).await;
+        assert_eq!(status, StatusCode::CREATED, "{registered}");
+        let credential = registered["credential"].as_str().unwrap();
+        assert_eq!(http(&app,"POST","/api/v1/runner/heartbeat",Some(credential),
+            json!({"protocolVersion":1,"status":"online","capacity":{"totalSlots":1,"busySlots":0},"capabilities":capabilities,"activeLeaseIds":[]})).await.0,StatusCode::NO_CONTENT);
+        let target = json!({"schema":"forge/kubernetes-environment/v1","cluster":"fixture","namespace":"product","release":"product","chart":"chart","health_url":"https://product.example.test/health"});
+        sqlx::query("UPDATE environments SET kubernetes_target=$2 WHERE id=$1")
+            .bind(f.environment)
+            .bind(&target)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE development_workspaces SET desired_runtime='running',runtime='running',environment_hash=$2 WHERE id=$1")
+            .bind(f.workspace).bind(store::request_hash(&target).unwrap()).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref) VALUES($1,$2,$3,$3,$4,'DEV-1')")
+            .bind(Uuid::new_v4()).bind(f.workspace).bind(f.actor).bind(Uuid::new_v4()).execute(&f.pool).await.unwrap();
+        let commit = "a".repeat(40);
+        let pipeline = Uuid::new_v4();
+        let stage = Uuid::new_v4();
+        let producer = Uuid::new_v4();
+        let producer_attempt = Uuid::new_v4();
+        let job = Uuid::new_v4();
+        let attempt = Uuid::new_v4();
+        let raw = "frozen owner recipe";
+        let plan = json!({"format":"v1-dag","version":1,"config_source":source,"resolved_commit_sha":commit,"jobs":[
+            {"key":"publish","image_publish":{"context":".","dockerfile":"Dockerfile","repository":"registry.example.test/team/application","descriptor_artifact":"out/build.json","published_artifact":"out/image.json"}},
+            {"key":"deploy","command":"forge:helm-deploy","image":"forge:runner-helm-deploy","commands":[],"required_secrets":[],"allow_failure":false,"artifact_paths":["out/release.json"],"needs":["publish"],"helm_deploy":{"environment_id":f.environment,"images":{"image":{"job":"publish","artifact":"out/image.json"}},"receipt_artifact":"out/release.json"}}
+        ]});
+        let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+        sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status) VALUES($1,$2,$3,$3,'queued')")
+            .bind(pipeline).bind(f.project).bind(&commit).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO pipeline_plans(pipeline_id,config_source,parser_version,git_ref,resolved_commit_sha,config_sha256,plan_sha256,raw_config,plan) VALUES($1,$2,'v1',$3,$3,$4,$5,$6,$7)")
+            .bind(pipeline).bind(source).bind(&commit).bind(hash(raw.as_bytes())).bind(hash(&serde_json::to_vec(&plan).unwrap())).bind(raw).bind(&plan).execute(&f.pool).await.unwrap();
+        if human_owner {
+            sqlx::query(
+                "INSERT INTO pipeline_human_owners(pipeline_id,owner_subject) VALUES($1,$2)",
+            )
+            .bind(pipeline)
+            .bind(f.actor)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        }
+        let actor = if operation_owner_matches {
+            f.actor
+        } else {
+            f.other_actor
+        };
+        sqlx::query("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,state,pipeline_id) VALUES($1,$2,$3,$3,$4,'{\"action\":\"check\"}',1,'running',$5)")
+            .bind(Uuid::new_v4()).bind(f.workspace).bind(actor).bind("b".repeat(64)).bind(pipeline).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'delivery',0,'queued')")
+            .bind(stage).bind(pipeline).execute(&f.pool).await.unwrap();
+        for (id, name, image, command, position, status, attempt_id) in [
+            (
+                producer,
+                "publish",
+                "forge:runner-image-publish",
+                "forge:image-publish",
+                0,
+                "success",
+                producer_attempt,
+            ),
+            (
+                job,
+                "deploy",
+                "forge:runner-helm-deploy",
+                "forge:helm-deploy",
+                1,
+                "queued",
+                attempt,
+            ),
+        ] {
+            sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,required_tags,artifact_paths,position,status) VALUES($1,$2,$3,$4,$5,ARRAY['linux'],ARRAY['out/release.json'],$6,$7)")
+                .bind(id).bind(stage).bind(name).bind(image).bind(command).bind(position).bind(status).execute(&f.pool).await.unwrap();
+            sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,$3,'initial')")
+                .bind(attempt_id).bind(id).bind(status).execute(&f.pool).await.unwrap();
+        }
+        let descriptor = b"fixture retained build descriptor".to_vec();
+        let published = cicd_domain::published_image::PublishedImage::new(
+            commit.clone(),
+            format!(
+                "registry.example.test/team/application@sha256:{}",
+                "c".repeat(64)
+            ),
+            hash(&descriptor),
+        )
+        .unwrap();
+        for (name, bytes) in [
+            ("out/build.json", descriptor),
+            ("out/image.json", serde_json::to_vec(&published).unwrap()),
+        ] {
+            let path = files.path().join(Uuid::new_v4().to_string());
+            std::fs::write(&path, &bytes).unwrap();
+            sqlx::query("INSERT INTO artifacts(id,job_id,attempt_id,name,storage_path,size_bytes,sha256,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '1 hour')")
+                .bind(Uuid::new_v4()).bind(producer).bind(producer_attempt).bind(cicd_domain::artifact_names::artifact_name_from_declared_path(name)).bind(path.to_str().unwrap()).bind(bytes.len() as i64).bind(hash(&bytes)).execute(&f.pool).await.unwrap();
+        }
+        sqlx::query("INSERT INTO job_queue(id,job_id,attempt_id,pipeline_id,stage_id,state,priority,required_tags) VALUES($1,$2,$3,$4,$5,'queued',100,ARRAY['linux'])")
+            .bind(Uuid::new_v4()).bind(job).bind(attempt).bind(pipeline).bind(stage).execute(&f.pool).await.unwrap();
+        let (status,offer)=http(&app,"POST","/api/v1/runner/work:poll",Some(credential),
+            json!({"protocolVersion":1,"capacity":{"freeSlots":1},"tags":["linux"],"waitSeconds":0})).await;
+        assert_eq!(
+            status,
+            if allowed {
+                StatusCode::OK
+            } else {
+                StatusCode::CONFLICT
+            },
+            "source={source},operation_owner_matches={operation_owner_matches},human_owner={human_owner},enabled={enabled}: {offer}"
+        );
+        let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM job_leases WHERE attempt_id=$1")
+            .bind(attempt)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+        assert_eq!(leases, i64::from(allowed));
+        if allowed {
+            assert_eq!(offer["attempt"]["commitSha"], commit);
+        }
+        drop(app);
+        f.close().await;
+    }
+}
+
+#[tokio::test]
 async fn public_api_preserves_original_commands_across_restart_and_revokes_project_access() {
     let f = Fixture::new().await;
     sqlx::query("INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'developer'),($1,$3,'viewer')")
