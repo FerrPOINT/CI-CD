@@ -111,6 +111,7 @@ pub(crate) struct RunnerRegisterRequest {
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default = "default_capabilities")]
+    /// Возможности runner; pipelineVariables=true требуется для заданий с переменными.
     capabilities: serde_json::Value,
 }
 
@@ -136,6 +137,7 @@ pub(crate) struct RunnerHeartbeatRequest {
     #[serde(default)]
     tags: Option<Vec<String>>,
     #[serde(default = "default_capabilities")]
+    /// Возможности runner; pipelineVariables=true требуется для заданий с переменными.
     capabilities: serde_json::Value,
     #[serde(default)]
     active_lease_ids: Vec<Uuid>,
@@ -196,6 +198,7 @@ pub(crate) struct RunnerAttemptSpec {
     executor: String,
     image: String,
     commands: Vec<String>,
+    /// Нормализованные переменные pipeline CICD_VAR_<KEY>, без служебных полей и секретов.
     environment: BTreeMap<String, String>,
     secrets: Vec<String>,
     timeout_seconds: i32,
@@ -341,6 +344,7 @@ struct ClaimedWork {
     attempt_id: Uuid,
     attempt_no: i32,
     pipeline_id: Uuid,
+    pipeline_variables: Option<serde_json::Value>,
     job_name: String,
     image: String,
     command: String,
@@ -1283,7 +1287,7 @@ async fn claim_next_work(
              SELECT q.id AS queue_id, q.attempt_id, \
                     j.id AS job_id, j.stage_id, j.name AS job_name, j.image, j.command, \
                     LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::integer AS timeout_seconds, \
-                    s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, rc.kind AS catalog_kind, rc.external_url AS catalog_external_url, rc.slug AS catalog_slug, gg.slug AS catalog_group_slug, j.required_secrets, j.artifact_paths, \
+                    s.pipeline_id, p.variables AS pipeline_variables, p.git_ref, p.commit_sha, pr.repository_url, rc.kind AS catalog_kind, rc.external_url AS catalog_external_url, rc.slug AS catalog_slug, gg.slug AS catalog_group_slug, j.required_secrets, j.artifact_paths, \
                     pp.plan_sha256 \
              FROM job_queue q \
              JOIN jobs j ON j.id = q.job_id \
@@ -1297,6 +1301,7 @@ async fn claim_next_work(
              WHERE q.state = 'queued' AND NOT EXISTS (SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                 AND NOT EXISTS(SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                 AND j.command <> 'forge:image-build' \
+                AND ($12::boolean OR p.variables IS NULL OR p.variables IN ('null'::jsonb, '{}'::jsonb)) \
                 AND (j.command <> 'forge:image-publish' OR $9::boolean) \
                 AND (j.command <> 'forge:helm-deploy' OR ($10::boolean AND EXISTS( \
                   SELECT 1 FROM jsonb_array_elements(COALESCE(pp.plan->'jobs','[]'::jsonb)) granted \
@@ -1383,7 +1388,7 @@ async fn claim_next_work(
              RETURNING cl.lease_id, cl.generation, cl.lease_expires_at, cl.ack_deadline \
          ) \
          SELECT cq.lease_id, c.job_id, c.stage_id, ca.id AS attempt_id, ca.attempt_no, \
-                c.pipeline_id, c.job_name, c.image, c.command, c.timeout_seconds, \
+                c.pipeline_id, c.pipeline_variables, c.job_name, c.image, c.command, c.timeout_seconds, \
                 c.git_ref, c.commit_sha, c.repository_url, c.catalog_kind, c.catalog_external_url, c.catalog_slug, c.catalog_group_slug, c.required_secrets, c.artifact_paths, cq.generation, \
                 cq.lease_expires_at, cq.ack_deadline, c.plan_sha256 \
          FROM candidate c \
@@ -1401,6 +1406,7 @@ async fn claim_next_work(
     .bind(runner_supports_job(&runner.capabilities, "image-publish-v1") && selected_executor(&runner.capabilities)==Some("kubernetes"))
     .bind(runner_supports_job(&runner.capabilities, "helm-deploy-v1") && selected_executor(&runner.capabilities)==Some("kubernetes"))
     .bind(runner_helm_targets(&runner.capabilities))
+    .bind(runner.capabilities.get("pipelineVariables").and_then(serde_json::Value::as_bool) == Some(true))
         .fetch_optional(&mut *tx)
         .await;
         let row = match row {
@@ -1421,6 +1427,22 @@ async fn claim_next_work(
         if let Some(clock) = owner_clock {
             clock.bind_commit_clock(&mut tx).await?;
         }
+        let environment = match cicd_domain::pipeline_variables::from_variables(
+            row.pipeline_variables.as_ref(),
+            &row.required_secrets,
+        ) {
+            Ok(environment) => environment,
+            Err(error) => {
+                refuse_undispatched(&mut tx, &row, &error).await?;
+                match tx.commit().await {
+                    Ok(()) => {}
+                    Err(error) if is_claim_serialization_failure(&error) => continue,
+                    Err(error) => return Err(ApiError::internal(error)),
+                }
+                crate::api::refresh_statuses(db, row.stage_id).await?;
+                continue;
+            }
+        };
         let checkout_url = match row.catalog_kind.as_deref() {
             Some("external") => row
                 .catalog_external_url
@@ -1541,7 +1563,7 @@ async fn claim_next_work(
                     .to_string(),
                 image: row.image,
                 commands: vec![row.command],
-                environment: BTreeMap::new(),
+                environment,
                 secrets: row.required_secrets,
                 timeout_seconds: row.timeout_seconds,
                 workspace: RunnerWorkspace {
@@ -1837,6 +1859,15 @@ fn validate_capabilities(value: &serde_json::Value) -> Result<(), ApiError> {
     let Some(object) = value.as_object() else {
         return Err(ApiError::bad_request("capabilities must be an object"));
     };
+
+    if object
+        .get("pipelineVariables")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(ApiError::bad_request(
+            "capabilities.pipelineVariables must be a boolean",
+        ));
+    }
 
     if let Some(targets) = object.get("helmTargets") {
         let array = targets
@@ -2780,6 +2811,26 @@ async fn lease_owner_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pipeline_variable_capability_is_explicit_and_boolean() {
+        for capabilities in [
+            serde_json::json!({}),
+            serde_json::json!({"pipelineVariables": false}),
+            serde_json::json!({"pipelineVariables": true}),
+        ] {
+            assert!(validate_capabilities(&capabilities).is_ok());
+        }
+        for value in [
+            serde_json::json!("true"),
+            serde_json::json!(1),
+            serde_json::Value::Null,
+        ] {
+            assert!(
+                validate_capabilities(&serde_json::json!({"pipelineVariables": value})).is_err()
+            );
+        }
+    }
 
     #[test]
     fn runner_tag_validation_matches_protocol_subset() {

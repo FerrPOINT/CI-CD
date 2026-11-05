@@ -138,7 +138,7 @@ def main():
             if str(uuid.UUID(attempt)) != attempt or int(generation) <= 0:
                 raise ValueError("Canonical readback identity required")
             result = subprocess.run(ssh(data, key, ("cancel" if args.cancel else "status") + " " + attempt + " " + str(int(generation))),
-                                    stdout=subprocess.PIPE, check=True)
+                                    stdout=subprocess.PIPE, check=True, timeout=45)
             if len(result.stdout) > MAX_RESULT:
                 raise ValueError("Worker receipt exceeds bound")
             json.loads(result.stdout)

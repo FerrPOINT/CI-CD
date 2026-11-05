@@ -292,6 +292,7 @@ async fn execute_claimed(
         generation,
         canceled.clone(),
         Some(guard),
+        config.git_sync.process_resources.clone(),
     )
     .await?;
     let local = git.refs(false).await?;
