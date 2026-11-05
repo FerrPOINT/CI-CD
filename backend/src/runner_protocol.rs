@@ -2079,6 +2079,7 @@ mod typed_job_capability_tests {
             attempt_id: Uuid::new_v4(),
             attempt_no: 1,
             pipeline_id: Uuid::new_v4(),
+            pipeline_variables: None,
             job_name: "deploy".into(),
             image: "forge:runner-helm-deploy".into(),
             command: "forge:helm-deploy".into(),
