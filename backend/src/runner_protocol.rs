@@ -1460,21 +1460,22 @@ async fn claim_next_work(
             row.command.as_str(),
             "forge:image-publish" | "forge:helm-deploy"
         ) {
-            let (plan, plan_hash, config_hash, raw_config, resolved_commit): (
+            let (plan, plan_hash, config_hash, raw_config, resolved_commit, config_source): (
                 serde_json::Value,
                 String,
                 String,
                 String,
                 Option<String>,
+                String,
             ) = sqlx::query_as(
-                "SELECT plan, plan_sha256, config_sha256, raw_config, resolved_commit_sha
-                     FROM pipeline_plans WHERE pipeline_id=$1 AND config_source='repository'",
+                "SELECT plan, plan_sha256, config_sha256, raw_config, resolved_commit_sha, config_source
+                     FROM pipeline_plans WHERE pipeline_id=$1",
             )
             .bind(row.pipeline_id)
             .fetch_optional(&mut *tx)
             .await
             .map_err(ApiError::internal)?
-            .ok_or_else(|| ApiError::conflict("Typed build requires a repository plan"))?;
+            .ok_or_else(|| ApiError::conflict("Typed job requires an immutable execution plan"))?;
             if row.command == "forge:image-publish" {
                 (
                     Some(validated_image_publish(
@@ -1484,6 +1485,7 @@ async fn claim_next_work(
                         &config_hash,
                         &raw_config,
                         resolved_commit.as_deref(),
+                        &config_source,
                     )?),
                     None,
                 )
@@ -1495,6 +1497,7 @@ async fn claim_next_work(
                     &config_hash,
                     &raw_config,
                     resolved_commit.as_deref(),
+                    &config_source,
                 )?;
                 let prepared = crate::deployment_runtime::prepare(
                     &mut tx,
@@ -1944,6 +1947,12 @@ fn runner_supports_job(capabilities: &serde_json::Value, kind: &str) -> bool {
         .is_some_and(|kinds| kinds.iter().any(|value| value.as_str() == Some(kind)))
 }
 
+/// Both sources contain frozen owner-admitted plans, unlike legacy templates.
+fn valid_typed_plan_source(plan: &serde_json::Value, config_source: &str) -> bool {
+    matches!(config_source, "repository" | "development_workspace")
+        && plan["config_source"].as_str() == Some(config_source)
+}
+
 /// Validate before committing the claim. The lease and source identities remain
 /// server-owned; an ordinary repository build never invents a task intent.
 fn validated_image_publish(
@@ -1953,10 +1962,11 @@ fn validated_image_publish(
     config_hash: &str,
     raw_config: &str,
     resolved_commit: Option<&str>,
+    config_source: &str,
 ) -> Result<crate::domain::image_publish::ImagePublishSpec, ApiError> {
     use sha2::{Digest, Sha256};
     let invalid =
-        || ApiError::conflict("Image publication differs from its immutable repository plan");
+        || ApiError::conflict("Image publication differs from its immutable execution plan");
     let entry = plan["jobs"]
         .as_array()
         .and_then(|jobs| {
@@ -1974,7 +1984,7 @@ fn validated_image_publish(
     ];
     if plan["format"] != "v1-dag"
         || plan["version"] != 1
-        || plan["config_source"] != "repository"
+        || !valid_typed_plan_source(plan, config_source)
         || row
             .commit_sha
             .as_deref()
@@ -2007,9 +2017,10 @@ fn validated_helm_deploy(
     config_hash: &str,
     raw_config: &str,
     resolved_commit: Option<&str>,
+    config_source: &str,
 ) -> Result<crate::domain::helm_deploy::HelmDeploySpec, ApiError> {
     let invalid =
-        || ApiError::conflict("Helm deployment differs from its immutable repository plan");
+        || ApiError::conflict("Helm deployment differs from its immutable execution plan");
     let entry = plan["jobs"]
         .as_array()
         .and_then(|entries| {
@@ -2024,7 +2035,7 @@ fn validated_helm_deploy(
     let artifacts = vec![spec.receipt_artifact.clone()];
     if plan["format"] != "v1-dag"
         || plan["version"] != 1
-        || plan["config_source"] != "repository"
+        || !valid_typed_plan_source(plan, config_source)
         || row
             .commit_sha
             .as_deref()
@@ -2056,6 +2067,94 @@ fn validated_helm_deploy(
 #[cfg(test)]
 mod typed_job_capability_tests {
     use super::*;
+    #[test]
+    fn typed_deployment_preserves_plan_source_and_commit_fences() {
+        let commit = "a".repeat(40);
+        let raw = "published owner recipe";
+        let config_hash = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        let mut row = ClaimedWork {
+            lease_id: Uuid::new_v4(),
+            job_id: Uuid::new_v4(),
+            stage_id: Uuid::new_v4(),
+            attempt_id: Uuid::new_v4(),
+            attempt_no: 1,
+            pipeline_id: Uuid::new_v4(),
+            pipeline_variables: None,
+            job_name: "deploy".into(),
+            image: "forge:runner-helm-deploy".into(),
+            command: "forge:helm-deploy".into(),
+            timeout_seconds: 60,
+            git_ref: "main".into(),
+            commit_sha: Some(commit.clone()),
+            repository_url: "https://example.test/source.git".into(),
+            catalog_kind: None,
+            catalog_external_url: None,
+            catalog_slug: None,
+            catalog_group_slug: None,
+            required_secrets: vec![],
+            artifact_paths: vec!["out/release.json".into()],
+            generation: 1,
+            lease_expires_at: Utc::now(),
+            ack_deadline: Utc::now(),
+            plan_sha256: None,
+        };
+        for (stored_source, plan_source, allowed) in [
+            ("repository", "repository", true),
+            ("development_workspace", "development_workspace", true),
+            ("repository", "development_workspace", false),
+            ("development_workspace", "repository", false),
+            ("legacy_template", "legacy_template", false),
+        ] {
+            let plan = serde_json::json!({"format":"v1-dag","version":1,"config_source":plan_source,
+                "resolved_commit_sha":commit,"jobs":[{"key":"deploy","command":row.command,
+                    "image":row.image,"commands":[],"required_secrets":[],"allow_failure":false,
+                    "artifact_paths":row.artifact_paths,"helm_deploy":{"environment_id":Uuid::new_v4(),
+                        "receipt_artifact":"out/release.json","images":{"image":{"job":"publish","artifact":"out/image.json"}}}}]});
+            let hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&plan).unwrap()));
+            row.plan_sha256 = Some(hash.clone());
+            assert_eq!(
+                validated_helm_deploy(
+                    &row,
+                    &plan,
+                    &hash,
+                    &config_hash,
+                    raw,
+                    Some(&commit),
+                    stored_source
+                )
+                .is_ok(),
+                allowed,
+                "stored={stored_source}, plan={plan_source}"
+            );
+            if allowed {
+                assert!(
+                    validated_helm_deploy(
+                        &row,
+                        &plan,
+                        &hash,
+                        &config_hash,
+                        raw,
+                        Some(&"b".repeat(40)),
+                        stored_source
+                    )
+                    .is_err()
+                );
+                assert!(
+                    validated_helm_deploy(
+                        &row,
+                        &plan,
+                        &"0".repeat(64),
+                        &config_hash,
+                        raw,
+                        Some(&commit),
+                        stored_source
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+
     #[test]
     fn legacy_runner_has_no_implicit_build_or_deploy_capability() {
         for value in [

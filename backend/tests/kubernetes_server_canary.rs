@@ -280,8 +280,14 @@ impl Fixture {
                 ),
                 ("CICD_RUNNER_TAGS", "linux,kubernetes".into()),
                 ("GIT_CONFIG_COUNT", "1".into()),
-                ("GIT_CONFIG_KEY_0", "http.http://127.0.0.1:22801/.extraheader".into()),
-                ("GIT_CONFIG_VALUE_0", format!("Authorization: Bearer {git_token}")),
+                (
+                    "GIT_CONFIG_KEY_0",
+                    "http.http://127.0.0.1:22801/.extraheader".into(),
+                ),
+                (
+                    "GIT_CONFIG_VALUE_0",
+                    format!("Authorization: Bearer {git_token}"),
+                ),
                 ("CICD_RUNNER_TOTAL_SLOTS", "1".into()),
                 ("CICD_RUNNER_POLL_INTERVAL_SECONDS", "1".into()),
                 ("CICD_RUNNER_WORK_DIR", "/workspaces".into()),
