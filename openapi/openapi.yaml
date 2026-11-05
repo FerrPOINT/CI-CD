@@ -10914,6 +10914,7 @@ components:
           - 'null'
         environment:
           type: object
+          description: Нормализованные переменные pipeline CICD_VAR_<KEY>, без служебных полей и секретов.
           additionalProperties:
             type: string
           propertyNames:
@@ -11036,7 +11037,8 @@ components:
           items:
             type: string
             format: uuid
-        capabilities: {}
+        capabilities:
+          description: Возможности runner; pipelineVariables=true требуется для заданий с переменными.
         capacity:
           $ref: '#/components/schemas/RunnerCapacity'
         draining:
@@ -11244,7 +11246,8 @@ components:
       - registrationToken
       - name
       properties:
-        capabilities: {}
+        capabilities:
+          description: Возможности runner; pipelineVariables=true требуется для заданий с переменными.
         name:
           type: string
         protocolVersion:
