@@ -1063,3 +1063,37 @@ Forge можно называть distributed CI/CD execution platform толь�
 - Logs/artifacts имеют attempt ownership, checksum/idempotency/retention.
 - Real PostgreSQL, runner protocol, e2e и failure/reconciliation tests включены в CI.
 - Документация `ARCHITECTURE`, `API`, `DATA_MODEL`, `SECURITY`, `RESILIENCE`, `ARTIFACTS`, `DEPLOYMENT` и `OPS_RUNBOOK` синхронизирована с реально поставленной фазой.
+
+
+## Исходный build-host принадлежит попытке
+
+Удалённая публикация использует прежний строгий `forge/host-image-build/v1` и
+прежний OCI descriptor. Публичные API и pipeline DSL не изменены.
+
+В operator HostBuild добавлено необязательное `connectionSha256`: SHA256
+точных bytes connection.json из выбранного immutable Secret. Отсутствие поля
+сохраняет чтение прежних установленных конфигураций; новый remote target
+публикуется с этим hash. Connection v1 читается; v2 дополнительно содержит id и
+hostKeySha256. Это внутренние operator inputs, не произвольные параметры job.
+
+Перед sealing host-image publication intent renderer вызывает
+`host_image_build.py --pin <execution-private-directory>/build-host`.
+В private binding v1 атомарно сохраняются исходный endpoint, fingerprint,
+config hash и credential bytes. Credentials не монтируются обычным jobs;
+typed build client получает только объявленный connection Secret своего intent.
+
+`status`, `cancel` и reconciliation используют `--binding` исходного Execution.
+Изменение текущего connection Secret или маршрута не выбирает другой сервер.
+Неверные hashes, symlinks и отсутствие binding закрывают readback, без fallback.
+Старые terminal истории остаются читаемыми; перед rollout активные старые
+попытки полностью drained/reconciled старой версией.
+
+После terminal readback и подтверждения отсутствия worker owner helper сохраняет
+проверяемый terminal response и удаляет копию private SSH key этой попытки.
+Активное/неизвестное выполнение сохраняет credentials и custody.
+Повторный terminal readback использует сохранённый ответ, который по-прежнему
+проверяется Forge по job/attempt/lease/generation/sourceCommit.
+
+Отказ нового build-host останавливает image publication, но не запуск Forge и
+обычных Compose/shell/Docker jobs. Кластерный допуск и host resources проверяются
+их владельцами; удалённый сборщик не получает cluster-admin или production volumes.

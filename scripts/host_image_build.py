@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Transport a typed repository build to the operator-owned rootless worker."""
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -18,9 +19,12 @@ MAX_RESULT = 2 * 1024**2
 
 def connection(path):
     data = json.loads(path.read_text())
-    if set(data) != {"schema", "host", "port", "user", "identityFile", "knownHostsFile"}:
+    fields = {"schema", "host", "port", "user", "identityFile", "knownHostsFile"}
+    version = data.get("schema")
+    required = fields if version == "forge/build-host-connection/v1" else fields | {"id", "hostKeySha256"}
+    if set(data) != required:
         raise ValueError("Closed build connection required")
-    if data["schema"] != "forge/build-host-connection/v1" or data["user"] != "root":
+    if version not in ("forge/build-host-connection/v1", "forge/build-host-connection/v2") or data["user"] != "root":
         raise ValueError("Unsupported operator connection")
     import ipaddress
     ipaddress.ip_address(data["host"])
@@ -29,7 +33,140 @@ def connection(path):
     for name in ["identityFile", "knownHostsFile"]:
         if not Path(data[name]).is_absolute():
             raise ValueError("Absolute operator credential paths required")
+    if version == "forge/build-host-connection/v2":
+        import re
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", data["id"]):
+            raise ValueError("Invalid build host ID")
+        if fingerprint(Path(data["knownHostsFile"])) != data["hostKeySha256"]:
+            raise ValueError("Build host SSH fingerprint changed")
     return data
+
+
+def fingerprint(path):
+    rows = [line.split() for line in path.read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")]
+    if len(rows) != 1 or len(rows[0]) != 3 or rows[0][0].startswith("@"):
+        raise ValueError("One explicit SSH host key required")
+    key = base64.b64decode(rows[0][2], validate=True)
+    return "SHA256:" + base64.b64encode(hashlib.sha256(key).digest()).decode().rstrip("=")
+
+
+def private_directory(path):
+    path = Path(path)
+    if not path.is_absolute() or path.resolve(strict=True) != path:
+        raise ValueError("Canonical private binding directory required")
+    stat = path.stat()
+    if not path.is_dir() or stat.st_uid != os.geteuid() or stat.st_mode & 0o077:
+        raise ValueError("Build binding is not private owner state")
+
+
+def pinned_connection(directory):
+    private_directory(directory)
+    marker = directory / "binding.json"
+    if marker.is_symlink() or marker.stat().st_size > 65536 or marker.stat().st_mode & 0o077:
+        raise ValueError("Private bounded build binding required")
+    metadata = json.loads(marker.read_text())
+    if (set(metadata) != {"schema", "hostId", "endpoint", "sshHostKeyFingerprint",
+                          "configurationSha256", "files"}
+            or metadata["schema"] != "forge/build-host-binding/v1"
+            or set(metadata["files"]) != {"identity", "known_hosts", "connection.json"}):
+        raise ValueError("Unknown build binding")
+    terminal = directory / "terminal.json"
+    for name, digest in metadata["files"].items():
+        path = directory / name
+        if name == "identity" and terminal.exists() and not path.exists():
+            continue
+        if path.is_symlink() or path.parent != directory or not path.is_file() or path.stat().st_mode & 0o077:
+            raise ValueError("Build binding file redirected or missing")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise ValueError("Build binding bytes changed")
+    data = connection(directory / "connection.json")
+    if (data["host"], data["port"], data["user"]) != tuple(metadata["endpoint"]):
+        raise ValueError("Build binding endpoint changed")
+    if fingerprint(Path(data["knownHostsFile"])) != metadata["sshHostKeyFingerprint"]:
+        raise ValueError("Build binding host key changed")
+    return data
+
+
+def pin_connection(source, directory, expected=None):
+    directory = Path(directory)
+    if directory.exists():
+        data = pinned_connection(directory)
+        if expected and json.loads((directory / "binding.json").read_text())["configurationSha256"] != expected:
+            raise ValueError("Retained build connection differs from original intent")
+        return data
+    private_directory(directory.parent)
+    data = connection(source)
+    raw = source.read_bytes()
+    if expected and hashlib.sha256(raw).hexdigest() != expected:
+        raise ValueError("Selected build connection differs from operator intent")
+    if len(raw) > 65536:
+        raise ValueError("Build connection exceeds bound")
+    with tempfile.TemporaryDirectory(prefix=".build-host-", dir=directory.parent) as temporary:
+        stage = Path(temporary)
+        stage.chmod(0o700)
+        files = {"identity": Path(data["identityFile"]).read_bytes(),
+                 "known_hosts": Path(data["knownHostsFile"]).read_bytes()}
+        if any(not value or len(value) > 65536 for value in files.values()):
+            raise ValueError("Build credentials exceed bound")
+        selected = dict(data, identityFile=str(directory / "identity"),
+                        knownHostsFile=str(directory / "known_hosts"))
+        files["connection.json"] = json.dumps(selected, sort_keys=True).encode()
+        for name, value in files.items():
+            path = stage / name
+            with path.open("xb") as stream:
+                stream.write(value); stream.flush(); os.fsync(stream.fileno())
+            path.chmod(0o600)
+        metadata = {"schema": "forge/build-host-binding/v1",
+                    "hostId": data.get("id", "connection-" + hashlib.sha256(raw).hexdigest()[:16]),
+                    "endpoint": [data["host"], data["port"], data["user"]],
+                    "sshHostKeyFingerprint": fingerprint(stage / "known_hosts"),
+                    "configurationSha256": hashlib.sha256(raw).hexdigest(),
+                    "files": {name: hashlib.sha256(value).hexdigest() for name, value in files.items()}}
+        with (stage / "binding.json").open("x") as stream:
+            json.dump(metadata, stream); stream.flush(); os.fsync(stream.fileno())
+        (stage / "binding.json").chmod(0o600)
+        os.rename(stage, directory)
+        parent = os.open(directory.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+        # TemporaryDirectory cleanup accepts the atomically moved-away staging name.
+    return pinned_connection(directory)
+
+
+def terminal_readback(directory):
+    path = directory / "terminal.json"
+    if not path.exists():
+        return None
+    if path.is_symlink() or path.stat().st_size > MAX_RESULT or path.stat().st_mode & 0o077:
+        raise ValueError("Invalid retained terminal readback")
+    value = json.loads(path.read_bytes())
+    if value.get("schema") != "forge/host-image-build-status/v1" or value.get("phase") not in ("complete", "failed"):
+        raise ValueError("Retained build is not terminal")
+    return value
+
+
+def retain_terminal(directory, value):
+    if value.get("phase") not in ("complete", "failed") or value.get("ownerAlive") is not False:
+        return
+    path = directory / "terminal.json"
+    payload = json.dumps(value, sort_keys=True).encode()
+    if path.exists():
+        if json.loads(path.read_bytes()) != value:
+            raise ValueError("Retained terminal readback changed")
+    else:
+        with path.open("xb") as stream:
+            stream.write(payload); stream.flush(); os.fsync(stream.fileno())
+        path.chmod(0o600)
+    parent = os.open(directory, os.O_DIRECTORY)
+    try:
+        os.fsync(parent)
+        (directory / "identity").unlink(missing_ok=True)
+        os.fsync(parent)
+    finally:
+        os.close(parent)
 
 
 def ssh(data, private_key, operation):
@@ -129,12 +266,28 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--connection", type=Path, default=Path("/run/forge-build-host/connection.json"))
     parser.add_argument("--request")
+    parser.add_argument("--pin", type=Path)
+    parser.add_argument("--binding", type=Path)
+    parser.add_argument("--expect-connection")
     readback = parser.add_mutually_exclusive_group()
     readback.add_argument("--status", nargs=2, metavar=("ATTEMPT", "GENERATION"))
     readback.add_argument("--cancel", nargs=2, metavar=("ATTEMPT", "GENERATION"))
     readback.add_argument("--health", action="store_true")
     args = parser.parse_args()
-    data = connection(args.connection)
+    if args.pin:
+        if args.binding or args.request or args.status or args.cancel or args.health:
+            raise ValueError("Pin is a separate owner operation")
+        pin_connection(args.connection, args.pin, args.expect_connection)
+        return
+    data = pinned_connection(args.binding) if args.binding else connection(args.connection)
+    if args.binding and (args.status or args.cancel):
+        retained = terminal_readback(args.binding)
+        if retained is not None:
+            attempt, generation = args.status or args.cancel
+            if retained.get("attemptId") != attempt or retained.get("generation") != int(generation):
+                raise ValueError("Retained terminal identity differs")
+            print(json.dumps(retained))
+            return
     with tempfile.TemporaryDirectory(prefix="forge-build-ssh-") as temporary:
         key = Path(temporary) / "identity"
         key.write_bytes(Path(data["identityFile"]).read_bytes())
@@ -153,7 +306,12 @@ def main():
                                     stdout=subprocess.PIPE, check=True)
             if len(result.stdout) > MAX_RESULT:
                 raise ValueError("Worker receipt exceeds bound")
-            json.loads(result.stdout)
+            value = json.loads(result.stdout)
+            if args.binding:
+                if (value.get("phase") != "absent"
+                        and (value.get("attemptId") != attempt or value.get("generation") != int(generation))):
+                    raise ValueError("Worker readback identity differs")
+                retain_terminal(args.binding, value)
             sys.stdout.buffer.write(result.stdout)
         else:
             execute(data, key, json.loads(args.request))
