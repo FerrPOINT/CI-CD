@@ -56,7 +56,8 @@ pub(crate) async fn prepare(
                  JOIN development_workspace_operations o ON o.workspace_id=s.workspace_id
                     AND o.actor_id=s.actor_id AND o.owner_subject=s.owner_subject
                  JOIN users u ON u.id=o.actor_id
-                 WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND o.pipeline_id=$2
+                 WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND s.machine_assignment IS NULL
+                    AND o.pipeline_id=$2
                     AND o.state='running' AND u.enabled AND u.role<>'service_account')",
             ).bind(workspace).bind(pipeline_id).fetch_one(&mut **tx).await.map_err(ApiError::internal)?,
             Some("repository") => sqlx::query_scalar(

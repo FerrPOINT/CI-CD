@@ -158,7 +158,8 @@ Typed jobs `image_publish` и `helm_deploy` исполняют закреплё�
 pipeline: её workspace, actor и subject должны совпадать с активной сессией.
 Для обычного repository pipeline используется его human owner. Эти источники
 не подменяют друг друга; отключённый владелец workspace не получает новый
-deployment offer. Runtime, занятость и environment binding проверяются отдельно.
+deployment offer. Машинная сессия Developer не разрешает delivery. Runtime,
+занятость и environment binding проверяются отдельно.
 
 ## CLI и интерфейс
 

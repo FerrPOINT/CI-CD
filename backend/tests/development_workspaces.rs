@@ -158,12 +158,13 @@ async fn typed_publication_claims_frozen_workspace_and_repository_plans_only() {
 #[tokio::test]
 async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
     use sha2::{Digest, Sha256};
-    for (source, operation_owner_matches, human_owner, enabled, allowed) in [
-        ("development_workspace", true, false, true, true),
-        ("development_workspace", false, true, true, false),
-        ("repository", true, false, true, false),
-        ("repository", false, true, true, true),
-        ("development_workspace", true, false, false, false),
+    for (source, operation_owner_matches, human_owner, enabled, machine, allowed) in [
+        ("development_workspace", true, false, true, false, true),
+        ("development_workspace", false, true, true, false, false),
+        ("repository", true, false, true, false, false),
+        ("repository", false, true, true, false, true),
+        ("development_workspace", true, false, false, false, false),
+        ("development_workspace", true, false, true, true, false),
     ] {
         let f = Fixture::new().await;
         sqlx::query("UPDATE users SET enabled=$2 WHERE id=$1")
@@ -203,8 +204,9 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             .unwrap();
         sqlx::query("UPDATE development_workspaces SET desired_runtime='running',runtime='running',environment_hash=$2 WHERE id=$1")
             .bind(f.workspace).bind(store::request_hash(&target).unwrap()).execute(&f.pool).await.unwrap();
-        sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref) VALUES($1,$2,$3,$3,$4,'DEV-1')")
-            .bind(Uuid::new_v4()).bind(f.workspace).bind(f.actor).bind(Uuid::new_v4()).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,machine_assignment) VALUES($1,$2,$3,$3,$4,'DEV-1',$5)")
+            .bind(Uuid::new_v4()).bind(f.workspace).bind(f.actor).bind(Uuid::new_v4())
+            .bind(machine.then(||json!({"machine_subject":Uuid::new_v4()}))).execute(&f.pool).await.unwrap();
         let commit = "a".repeat(40);
         let pipeline = Uuid::new_v4();
         let stage = Uuid::new_v4();
@@ -296,7 +298,7 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             } else {
                 StatusCode::CONFLICT
             },
-            "source={source},operation_owner_matches={operation_owner_matches},human_owner={human_owner},enabled={enabled}: {offer}"
+            "source={source},operation_owner_matches={operation_owner_matches},human_owner={human_owner},enabled={enabled},machine={machine}: {offer}"
         );
         let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM job_leases WHERE attempt_id=$1")
             .bind(attempt)
