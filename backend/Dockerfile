@@ -36,6 +36,7 @@ COPY CI-CD/backend/infra/src infra/src
 COPY CI-CD/backend/api/src api/src
 COPY CI-CD/backend/cli/src cli/src
 COPY CI-CD/backend/migration/src migration/src
+COPY CI-CD/backend/migration/catalog.rs migration/catalog.rs
 COPY CI-CD/backend/migrations ./migrations
 # Compile-time delivery witnesses must come from the same pinned source set.
 COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
