@@ -24,6 +24,7 @@ RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src 
  && printf '\n' > domain/src/lib.rs \
  && printf '\n' > app/src/lib.rs \
  && printf '\n' > infra/src/lib.rs \
+ && mkdir -p infra/tests && printf '\n' > infra/tests/repository_sync_schedule.rs \
  && printf '\n' > api/src/lib.rs \
  && printf 'fn main() {}\n' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs \
