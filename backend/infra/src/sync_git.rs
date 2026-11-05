@@ -178,6 +178,14 @@ impl Endpoint {
         }
     }
 }
+/// Explicit installation limits; ambient Git configuration is never inherited.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitProcessResources {
+    pub threads: u16,
+    pub window_memory_bytes: u64,
+    pub delta_cache_bytes: u64,
+}
+
 pub struct GitSession {
     pub scratch: PathBuf,
     local: PathBuf,
@@ -186,6 +194,7 @@ pub struct GitSession {
     token: String,
     pub canceled: Arc<AtomicBool>,
     pub guard: Option<Arc<MutationGuard>>,
+    resources: Option<GitProcessResources>,
 }
 impl Drop for GitSession {
     fn drop(&mut self) {
@@ -227,7 +236,7 @@ impl GitSession {
         canceled: Arc<AtomicBool>,
     ) -> Result<Self, Error> {
         Self::new_with_guard(
-            root, local, settings, token, run, generation, canceled, None,
+            root, local, settings, token, run, generation, canceled, None, None,
         )
         .await
     }
@@ -242,6 +251,7 @@ impl GitSession {
         generation: i64,
         canceled: Arc<AtomicBool>,
         guard: Option<Arc<MutationGuard>>,
+        resources: Option<GitProcessResources>,
     ) -> Result<Self, Error> {
         let directory = root.join(".forge-sync-scratch");
         std::fs::create_dir_all(&directory)
@@ -259,6 +269,7 @@ impl GitSession {
             token,
             canceled,
             guard,
+            resources,
         };
         #[cfg(unix)]
         {
@@ -302,6 +313,15 @@ impl GitSession {
         ]);
         if remote && matches!(self.remote, Endpoint::External(_)) {
             command.args(["-c","credential.helper=!f() { if test \"$1\" = get; then eval \"cat <&$FORGE_SYNC_CREDENTIAL_FD\"; fi; }; f"]);
+        }
+        if let Some(resources) = &self.resources {
+            for (key, value) in [
+                ("pack.threads", u64::from(resources.threads)),
+                ("pack.windowMemory", resources.window_memory_bytes),
+                ("pack.deltaCacheSize", resources.delta_cache_bytes),
+            ] {
+                command.arg("-c").arg(format!("{key}={value}"));
+            }
         }
         command.args(args);
         command
@@ -655,6 +675,46 @@ mod tests {
                 .success()
         );
     }
+    #[tokio::test]
+    async fn explicit_resource_limits_survive_sanitization_and_reach_a_git_child() {
+        let root = std::env::temp_dir().join(format!("forge-git-limits-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let git_root = root.join("scratch.git");
+        git(&root, &["init", "--bare", git_root.to_str().unwrap()]).await;
+        let mut session = GitSession {
+            scratch: git_root.clone(),
+            local: git_root.clone(),
+            remote: Endpoint::Local(git_root),
+            scope: None,
+            token: "never-inherited".into(),
+            canceled: Arc::new(AtomicBool::new(false)),
+            guard: None,
+            resources: Some(GitProcessResources {
+                threads: 1,
+                window_memory_bytes: 16 * 1024 * 1024,
+                delta_cache_bytes: 16 * 1024 * 1024,
+            }),
+        };
+        for (key, expected) in [
+            ("pack.threads", "1"),
+            ("pack.windowMemory", "16777216"),
+            ("pack.deltaCacheSize", "16777216"),
+        ] {
+            // The alias starts another real Git process after env_clear, like fetch/index-pack.
+            let alias = format!("alias.resource-proof=!git config --get {key}");
+            let args = vec!["-c".into(), alias, "resource-proof".into()];
+            let mut command = session.configure(false, &args);
+            let output = session.command(false, &args, &mut command).await.unwrap();
+            assert_eq!(String::from_utf8(output).unwrap().trim(), expected);
+        }
+        session.resources = None;
+        let args = vec!["config".into(), "--get".into(), "pack.threads".into()];
+        let mut command = session.configure(false, &args);
+        assert!(session.command(false, &args, &mut command).await.is_err());
+        drop(session);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn selected_branch_sync_preserves_other_refs_and_creates_missing_destination() {
         use cicd_domain::repository_sync::Direction;

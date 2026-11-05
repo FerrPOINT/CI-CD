@@ -61,6 +61,21 @@
 
 Схема: `status` равен `online` или `draining`; `totalSlots` - 1..1024, `busySlots` - 0..`totalSlots`; current MVP нормализует optional tags, при наличии заменяет stored tags, при отсутствии сохраняет текущие tags, сохраняет optional object capabilities, валидирует optional `capabilities.executorKinds` и обновляет heartbeat snapshot. Во время active lease runner продолжает слать heartbeat с занятым слотом и `activeLeaseIds`; `forge-runner` делает это каждые 15 секунд после `ack` до terminal completion. Ответ `204`. Protected-tag scope, capability allowlist и запрет изменения protected tags остаются target policy.
 
+### Переменные pipeline и совместимость runner
+
+Capability `pipelineVariables` — необязательное boolean-поле `capabilities`
+при регистрации и heartbeat. Только значение `true` разрешает выдачу задания
+с непустыми сохранёнными переменными pipeline. Отсутствие поля или `false`
+сохраняет исполнение заданий без переменных. Неверный тип отклоняется.
+Проверка совместимости очереди использует то же условие.
+
+Существующее поле `attempt.environment` содержит переменные
+`CICD_VAR_<KEY>`: ASCII-буквы переводятся в верхний регистр, дефис — в
+подчёркивание. Строковые значения передаются без изменения; остальные JSON
+значения сериализуются. Коллизии имён, NUL, служебные identity и пересечения
+с declared secrets отклоняются до запуска. Embedded и external используют
+одну нормализацию. Значения передаются адаптеру окружения, без команд `export`.
+
 ## 3. Получение и подтверждение работы
 
 `POST /api/v1/runner/work:poll`:
@@ -100,6 +115,20 @@ Offer содержит только имена declared secrets и relative path
 Ack допускается только до `ackDeadline`; ответ: `{protocolVersion, leaseExpiresAt, renewAfter, cancelRequested}`. Current reconciler после `ackDeadline` закрывает unacknowledged lease как expired delivery и возвращает тот же `job_queue`/job/attempt в `queued` для следующего claim; поздний ack старой lease получает `410`. Renew допускается только для active, acknowledged, неистёкшей lease и возвращает те же поля. Повтор корректного ack/renew идемпотентен; stale token/generation возвращает `409 lease_fenced` (или `410` после окончательного expiry).
 
 `GET /api/v1/runner/leases/{leaseId}/control` возвращает те же control fields без продления lease. В current MVP control fields передаются headers: `Authorization: Bearer <runner-credential>`, `X-Runner-Protocol-Version: 1`, `X-Lease-Token: <opaque>`, `X-Fencing-Token: <generation>`. Endpoint доступен только owner-у acknowledged active lease. User-facing cancel для external lease выставляет `cancel_requested_at`, после чего `control`, `ack` и `renew` возвращают `cancelRequested: true`; `forge-runner` polling-ит этот endpoint во время long-running shell command, завершает процесс и отправляет `complete` с `outcome: "canceled"`. Если user cancel уже перевёл job/attempt в `canceled`, сервер принимает только подтверждённый `outcome: "canceled"` от того же active lease; конкурентный `success` rejected как fenced/conflict.
+
+При timeout/cancel Kubernetes-клиента runner сначала сохраняет намерение,
+останавливает исходное native execution и принадлежащую ему сборку, затем
+проверяет terminal receipt того же attempt/lease/generation. Пока живой
+сборщик подтверждает остановку, runner продолжает renew и heartbeat.
+Ожидание readback ограничено 120 секундами, каждый SSH-запрос — 45 секундами;
+последний запрос может завершиться после окончания общего бюджета.
+Timeout самого задания не продлевается. Неизвестный результат, недоступный
+worker, чужая identity или исчезнувший без terminal receipt процесс оставляют
+workspace и очередь заблокированными. Новый START не выполняется.
+
+`forge-runner --inspect-workspaces` читает inventory до регистрации участника
+quiescence, не создаёт workspace/identity и не занимает execution slot.
+Изменяющая reconciliation использует прежнее исключительное владение.
 
 ## 4. Секреты, артефакты, логи и завершение
 
