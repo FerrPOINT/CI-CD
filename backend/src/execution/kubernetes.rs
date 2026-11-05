@@ -90,10 +90,21 @@ pub struct HostBuild {
     pub client_image: String,
     pub service_account: String,
     pub connection_secret: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_sha256: Option<String>,
     pub registry_prefix: String,
 }
 impl HostBuild {
     fn validate(&self, config: &Config) -> anyhow::Result<()> {
+        ensure!(
+            self.connection_sha256.as_ref().is_none_or(|hash| {
+                hash.len() == 64
+                    && hash
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            }),
+            "Invalid host build connection hash"
+        );
         ensure!(
             digest_image(&self.client_image)
                 && dns(&self.service_account)
@@ -1102,6 +1113,18 @@ impl Execution {
                     .starts_with(&format!("{}/", host.registry_prefix)),
             "Publication target outside this operator grant"
         );
+        let mut pin = std::process::Command::new("python3");
+        pin.arg("-I")
+            .arg("/usr/local/libexec/forge/host_image_build.py")
+            .arg("--pin")
+            .arg(self.host_build_binding());
+        if let Some(hash) = &host.connection_sha256 {
+            pin.arg("--expect-connection").arg(hash);
+        }
+        ensure!(
+            pin.status()?.success(),
+            "Could not retain original build host binding"
+        );
         self.manifest["spec"]["serviceAccountName"] = json!(host.service_account);
         self.manifest["metadata"]["labels"]["pdlc.forge-executor"] = json!("host-builder");
         // Typed clients never execute repository commands with their operator credentials.
@@ -1124,6 +1147,9 @@ impl Execution {
         )?;
         self.seal_effect()?;
         Ok(())
+    }
+    pub fn host_build_binding(&self) -> PathBuf {
+        self.directory.join("build-host")
     }
     pub fn host_build_spec(
         &self,
