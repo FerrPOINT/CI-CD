@@ -95,6 +95,8 @@ struct AttemptSpec {
     commit_sha: Option<String>,
     commands: Vec<String>,
     #[serde(default)]
+    environment: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
     secrets: Vec<String>,
     #[serde(default)]
     artifacts: Vec<String>,
@@ -233,27 +235,29 @@ impl std::error::Error for UnconfirmedExecution {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if std::env::var_os("CICD_QUIESCENCE_DIR").is_none() {
-        return run().await;
-    }
-    tokio::select! { result=run()=>result, result=cicd::quiescence::wait_for_exit()=>result }
-}
-async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     validate_cli(&cli)?;
+    if cli.inspect_workspaces {
+        println!(
+            "{}",
+            serde_json::to_string(&cicd::runner_workspace::OwnedWorkspace::inventory(
+                &workspace_root(&cli)
+            )?)?
+        );
+        return Ok(());
+    }
+    if std::env::var_os("CICD_QUIESCENCE_DIR").is_none() {
+        return run(cli).await;
+    }
+    tokio::select! { result=run(cli)=>result, result=cicd::quiescence::wait_for_exit()=>result }
+}
+async fn run(cli: Cli) -> anyhow::Result<()> {
     let root = workspace_root(&cli);
     cicd::quiescence::initialize(
         "external-runner",
         vec![cicd::quiescence::CustodyRoot::workspace(root.clone())],
     )?;
     cicd::quiescence::wait_for_enrollment().await?;
-    if cli.inspect_workspaces {
-        println!(
-            "{}",
-            serde_json::to_string(&cicd::runner_workspace::OwnedWorkspace::inventory(&root)?)?
-        );
-        return Ok(());
-    }
     if !cli.reconcile_workspaces {
         ensure_no_unresolved_workspaces(&root)?;
     }
@@ -1080,6 +1084,14 @@ async fn execute_attempt(
     log_context: Option<LogContext>,
     secret_env: &[(String, String)],
 ) -> anyhow::Result<(ExecutionResult, cicd::runner_workspace::OwnedWorkspace)> {
+    cicd_domain::pipeline_variables::validate(
+        &offer.attempt.environment,
+        &secret_env
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(anyhow::Error::msg)?;
     let owned_workspace = prepare_workspace(cli, offer).await?;
     let workspace = owned_workspace.checkout();
     if kubernetes_mode() {
@@ -1095,6 +1107,13 @@ async fn execute_attempt(
         diagnostic: None,
     };
 
+    let mut command_environment: Vec<_> = offer
+        .attempt
+        .environment
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    command_environment.extend(secret_env.iter().cloned());
     let mut processes = AttemptProcesses::new()?;
     for command in &offer.attempt.commands {
         let command_outcome = match run_shell_command_in_scope(
@@ -1102,7 +1121,7 @@ async fn execute_attempt(
             workspace,
             offer.attempt.timeout_seconds,
             log_context.as_ref(),
-            secret_env,
+            &command_environment,
             &mut processes,
         )
         .await
@@ -2015,7 +2034,7 @@ async fn runner_capabilities() -> serde_json::Value {
         kinds.push("helm-deploy-v1");
     }
     json!({
-        "jobKinds":kinds,"helmTargets":targets,
+        "jobKinds":kinds,"helmTargets":targets,"pipelineVariables":true,
         "executorKinds":[if kubernetes_mode(){"kubernetes"}else{"shell"}],
         "os":std::env::consts::OS,"arch":std::env::consts::ARCH
     })
@@ -2139,6 +2158,7 @@ mod tests {
                 git_ref: "main".to_string(),
                 commit_sha: None,
                 commands: vec![command.to_string()],
+                environment: Default::default(),
                 secrets: Vec::new(),
                 artifacts: Vec::new(),
                 timeout_seconds,
@@ -2148,6 +2168,53 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[tokio::test]
+    async fn external_shell_receives_variables_as_environment_without_reinterpreting_values() {
+        let root = std::env::temp_dir().join(format!("forge-variable-shell-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let cli = test_cli(root.clone());
+        let mut offer = test_offer(
+            "test \"$CICD_VAR_TEXT\" = 'literal $HOME; echo forbidden' && test \"$PRODUCT_TOKEN\" = fixture",
+            5,
+        );
+        offer.attempt.environment.insert(
+            "CICD_VAR_TEXT".into(),
+            "literal $HOME; echo forbidden".into(),
+        );
+        let (result, _) = execute_attempt(
+            &cli,
+            &offer,
+            None,
+            &[("PRODUCT_TOKEN".into(), "fixture".into())],
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.outcome, "success");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn external_kubernetes_receives_original_variables_and_rejects_identity_overrides() {
+        let mut offer = test_offer("true", 5);
+        offer.attempt.commit_sha = Some("a".repeat(40));
+        offer
+            .attempt
+            .environment
+            .insert("CICD_VAR_DELAY".into(), "90".into());
+        let environment: std::collections::BTreeMap<_, _> =
+            kubernetes_job_environment(&offer.attempt, &[])
+                .unwrap()
+                .into_iter()
+                .collect();
+        assert_eq!(environment["CICD_VAR_DELAY"], "90");
+        assert_eq!(environment["CICD_JOB_ID"], offer.attempt.job_id.to_string());
+        offer
+            .attempt
+            .environment
+            .insert("CICD_JOB_ID".into(), "forged".into());
+        assert!(kubernetes_job_environment(&offer.attempt, &[]).is_err());
     }
 
     #[tokio::test]
@@ -2829,6 +2896,14 @@ fn kubernetes_job_environment(
     attempt: &AttemptSpec,
     secrets: &[(String, String)],
 ) -> anyhow::Result<Vec<(String, String)>> {
+    cicd_domain::pipeline_variables::validate(
+        &attempt.environment,
+        &secrets
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(anyhow::Error::msg)?;
     anyhow::ensure!(
         !attempt.pipeline_id.is_nil() && !attempt.job_id.is_nil(),
         "Kubernetes job requires its original pipeline and job identity"
@@ -2856,6 +2931,12 @@ fn kubernetes_job_environment(
     );
     Ok(identity
         .into_iter()
+        .chain(
+            attempt
+                .environment
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone())),
+        )
         .chain(secrets.iter().cloned())
         .collect())
 }
@@ -3204,6 +3285,7 @@ async fn recover_kubernetes(
             git_ref: String::new(),
             commit_sha: Some(scope.source_commit.clone()),
             commands: Vec::new(),
+            environment: Default::default(),
             artifacts,
             secrets,
             timeout_seconds: 86400,

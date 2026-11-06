@@ -152,7 +152,7 @@ test('CI/CD global header preserves navigation, runtime services, focus and cent
       'aria-disabled',
       'true',
     )
-    await expect(menu.getByRole('menuitem', { name: /Central Auth|Java Agent|Pulse/ })).toHaveCount(
+    await expect(menu.getByRole('menuitem', { name: /Central Auth|Java Agent/ })).toHaveCount(
       0,
     )
     await page.keyboard.press('ArrowDown')

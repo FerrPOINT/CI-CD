@@ -29,6 +29,6 @@ Backend, OpenAPI, схема БД, Compose и зависимости не мен
 Исходные full-page PNG просмотрены; viewport height 1080, тема dark,
 реальный пустой поиск без персональных данных:
 
-- [375 px](../screenshots/2026-10-18-sync-offsets/repository-syncs-375.png)
-- [1920 px](../screenshots/2026-10-18-sync-offsets/repository-syncs-1920.png)
-- [2560 px](../screenshots/2026-10-18-sync-offsets/repository-syncs-2560.png)
+- [375 px](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/2026-10-18-sync-offsets/repository-syncs-375.png)
+- [1920 px](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/2026-10-18-sync-offsets/repository-syncs-1920.png)
+- [2560 px](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/2026-10-18-sync-offsets/repository-syncs-2560.png)

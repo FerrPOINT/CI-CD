@@ -79,6 +79,30 @@ desired_runtime хранится отдельно от фактического 
 выключить занятую сессию; Start допускается свободному окружению или владельцу
 его текущей сессии. Unknown сохраняет блокировку до подтверждённого recovery.
 
+## Постоянный Developer
+
+Configured-cli-v1 использует тот же реестр, сессии, операции и Git transport.
+Существующий human-only adapter не подходит постоянной service identity:
+передача human admin token нарушила бы разделение ролей. Вместо второго CLI,
+нового сервиса или per-message credential добавляется узкий adapter постоянного
+Central PAT с явным членством в проекте и свежим назначением Tracker.
+Сессия сохраняет неизменный fence; worker и runner проверяют его перед эффектом.
+Git username явно выбирает workspace UUID; native Git hooks повторно проверяют
+назначение и единственный candidate ref до изменения refs. Обычный post-receive
+не запускает выпуск. Исторический delegated task protocol не расширяется.
+
+Credential хранится только зашифрованной внутри прежнего private operation plan
+и временной server-owned hook custody, необходимой для свежего callback перед
+нативным commit. API, профиль и сессия не получают credential. Это добавленная
+сложность для конкретного требования revoke/fencing после принятия async команды,
+а не самостоятельная система исполнения. Подробные права и восстановление:
+[Developer](../DEVELOPMENT_WORKSPACES.md#developer-configured-cli-v1).
+
+После активации машинных сессий rollback сохраняет schema и историю. Старый
+binary, не проверяющий machine assignment, не является совместимым rollback.
+Перед заменой writer-компонентов требуется завершить или штатно восстановить
+их исходные операции и остановить новые назначения; неизвестный исход не снимается.
+
 ## Поставка и незавершённая работа
 
 Аддитивная 0113 следует за общей SQLx convergence 0112 из ADR-0042. Новые identity

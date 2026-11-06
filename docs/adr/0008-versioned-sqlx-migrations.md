@@ -29,12 +29,6 @@ version 38 `platform messaging`. Каталог сохраняет точные 
 Base pin, API и runner protocol не меняются. Replay сохраняет history,
 outbox rows и terminal event sequence; неверный checksum остаётся отказом.
 
-Уточнение 2026-10-03: каталог дополнен точными ранее применёнными migrations
-36/37 после проверки исторического SQLx ledger. Существующие migration bytes
-и правила `.gitattributes` сохранены; `ignore_missing`, ручное исправление ledger
-и перенос специального Pulse deployment/runner не используются. Публикация
-каталога не заменяет свежий backup и проверку отката рабочего runtime.
-
 - `docs/STORAGE_ARCHITECTURE.md`
 - `docs/MIGRATIONS.md`
 - `docs/DATA_MODEL.md`

@@ -24,3 +24,14 @@ worktrees/
 target/
 target-stage/
 target-stable/
+
+# Disposable results are not repository inputs.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.gradle/
+playwright-report/
+test-results/
+htmlcov/
+handoff/workspace-recovery*/
+docs/**/*.log

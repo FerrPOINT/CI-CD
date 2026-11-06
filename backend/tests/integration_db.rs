@@ -1510,6 +1510,13 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     .await
     .expect("insert protocol queue row");
 
+    sqlx::query("UPDATE pipelines SET variables=$2 WHERE id=$1")
+        .bind(pipeline_id)
+        .bind(serde_json::json!({"release-name": "literal $HOME; echo unchanged", "count": 7}))
+        .execute(&pool)
+        .await
+        .unwrap();
+
     let response = app
         .clone()
         .oneshot(
@@ -1587,6 +1594,52 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
+    // An older otherwise compatible runner must leave variable-bearing work queued.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/work:poll")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1, "capacity": {"freeSlots": 1},
+                        "tags": ["linux", "docker"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let queued: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id=$1")
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queued, "queued");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1, "status": "online",
+                        "capacity": {"totalSlots": 2, "busySlots": 0},
+                        "tags": ["linux", "docker"], "activeLeaseIds": [],
+                        "capabilities": {"executorKinds": ["shell"], "pipelineVariables": true}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
     let response = app
         .clone()
         .oneshot(
@@ -1612,6 +1665,12 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     assert_eq!(offer["attempt"]["id"], attempt_id.to_string());
     assert_eq!(offer["attempt"]["jobId"], job_id.to_string());
     assert_eq!(offer["attempt"]["jobKey"], "compile");
+    assert_eq!(
+        offer["attempt"]["environment"],
+        serde_json::json!({
+            "CICD_VAR_RELEASE_NAME": "literal $HOME; echo unchanged", "CICD_VAR_COUNT": "7"
+        })
+    );
     assert_eq!(offer["attempt"]["executor"], "shell");
     assert_eq!(offer["attempt"]["commands"][0], "echo ok");
     assert_eq!(
@@ -5874,6 +5933,42 @@ async fn queue_timeout_keeps_old_work_when_compatible_protocol_runner_exists() {
     assert_eq!(pipeline_status, "queued");
     assert_eq!(queue_state, "queued");
 
+    sqlx::query("UPDATE pipelines SET variables=$2 WHERE id=$1")
+        .bind(pipeline_id)
+        .bind(serde_json::json!({"count": 7}))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE runners SET capabilities=capabilities || $2 WHERE id=$1")
+        .bind(runner_id)
+        .bind(serde_json::json!({"pipelineVariables":true}))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cicd::runner::reconcile_queue_timeouts_with_config(&pool, Some(60), false)
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::query("UPDATE runners SET capabilities=capabilities - 'pipelineVariables' WHERE id=$1")
+        .bind(runner_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cicd::runner::reconcile_queue_timeouts_with_config(&pool, Some(60), false)
+            .await
+            .unwrap(),
+        1
+    );
+    let status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id=$1")
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "failed");
+
     fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
@@ -9101,7 +9196,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let released = sqlx::migrate::Migrator::new(path.as_path()).await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=40).chain(90..=113).collect::<Vec<_>>()
+        (1..=40).chain(90..=115).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -9138,7 +9233,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=40).chain(90..=113).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=40).chain(90..=115).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);
@@ -9168,7 +9263,7 @@ async fn migration_catalog_accepts_historical_data_and_rejects_missing_versions(
     let pipeline = Uuid::new_v4();
     let deployment = Uuid::new_v4();
     let request_key = Uuid::new_v4();
-    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, 'catalog-history', 'http://localhost/git/service-pulse.git')")
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, 'catalog-history', 'http://localhost/git/fixture-project.git')")
         .bind(project).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO environments (id, project_id, name) VALUES ($1, $2, 'history')")
         .bind(environment)

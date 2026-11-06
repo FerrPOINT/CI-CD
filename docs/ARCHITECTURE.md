@@ -149,7 +149,7 @@ Dashboard использует общий `PlatformHeader` из `@pdlc/ui`: он
 actions содержит тему и аккаунт с central logout. Sidebar начинается под
 Header и содержит только локальную навигацию. Полная identity не дублируется
 в sidebar и не участвует в геометрии Header. Контекстные `PageFrame` режимы
-рабочих страниц сохраняются; API-only и Pulse не становятся UI-приложениями.
+рабочих страниц сохраняются; API-only не становятся UI-приложениями.
 Приёмка и неизменяемые границы: [план Header](../plans/2026-10-01-platform-header.md).
 
 - PostgreSQL 17, Docker Compose.

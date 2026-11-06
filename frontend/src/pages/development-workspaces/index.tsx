@@ -92,6 +92,8 @@ export function DevelopmentWorkspacesPage() {
   });
   const correctProject =
     !!ref &&
+    !configuration.isError &&
+    !repository.isError &&
     repository.data?.namespace?.namespace_id === ref.namespace_id &&
     repository.data?.namespace?.registry_instance_id ===
       ref.registry_instance_id;
@@ -151,9 +153,13 @@ export function DevelopmentWorkspacesPage() {
       {project && (configuration.isError || repository.isError) && (
         <ErrorState message="Конфигурация проекта недоступна." />
       )}
-      {project && repository.data && !correctProject && (
-        <ErrorState message="Выбранная конфигурация принадлежит другому проекту. Выберите конфигурацию текущего проекта." />
-      )}
+      {project &&
+        repository.data &&
+        !repository.isError &&
+        !configuration.isError &&
+        !correctProject && (
+          <ErrorState message="Выбранная конфигурация принадлежит другому проекту. Выберите конфигурацию текущего проекта." />
+        )}
       {project && correctProject && (
         <Registration
           key={project}
@@ -164,8 +170,10 @@ export function DevelopmentWorkspacesPage() {
       {list.isPending && project && correctProject && (
         <LoadingState message="Загружаем окружения…" />
       )}
-      {list.isError && <ErrorState message={message(list.error)} />}
-      {list.data && (
+      {correctProject && list.isError && (
+        <ErrorState message={message(list.error)} />
+      )}
+      {correctProject && !list.isError && list.data && (
         <>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {list.data.items.map((workspace) => (
@@ -213,7 +221,7 @@ export function DevelopmentWorkspacesPage() {
           )}
         </>
       )}
-      {selected && correctProject && (
+      {selected && correctProject && !list.isError && (
         <WorkspaceCard key={selected} id={selected} configuration={project} />
       )}
     </section>
@@ -283,7 +291,7 @@ function Registration({
           Профили недоступны: {message(targets.error)}
         </Notice>
       )}
-      {targets.data && (
+      {!targets.isError && targets.data && (
         <>
           <Label htmlFor="workspace-target">Профиль и место размещения</Label>
           <Select
@@ -505,7 +513,9 @@ function WorkspaceCard({
               ? "Выполняется операция"
               : session
                 ? "В работе"
-                : "Свободно"}
+                : data.busy
+                  ? "Занято проверкой, сборкой или доставкой"
+                  : "Свободно"}
           </DescriptionItem>
           <DescriptionItem label="Последнее наблюдение">
             {workspace.observed_at

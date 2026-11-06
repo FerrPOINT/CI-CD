@@ -1,5 +1,8 @@
 //! Synchronization use cases and ports. External credentials never enter job secrets.
-use cicd_domain::repository_sync::{Connection, ProtectedBranchUpdates, SaveConnection, Settings};
+use cicd_domain::repository_sync::{
+    Connection, ProtectedBranchUpdates, SaveConnection, SaveSchedule, Schedule, ScheduleState,
+    Settings,
+};
 use std::future::Future;
 use uuid::Uuid;
 
@@ -27,6 +30,9 @@ pub struct Access {
 impl Access {
     pub fn can_manage_protected_branch_updates(self) -> bool {
         self.admin && !self.machine
+    }
+    pub fn can_manage_schedule(self) -> bool {
+        self.admin && self.writable && !self.machine && self.project_id.is_none()
     }
 }
 pub trait Crypto: Sync {
@@ -115,4 +121,39 @@ pub async fn credential(
         ));
     }
     crypto.open(&encrypted)
+}
+
+pub trait ScheduleStore: Sync {
+    fn read_schedule(
+        &self,
+        defaults: Schedule,
+    ) -> impl Future<Output = Result<ScheduleState, Error>> + Send;
+    fn save_schedule(
+        &self,
+        operation: Uuid,
+        access: Access,
+        input: &SaveSchedule,
+        defaults: Schedule,
+    ) -> impl Future<Output = Result<ScheduleState, Error>> + Send;
+}
+
+pub async fn save_schedule(
+    store: &impl ScheduleStore,
+    operation: Uuid,
+    access: Access,
+    input: SaveSchedule,
+    defaults: Schedule,
+) -> Result<ScheduleState, Error> {
+    if !access.can_manage_schedule() {
+        return Err(Error::Forbidden);
+    }
+    if operation.is_nil() || input.expected_version < 0 {
+        return Err(Error::Invalid(
+            "Некорректная команда сохранения расписания".into(),
+        ));
+    }
+    input.settings.validate().map_err(Error::Invalid)?;
+    store
+        .save_schedule(operation, access, &input, defaults)
+        .await
 }

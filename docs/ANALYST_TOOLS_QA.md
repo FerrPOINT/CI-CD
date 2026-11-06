@@ -36,6 +36,11 @@ cicd-cli repository blob --repo "$REPOSITORY" --git-ref "$COMMIT" --path docs/we
 записи. Исправность CLI отдельно от версии установленного сервера и прав.
 Сборка нового CLI не означает обновление Fleet или установленной платформы.
 
+CLI использует `ApiClient::request_segments` из Base для полного имени репозитория.
+Собирать его с точной SDK-версией из `.base-revision`; прежний pin без этого
+метода несовместим. SDK проверяется вместе с CLI и сервером, отдельно от
+namespace/UI/skills pins.
+
 Воспроизводимая подготовка принадлежит Base: `scripts/analyst_qa.py` создаёт
 изолированные источники и назначения, а `scripts/analyst_tools_qa.py products`
 проверяет CLI. QA не вызывает Workflow, Fleet, typed proposal или Complete.

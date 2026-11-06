@@ -1,5 +1,12 @@
 # Авторизация и границы доступа Forge CI/CD
 
+Постоянный Developer configured-cli-v1 использует Central PAT, explicit project
+membership и текущее назначение Tracker. Его узкий workspace/Git adapter не
+расширяет обычный human mapper и legacy SAT. Отзыв назначения запрещает новые
+эффекты, включая worker/runner и reference-transaction/prepared. Публичное
+чтение сохранённой исходной операции не повторяет эффект. Полная матрица прав:
+[Developer workspace](DEVELOPMENT_WORKSPACES.md#developer-configured-cli-v1).
+
 ## Статус
 
 > Нормативные контракты вынесены в `contracts/AUTHZ_CONTRACT.md`; при конфликте прав контракт. Этот документ — объяснительный narrative (ADR-0009).

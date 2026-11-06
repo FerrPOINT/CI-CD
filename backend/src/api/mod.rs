@@ -105,6 +105,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::repository_sync::save_connection, crate::repository_sync::check,
         crate::repository_sync::start, crate::repository_sync::runs,
         crate::repository_sync::run, crate::repository_sync::refs,
+        crate::repository_sync::get_schedule, crate::repository_sync::save_schedule,
         crate::workspace_projects::all_pipelines,
         crate::workspace_projects::all_summary,
         crate::repository_catalog::all,
@@ -228,6 +229,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::git_host::git_info_refs, crate::git_host::git_service_endpoint,
         crate::git_host::git_receive_pack_openapi, crate::git_host::internal_git_push,
         crate::task_git::callback,
+        crate::development_workspaces::machine_git::callback,
         crate::pulls::list_refs, crate::pulls::list_tree, crate::pulls::get_blob,
         crate::pulls::list_tags, crate::pulls::list_commits, crate::pulls::compare_refs,
         crate::pulls::list_pull_requests, crate::pulls::list_pull_request_page,
@@ -256,6 +258,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         cicd_domain::repository_sync::Connection,cicd_domain::repository_sync::SyncRun,
         cicd_domain::repository_sync::RefResult,crate::repository_sync::ConnectionPage,
         crate::repository_sync::RunPage,crate::repository_sync::RefPage,
+        cicd_domain::repository_sync::Schedule,cicd_domain::repository_sync::SaveSchedule,
+        crate::repository_sync::ScheduleStatus,
         crate::domain::sdlc_workspace::WorkspaceOperationRequest,
         crate::domain::sdlc_workspace::WorkspaceTaskBinding,
         crate::domain::sdlc_workspace::TaskWorkspaceIntent,
@@ -826,6 +830,13 @@ mod tests {
         );
         assert_eq!(
             rate_limit_rule(&Method::POST, "/api/v1/internal/task-git-check"),
+            rate_limit_rule(&Method::POST, "/api/v1/internal/git-push")
+        );
+        assert_eq!(
+            rate_limit_rule(
+                &Method::POST,
+                "/api/v1/internal/development-workspace-git-check"
+            ),
             rate_limit_rule(&Method::POST, "/api/v1/internal/git-push")
         );
         assert_eq!(

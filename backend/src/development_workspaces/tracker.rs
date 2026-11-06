@@ -16,6 +16,27 @@ pub(super) async fn read_task(
     project: Uuid,
     identifier: &str,
 ) -> Result<(Uuid, String), ApiError> {
+    let (client, base, token) = reader(namespace, tracker_instance).await?;
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        resolve(
+            &client,
+            &base,
+            &token,
+            namespace,
+            tracker_instance,
+            project,
+            identifier,
+        ),
+    )
+    .await
+    .map_err(|_| unavailable())?
+}
+
+async fn reader(
+    namespace: &NamespaceRef,
+    tracker_instance: Uuid,
+) -> Result<(Client, Url, String), ApiError> {
     let registered = |name| {
         std::env::var(name)
             .ok()
@@ -54,20 +75,41 @@ pub(super) async fn read_task(
         .timeout(Duration::from_secs(3))
         .build()
         .map_err(|_| unavailable())?;
-    tokio::time::timeout(
-        Duration::from_secs(3),
-        resolve(
-            &client,
-            &base,
-            token.trim(),
-            namespace,
-            tracker_instance,
-            project,
-            identifier,
-        ),
+    Ok((client, base, token.trim().to_owned()))
+}
+
+pub(super) async fn read_assignment(
+    namespace: &NamespaceRef,
+    tracker: Uuid,
+    project: Uuid,
+    task: Uuid,
+    subject: Uuid,
+    repository: Uuid,
+    workspace: Uuid,
+) -> Result<super::assignment::DeveloperAssignment, ApiError> {
+    let (client, base, token) = reader(namespace, tracker).await?;
+    let mut url = base
+        .join(&format!("api/v1/namespace-tasks/{task}"))
+        .map_err(|_| unavailable())?;
+    url.query_pairs_mut()
+        .append_pair(
+            "registry_instance_id",
+            &namespace.registry_instance_id.to_string(),
+        )
+        .append_pair("namespace_id", &namespace.namespace_id.to_string())
+        .append_pair("include_execution", "true");
+    let context = get(&client, url, &token).await?;
+    let forge = std::env::var("CICD_NAMESPACE__INSTANCE_ID")
+        .ok()
+        .and_then(|s| s.parse::<Uuid>().ok())
+        .filter(|id| !id.is_nil())
+        .ok_or_else(unavailable)?;
+    if context["execution"]["source_binding"]["forge_instance_id"] != forge.to_string() {
+        return Err(ApiError::forbidden());
+    }
+    super::assignment::DeveloperAssignment::read(
+        &context, namespace, tracker, project, task, subject, repository, workspace,
     )
-    .await
-    .map_err(|_| unavailable())?
 }
 
 async fn get(client: &Client, url: Url, token: &str) -> Result<Value, ApiError> {

@@ -66,6 +66,7 @@ impl EvidenceQuery {
             return Err(ApiError::bad_request("invalid_devops_evidence_selector"));
         }
         let query = RepositoryQuery {
+            development_workspace_id: None,
             registry_instance_id: self.registry_instance_id,
             namespace_id: self.namespace_id,
             base_ref: self.base_ref.clone(),

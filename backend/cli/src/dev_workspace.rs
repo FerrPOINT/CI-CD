@@ -1,4 +1,4 @@
-//! Human workspace commands; original operation UUIDs are explicit and reusable.
+//! Workspace commands; original operation UUIDs are explicit and reusable.
 use super::ApiClient;
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Subcommand};
@@ -293,6 +293,16 @@ async fn prepare(
         "Нужен абсолютный локальный каталог workspace"
     );
     let detail = api.json(api.get(&path(mutation.workspace))).await?;
+    let machine = detail["session"]["machine_assignment"].is_object();
+    if machine {
+        ensure!(
+            std::env::var("FLEET_CLI_PROTOCOL").as_deref() == Ok("configured-cli-v1")
+                && std::env::var("FLEET_AGENT_ID").ok().as_deref()
+                    == detail["session"]["machine_assignment"]["agent_id"].as_str()
+                && std::env::var("CICD_API_TOKEN").is_ok_and(|s| !s.trim().is_empty()),
+            "Подготовка агента требует настроенной identity текущего исполнителя"
+        );
+    }
     let workspace = &detail["workspace"];
     let project = workspace["project_id"]
         .as_str()
@@ -342,8 +352,27 @@ async fn prepare(
     profile.flush()?;
     let request = json!({"root":root,"repositories":selected,"operationId":mutation.operation_id});
     let output = tokio::task::spawn_blocking(move || -> Result<std::process::Output> {
-        let mut child = std::process::Command::new(helper)
-            .env_remove("CICD_API_TOKEN")
+        let mut command = std::process::Command::new(helper);
+        if machine {
+            // Keep the permanent credential helper configured before the run.
+            // Only a nonsecret selector is added for this exact preparation;
+            // neither the token nor an agent's previous workspace enters argv.
+            let count = std::env::var("GIT_CONFIG_COUNT")
+                .unwrap_or_else(|_| "0".into())
+                .parse::<usize>()
+                .context("Некорректная настройка Git агента")?;
+            ensure!(count <= 32, "Слишком много настроек Git агента");
+            command
+                .env("GIT_CONFIG_COUNT", (count + 1).to_string())
+                .env(format!("GIT_CONFIG_KEY_{count}"), "credential.username")
+                .env(
+                    format!("GIT_CONFIG_VALUE_{count}"),
+                    format!("workspace-{}", mutation.workspace),
+                );
+        } else {
+            command.env_remove("CICD_API_TOKEN");
+        }
+        let mut child = command
             .arg("prepare-sources")
             .arg("--profile")
             .arg(profile.path())

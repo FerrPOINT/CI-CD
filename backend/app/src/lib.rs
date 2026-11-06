@@ -212,6 +212,18 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     administration(GET, "/api/v1/repository-syncs", Action::Read, Role::Viewer),
     administration(
         GET,
+        "/api/v1/repository-sync-schedule",
+        Action::Read,
+        Role::Admin,
+    ),
+    administration(
+        PUT,
+        "/api/v1/repository-sync-schedule",
+        Action::Admin,
+        Role::Admin,
+    ),
+    administration(
+        GET,
         "/api/v1/catalog/repositories/{id}/sync",
         Action::Read,
         Role::Viewer,
@@ -563,6 +575,7 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     public(POST, "/api/v1/auth/logout"),
     system(POST, "/api/v1/internal/git-push"),
     system(POST, "/api/v1/internal/task-git-check"),
+    system(POST, "/api/v1/internal/development-workspace-git-check"),
     system(
         POST,
         "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals",

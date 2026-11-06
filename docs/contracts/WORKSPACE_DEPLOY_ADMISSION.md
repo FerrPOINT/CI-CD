@@ -131,14 +131,6 @@ actual container/network observation и process exit code. `validation=verified`
 Для ненулевого exit используется `validation=failed`. Runtime state всегда
 `stopped-after-validation`, никогда current healthy после cleanup.
 
-Fresh publication authority и existing atomic terminal success CAS сохраняют
-исходные lease/attempt/job/queue guards. Только durable terminal ACK разрешает
-прежний scoped Compose down с disposable volumes. Никаких permanent Pulse
-workspace, production/default-ref изменений или application-specific CRUD/migrate
-проверок в Forge нет. PM requirements/confirmation предшествуют repo business
-tests. Этот receipt сам по себе не является Tracker transition или delivery
-acceptance; соответствующую consumer integration квалифицирует её владелец.
-
 ## Проверки
 
 Host tests выполняют pure validator/renderer и реальный isolated Python bridge с

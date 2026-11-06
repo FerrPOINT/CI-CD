@@ -3,6 +3,13 @@
 Отдельное семейство `/development-workspaces`: реестр, сессии, именованные
 проверки и original-key async lifecycle. [Контракт и recovery](DEVELOPMENT_WORKSPACES.md).
 Существующие project/task workspace routes и identifiers сохраняются.
+Постоянная configured-cli-v1 machine identity Developer получает только scoped
+read/session/prepare/check adapter; регистрация, recovery, lifecycle и выпуск
+им не разрешаются. Карточка сессии аддитивно возвращает optional
+`machine_assignment` без credentials. [Назначение, Git и границы роли](DEVELOPMENT_WORKSPACES.md#developer-configured-cli-v1).
+Ответ карточки содержит вычисляемый `busy: boolean`: сессия, операция либо
+незавершённая проверка/сборка/delivery удерживают окружение. Новое поле не
+добавляет сохранённого состояния; разрешения действий возвращаются отдельно.
 
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и
 сохранённый владелец CI: [ADR-0041](adr/0041-sync-admission-and-automation-owner.md).
@@ -2322,3 +2329,32 @@ GET/list/save вычисляют его из полномочий текущег
 не знает нового поля, надо штатно вернуть blocked у изменённых подключений,
 дождаться завершения/остановки их runs и проверить readback. Старый parser
 нельзя запускать поверх сохранённых settings source_fast_forward.
+
+
+### Область и расписание внешнего синка
+
+`RepositorySyncSettings.branch` — необязательное имя одной ветки без префикса
+`refs/heads/`. Отсутствие или `null` сохраняет обмен всеми ветками и тегами;
+пустая строка и некорректные Git ref names отклоняются. Поле возвращается в
+настройках подключения и immutable snapshot каждого запуска. Изменения идут
+через прежний PUT с `expected_version` и `Idempotency-Key`; при активном запуске
+сначала требуется штатное отключение и дренирование. Credentials не меняются.
+Период и запуск после изменений — общая настройка Forge, а не DTO подключения.
+
+`GET /api/v1/repository-sync-schedule` возвращает `version`,
+`settings: {interval_seconds, on_change}`, read-only `worker_enabled` и `concurrency`.
+`PUT` принимает `expected_version/settings` и UUID `Idempotency-Key`.
+Период — целое число 1–86400 секунд; 3600 означает час. Доступ — подтверждённая
+human admin session; PAT, project-bound token и service account получают 403.
+CAS-конфликт даёт 409; повтор точного запроса с тем же ключом не создаёт новую
+версию/аудит. Ответ показывает актуальную политику, включая более новую версию
+после успешного старого запроса. Неизвестный сетевой результат проверяется тем же
+ключом и телом; новая команда получает новый ключ.
+
+Forge → «Конфигурация сервера» сохраняет настройку в БД. До первого сохранения
+действуют `CICD_GIT_SYNC_INTERVAL_SECONDS` и `CICD_GIT_SYNC_ON_CHANGE`; затем
+сохранённая политика имеет приоритет. Существующий worker применяет её без
+перезапуска. `ENABLED` и `CONCURRENCY` остаются настройками установки, не формы.
+При сохранении следующий срок считается от последнего автоматического запуска;
+ручные запуски не сдвигают его. Очередь/активные запуски не отменяются.
+Детали владения и совместимости: [ADR-0045](adr/0045-global-sync-schedule.md).

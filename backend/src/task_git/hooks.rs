@@ -7,14 +7,14 @@ fn error() -> ApiError {
     ApiError::service_unavailable("Private task Git hook unavailable")
 }
 
-fn quote(path: &Path) -> Result<String, ApiError> {
+pub(crate) fn quote(path: &Path) -> Result<String, ApiError> {
     Ok(format!(
         "'{}'",
         path.to_str().ok_or_else(error)?.replace('\'', "'\\''")
     ))
 }
 
-fn write(path: &Path, data: &[u8], executable: bool) -> Result<(), ApiError> {
+pub(crate) fn write(path: &Path, data: &[u8], executable: bool) -> Result<(), ApiError> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -34,7 +34,7 @@ fn write(path: &Path, data: &[u8], executable: bool) -> Result<(), ApiError> {
 }
 
 // Includes exact-line checking again at reference-transaction/prepared, after custom hooks.
-const CHECK: &str = r#"set -eu
+pub(crate) const CHECK: &str = r#"set -eu
 umask 077
 export GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 GIT_OPTIONAL_LOCKS=0
 cat > "$dir/task-updates"
@@ -193,6 +193,9 @@ mod tests {
                 Self::with_seeded_candidate(false)
             }
             fn with_seeded_candidate(seed_candidate: bool) -> Self {
+                Self::configured(seed_candidate, false)
+            }
+            fn configured(seed_candidate: bool, developer: bool) -> Self {
                 let root = std::env::temp_dir().join(format!("forge-task-hook-{}", Uuid::new_v4()));
                 let source = root.join("source");
                 let bare = root.join("repo.git");
@@ -261,8 +264,13 @@ mod tests {
                     true,
                 )
                 .unwrap();
+                let callback = if developer {
+                    "development-workspace-git-check"
+                } else {
+                    "task-git-check"
+                };
                 let curl = format!(
-                    "#!/bin/sh\nfor last; do :; done\ntest \"$last\" = 'http://127.0.0.1:22801/api/v1/internal/task-git-check' || exit 1\ntest ! -e {} || exit 1\nprintf 'checked\\n' >> {}\n",
+                    "#!/bin/sh\nfor last; do :; done\ntest \"$last\" = 'http://127.0.0.1:22801/api/v1/internal/{callback}' || exit 1\ntest ! -e {} || exit 1\nprintf 'checked\\n' >> {}\n",
                     quote(&f.root.join("revoked")).unwrap(),
                     quote(&f.root.join("checks")).unwrap()
                 );
@@ -281,7 +289,22 @@ mod tests {
                         .success()
                     );
                 }
-                install(&f.hooks, &f.authorization, "fixture-internal", 22801).unwrap();
+                if developer {
+                    let authorization =
+                        crate::development_workspaces::machine_git::tests::authorization(
+                            serde_json::to_value(&f.authorization.context.source).unwrap(),
+                            f.authorization.deadline,
+                        );
+                    crate::development_workspaces::machine_git::install(
+                        &f.hooks,
+                        &authorization,
+                        "fixture-internal",
+                        22801,
+                    )
+                    .unwrap();
+                } else {
+                    install(&f.hooks, &f.authorization, "fixture-internal", 22801).unwrap();
+                }
                 assert!(
                     f.git(&[
                         "--git-dir",
@@ -325,6 +348,93 @@ mod tests {
             fn drop(&mut self) {
                 let _ = fs::remove_dir_all(&self.root);
             }
+        }
+
+        #[test]
+        fn configured_workspace_git_accepts_native_candidate_push_without_a_pipeline() {
+            for seeded in [false, true] {
+                let f = Fixture::configured(seeded, true);
+                let result = f.push(&[&f.candidate()]);
+                assert!(
+                    result.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                assert_eq!(
+                    f.reference(&f.authorization.context.source.candidate_ref)
+                        .as_deref(),
+                    Some(f.authorization.context.new_oid.as_str())
+                );
+                assert_eq!(
+                    fs::read_to_string(f.root.join("checks"))
+                        .unwrap()
+                        .lines()
+                        .count(),
+                    2
+                );
+                assert!(!f.root.join("ordinary-pipeline").exists());
+                let context: serde_json::Value =
+                    serde_json::from_slice(&fs::read(f.hooks.join("context.json")).unwrap())
+                        .unwrap();
+                assert_eq!(
+                    context,
+                    serde_json::json!({"developer_workspace":"synthetic-server-ciphertext"})
+                );
+                assert!(
+                    !fs::read_to_string(f.hooks.join("child-headers"))
+                        .unwrap()
+                        .contains("Bearer")
+                );
+            }
+        }
+
+        #[test]
+        fn configured_workspace_git_rejects_foreign_multiref_delete_and_force_pushes() {
+            let f = Fixture::configured(true, true);
+            let old = f
+                .reference(&f.authorization.context.source.candidate_ref)
+                .unwrap();
+            let delete = format!(":{}", f.authorization.context.source.candidate_ref);
+            for refs in [
+                vec!["HEAD:refs/heads/main"],
+                vec![&f.candidate(), "HEAD:refs/heads/foreign"],
+                vec![&delete],
+            ] {
+                assert!(!f.push(&refs).status.success());
+                assert_eq!(
+                    f.reference(&f.authorization.context.source.candidate_ref)
+                        .as_deref(),
+                    Some(old.as_str())
+                );
+            }
+            assert!(f.push(&[&f.candidate()]).status.success());
+            let candidate = f.authorization.context.source.candidate_ref.clone();
+            let forced = format!("{}:{candidate}", f.authorization.context.source.base_commit);
+            assert!(!f.push(&["--force", &forced]).status.success());
+            assert_eq!(
+                f.reference(&candidate).as_deref(),
+                Some(f.authorization.context.new_oid.as_str())
+            );
+        }
+
+        #[test]
+        fn configured_workspace_git_rechecks_revocation_at_reference_preparation() {
+            let f = Fixture::configured(false, true);
+            let curl = format!(
+                "#!/bin/sh\ntest ! -e {} || exit 1\ntouch {}\n",
+                quote(&f.root.join("revoked")).unwrap(),
+                quote(&f.root.join("revoked")).unwrap()
+            );
+            fs::write(f.root.join("bin/curl"), curl).unwrap();
+            assert!(!f.push(&[&f.candidate()]).status.success());
+            assert!(
+                f.reference(&f.authorization.context.source.candidate_ref)
+                    .is_none()
+            );
+            assert!(!f.root.join("ordinary-pipeline").exists());
+            fs::remove_file(f.root.join("revoked")).unwrap();
+            fs::write(f.hooks.join("protected-pre-receive"), "#!/bin/sh\nexit 1\n").unwrap();
+            assert!(!f.push(&[&f.candidate()]).status.success());
         }
 
         #[test]

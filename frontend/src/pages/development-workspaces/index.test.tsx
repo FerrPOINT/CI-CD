@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -12,6 +13,7 @@ import { MemoryRouter } from "react-router";
 import { ApiError } from "@/api/client";
 import {
   developmentWorkspaces as service,
+  developmentWorkspaceKeys as keys,
   type DevelopmentWorkspace,
   type WorkspaceDetail,
   type WorkspaceOperation,
@@ -84,6 +86,7 @@ function detail(overrides: Partial<WorkspaceDetail> = {}): WorkspaceDetail {
   return {
     workspace,
     actor_id: actor,
+    busy: false,
     session: null,
     latest_operation: null,
     actions: [
@@ -138,10 +141,11 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
-function mount() {
-  const cache = new QueryClient({
+function mount(
+  cache = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  }),
+) {
   return render(
     <QueryClientProvider client={cache}>
       <MemoryRouter
@@ -169,6 +173,83 @@ it("keeps runtime, source readiness and current session separate", async () => {
   ).toHaveAttribute("href", workspace.public_origin);
 });
 
+it("shows a server-held delivery as busy without an active workspace operation", async () => {
+  vi.mocked(service.detail).mockResolvedValue(detail({ busy: true }));
+  mount();
+  await screen.findByRole("button", { name: "Включить" });
+  expect(
+    screen.getByText("Занято проверкой, сборкой или доставкой"),
+  ).toBeVisible();
+  expect(screen.queryByText("Свободно")).not.toBeInTheDocument();
+});
+
+it("hides previously cached workspaces after switching to another namespace", async () => {
+  const cache = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  mount(cache);
+  await screen.findByRole("button", { name: "Включить" });
+  await screen.findByRole("button", { name: "Открыть окружение" });
+  const previous = context.ref;
+  try {
+    context.ref = {
+      ...previous,
+      namespace_id: "99999999-9999-4999-8999-999999999999",
+    };
+    cleanup();
+    mount(cache);
+    await screen.findByText(
+      "Выбранная конфигурация принадлежит другому проекту. Выберите конфигурацию текущего проекта.",
+    );
+    expect(screen.queryByText(workspace.name)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Открыть окружение" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Включить" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    context.ref = previous;
+    cache.clear();
+  }
+});
+
+it.each(["configuration", "repository", "list"] as const)(
+  "hides cached workspace controls when access to %s is revoked",
+  async (boundary) => {
+    const cache = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    mount(cache);
+    await screen.findByRole("button", { name: "Включить" });
+    await screen.findByRole("button", { name: "Открыть окружение" });
+    vi.mocked(service[boundary]).mockRejectedValue(
+      new ApiError({
+        kind: "api",
+        status: 403,
+        message: "Доступ отозван",
+      }),
+    );
+    const queryKey =
+      boundary === "configuration"
+        ? keys.configuration(configuration)
+        : boundary === "repository"
+          ? keys.repository(repository)
+          : keys.list(configuration, 0);
+    await act(async () => {
+      await cache.invalidateQueries({ queryKey });
+    });
+    await waitFor(() => expect(screen.queryAllByText(workspace.name)).toHaveLength(0));
+    expect(
+      screen.queryByRole("button", { name: "Включить" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Открыть окружение" }),
+    ).not.toBeInTheDocument();
+    cache.clear();
+  },
+);
+
 it("shows the named session owner and opens its real Tracker task", async () => {
   vi.mocked(service.detail).mockResolvedValue(
     detail({
@@ -192,6 +273,28 @@ it("shows the named session owner and opens its real Tracker task", async () => 
     "https://platform.example.invalid/tracker/issues/DEV-7",
   );
   expect(screen.getByText(/Владелец: session-developer/)).toBeVisible();
+});
+
+it("hides cached registration controls when profile access is revoked", async () => {
+  const cache = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  mount(cache);
+  await screen.findByLabelText("Название окружения");
+  vi.mocked(service.targets).mockRejectedValue(
+    new ApiError({ kind: "api", status: 403, message: "Доступ отозван" }),
+  );
+  await act(async () => {
+    await cache.invalidateQueries({ queryKey: keys.targets(configuration) });
+  });
+  await screen.findByText("Профили недоступны: Доступ отозван");
+  expect(screen.queryByLabelText("Название окружения")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Создать окружение" }),
+  ).not.toBeInTheDocument();
+  // Losing catalog access does not erase a separately authorized workspace.
+  expect(screen.getByRole("button", { name: "Включить" })).toBeVisible();
+  cache.clear();
 });
 
 it("retains the exact UUID, version and payload after a lost reply", async () => {

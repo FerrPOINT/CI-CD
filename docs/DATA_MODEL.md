@@ -8,6 +8,15 @@ queued/running/unknown операцию на instance. История и termina
 Настоящий Tracker project, Forge repository/configuration и execution environment
 сохраняются отдельно. [Контракт](DEVELOPMENT_WORKSPACES.md).
 
+Аддитивная 0115 разрешает явный профиль `users.role=service_account` для
+постоянной Central machine identity и добавляет nullable JSONB
+`development_workspace_sessions.machine_assignment`. Старые человеческие сессии
+сохраняют NULL; назначение машины записывается при создании сессии и защищено
+от изменения SQL trigger. Оно содержит task/agent/assignment/execution/version
+и замороженный source binding, без credential. Зашифрованная credential исходной
+операции остаётся в существующем private `execution_plan`; публичный Operation
+его не сериализует. Новых таблиц и destructive down migration нет.
+
 Две выпущенные SQLx histories сходятся через явные migration directories: [ADR-0042](adr/0042-native-main-migration-lineages.md). Канонические 0108–0111 добавляют native Kubernetes target/execution, push refs и internal outbox channel. Общая 0112 устанавливает request clocks на добавленные таблицы, сохраняет owner_subject merge attempt и расширяет identity deletion fencing на попытки и владельца internal outbox. Исторические SQL/checksums не меняются.
 
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и
@@ -521,8 +530,6 @@ Base pin в восстановление каталога не входят. С�
 | `raw_config` | TEXT | NOT NULL | — | Raw YAML, из которого построен snapshot |
 | `plan` | JSONB | NOT NULL | — | Normalised plan: stages, jobs, node keys, `needs` и dependency edges |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время фиксации snapshot |
-
-**CHECK constraints:** `config_source IN ('repository','legacy_template','deployment')`, `parser_version` длиной `1..64`, hash-поля соответствуют `^[0-9a-f]{64}$`. Migration 37 восстанавливает ранее применённый каталог; обычный API продолжает создавать прежние repository/template планы, специальный Pulse runner не добавляется.
 
 **Индексы:**
 - `pipeline_plans_pkey` — PRIMARY KEY (`pipeline_id`)
@@ -1345,3 +1352,20 @@ checksums нет. Значение `forge.request_valid_until` задаётся 
 из исходного request proof и очищается перед повторным использованием.
 Новые таблицы также должны получить этот guard. Полный контракт:
 [HUMAN_APPLICATION_ACCESS](HUMAN_APPLICATION_ACCESS.md#обычные-sql-записи-и-исходный-срок-подтверждения).
+
+### Общее расписание синхронизаций
+
+Миграция 0114 добавляет append-only `repository_sync_schedule`: UUID команды,
+уникальная последовательная `version`, `interval_seconds`, `on_change`, `created_at`.
+Последняя версия — единственный источник сохранённой политики; пустая таблица
+означает прежние env defaults. UPDATE/DELETE запрещены. Отдельной копии текущего
+состояния и второго хранилища идемпотентности нет. Авторство принадлежит существующему
+identity-fenced `audit_log`: `repository_sync.schedule_updated`, ресурс — UUID команды.
+
+Общий advisory lock сериализует CAS, первое сохранение и пересчёт `next_check_at`.
+Worker и сохранение подключения используют shared lock и одну актуальную политику.
+Пересчёт next_check_at выполняется только для доступных автоматических подключений
+по общему предикату планировщика; архивные/отключённые записи остаются неизменными.
+Сроки считаются по последнему `schedule/git_change` run; ручной run не меняет период.
+Миграция подключает таблицу к существующему original-request commit clock.
+Исторические миграции, подключения, credentials и run snapshots сохраняются.

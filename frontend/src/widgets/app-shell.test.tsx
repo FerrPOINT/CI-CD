@@ -80,6 +80,7 @@ function renderShell(path = "/") {
 }
 
 beforeEach(() => {
+  vi.stubEnv("VITE_NAMESPACE_ENABLED", "false");
   vi.stubEnv("VITE_AUTH_APPLICATION_ACCESS_REQUIRED", "true");
   authState.logout.mockReset();
   authState.logout.mockResolvedValue(undefined);
@@ -238,7 +239,11 @@ describe("AppShell navigation", () => {
     expect(media.removeEventListener).toHaveBeenCalledWith("change", listener);
   });
 
-  it("owns one global header above the offset work area and navigation-only sidebar", () => {
+  it.each([
+    { namespace: "false", slots: ["leading", "services", "actions"] },
+    { namespace: "true", slots: ["leading", "services", "context", "actions"] },
+  ])("owns one global header and navigation-only sidebar with namespace=$namespace", ({ namespace, slots }) => {
+    vi.stubEnv("VITE_NAMESPACE_ENABLED", namespace);
     const { container } = renderShell();
     const header = screen.getByRole("banner");
     expect(container.querySelectorAll("[data-platform-header]")).toHaveLength(
@@ -248,7 +253,7 @@ describe("AppShell navigation", () => {
       [...header.querySelectorAll("[data-platform-header-slot]")].map((slot) =>
         slot.getAttribute("data-platform-header-slot"),
       ),
-    ).toEqual(["leading", "services", "actions"]);
+    ).toEqual(slots);
     expect(header.parentElement).toBe(container.firstElementChild);
     expect(
       within(header).getByRole("button", {
@@ -260,6 +265,17 @@ describe("AppShell navigation", () => {
     ).toHaveAttribute("href", "/");
     expect(container.querySelector("aside")).not.toContainElement(header);
     expect(container.querySelector("aside")).not.toHaveTextContent("admin");
+  });
+
+  it("adds namespace context to the same global header when enabled", () => {
+    vi.stubEnv("VITE_NAMESPACE_ENABLED", "true");
+    const { container } = renderShell();
+    const header = screen.getByRole("banner");
+    expect(container.querySelectorAll("[data-platform-header]")).toHaveLength(1);
+    expect([...header.querySelectorAll("[data-platform-header-slot]")].map((slot) =>
+      slot.getAttribute("data-platform-header-slot"),
+    )).toEqual(["leading", "services", "context", "actions"]);
+    expect(container.querySelector("aside")).not.toContainElement(header);
   });
 
   it("keeps a long identity outside header layout and closes the account menu with Escape", () => {

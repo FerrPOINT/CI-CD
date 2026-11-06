@@ -233,7 +233,7 @@ impl Fixture {
             }
         }).await.context("bound lease ACK/workspace cleanup deadline")?
     }
-    async fn start_external(&self) -> Result<()> {
+    async fn start_external(&self, git_token: &str) -> Result<()> {
         if self.input.runner_profile != RunnerProfile::External {
             return Ok(());
         }
@@ -279,6 +279,15 @@ impl Fixture {
                     self.registration_token.clone(),
                 ),
                 ("CICD_RUNNER_TAGS", "linux,kubernetes".into()),
+                ("GIT_CONFIG_COUNT", "1".into()),
+                (
+                    "GIT_CONFIG_KEY_0",
+                    "http.http://127.0.0.1:22801/.extraheader".into(),
+                ),
+                (
+                    "GIT_CONFIG_VALUE_0",
+                    format!("Authorization: Bearer {git_token}"),
+                ),
                 ("CICD_RUNNER_TOTAL_SLOTS", "1".into()),
                 ("CICD_RUNNER_POLL_INTERVAL_SECONDS", "1".into()),
                 ("CICD_RUNNER_WORK_DIR", "/workspaces".into()),
@@ -336,8 +345,10 @@ impl Fixture {
                     let log=fs::read(self.root.join("runner.stderr.private.log"))?;
                     ensure!(log.len()<=1024*1024,"registration log bound");
                     let text=std::str::from_utf8(&log)?;
-                    let credentials:Vec<_>=text.lines().filter_map(|l|l.strip_prefix("runner credential: ")).collect();
-                    if credentials.len()==1 && hash(credentials[0].as_bytes())==*digest
+                    // Heartbeats are authenticated with the process-local registration credential.
+                    // The CLI intentionally never prints that credential.
+                    if text.contains(&format!("registered runner {id}."))
+                        && digest.len()==64 && digest.bytes().all(|v|v.is_ascii_hexdigit())
                         && payload["capacity"]["busySlots"]==0 && payload["activeLeaseIds"]==json!([])
                         && payload["capabilities"]["executorKinds"]==json!(["kubernetes"]) {
                         let count:i64=sqlx::query_scalar("SELECT count(*) FROM runners").fetch_one(&self.pool).await?;
@@ -627,11 +638,11 @@ fn source(root: &Path, image: &str, op: Uuid) -> Result<(String, String)> {
         }
         let command = if branch == "success" {
             format!(
-                "test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/product.txt; printf 'main-canary:%s\\n' '{op}'"
+                "test \"$(cat source.txt)\" = '{op}'; test \"$CICD_VAR_QUALIFICATION\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/product.txt; printf 'main-canary:%s\\n' '{op}'"
             )
         } else {
             format!(
-                "test \"$(cat source.txt)\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/started; exec sleep 90"
+                "test \"$(cat source.txt)\" = '{op}'; test \"$CICD_VAR_QUALIFICATION\" = '{op}'; mkdir -p artifacts; printf '%s' '{op}' > artifacts/started; exec sleep 90"
             )
         };
         let mut job = json!({"image":image,"commands":[command],"timeout":"120s"});
@@ -697,7 +708,6 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
     })
     .await
     .context("main readiness deadline")??;
-    f.start_external().await?;
     let user = Uuid::new_v4();
     let password = Uuid::new_v4().to_string();
     let username = format!("canary-{user}");
@@ -752,6 +762,7 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
         .await?;
     sqlx::query("INSERT INTO projects(id,name,repository_url,repository_id) VALUES($1,'native-canary','http://127.0.0.1:22801/git/canary.git',$2)")
         .bind(project).bind(repo).execute(&f.pool).await?;
+    f.start_external(token).await?;
     let mut receipts = Vec::new();
     for (branch, pin) in [("success", &f.success), ("cancel", &f.cancel)] {
         let created = f
@@ -759,7 +770,7 @@ async fn exercise(f: Arc<Fixture>) -> Result<Value> {
                 Method::POST,
                 &format!("/api/v1/projects/{project}/pipelines"),
                 token,
-                json!({"git_ref":branch}),
+                json!({"git_ref":branch,"variables":{"qualification":f.input.operation_id.to_string()}}),
             )
             .await?;
         let pipeline: Uuid = serde_json::from_value(created["pipeline"]["id"].clone())?;

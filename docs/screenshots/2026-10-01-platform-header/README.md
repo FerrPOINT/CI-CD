@@ -8,7 +8,7 @@ full-page, а не обрезанный fixture. Все четыре изобр�
 - `desktop-light-1920.png`: `/projects`, 1920x1080, светлая тема.
 - `wide-gray-2560.png`: `/projects`, 2560x1080, серая тема.
 - `services-menu-dark-375.png`: `/settings`, 375x812, непрозрачное runtime-меню;
-  ровно шесть healthy UI, текущий CI/CD disabled, API-only и Pulse отсутствуют.
+  ровно шесть healthy UI, текущий CI/CD disabled, API-only отсутствуют.
 
 `results.json`: 99 route/theme/width сочетаний; полный Header 60 px, sidebar
 под ним, controls 44/40 px, без переполнения/ошибок/записей в продуктовый API.

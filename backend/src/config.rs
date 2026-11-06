@@ -87,16 +87,20 @@ pub struct DevelopmentWorkspacesConfig {
 pub struct GitSyncConfig {
     pub enabled: bool,
     pub interval_seconds: i64,
+    pub on_change: bool,
     pub concurrency: usize,
     pub allowed_gitlab_origins: Vec<String>,
+    pub process_resources: Option<cicd_infra::sync_git::GitProcessResources>,
 }
 impl Default for GitSyncConfig {
     fn default() -> Self {
         Self {
             enabled: false,
             interval_seconds: 300,
+            on_change: true,
             concurrency: 2,
             allowed_gitlab_origins: Vec::new(),
+            process_resources: None,
         }
     }
 }
@@ -119,6 +123,41 @@ impl GitSyncConfig {
                     }),
             }
         }
+        let resource_values = [
+            get("CICD_GIT_SYNC_PACK_THREADS"),
+            get("CICD_GIT_SYNC_PACK_WINDOW_MEMORY_BYTES"),
+            get("CICD_GIT_SYNC_PACK_DELTA_CACHE_BYTES"),
+        ];
+        let process_resources = if resource_values.iter().all(Option::is_none) {
+            None
+        } else {
+            let invalid = || {
+                ConfigError::invalid(
+                    "CICD_GIT_SYNC_PACK_THREADS",
+                    "all three Git process limits must be positive bounded integers",
+                )
+            };
+            let values = resource_values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_ref()
+                        .and_then(|value| value.trim().parse::<u64>().ok())
+                        .ok_or_else(invalid)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if !(1..=32).contains(&values[0])
+                || !(1..=1024 * 1024 * 1024).contains(&values[1])
+                || !(1..=1024 * 1024 * 1024).contains(&values[2])
+            {
+                return Err(invalid());
+            }
+            Some(cicd_infra::sync_git::GitProcessResources {
+                threads: values[0] as u16,
+                window_memory_bytes: values[1],
+                delta_cache_bytes: values[2],
+            })
+        };
         let mut origins = Vec::new();
         for origin in get("CICD_GIT_SYNC_GITLAB_ORIGINS")
             .unwrap_or_default()
@@ -149,6 +188,11 @@ impl GitSyncConfig {
         }
         Ok(Self {
             enabled: bool_from_env("CICD_GIT_SYNC_ENABLED", get("CICD_GIT_SYNC_ENABLED"), false)?,
+            on_change: bool_from_env(
+                "CICD_GIT_SYNC_ON_CHANGE",
+                get("CICD_GIT_SYNC_ON_CHANGE"),
+                true,
+            )?,
             interval_seconds: number(
                 get("CICD_GIT_SYNC_INTERVAL_SECONDS"),
                 "CICD_GIT_SYNC_INTERVAL_SECONDS",
@@ -162,6 +206,7 @@ impl GitSyncConfig {
                 32,
             )? as usize,
             allowed_gitlab_origins: origins,
+            process_resources,
         })
     }
 }
@@ -786,11 +831,46 @@ fn redacted<T>(value: Option<T>) -> Option<&'static str> {
 mod tests {
     use super::*;
     #[test]
+    fn git_process_limits_are_optional_bounded_and_all_or_none() {
+        assert!(
+            RuntimeConfig::from_env_source(|_| None, false)
+                .unwrap()
+                .git_sync
+                .process_resources
+                .is_none()
+        );
+        assert!(
+            RuntimeConfig::from_env_source(
+                |key| (key == "CICD_GIT_SYNC_PACK_THREADS").then(|| "1".into()),
+                false
+            )
+            .is_err()
+        );
+        let configured = |threads: &str| {
+            RuntimeConfig::from_env_source(
+                |key| match key {
+                    "CICD_GIT_SYNC_PACK_THREADS" => Some(threads.into()),
+                    "CICD_GIT_SYNC_PACK_WINDOW_MEMORY_BYTES"
+                    | "CICD_GIT_SYNC_PACK_DELTA_CACHE_BYTES" => Some("16777216".into()),
+                    _ => None,
+                },
+                false,
+            )
+        };
+        let resources = configured("1").unwrap().git_sync.process_resources.unwrap();
+        assert_eq!(resources.threads, 1);
+        assert_eq!(resources.window_memory_bytes, 16777216);
+        assert!(configured("0").is_err());
+        assert!(configured("1 -c credential.helper=unsafe").is_err());
+    }
+
+    #[test]
     fn synchronization_defaults_and_limits_are_explicit() {
         let config = RuntimeConfig::from_env_source(|_| None, false).unwrap();
         assert_eq!(config.git_sync, GitSyncConfig::default());
         for (name, value) in [
             ("CICD_GIT_SYNC_ENABLED", "maybe"),
+            ("CICD_GIT_SYNC_ON_CHANGE", "maybe"),
             ("CICD_GIT_SYNC_INTERVAL_SECONDS", "0"),
             ("CICD_GIT_SYNC_CONCURRENCY", "33"),
             ("CICD_GIT_SYNC_GITLAB_ORIGINS", "http://git.internal"),
@@ -804,6 +884,9 @@ mod tests {
         let config = RuntimeConfig::from_env_source(
             |key| match key {
                 "CICD_GIT_SYNC_ENABLED" => Some("true".into()),
+                "CICD_GIT_SYNC_ON_CHANGE" => Some("false".into()),
+                "CICD_GIT_SYNC_INTERVAL_SECONDS" => Some("3600".into()),
+                "CICD_GIT_SYNC_CONCURRENCY" => Some("1".into()),
                 "CICD_GIT_SYNC_GITLAB_ORIGINS" => {
                     Some("https://git.internal,https://git.internal/".into())
                 }
@@ -813,6 +896,9 @@ mod tests {
         )
         .unwrap();
         assert!(config.git_sync.enabled);
+        assert!(!config.git_sync.on_change);
+        assert_eq!(config.git_sync.interval_seconds, 3600);
+        assert_eq!(config.git_sync.concurrency, 1);
         assert_eq!(
             config.git_sync.allowed_gitlab_origins,
             vec!["https://git.internal"]

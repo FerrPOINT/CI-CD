@@ -46,6 +46,8 @@ pub async fn cancel(execution: &Execution) -> anyhow::Result<()> {
     let output = tokio::process::Command::new("python3")
         .arg("-I")
         .arg("/usr/local/libexec/forge/host_image_build.py")
+        .arg("--binding")
+        .arg(execution.host_build_binding())
         .arg("--cancel")
         .arg(scope.attempt_id.to_string())
         .arg(scope.generation.to_string())
@@ -87,21 +89,15 @@ pub async fn finalize(
         return Ok(());
     };
     let scope = execution.scope();
-    let output = tokio::process::Command::new("python3")
-        .arg("-I")
-        .arg("/usr/local/libexec/forge/host_image_build.py")
-        .arg("--status")
-        .arg(scope.attempt_id.to_string())
-        .arg(scope.generation.to_string())
-        .kill_on_drop(true)
-        .output()
-        .await?;
-    ensure!(
-        output.status.success() && output.stdout.len() <= 2 * 1024 * 1024,
-        "Worker build readback unavailable; retain execution"
-    );
-    let receipt: Value = serde_json::from_slice(&output.stdout)?;
+    let receipt = wait_for_terminal_receipt(
+        || read_worker_status(execution),
+        scope,
+        execution.cancelled(),
+        std::time::Duration::from_secs(120),
+    )
+    .await?;
     match validate_receipt(&receipt, scope)? {
+        HostTerminal::Active => anyhow::bail!("Worker is still active; retain execution"),
         HostTerminal::NotStarted | HostTerminal::Failed => {
             if validate_receipt(&receipt, scope)? == HostTerminal::NotStarted {
                 // Fence even an as-yet unrecorded SSH request before closing custody.
@@ -122,8 +118,67 @@ pub async fn finalize(
     Ok(())
 }
 
+async fn read_worker_status(execution: &Execution) -> anyhow::Result<Value> {
+    let scope = execution.scope();
+    let output = tokio::process::Command::new("python3")
+        .arg("-I")
+        .arg("/usr/local/libexec/forge/host_image_build.py")
+        .arg("--binding")
+        .arg(execution.host_build_binding())
+        .arg("--status")
+        .arg(scope.attempt_id.to_string())
+        .arg(scope.generation.to_string())
+        .kill_on_drop(true)
+        .output()
+        .await?;
+    ensure!(
+        output.status.success() && output.stdout.len() <= 2 * 1024 * 1024,
+        "Worker build readback unavailable; retain execution"
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+/// A canceled client can finish before the rootless worker confirms solve closure.
+async fn wait_for_terminal_receipt<F, Fut>(
+    mut read: F,
+    scope: &Scope,
+    canceled: bool,
+    closing_timeout: std::time::Duration,
+) -> anyhow::Result<Value>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Value>>,
+{
+    let deadline = tokio::time::Instant::now() + closing_timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        ensure!(
+            !remaining.is_zero(),
+            "Worker stopping deadline exceeded; retain execution"
+        );
+        // The helper owns its SSH child and bounds each readback to 45 seconds.
+        // Do not kill the helper ahead of its child/key cleanup.
+        let receipt = read().await?;
+        match validate_receipt(&receipt, scope)? {
+            HostTerminal::Active => {
+                ensure!(
+                    canceled,
+                    "Noncanceled client ended before its worker; retain execution"
+                );
+                ensure!(
+                    tokio::time::Instant::now() < deadline,
+                    "Worker stopping deadline exceeded; retain execution"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            _ => return Ok(receipt),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum HostTerminal {
+    Active,
     NotStarted,
     Failed,
     Complete,
@@ -146,6 +201,7 @@ fn validate_receipt(value: &Value, scope: &Scope) -> anyhow::Result<HostTerminal
         "Host build custody differs"
     );
     match value["phase"].as_str() {
+        Some("running" | "receiving") if value["ownerAlive"] == true => Ok(HostTerminal::Active),
         Some("complete") => Ok(HostTerminal::Complete),
         Some("failed") => Ok(HostTerminal::Failed),
         Some("receiving") if value["ownerAlive"] == false => Ok(HostTerminal::NotStarted),
@@ -256,6 +312,86 @@ mod tests {
             source_commit: "a".repeat(40),
         }
     }
+    fn active_receipt(scope: &Scope) -> Value {
+        serde_json::json!({"schema":"forge/host-image-build-status/v1",
+            "phase":"running","ownerAlive":true,"jobId":scope.job_id,
+            "attemptId":scope.attempt_id,"leaseId":scope.lease_id,
+            "generation":scope.generation,"sourceCommit":scope.source_commit})
+    }
+
+    #[tokio::test]
+    async fn canceled_worker_closure_is_polled_without_repeating_execution() {
+        let scope = scope();
+        let mut reads = 0;
+        let receipt = wait_for_terminal_receipt(
+            || {
+                reads += 1;
+                let mut value = active_receipt(&scope);
+                if reads == 2 {
+                    value["phase"] = serde_json::json!("failed");
+                    value["ownerAlive"] = serde_json::json!(false);
+                }
+                std::future::ready(Ok(value))
+            },
+            &scope,
+            true,
+            std::time::Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reads, 2);
+        assert_eq!(receipt["phase"], "failed");
+    }
+
+    #[tokio::test]
+    async fn canceled_worker_unknown_owner_and_expired_closing_deadline_stay_held() {
+        let scope = scope();
+        let mut unknown = active_receipt(&scope);
+        unknown["ownerAlive"] = serde_json::json!(false);
+        assert!(
+            wait_for_terminal_receipt(
+                || std::future::ready(Ok(unknown.clone())),
+                &scope,
+                true,
+                std::time::Duration::from_secs(1),
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            wait_for_terminal_receipt(
+                || std::future::ready(Ok(active_receipt(&scope))),
+                &scope,
+                true,
+                std::time::Duration::ZERO,
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            wait_for_terminal_receipt(
+                || std::future::ready(Ok(active_receipt(&scope))),
+                &scope,
+                false,
+                std::time::Duration::from_secs(1),
+            )
+            .await
+            .is_err()
+        );
+        let mut foreign = active_receipt(&scope);
+        foreign["generation"] = serde_json::json!(scope.generation + 1);
+        assert!(
+            wait_for_terminal_receipt(
+                || std::future::ready(Ok(foreign.clone())),
+                &scope,
+                true,
+                std::time::Duration::from_secs(1),
+            )
+            .await
+            .is_err()
+        );
+    }
+
     #[test]
     fn remote_readback_keeps_exact_lease_attempt_and_generation() {
         let s = scope();

@@ -137,7 +137,7 @@
   owned volume preparation, all-service stop и historical validation receipt.
   Общие parser/runner подключения и backend image sources включены;
   Rust/PG/native qualification pending;
-  readonly OCI и Pulse business logic не меняются.
+  readonly OCI и предметная логика не меняются.
 
 - Меню сервисов CI/CD использует адреса только из собственного runtime-каталога.
   Пока каталог загружается или недоступен, названия остаются видимыми без
