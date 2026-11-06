@@ -174,13 +174,12 @@ Private CA добавляется в системный trust store, TLS verific
 Feature flag не удаляет историю и допускает наблюдение незавершённых эффектов,
 но запрещает новые ручные/автоматические передачи.
 
-## Private certificate authorities
+## Частные центры сертификации
 
-Forge uses the operating-system trust store in addition to public TLS roots.
-For an installation with a private CA, mount its verified CA bundle read-only
-and set the standard SSL_CERT_FILE environment variable to that bundle.
-The bundle must contain the existing public roots as well as the private CA.
-Configure this before starting the process; issuer and hostname verification
-remain enabled. Do not use insecure TLS options or replace the issuer URL to
-bypass certificate verification. The same trust is required for background
-owner-admission requests as for ordinary authenticated requests.
+Forge использует системное хранилище доверия вместе с публичными TLS-корнями.
+Для установки с частным CA подключите проверенный набор сертификатов только
+для чтения и укажите его в стандартной переменной окружения `SSL_CERT_FILE`.
+Набор должен содержать действующие публичные корни и частный CA.
+Настройте доверие до запуска процесса; проверки издателя и имени сервера
+остаются включены. Не отключайте TLS-проверку и не подменяйте URL издателя
+ради обхода ошибки сертификата. Такое же доверие требуется фоновым запросам
