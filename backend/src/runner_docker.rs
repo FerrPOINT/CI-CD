@@ -1992,7 +1992,12 @@ fn compose_job(
         index += 1;
         match flag {
             "--name" => service["container_name"] = json!(value),
-            "--network" => (),
+            "--network" => {
+                if value == "none" {
+                    service.as_object_mut().unwrap().remove("networks");
+                    service["network_mode"] = json!("none");
+                }
+            }
             "--mount" => {
                 if value
                     .split(',')
@@ -3010,6 +3015,34 @@ mod tests {
         assert!(!value.to_string().contains("secret"));
         assert_eq!(value["entrypoint"][2], "echo $CICD_JOB_ID");
         assert_eq!(value["volumes"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn offline_job_keeps_network_none_without_control_mounts() {
+        let args = [
+            "run",
+            "--rm",
+            "--name",
+            "offline-job",
+            "--network",
+            "none",
+            "--mount",
+            "type=volume,src=control,dst=/workspaces",
+            "python:3.12",
+            "true",
+        ]
+        .map(String::from);
+        let value = compose_job(&args, &[("DOCKER_HOST".into(), "secret".into())], None).unwrap();
+        assert_eq!(value["network_mode"], "none");
+        assert!(value.get("networks").is_none());
+        assert_eq!(value["volumes"].as_array().unwrap().len(), 2);
+        assert!(!value.to_string().contains("control"));
+        assert!(!value.to_string().contains("secret"));
+        let mut online = args;
+        online[5] = "workspace_cicd".into();
+        let connected = compose_job(&online, &[], None).unwrap();
+        assert_eq!(connected["networks"], json!(["job"]));
+        assert!(connected.get("network_mode").is_none());
     }
 
     #[test]
