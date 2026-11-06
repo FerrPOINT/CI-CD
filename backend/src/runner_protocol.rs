@@ -2096,7 +2096,7 @@ mod typed_job_capability_tests {
             lease_expires_at: Utc::now(),
             ack_deadline: Utc::now(),
             plan_sha256: None,
-            pipeline_variables: serde_json::Value::Null,
+            pipeline_variables: None,
         };
         for (stored_source, plan_source, allowed) in [
             ("repository", "repository", true),
