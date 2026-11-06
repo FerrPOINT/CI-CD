@@ -158,43 +158,123 @@ async fn typed_publication_claims_frozen_workspace_and_repository_plans_only() {
 #[tokio::test]
 async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
     use sha2::{Digest, Sha256};
-    for (source, binding, human_owner, enabled, machine, allowed) in [
-        ("development_workspace", "current", false, true, false, true),
-        (
-            "development_workspace",
-            "other-actor",
-            true,
-            true,
-            false,
-            false,
-        ),
-        (
-            "development_workspace",
-            "other-subject",
-            true,
-            true,
-            false,
-            false,
-        ),
-        ("repository", "current", false, true, false, false),
-        ("repository", "other-actor", true, true, false, true),
-        (
-            "development_workspace",
-            "current",
-            false,
-            false,
-            false,
-            false,
-        ),
-        ("development_workspace", "current", false, true, true, false),
+    #[derive(Clone, Copy)]
+    struct Case {
+        name: &'static str,
+        source: &'static str,
+        original_owner: bool,
+        original_subject: bool,
+        pipeline_owner: bool,
+        enabled: bool,
+        retry: bool,
+        retry_owner: Option<bool>,
+        stale_session: bool,
+        stale_source: bool,
+        unknown: bool,
+        machine: bool,
+        allowed: bool,
+    }
+    let current = Case {
+        name: "initial workspace delivery",
+        source: "development_workspace",
+        original_owner: true,
+        original_subject: true,
+        pipeline_owner: false,
+        enabled: true,
+        retry: false,
+        retry_owner: None,
+        stale_session: false,
+        stale_source: false,
+        unknown: false,
+        machine: false,
+        allowed: true,
+    };
+    let retry = Case {
+        name: "same session retry",
+        retry: true,
+        retry_owner: Some(true),
+        ..current
+    };
+    for case in [
+        current,
+        Case {
+            name: "foreign central subject",
+            original_subject: false,
+            allowed: false,
+            ..current
+        },
+        Case {
+            name: "machine session cannot release",
+            machine: true,
+            allowed: false,
+            ..current
+        },
+        Case {
+            name: "foreign original owner",
+            original_owner: false,
+            pipeline_owner: true,
+            allowed: false,
+            ..current
+        },
+        Case {
+            name: "repository without pipeline owner",
+            source: "repository",
+            allowed: false,
+            ..current
+        },
+        Case {
+            name: "repository pipeline owner",
+            source: "repository",
+            original_owner: false,
+            pipeline_owner: true,
+            ..current
+        },
+        Case {
+            name: "disabled owner",
+            enabled: false,
+            allowed: false,
+            ..current
+        },
+        retry,
+        Case {
+            name: "foreign retry owner",
+            retry_owner: Some(false),
+            allowed: false,
+            ..retry
+        },
+        Case {
+            name: "missing retry owner",
+            retry_owner: None,
+            allowed: false,
+            ..retry
+        },
+        Case {
+            name: "old session",
+            stale_session: true,
+            allowed: false,
+            ..retry
+        },
+        Case {
+            name: "source changed",
+            stale_source: true,
+            allowed: false,
+            ..retry
+        },
+        Case {
+            name: "unknown original outcome",
+            unknown: true,
+            allowed: false,
+            ..retry
+        },
     ] {
+        let source = case.source;
         let f = Fixture::new().await;
-        // A local user UUID and its central owner subject are distinct identities.
-        let owner_subject = Uuid::new_v4();
+        let subject = Uuid::new_v4();
         let other_subject = Uuid::new_v4();
+        let session = Uuid::new_v4();
         sqlx::query("UPDATE users SET enabled=$2 WHERE id=$1")
             .bind(f.actor)
-            .bind(enabled)
+            .bind(case.enabled)
             .execute(&f.pool)
             .await
             .unwrap();
@@ -227,12 +307,23 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             .execute(&f.pool)
             .await
             .unwrap();
-        sqlx::query("UPDATE development_workspaces SET desired_runtime='running',runtime='running',environment_hash=$2 WHERE id=$1")
-            .bind(f.workspace).bind(store::request_hash(&target).unwrap()).execute(&f.pool).await.unwrap();
-        sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,machine_assignment) VALUES($1,$2,$3,$4,$5,'DEV-1',$6)")
-            .bind(Uuid::new_v4()).bind(f.workspace).bind(f.actor).bind(owner_subject).bind(Uuid::new_v4())
-            .bind(machine.then(||json!({"machine_subject":Uuid::new_v4()}))).execute(&f.pool).await.unwrap();
         let commit = "a".repeat(40);
+        let selected_commit = if case.stale_source {
+            "b".repeat(40)
+        } else {
+            commit.clone()
+        };
+        let sources = json!([{"key":"source","repository_id":
+            sqlx::query_scalar::<_,Uuid>("SELECT repository_id FROM development_workspaces WHERE id=$1")
+                .bind(f.workspace).fetch_one(&f.pool).await.unwrap(),"commit":selected_commit}]);
+        sqlx::query("UPDATE development_workspaces SET desired_runtime='running',runtime='running',environment_hash=$2,preparation='prepared',sources=$3 WHERE id=$1")
+            .bind(f.workspace).bind(store::request_hash(&target).unwrap()).bind(&sources).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,sources,machine_assignment) VALUES($1,$2,$3,$4,$5,'DEV-1',$6,$7)")
+            .bind(session).bind(f.workspace).bind(f.actor).bind(subject).bind(Uuid::new_v4()).bind(&sources)
+            .bind(if case.machine { Some(json!({"fixture":true})) } else { None }).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,state,finished_at,result) VALUES($1,$2,$3,$4,$5,'{\"action\":\"begin_session\"}',$6,'succeeded',now(),'{}')")
+            .bind(session).bind(f.workspace).bind(f.actor).bind(subject).bind("a".repeat(64))
+            .bind(if case.stale_session { 3_i64 } else { 1_i64 }).execute(&f.pool).await.unwrap();
         let pipeline = Uuid::new_v4();
         let stage = Uuid::new_v4();
         let producer = Uuid::new_v4();
@@ -249,28 +340,33 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             .bind(pipeline).bind(f.project).bind(&commit).execute(&f.pool).await.unwrap();
         sqlx::query("INSERT INTO pipeline_plans(pipeline_id,config_source,parser_version,git_ref,resolved_commit_sha,config_sha256,plan_sha256,raw_config,plan) VALUES($1,$2,'v1',$3,$3,$4,$5,$6,$7)")
             .bind(pipeline).bind(source).bind(&commit).bind(hash(raw.as_bytes())).bind(hash(&serde_json::to_vec(&plan).unwrap())).bind(raw).bind(&plan).execute(&f.pool).await.unwrap();
-        if human_owner {
+        if case.pipeline_owner {
             sqlx::query(
                 "INSERT INTO pipeline_human_owners(pipeline_id,owner_subject) VALUES($1,$2)",
             )
             .bind(pipeline)
-            .bind(owner_subject)
+            .bind(subject)
             .execute(&f.pool)
             .await
             .unwrap();
         }
-        let actor = if binding == "other-actor" {
-            f.other_actor
-        } else {
+        let actor = if case.original_owner {
             f.actor
-        };
-        let subject = if binding == "other-subject" {
-            other_subject
         } else {
-            owner_subject
+            f.other_actor
         };
-        sqlx::query("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,state,pipeline_id) VALUES($1,$2,$3,$4,$5,'{\"action\":\"check\"}',1,'running',$6)")
-            .bind(Uuid::new_v4()).bind(f.workspace).bind(actor).bind(subject).bind("b".repeat(64)).bind(pipeline).execute(&f.pool).await.unwrap();
+        let operation = Uuid::new_v4();
+        let operation_state = if case.unknown {
+            "unknown"
+        } else if case.retry {
+            "failed"
+        } else {
+            "running"
+        };
+        sqlx::query("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,state,pipeline_id,finished_at) VALUES($1,$2,$3,$4,$5,$6,2,$7,$8,CASE WHEN $7='failed' THEN now() END)")
+            .bind(operation).bind(f.workspace).bind(actor).bind(if case.original_subject { subject } else { other_subject })
+            .bind("b".repeat(64)).bind(json!({"action":"check","recipe":"dev-delivery","source_commit":commit}))
+            .bind(operation_state).bind(pipeline).execute(&f.pool).await.unwrap();
         sqlx::query("INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'delivery',0,'queued')")
             .bind(stage).bind(pipeline).execute(&f.pool).await.unwrap();
         for (id, name, image, command, position, status, attempt_id) in [
@@ -295,8 +391,18 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
         ] {
             sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,required_tags,artifact_paths,position,status) VALUES($1,$2,$3,$4,$5,ARRAY['linux'],ARRAY['out/release.json'],$6,$7)")
                 .bind(id).bind(stage).bind(name).bind(image).bind(command).bind(position).bind(status).execute(&f.pool).await.unwrap();
-            sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,$3,'initial')")
-                .bind(attempt_id).bind(id).bind(status).execute(&f.pool).await.unwrap();
+            let retrying = id == job && case.retry;
+            if retrying {
+                sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,'canceled','initial')")
+                    .bind(Uuid::new_v4()).bind(job).execute(&f.pool).await.unwrap();
+            }
+            sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,$3,$4,$5)")
+                .bind(attempt_id).bind(id).bind(if retrying { 2 } else { 1 }).bind(status)
+                .bind(if retrying { "job_retry" } else { "initial" }).execute(&f.pool).await.unwrap();
+        }
+        if let Some(matches) = case.retry_owner {
+            sqlx::query("INSERT INTO execution_attempt_human_owners(attempt_id,owner_subject,requires_admin) VALUES($1,$2,false)")
+                .bind(attempt).bind(if matches { subject } else { other_subject }).execute(&f.pool).await.unwrap();
         }
         let descriptor = b"fixture retained build descriptor".to_vec();
         let published = cicd_domain::published_image::PublishedImage::new(
@@ -323,20 +429,39 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             json!({"protocolVersion":1,"capacity":{"freeSlots":1},"tags":["linux"],"waitSeconds":0})).await;
         assert_eq!(
             status,
-            if allowed {
+            if case.allowed {
                 StatusCode::OK
             } else {
                 StatusCode::CONFLICT
             },
-            "source={source},binding={binding},human_owner={human_owner},enabled={enabled},machine={machine}: {offer}"
+            "{}: {offer}",
+            case.name
         );
         let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM job_leases WHERE attempt_id=$1")
             .bind(attempt)
             .fetch_one(&f.pool)
             .await
             .unwrap();
-        assert_eq!(leases, i64::from(allowed));
-        if allowed {
+        assert_eq!(leases, i64::from(case.allowed), "{}", case.name);
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id=$1")
+                .bind(producer)
+                .fetch_one(&f.pool)
+                .await
+                .unwrap(),
+            "success"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM development_workspace_operations WHERE id=$1"
+            )
+            .bind(operation)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+            operation_state
+        );
+        if case.allowed {
             assert_eq!(offer["attempt"]["commitSha"], commit);
         }
         drop(app);
