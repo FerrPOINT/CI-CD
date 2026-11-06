@@ -228,11 +228,13 @@ DB ACK отдельно от actual exact-UID terminated Pod proof: cleanup тр
 Sanitized diagnostics содержат только attempt/job IDs, bounded stage, HTTP status
 или transport timeout/connect flags, без response body, token или secret values.
 
-Снятие finalizer использует атомарный JSON Patch с проверкой UID, spec,
-labels, annotations, исходного finalizer и наблюдённого stop status.
-Обновление только resourceVersion или постороннего поля статуса kubelet не
-блокирует cleanup. Изменение execution identity или stop proof остаётся HOLD;
-новый START и автоматическая подмена сохранённой попытки не допускаются.
+Finalizer снимается штатным merge-patch с UID и resourceVersion.
+При конфликте версии допустимы не более трёх запросов: перед повтором
+читается тот же Pod и проверяются исходные spec, labels/annotations и stop proof.
+После потерянного ответа сначала выполняется readback: уже снятый finalizer
+или исчезнувший Pod после durable ACK позволяют закончить cleanup.
+Неизвестный исход, чужая identity и изменившееся доказательство остановки
+остаются HOLD. Новый START не выполняется.
 
 ## Проверки source candidate
 
