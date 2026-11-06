@@ -728,6 +728,21 @@ impl ApiClient {
         Ok(self.get(&self.endpoint_with_query(path, params)?))
     }
 
+    fn get_segments(
+        &self,
+        segments: &[&str],
+        params: &[(&str, Option<String>)],
+    ) -> anyhow::Result<RequestBuilder> {
+        let pairs: Vec<_> = params
+            .iter()
+            .filter_map(|(key, value)| value.as_deref().map(|value| (*key, value)))
+            .collect();
+        Ok(self
+            .transport
+            .request_segments(Method::GET, segments)?
+            .query(&pairs))
+    }
+
     fn post(&self, path: &str) -> RequestBuilder {
         self.transport.request_builder(Method::POST, path)
     }
