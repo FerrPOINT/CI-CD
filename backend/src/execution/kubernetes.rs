@@ -956,47 +956,65 @@ impl Execution {
             "foreign finalizer; cleanup held"
         );
         if !finalizers.is_empty() {
-            // Kubelet can still update status/resourceVersion after termination.
-            // Fence custody and the observed stop proof atomically, rather than
-            // coupling finalizer release to unrelated object-version changes.
-            let status_path = if value["status"].get("containerStatuses").is_some() {
-                "/status/containerStatuses"
-            } else {
-                "/status"
-            };
-            let stop_status = value.pointer(status_path).context("Pod status missing")?;
-            let patch = json!([
-                {"op":"test","path":"/metadata/uid","value":uid},
-                {"op":"test","path":"/metadata/labels","value":value["metadata"]["labels"]},
-                {"op":"test","path":"/metadata/annotations","value":value["metadata"]["annotations"]},
-                {"op":"test","path":"/spec","value":value["spec"]},
-                {"op":"test","path":status_path,"value":stop_status},
-                {"op":"test","path":"/metadata/finalizers","value":finalizers},
-                {"op":"remove","path":"/metadata/finalizers"}
-            ]);
-            let mut request = self
-                .client
-                .patch(format!("{}{}", self.server, self.path()))
-                .header("Content-Type", "application/json-patch+json")
-                .json(&patch);
-            if let Some(path) = &self.token_path {
-                request = request.bearer_auth(fs::read_to_string(path)?.trim());
+            let mut current = value.clone();
+            // Kubelet can update the same stopped Pod while ACK is being stored.
+            // Retry only a confirmed version conflict, retaining the original
+            // execution contract and terminal proof. Never replay START.
+            for attempt in 0..3 {
+                let patch = json!({"metadata":{
+                    "uid":uid,"resourceVersion":current["metadata"]["resourceVersion"],
+                    "finalizers":[]
+                }});
+                let mut request = self
+                    .client
+                    .patch(format!("{}{}", self.server, self.path()))
+                    .header("Content-Type", "application/merge-patch+json")
+                    .json(&patch);
+                if let Some(path) = &self.token_path {
+                    request = request.bearer_auth(fs::read_to_string(path)?.trim());
+                }
+                let response = request.send().await;
+                let status = response.as_ref().ok().map(reqwest::Response::status);
+                if status.is_some_and(|status| status.is_success()) {
+                    break;
+                }
+                // A lost reply can follow a committed removal. Read back the
+                // same custody before deciding whether any retry is permitted.
+                let Some(fresh) = self.get(&self.path()).await? else {
+                    return self.complete_cleanup();
+                };
+                ensure!(
+                    self.identity(&fresh)? == uid
+                        && self.observed_terminal(&fresh, &uid)? == Some(previous.clone())
+                        && fresh["spec"] == value["spec"]
+                        && fresh["metadata"]["labels"] == value["metadata"]["labels"]
+                        && fresh["metadata"]["annotations"] == value["metadata"]["annotations"],
+                    "finalizer custody or stop proof changed"
+                );
+                let released = match &fresh["metadata"]["finalizers"] {
+                    Value::Null => true,
+                    Value::Array(values) => {
+                        ensure!(
+                            values.iter().all(|v| v == FINALIZER),
+                            "foreign finalizer; cleanup held"
+                        );
+                        values.is_empty()
+                    }
+                    _ => return Err(Held.into()),
+                };
+                if released {
+                    break;
+                }
+                ensure!(
+                    status == Some(StatusCode::CONFLICT)
+                        && attempt < 2
+                        && fresh["metadata"]["resourceVersion"]
+                            != current["metadata"]["resourceVersion"],
+                    "finalizer release unconfirmed (HTTP {:?})",
+                    status.map(|status| status.as_u16())
+                );
+                current = fresh;
             }
-            let response = request.send().await.inspect_err(|error| {
-                tracing::warn!(attempt_id = %self.intent.scope.attempt_id,
-                    stage = "finalizer-release", timeout = error.is_timeout(),
-                    connect = error.is_connect(), "Kubernetes custody transport held");
-            })?;
-            let status = response.status();
-            if !status.is_success() {
-                tracing::warn!(attempt_id = %self.intent.scope.attempt_id,
-                    stage = "finalizer-release", http_status = status.as_u16(),
-                    "Kubernetes custody update held");
-            }
-            ensure!(
-                status.is_success(),
-                "finalizer release unconfirmed (HTTP {status})"
-            );
         }
         let (status, _) = self
             .request(
@@ -2025,6 +2043,9 @@ mod lifecycle_tests {
         log_reads: usize,
         logs_unavailable: bool,
         patch_race: Option<&'static str>,
+        patches: usize,
+        always_conflict: bool,
+        patch_error: Option<(bool, u16)>,
     }
     async fn fixture() -> (Execution, Arc<Mutex<Api>>, tokio::task::JoinHandle<()>) {
         let config = super::tests::config();
@@ -2045,8 +2066,13 @@ mod lifecycle_tests {
             else if method==Method::POST && path.ends_with("/pods") {api.creates+=1;let mut pod:Value=serde_json::from_slice(&bytes).unwrap();pod["metadata"]["uid"]=json!(Uuid::new_v4().to_string());pod["metadata"]["resourceVersion"]=json!("1");pod["status"]=json!({"phase":"Running","containerStatuses":[{"name":"execution","restartCount":0,"state":{"running":{"startedAt":"2026-10-22T00:00:00Z"}}}]});api.pod=Some(pod.clone());(201,pod)}
             else if method==Method::DELETE {api.deletes+=1;if let Some(pod)=&mut api.pod{pod["metadata"]["deletionTimestamp"]=json!("2026-10-22T00:01:00Z");pod["status"]=json!({"phase":"Failed","containerStatuses":[{"name":"execution","restartCount":0,"state":{"terminated":{"exitCode":143,"finishedAt":"2026-10-22T00:01:00Z","reason":"Terminated"}}}]});(200,pod.clone())}else{(404,json!({}))}}
             else if method==Method::PATCH {
+                api.patches += 1;
+                let version = (api.patches + 1).to_string();
+                let busy = api.always_conflict;
+                let error = api.patch_error.take();
                 let race = api.patch_race.take();
                 if let Some(pod)=&mut api.pod {
+                    if race.is_some() || busy { pod["metadata"]["resourceVersion"]=json!(version); }
                     match race {
                         Some("status") => { pod["metadata"]["resourceVersion"]=json!("2"); pod["status"]["message"]=json!("kubelet observed termination"); }
                         Some("uid") => pod["metadata"]["uid"]=json!(Uuid::new_v4().to_string()),
@@ -2067,7 +2093,10 @@ mod lifecycle_tests {
                         patch["metadata"]["uid"]==pod["metadata"]["uid"]
                             && patch["metadata"]["resourceVersion"]==pod["metadata"]["resourceVersion"]
                     };
-                    if valid {pod["metadata"].as_object_mut().unwrap().remove("finalizers");(200,pod.clone())}
+                    if let Some((applied, status)) = error {
+                        if applied {pod["metadata"].as_object_mut().unwrap().remove("finalizers");}
+                        (status,json!({"reason":"InjectedFailure"}))
+                    } else if valid {pod["metadata"].as_object_mut().unwrap().remove("finalizers");(200,pod.clone())}
                     else {(409,json!({"reason":"Conflict"}))}
                 } else {(404,json!({}))}
             }
@@ -2479,7 +2508,7 @@ mod lifecycle_tests {
         task.abort();
     }
     #[tokio::test]
-    async fn finalizer_release_ignores_status_versions_but_fences_execution_fields() {
+    async fn finalizer_conflict_rereads_stop_and_custody_without_restarting() {
         for race in [
             "status",
             "uid",
@@ -2505,7 +2534,37 @@ mod lifecycle_tests {
             );
             let api = state.lock().unwrap();
             assert_eq!(api.creates, 1);
+            assert_eq!(api.patches, if race == "status" { 2 } else { 1 });
             assert_eq!(api.deletes, if race == "status" { 2 } else { 1 });
+            drop(api);
+            task.abort();
+            fs::remove_dir_all(&execution.directory).unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn finalizer_uncertainty_uses_readback_and_conflicts_are_bounded() {
+        for (applied, status) in [(false, 403), (false, 500), (true, 500), (false, 409)] {
+            let (execution, state, task) = fixture().await;
+            execution
+                .start_with_admission(|| Ok(grant(&execution.config)))
+                .await
+                .unwrap();
+            execution.cancel().await.unwrap();
+            execution.observe().await.unwrap().unwrap();
+            {
+                let mut api = state.lock().unwrap();
+                if status == 409 {
+                    api.always_conflict = true;
+                } else {
+                    api.patch_error = Some((applied, status));
+                }
+            }
+            let result = execution.acknowledge().await;
+            assert_eq!(result.is_ok(), applied, "{applied}/{status}: {result:?}");
+            let api = state.lock().unwrap();
+            assert_eq!(api.creates, 1);
+            assert_eq!(api.patches, if status == 409 { 3 } else { 1 });
+            assert_eq!(api.deletes, if applied { 2 } else { 1 });
             drop(api);
             task.abort();
             fs::remove_dir_all(&execution.directory).unwrap();
