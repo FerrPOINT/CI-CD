@@ -173,3 +173,14 @@ flock на общем хранилище; runtime filesystem должен под
 Private CA добавляется в системный trust store, TLS verification не отключается.
 Feature flag не удаляет историю и допускает наблюдение незавершённых эффектов,
 но запрещает новые ручные/автоматические передачи.
+
+## Private certificate authorities
+
+Forge uses the operating-system trust store in addition to public TLS roots.
+For an installation with a private CA, mount its verified CA bundle read-only
+and set the standard SSL_CERT_FILE environment variable to that bundle.
+The bundle must contain the existing public roots as well as the private CA.
+Configure this before starting the process; issuer and hostname verification
+remain enabled. Do not use insecure TLS options or replace the issuer URL to
+bypass certificate verification. The same trust is required for background
+owner-admission requests as for ordinary authenticated requests.
