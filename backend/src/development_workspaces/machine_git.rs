@@ -117,6 +117,7 @@ pub(crate) async fn admit(
         verified,
         &assignment,
         write,
+        !write,
     )
     .await?;
     let sealed = if write {
@@ -211,6 +212,7 @@ async fn check_callback(
         verified,
         &ticket.assignment,
         true,
+        false,
     )
     .await?;
     proof.clock.cap_until(ticket.until).require()?;

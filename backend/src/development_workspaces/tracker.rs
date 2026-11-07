@@ -86,7 +86,8 @@ pub(super) async fn read_assignment(
     subject: Uuid,
     repository: Uuid,
     workspace: Uuid,
-) -> Result<super::assignment::DeveloperAssignment, ApiError> {
+    allow_preparation: bool,
+) -> Result<(super::assignment::DeveloperAssignment, Option<super::assignment::WorkspacePreparation>), ApiError> {
     let (client, base, token) = reader(namespace, tracker).await?;
     let mut url = base
         .join(&format!("api/v1/namespace-tasks/{task}"))
@@ -109,6 +110,7 @@ pub(super) async fn read_assignment(
     }
     super::assignment::DeveloperAssignment::read(
         &context, namespace, tracker, project, task, subject, repository, workspace,
+        allow_preparation,
     )
 }
 
