@@ -92,6 +92,8 @@ pub enum Command {
         sources: Vec<(String, String)>,
         #[arg(long, default_value = "pdlc-dev-workspace-operator")]
         source_helper: PathBuf,
+        #[arg(long, hide = true)]
+        request_only: bool,
     },
     Check {
         #[command(flatten)]
@@ -135,12 +137,20 @@ pub enum Command {
 fn path(workspace: Uuid) -> String {
     format!("/development-workspaces/{workspace}")
 }
-async fn mutate(api: &ApiClient, mutation: Mutation, command: Value) -> Result<Value> {
+fn operation_request(mutation: &Mutation, command: Value) -> Result<Value> {
     ensure!(
         !mutation.operation_id.is_nil() && mutation.expected_version > 0,
         "Нужны исходный UUID операции и текущая версия workspace"
     );
-    let body = json!({"operation_id":mutation.operation_id,"expected_version":mutation.expected_version,"command":command});
+    Ok(
+        json!({"operation_id":mutation.operation_id,"expected_version":mutation.expected_version,"command":command}),
+    )
+}
+async fn mutate(api: &ApiClient, mutation: Mutation, command: Value) -> Result<Value> {
+    let body = operation_request(&mutation, command)?;
+    submit(api, mutation, body).await
+}
+async fn submit(api: &ApiClient, mutation: Mutation, body: Value) -> Result<Value> {
     // Never invent a replacement key after a lost response. The caller can
     // read this exact UUID using `operation`, `wait` or `reconcile`.
     api.json(
@@ -229,7 +239,15 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
             root,
             sources,
             source_helper,
-        } => prepare(api, mutation, root, sources, source_helper).await,
+            request_only,
+        } => {
+            let body = prepare(api, &mutation, root, sources, source_helper).await?;
+            if request_only {
+                Ok(body)
+            } else {
+                submit(api, mutation, body).await
+            }
+        }
         Command::Operations { workspace } => {
             api.json(api.get(&format!("{}/operations", path(workspace))))
                 .await
@@ -283,7 +301,7 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
 }
 async fn prepare(
     api: &ApiClient,
-    mutation: Mutation,
+    mutation: &Mutation,
     root: PathBuf,
     sources: Vec<(String, String)>,
     helper: PathBuf,
@@ -432,7 +450,10 @@ async fn prepare(
         .iter()
         .map(|item| json!({"key":item["key"],"commit":item["commit"],"dirty":item["dirty"]}))
         .collect::<Vec<_>>();
-    mutate(api,mutation,json!({"action":"prepare","sources":server_sources,"local":{"machine_id":machine,"profile_hash":workspace["profile_hash"],"repositories":repositories,"tools":report["tools"]}})).await
+    operation_request(
+        mutation,
+        json!({"action":"prepare","sources":server_sources,"local":{"machine_id":machine,"profile_hash":workspace["profile_hash"],"repositories":repositories,"tools":report["tools"]}}),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

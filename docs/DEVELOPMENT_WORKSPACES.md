@@ -40,9 +40,16 @@ Developer получает Central PAT со scopes `ci-cd:read` / `ci-cd:write` 
 `service_account`; он не становится human administrator. Собственное назначение
 проверяется через существующий registered namespace reader Tracker с
 `include_execution=true`: текущие configured-cli-v1 Development/Rework,
-InProgress, project/task, agent, machine subject, assignment/execution UUID,
+project/task, agent, machine subject, assignment/execution UUID,
 версия назначения и подтверждённые исходники. Tracker также перепроверяет
 актуальный доступ назначенного исполнителя к проекту.
+Резервация в `Ready` разрешает открыть сессию, читать Git и подтвердить
+подготовку точного SHA. Закрытие собственной сессии доступно для того же
+назначения, пока оно видимо в Tracker, включая завершение подготовки после
+истечения резервации. Проверки и push требуют `InProgress`.
+Fleet сохраняет исходный ID, payload и ожидаемую версию до отправки команды.
+После потери ответа оператор сверяет исходную операцию Forge. Неизвестный
+результат удерживает сессию до сверки.
 `source_binding.development_workspace_id` должен совпадать с UUID выбранного
 окружения. Owner выбирает эту optional ссылку в существующем source policy;
 Forge source reader проверяет реальный instance/repository/namespace перед

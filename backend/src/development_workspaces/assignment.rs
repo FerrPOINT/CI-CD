@@ -25,6 +25,25 @@ pub(super) struct WorkspacePreparation {
     commit: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum AssignmentAccess {
+    Active,
+    Preparing,
+    Closing,
+}
+
+impl AssignmentAccess {
+    pub fn for_action(action: &WorkspaceAction) -> Self {
+        match action {
+            WorkspaceAction::BeginSession { .. } | WorkspaceAction::Prepare { .. } => {
+                Self::Preparing
+            }
+            WorkspaceAction::EndSession { .. } => Self::Closing,
+            _ => Self::Active,
+        }
+    }
+}
+
 impl WorkspacePreparation {
     pub fn require_source(&self, action: &WorkspaceAction) -> Result<(), ApiError> {
         if let WorkspaceAction::Prepare { sources, .. } = action
@@ -47,15 +66,17 @@ impl DeveloperAssignment {
         subject: Uuid,
         repository: Uuid,
         workspace: Uuid,
-        allow_preparation: bool,
+        access: AssignmentAccess,
     ) -> Result<(Self, Option<WorkspacePreparation>), ApiError> {
         let denied = ApiError::forbidden;
         let execution = &context["execution"];
         let assignment = &execution["assignment"];
         let source = &execution["source_binding"];
-        let preparation = if execution["status"] == "InProgress" {
+        let preparation = if execution["status"] == "InProgress"
+            || (access == AssignmentAccess::Closing && execution["status"] == "Ready")
+        {
             None
-        } else if allow_preparation && execution["status"] == "Ready" {
+        } else if access == AssignmentAccess::Preparing && execution["status"] == "Ready" {
             Some(WorkspacePreparation {
                 expires_at: execution["workspace_preparation_expires_at"]
                     .as_str()
@@ -118,17 +139,20 @@ impl DeveloperAssignment {
                 .filter(|v| *v > 0 && *v <= 9_007_199_254_740_991)
                 .ok_or_else(denied)
         };
-        Ok((Self {
-            task_id: task,
-            assignment_id: id("assignment_id")?,
-            execution_id: id("execution_id")?,
-            agent_id: id("agent_id")?,
-            version: version(&assignment["version"])?,
-            machine_subject: subject,
-            requirement_revision: version(&execution["requirement_revision"])?,
-            stage: execution["stage"].as_str().ok_or_else(denied)?.to_owned(),
-            source: source.clone(),
-        }, preparation))
+        Ok((
+            Self {
+                task_id: task,
+                assignment_id: id("assignment_id")?,
+                execution_id: id("execution_id")?,
+                agent_id: id("agent_id")?,
+                version: version(&assignment["version"])?,
+                machine_subject: subject,
+                requirement_revision: version(&execution["requirement_revision"])?,
+                stage: execution["stage"].as_str().ok_or_else(denied)?.to_owned(),
+                source: source.clone(),
+            },
+            preparation,
+        ))
     }
 
     pub(super) fn require_same(&self, saved: &Self) -> Result<(), ApiError> {
@@ -141,7 +165,10 @@ impl DeveloperAssignment {
 }
 
 fn commit_sha(value: &str) -> bool {
-    value.len() == 40 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 pub(super) fn developer_action(action: &WorkspaceAction) -> bool {
@@ -151,15 +178,6 @@ pub(super) fn developer_action(action: &WorkspaceAction) -> bool {
             | WorkspaceAction::EndSession { .. }
             | WorkspaceAction::Prepare { .. }
             | WorkspaceAction::Check { .. }
-    )
-}
-
-pub(super) fn developer_preparation(action: &WorkspaceAction) -> bool {
-    matches!(
-        action,
-        WorkspaceAction::BeginSession { .. }
-            | WorkspaceAction::Prepare { .. }
-            | WorkspaceAction::EndSession { .. }
     )
 }
 
@@ -210,7 +228,15 @@ mod tests {
         );
         let read = |v: &Value| {
             DeveloperAssignment::read(
-                v, &namespace, tracker, project, task, actor, repository, workspace, false,
+                v,
+                &namespace,
+                tracker,
+                project,
+                task,
+                actor,
+                repository,
+                workspace,
+                AssignmentAccess::Active,
             )
             .map(|(assignment, _)| assignment)
         };
@@ -224,10 +250,32 @@ mod tests {
         reserved["execution"]["status"] = json!("Ready");
         let read_preparation = |v: &Value| {
             DeveloperAssignment::read(
-                v, &namespace, tracker, project, task, actor, repository, workspace, true,
+                v,
+                &namespace,
+                tracker,
+                project,
+                task,
+                actor,
+                repository,
+                workspace,
+                AssignmentAccess::Preparing,
             )
         };
         assert!(read_preparation(&reserved).is_err());
+        let (closing, deadline) = DeveloperAssignment::read(
+            &reserved,
+            &namespace,
+            tracker,
+            project,
+            task,
+            actor,
+            repository,
+            workspace,
+            AssignmentAccess::Closing,
+        )
+        .unwrap();
+        closing.require_same(&saved).unwrap();
+        assert!(deadline.is_none());
         reserved["execution"]["workspace_preparation_expires_at"] =
             json!(chrono::Utc::now() + chrono::Duration::seconds(30));
         reserved["execution"]["workspace_preparation_commit"] = json!("a".repeat(40));

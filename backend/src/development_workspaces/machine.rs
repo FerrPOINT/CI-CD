@@ -1,6 +1,6 @@
 //! Assignment-scoped Developer access, never a substitute human administrator.
 use super::{
-    assignment::{DeveloperAssignment, developer_action, developer_preparation},
+    assignment::{AssignmentAccess, DeveloperAssignment, developer_action},
     tracker,
 };
 use crate::{
@@ -316,7 +316,7 @@ pub(super) async fn seal(
         subject,
         workspace.repository_id,
         workspace.id,
-        developer_preparation(action),
+        AssignmentAccess::for_action(action),
     )
     .await?;
     if let Some(preparation) = preparation {
@@ -395,7 +395,7 @@ pub(super) async fn verify(
         verified,
         &credential.assignment,
         true,
-        developer_preparation(action),
+        AssignmentAccess::for_action(action),
     )
     .await?;
     if let Some(preparation) = &proof.preparation {
@@ -411,7 +411,7 @@ pub(super) async fn confirm_identity(
     verified: VerifiedCentralToken,
     saved: &DeveloperAssignment,
     write: bool,
-    allow_preparation: bool,
+    access: AssignmentAccess,
 ) -> Result<Confirmed, ApiError> {
     let subject = require_token(&verified, write)?;
     let profile: Option<(String, Option<String>, bool)> =
@@ -433,7 +433,7 @@ pub(super) async fn confirm_identity(
         subject,
         workspace.repository_id,
         workspace.id,
-        allow_preparation,
+        access,
     )
     .await?;
     assignment.require_same(saved)?;
@@ -443,7 +443,11 @@ pub(super) async fn confirm_identity(
         None => clock,
     };
     clock.require()?;
-    Ok(Confirmed { assignment, clock, preparation })
+    Ok(Confirmed {
+        assignment,
+        clock,
+        preparation,
+    })
 }
 
 pub(crate) async fn pipeline_clock(
