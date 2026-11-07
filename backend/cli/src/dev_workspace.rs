@@ -369,6 +369,7 @@ async fn prepare(
     serde_json::to_writer(&mut profile, &workspace["profile"])?;
     profile.flush()?;
     let request = json!({"root":root,"repositories":selected,"operationId":mutation.operation_id});
+    let workspace_id = mutation.workspace;
     let output = tokio::task::spawn_blocking(move || -> Result<std::process::Output> {
         let mut command = std::process::Command::new(helper);
         if machine {
@@ -385,7 +386,7 @@ async fn prepare(
                 .env(format!("GIT_CONFIG_KEY_{count}"), "credential.username")
                 .env(
                     format!("GIT_CONFIG_VALUE_{count}"),
-                    format!("workspace-{}", mutation.workspace),
+                    format!("workspace-{workspace_id}"),
                 );
         } else {
             command.env_remove("CICD_API_TOKEN");
