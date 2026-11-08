@@ -107,6 +107,16 @@ describe("shared workspace catalog", () => {
       expect(
         link.querySelector(`[data-project-avatar="${index ? "TWO" : "ONE"}"]`),
       ).not.toBeNull();
+      expect(
+        screen.getByRole("link", {
+          name: `Стенды и workspace проекта ${index ? "TWO" : "ONE"}`,
+        }),
+      ).toHaveAttribute(
+        "href",
+        expect.stringContaining(
+          `/workspaces/${registry}/${namespaces[index]}/development-workspaces?`,
+        ),
+      );
     });
     expect(
       screen.queryByRole("button", { name: /Удалить|Создать/ }),
@@ -142,12 +152,18 @@ describe("shared workspace catalog", () => {
     );
   });
   it("distinguishes an unavailable source from a successful empty catalog", async () => {
-    vi.mocked(api).mockRejectedValue(new Error("Tracker unavailable"));
+    vi.mocked(api)
+      .mockRejectedValueOnce(new Error("Tracker unavailable"))
+      .mockResolvedValueOnce({ items: [project(0)], total: 1 });
     mount();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Каталог проектов недоступен",
     );
     expect(screen.queryByText(/Подключённых проектов пока нет/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Повторить/ }));
+    expect(
+      await screen.findByRole("link", { name: "Стенды и workspace проекта ONE" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps shared work visible without offering structure creation to a current user", async () => {
