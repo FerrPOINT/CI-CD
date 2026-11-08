@@ -120,7 +120,7 @@ export function DevelopmentWorkspacesPage() {
     <section className="space-y-5" aria-label="Рабочие окружения">
       <SectionHeader
         title="Рабочие окружения"
-        context="Исходники, инструменты, сервисы и данные сохраняются между рабочими сессиями."
+        context="Выберите конфигурацию проекта, чтобы увидеть workspace и перейти к списку стендов."
       />
       <SearchableSelect
         label="Конфигурация проекта"
@@ -150,6 +150,13 @@ export function DevelopmentWorkspacesPage() {
         onRetry={() => void configurations.refetch()}
         onChange={(value) => select("workspace_configuration", value)}
       />
+      {correctProject && (
+        <TextLink asChild>
+          <Link to={`/delivery-configs/${encodeURIComponent(project)}/environments`}>
+            Стенды и адреса приложений
+          </Link>
+        </TextLink>
+      )}
       {project && (configuration.isError || repository.isError) && (
         <ErrorState message="Конфигурация проекта недоступна." />
       )}
