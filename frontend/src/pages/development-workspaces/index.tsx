@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -77,6 +77,23 @@ export function DevelopmentWorkspacesPage() {
     queryFn: ({ signal }) =>
       service.configurations(ref!, search, configOffset, signal),
   });
+  const onlyConfigurationId =
+    ref &&
+    !search &&
+    configOffset === 0 &&
+    configurations.isSuccess &&
+    configurations.data.total === 1
+      ? configurations.data.items[0]?.id
+      : undefined;
+  useEffect(() => {
+    if (!project && onlyConfigurationId) {
+      setParams((current) => {
+        const next = new URLSearchParams(current);
+        next.set("workspace_configuration", onlyConfigurationId);
+        return next;
+      }, { replace: true });
+    }
+  }, [onlyConfigurationId, project, setParams]);
   const configuration = useQuery({
     queryKey: keys.configuration(project),
     enabled: !!project,
@@ -120,7 +137,7 @@ export function DevelopmentWorkspacesPage() {
     <section className="space-y-5" aria-label="Рабочие окружения">
       <SectionHeader
         title="Рабочие окружения"
-        context="Выберите конфигурацию проекта, чтобы увидеть workspace и перейти к списку стендов."
+        context="Здесь можно открыть workspace и перейти к списку стендов проекта."
       />
       <SearchableSelect
         label="Конфигурация проекта"
