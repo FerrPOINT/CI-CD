@@ -1,6 +1,6 @@
 //! Assignment-scoped Developer access, never a substitute human administrator.
 use super::{
-    assignment::{DeveloperAssignment, developer_action},
+    assignment::{AssignmentAccess, DeveloperAssignment, developer_action},
     tracker,
 };
 use crate::{
@@ -308,7 +308,7 @@ pub(super) async fn seal(
             .ok_or_else(ApiError::forbidden)?
             .task_id
     };
-    let assignment = tracker::read_assignment(
+    let (assignment, preparation) = tracker::read_assignment(
         &namespace,
         workspace.tracker_instance_id,
         workspace.tracker_project_id,
@@ -316,8 +316,12 @@ pub(super) async fn seal(
         subject,
         workspace.repository_id,
         workspace.id,
+        AssignmentAccess::for_action(action),
     )
     .await?;
+    if let Some(preparation) = preparation {
+        preparation.require_source(action)?;
+    }
     if !matches!(action, WorkspaceAction::BeginSession { .. }) {
         let saved:Option<Value>=sqlx::query_scalar("SELECT machine_assignment FROM development_workspace_sessions WHERE workspace_id=$1 AND ended_at IS NULL AND actor_id=$2 AND owner_subject=$3")
             .bind(workspace.id).bind(identity.claims.sub).bind(subject).fetch_optional(pool).await.map_err(ApiError::internal)?.flatten();
@@ -347,6 +351,7 @@ pub(super) async fn seal(
 pub(super) struct Confirmed {
     pub assignment: DeveloperAssignment,
     pub clock: GitDeadline,
+    preparation: Option<super::assignment::WorkspacePreparation>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -383,15 +388,20 @@ pub(super) async fn verify(
     if require_token(&verified, true)? != subject || verified.issuer != credential.issuer {
         return Err(ApiError::forbidden());
     }
-    confirm_identity(
+    let proof = confirm_identity(
         pool,
         workspace,
         actor,
         verified,
         &credential.assignment,
         true,
+        AssignmentAccess::for_action(action),
     )
-    .await
+    .await?;
+    if let Some(preparation) = &proof.preparation {
+        preparation.require_source(action)?;
+    }
+    Ok(proof)
 }
 
 pub(super) async fn confirm_identity(
@@ -401,6 +411,7 @@ pub(super) async fn confirm_identity(
     verified: VerifiedCentralToken,
     saved: &DeveloperAssignment,
     write: bool,
+    access: AssignmentAccess,
 ) -> Result<Confirmed, ApiError> {
     let subject = require_token(&verified, write)?;
     let profile: Option<(String, Option<String>, bool)> =
@@ -414,7 +425,7 @@ pub(super) async fn confirm_identity(
     }
     project_access(pool, actor, workspace.project_id, write).await?;
     let namespace = namespace(pool, workspace).await?;
-    let assignment = tracker::read_assignment(
+    let (assignment, preparation) = tracker::read_assignment(
         &namespace,
         workspace.tracker_instance_id,
         workspace.tracker_project_id,
@@ -422,12 +433,21 @@ pub(super) async fn confirm_identity(
         subject,
         workspace.repository_id,
         workspace.id,
+        access,
     )
     .await?;
     assignment.require_same(saved)?;
     let clock = GitDeadline::identity(&verified);
+    let clock = match &preparation {
+        Some(preparation) => clock.cap_until(preparation.expires_at),
+        None => clock,
+    };
     clock.require()?;
-    Ok(Confirmed { assignment, clock })
+    Ok(Confirmed {
+        assignment,
+        clock,
+        preparation,
+    })
 }
 
 pub(crate) async fn pipeline_clock(

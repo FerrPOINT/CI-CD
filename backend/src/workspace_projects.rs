@@ -93,11 +93,23 @@ pub struct ExecutionPage {
     pub items: Vec<ExecutionRow>,
     pub total: i64,
 }
-pub async fn validate_catalog(pool: &PgPool) -> Result<(), ApiError> {
-    let rows=sqlx::query("SELECT b.* FROM forge_namespace_bindings b JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id").fetch_all(pool).await.map_err(ApiError::internal)?;
+pub(crate) fn catalog_registry() -> Result<Option<Uuid>, ApiError> {
+    std::env::var_os("CICD_NAMESPACE__REGISTRY_INSTANCE_ID")
+        .map(|raw| {
+            raw.to_str()
+                .and_then(|value| value.parse::<Uuid>().ok())
+                .filter(|id| !id.is_nil())
+                .ok_or_else(|| ApiError::service_unavailable("namespace_owner_not_configured"))
+        })
+        .transpose()
+}
+
+pub async fn validate_catalog(pool: &PgPool, registry: Option<Uuid>) -> Result<(), ApiError> {
+    let rows = sqlx::query_scalar("SELECT b.command FROM forge_namespace_bindings b JOIN forge_workspace_projects w USING (registry_instance_id, namespace_id) WHERE ($1::uuid IS NULL OR w.registry_instance_id=$1)")
+        .bind(registry).fetch_all(pool).await.map_err(ApiError::internal)?;
     for row in rows {
         let command: pdlc_shared::resource_context::OwnerCommand =
-            serde_json::from_value(row.get("command"))
+            serde_json::from_value(row)
                 .map_err(|_| ApiError::service_unavailable("invalid_namespace_projection"))?;
         crate::namespace::validate_projection(&command)?;
     }
@@ -115,8 +127,9 @@ pub async fn all_summary(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<WorkspaceSummary>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    validate_catalog(pool).await?;
-    let row=sqlx::query("SELECT (SELECT count(*) FROM forge_workspace_projects) AS projects,(SELECT count(*) FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id) AS repositories,(SELECT count(*) FROM projects p JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id) AS configurations,count(*) FILTER(WHERE pl.status='queued') AS queued,count(*) FILTER(WHERE pl.status='running') AS running,count(*) FILTER(WHERE pl.status='failed') AS failed FROM pipelines pl JOIN projects p ON p.id=pl.project_id JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id").fetch_one(pool).await.map_err(ApiError::internal)?;
+    let registry = catalog_registry()?;
+    validate_catalog(pool, registry).await?;
+    let row=sqlx::query("SELECT (SELECT count(*) FROM forge_workspace_projects WHERE ($1::uuid IS NULL OR registry_instance_id=$1)) AS projects,(SELECT count(*) FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE ($1::uuid IS NULL OR w.registry_instance_id=$1)) AS repositories,(SELECT count(*) FROM projects p JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE ($1::uuid IS NULL OR w.registry_instance_id=$1)) AS configurations,count(*) FILTER(WHERE pl.status='queued') AS queued,count(*) FILTER(WHERE pl.status='running') AS running,count(*) FILTER(WHERE pl.status='failed') AS failed FROM pipelines pl JOIN projects p ON p.id=pl.project_id JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE ($1::uuid IS NULL OR w.registry_instance_id=$1)").bind(registry).fetch_one(pool).await.map_err(ApiError::internal)?;
     if !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM forge_workspace_catalog_sync)")
         .fetch_one(pool)
         .await
@@ -163,8 +176,10 @@ pub async fn list(
     Query(query): Query<WorkspaceQuery>,
 ) -> Result<Json<WorkspacePage>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    validate_catalog(pool).await?;
-    let known: i64 = sqlx::query_scalar("SELECT count(*) FROM forge_workspace_projects")
+    let registry = catalog_registry()?;
+    validate_catalog(pool, registry).await?;
+    let known: i64 = sqlx::query_scalar("SELECT count(*) FROM forge_workspace_projects WHERE ($1::uuid IS NULL OR registry_instance_id=$1)")
+        .bind(registry)
         .fetch_one(pool)
         .await
         .map_err(ApiError::internal)?;
@@ -183,12 +198,13 @@ pub async fn list(
     }
     let search = query.search();
     let (limit, offset) = query.bounds();
-    let filter = " WHERE position($1 in lower(w.name||' '||w.project_key))>0";
+    let filter = " WHERE position($1 in lower(w.name||' '||w.project_key))>0 AND ($2::uuid IS NULL OR w.registry_instance_id=$2)";
     let sql = format!(
-        "{PROJECT_SELECT}{filter} ORDER BY w.name,w.registry_instance_id,w.namespace_id LIMIT $2 OFFSET $3"
+        "{PROJECT_SELECT}{filter} ORDER BY w.name,w.registry_instance_id,w.namespace_id LIMIT $3 OFFSET $4"
     );
     let items = sqlx::query_as(&sql)
         .bind(&search)
+        .bind(registry)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
@@ -198,6 +214,7 @@ pub async fn list(
         "SELECT count(*) FROM forge_workspace_projects w{filter}"
     ))
     .bind(search)
+    .bind(registry)
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)?;
@@ -307,6 +324,7 @@ async fn executions(
         return Err(ApiError::bad_request("invalid_approval_state"));
     }
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let registry = catalog_registry()?;
     let group = if let Some((registry, ns)) = namespace {
         let c = ensure_context(pool, registry, ns).await?;
         Some(
@@ -314,7 +332,7 @@ async fn executions(
                 .ok_or_else(|| ApiError::conflict("git_not_connected"))?,
         )
     } else if repository.is_none() {
-        validate_catalog(pool).await?;
+        validate_catalog(pool, registry).await?;
         if !sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM forge_workspace_catalog_sync)",
         )
@@ -376,7 +394,7 @@ async fn executions(
         )
     };
     let filter = " JOIN repository_catalog r ON r.id=p.repository_id JOIN git_groups g ON g.id=r.group_id JOIN forge_namespace_bindings b ON b.resource_id=g.id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE ($1::uuid IS NULL OR r.group_id=$1) AND ($2::uuid IS NULL OR r.id=$2) AND ($3::uuid IS NULL OR p.id=$3) AND ($4::text IS NULL OR x.status=$4) AND ($5::text IS NULL OR x.git_ref=$5) AND ($6::timestamptz IS NULL OR x.created_at >= $6) AND ($7::timestamptz IS NULL OR x.created_at <= $7)";
-    let filter = format!("{filter}{deployment_filter}");
+    let filter = format!("{filter}{deployment_filter} AND ($10::uuid IS NULL OR w.registry_instance_id=$10)");
     let total: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {from}{filter}"))
         .bind(group)
         .bind(query.repository_id.or(repository))
@@ -387,12 +405,13 @@ async fn executions(
         .bind(query.until)
         .bind(query.environment_id)
         .bind(&query.approval_state)
+        .bind(registry)
         .fetch_one(pool)
         .await
         .map_err(ApiError::internal)?;
     let (limit, offset) = query.bounds();
     let sql = format!(
-        "SELECT jsonb_build_object('namespace',jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id),'id',x.id,'repository_id',r.id,'repository_name',g.slug||'/'||r.slug,'configuration_id',p.id,'configuration_name',p.name,'status',x.status,'git_ref',x.git_ref,'created_at',x.created_at,{extra}) FROM {from}{filter} ORDER BY x.created_at DESC,x.id DESC LIMIT $10 OFFSET $11"
+        "SELECT jsonb_build_object('namespace',jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id),'id',x.id,'repository_id',r.id,'repository_name',g.slug||'/'||r.slug,'configuration_id',p.id,'configuration_name',p.name,'status',x.status,'git_ref',x.git_ref,'created_at',x.created_at,{extra}) FROM {from}{filter} ORDER BY x.created_at DESC,x.id DESC LIMIT $11 OFFSET $12"
     );
     let values: Vec<Value> = sqlx::query_scalar(&sql)
         .bind(group)
@@ -404,6 +423,7 @@ async fn executions(
         .bind(query.until)
         .bind(query.environment_id)
         .bind(query.approval_state)
+        .bind(registry)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)

@@ -1,5 +1,8 @@
 //! Ordinary Git transport for the assigned workspace, using permanent identity.
-use super::{assignment::DeveloperAssignment, machine};
+use super::{
+    assignment::{AssignmentAccess, DeveloperAssignment},
+    machine,
+};
 use crate::{
     api::{ApiError, AppState},
     git_host::GitDeadline,
@@ -117,6 +120,11 @@ pub(crate) async fn admit(
         verified,
         &assignment,
         write,
+        if write {
+            AssignmentAccess::Active
+        } else {
+            AssignmentAccess::Preparing
+        },
     )
     .await?;
     let sealed = if write {
@@ -211,6 +219,7 @@ async fn check_callback(
         verified,
         &ticket.assignment,
         true,
+        AssignmentAccess::Active,
     )
     .await?;
     proof.clock.cap_until(ticket.until).require()?;

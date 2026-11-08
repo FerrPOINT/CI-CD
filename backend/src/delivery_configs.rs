@@ -122,8 +122,9 @@ async fn read_configs(
 ) -> Result<ConfigPage, ApiError> {
     let user = claims.map(|c| c.sub);
     let admin = claims.is_some_and(|c| c.role == "admin");
+    let registry = crate::workspace_projects::catalog_registry()?;
     if !query.unbound.unwrap_or(false) {
-        crate::workspace_projects::validate_catalog(pool).await?;
+        crate::workspace_projects::validate_catalog(pool, registry).await?;
     }
     if query.registry_instance_id.is_some() != query.namespace_id.is_some() {
         return Err(ApiError::bad_request("invalid_namespace_ref"));
@@ -132,7 +133,7 @@ async fn read_configs(
     let search = query.search.unwrap_or_default();
     let unbound = query.unbound.unwrap_or(false);
     let filter = format!(
-        "{filter} AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM repository_catalog rc JOIN forge_namespace_bindings nb ON nb.resource_id=rc.group_id WHERE rc.id=p.repository_id AND nb.registry_instance_id=$6 AND nb.namespace_id=$7)) AND (NOT $8 OR EXISTS(SELECT 1 FROM repository_catalog mr JOIN forge_namespace_bindings mb ON mb.resource_id=mr.group_id JOIN forge_workspace_projects mw ON mw.registry_instance_id=mb.registry_instance_id AND mw.namespace_id=mb.namespace_id WHERE mr.id=p.repository_id))"
+        "{filter} AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM repository_catalog rc JOIN forge_namespace_bindings nb ON nb.resource_id=rc.group_id WHERE rc.id=p.repository_id AND nb.registry_instance_id=$6 AND nb.namespace_id=$7)) AND (NOT $8 OR EXISTS(SELECT 1 FROM repository_catalog mr JOIN forge_namespace_bindings mb ON mb.resource_id=mr.group_id JOIN forge_workspace_projects mw ON mw.registry_instance_id=mb.registry_instance_id AND mw.namespace_id=mb.namespace_id WHERE mr.id=p.repository_id)) AND NOT EXISTS(SELECT 1 FROM repository_catalog rc JOIN forge_namespace_bindings nb ON nb.resource_id=rc.group_id WHERE rc.id=p.repository_id AND nb.registry_instance_id<>$9)"
     );
     let total = sqlx::query_scalar(&format!("SELECT count(*) FROM projects p{filter}"))
         .bind(repo)
@@ -143,11 +144,12 @@ async fn read_configs(
         .bind(query.registry_instance_id)
         .bind(query.namespace_id)
         .bind(query.managed.unwrap_or(false))
+        .bind(registry)
         .fetch_one(pool)
         .await
         .map_err(ApiError::internal)?;
     let sql = format!(
-        "SELECT p.id,p.name,p.repository_id,p.repository_url,p.default_branch,p.max_running_jobs,p.created_at,COALESCE(display_group.slug||'/'||display_repo.slug,display_repo.slug) AS repository_name FROM projects p LEFT JOIN repository_catalog display_repo ON display_repo.id=p.repository_id LEFT JOIN git_groups display_group ON display_group.id=display_repo.group_id{filter} ORDER BY p.name,p.id LIMIT $9 OFFSET $10"
+        "SELECT p.id,p.name,p.repository_id,p.repository_url,p.default_branch,p.max_running_jobs,p.created_at,COALESCE(display_group.slug||'/'||display_repo.slug,display_repo.slug) AS repository_name FROM projects p LEFT JOIN repository_catalog display_repo ON display_repo.id=p.repository_id LEFT JOIN git_groups display_group ON display_group.id=display_repo.group_id{filter} ORDER BY p.name,p.id LIMIT $10 OFFSET $11"
     );
     let items = sqlx::query_as(&sql)
         .bind(repo)
@@ -158,6 +160,7 @@ async fn read_configs(
         .bind(query.registry_instance_id)
         .bind(query.namespace_id)
         .bind(query.managed.unwrap_or(false))
+        .bind(registry)
         .bind(query.limit.unwrap_or(50).clamp(1, 100))
         .bind(query.offset.unwrap_or(0).max(0))
         .fetch_all(pool)
