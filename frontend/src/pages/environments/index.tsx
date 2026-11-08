@@ -166,6 +166,8 @@ export function EnvironmentsPage() {
         }
       />
 
+      <p className="text-sm text-text-muted">{t("environments.statusContext")}</p>
+
       {showForm && (
         <ContentSection asChild dividers="both">
           <form
