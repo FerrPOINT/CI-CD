@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Button,
   ResourceListDescription,
   EmptyState,
   ResourceListTitle,
@@ -61,18 +62,17 @@ export function ProjectsPage() {
       ) : catalog.isError ? (
         <ErrorState
           message={"Каталог проектов недоступен: " + catalog.error.message}
+          onRetry={() => void catalog.refetch()}
         />
       ) : (
         <>
           <ResourceList asChild variant="bordered" density="comfortable">
             <ul>
               {catalog.data.items.map((project) => (
-                <li
-                  key={`${project.registry_instance_id}/${project.namespace_id}`}
-                >
-                  <ResourceListRow asChild interactive>
+                <ResourceListRow asChild key={workspacePath(project)}>
+                  <li className="flex flex-wrap items-center gap-3">
                     <Link
-                      className="flex flex-wrap items-center gap-3"
+                      className="flex min-w-0 flex-1 flex-wrap items-center gap-3"
                       to={withNamespaceLocation(
                         workspacePath(project) + "?project_scope=all",
                         project,
@@ -111,8 +111,20 @@ export function ProjectsPage() {
                       </span>
                       </ResourceListDescription>
                     </Link>
-                  </ResourceListRow>
-                </li>
+                    <Button asChild variant="outline" size="sm">
+                      <Link
+                        aria-label={`Стенды и workspace проекта ${project.project_key}`}
+                        to={withNamespaceLocation(
+                          workspacePath(project, "development-workspaces") +
+                            "?project_scope=all",
+                          project,
+                        )}
+                      >
+                        Стенды и workspace
+                      </Link>
+                    </Button>
+                  </li>
+                </ResourceListRow>
               ))}
             </ul>
           </ResourceList>
