@@ -89,12 +89,21 @@ export type DownloadedArtifact = {
 export async function downloadArtifact(
   artifactId: string,
 ): Promise<DownloadedArtifact> {
+  return download(`/artifacts/${encodeURIComponent(artifactId)}/download`, "artifact", "application/octet-stream");
+}
+
+export async function downloadPullPatch(repositoryId: string, number: number, baseSha: string, headSha: string): Promise<DownloadedArtifact> {
+  const query = new URLSearchParams({ base_sha: baseSha, head_sha: headSha });
+  return download(`/catalog/repositories/${encodeURIComponent(repositoryId)}/pulls/${number}/patch?${query}`, `pr-${number}-${headSha}.patch`, "text/plain");
+}
+
+async function download(path: string, fallbackFilename: string, accept: string): Promise<DownloadedArtifact> {
   const owner = currentSession();
   const privateState = capturePlatformPrivateState();
   const response = await authenticatedFetch(
-    `/artifacts/${encodeURIComponent(artifactId)}/download`,
+    path,
     {
-      headers: { Accept: "application/octet-stream" },
+      headers: { Accept: accept },
     },
   );
   if (!response.ok) {
@@ -108,7 +117,7 @@ export async function downloadArtifact(
     blob,
     filename:
       filenameFromDisposition(response.headers.get("Content-Disposition")) ??
-      "artifact",
+      fallbackFilename,
   };
 }
 

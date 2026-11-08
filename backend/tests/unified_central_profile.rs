@@ -7,6 +7,8 @@ mod git_scope;
 mod git_space_admission;
 #[path = "support/group_drain.rs"]
 mod group_drain;
+#[path = "support/pull_fixture.rs"]
+mod pull_fixture;
 #[path = "support/space_owner.rs"]
 mod space_owner;
 use axum::{Json, Router, routing::get};

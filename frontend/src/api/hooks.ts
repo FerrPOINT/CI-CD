@@ -315,6 +315,18 @@ export function useRepositoryCommits(repo: string | undefined, branch = 'HEAD', 
   })
 }
 
+export function usePullReviewContext(repositoryId: string | null | undefined, number: number | undefined) {
+  return useQuery({
+    queryKey: ['pull-review-context', repositoryId, number],
+    queryFn: ({ signal }) => api<{ pull_request_id: string; base_sha: string; head_sha: string; merge_base: string }>(
+      `/catalog/repositories/${repositoryId}/pulls/${number}/review-context`, { signal }),
+    enabled: Boolean(repositoryId && number),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: apiRetry,
+  })
+}
+
 export function useRepositoryComparison(repo: string | undefined, from: string, to: string) {
   return useQuery({
     queryKey: KEYS.comparison(repo ?? '', from, to),

@@ -141,6 +141,9 @@ export type PullRequestStatus = 'open' | 'closed' | 'merged'
 export type PullRequestAction = 'merge' | 'close' | 'reopen'
 
 export interface PullRequest {
+  repository_id?: string | null
+  primary_tracker_instance_id?: string | null
+  primary_task_id?: string | null
   id: string
   repository_name: string
   number: number
@@ -164,6 +167,7 @@ export interface PullRequestPage {
 }
 
 export interface CreatePullRequestInput {
+  primary_task: { tracker_instance_id: string; task_id: string }
   repository_name: string
   title: string
   description?: string

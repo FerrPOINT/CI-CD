@@ -385,6 +385,38 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Role::Viewer,
     ),
     work(
+        GET,
+        "/api/v1/catalog/repositories/{id}/pulls/{number}/comments",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(
+        POST,
+        "/api/v1/catalog/repositories/{id}/pulls/{number}/comments",
+        Action::Write,
+        Role::Developer,
+    ),
+    work(
+        GET,
+        "/api/v1/catalog/repositories/{id}/pulls/{number}/review-context",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(
+        GET,
+        "/api/v1/catalog/repositories/{id}/pulls/{number}/patch",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(
+        GET,
+        "/api/v1/catalog/repositories/{id}/pulls/{number}/checks",
+        Action::Read,
+        Role::Viewer,
+    ),
+    work(GET, "/api/v1/task-pulls", Action::Read, Role::Viewer),
+    work(GET, "/api/v1/repos/{repo}/task", Action::Read, Role::Viewer),
+    work(
         POST,
         "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks",
         Action::Write,

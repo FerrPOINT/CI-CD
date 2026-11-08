@@ -85,8 +85,14 @@ pub(crate) async fn admit(
         "/api/v1/development-workspaces/{workspace_id}{}",
         if write { "/operations" } else { "" }
     );
-    let identity =
-        machine::authenticate(pool, verified, if write { "POST" } else { "GET" }, &path).await?;
+    let identity = machine::authenticate(
+        pool,
+        verified,
+        if write { "POST" } else { "GET" },
+        &path,
+        None,
+    )
+    .await?;
     let workspace = store::workspace(pool, workspace_id)
         .await
         .map_err(super::error)?;

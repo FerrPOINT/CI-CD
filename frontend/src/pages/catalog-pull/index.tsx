@@ -23,6 +23,7 @@ import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
 import type { components } from "@/api/schema";
 import { useNamespaceContext } from "@/widgets/namespace-context";
+import { PullComments } from "@/pages/pull-request-detail/comments";
 export function CatalogPullPage() {
   const { search } = useLocation();
   const { id, number } = useParams();
@@ -147,6 +148,7 @@ export function CatalogPullPage() {
         {pr.source_branch} → {pr.target_branch} · {pr.status}
       </p>
       <p>{pr.description}</p>
+      {id && <PullComments namespace={ref} repositoryId={id} number={pr.number} repo={pr.repository_name} />}
       {error && (
         <Notice role="alert" tone="danger" appearance="inline">
           {error}
