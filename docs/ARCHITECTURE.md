@@ -352,3 +352,9 @@ Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` prox
 
 Приостановка producers и source-owned writer closure перед backup описаны в
 [FORGE_QUIESCENCE](FORGE_QUIESCENCE.md) и [ADR-0033](adr/0033-product-local-quiescence.md).
+
+Фоновые профессии Fleet читают bare Git через [отдельное разрешение API](API.md#чтение-исходников-фоновым-исполнением-fleet).
+Fleet владеет исполнением и журналом исследованных SHA; Forge проверяет admission,
+настройки repository/branch/namespace и фиксирует фактически прочитанную версию
+перед выдачей содержимого. Проектный workspace, запуск кода и запись в продукт
+для этого пути не создаются. HTTP health не подтверждает настройку межсервисных прав.

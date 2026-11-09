@@ -1590,6 +1590,31 @@ async fn read_tree_page(
     Ok(entries)
 }
 
+pub(crate) async fn read_committed_tree(
+    repository: &std::path::Path,
+    commit: &str,
+    subpath: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<TreeEntry>, ApiError> {
+    let spec = if subpath.is_empty() {
+        commit.to_owned()
+    } else {
+        format!("{commit}:{subpath}")
+    };
+    read_tree_page(
+        repository,
+        &spec,
+        subpath,
+        TreePage {
+            limit,
+            offset,
+            search: None,
+        },
+    )
+    .await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn collect_tree_entries(
     path: &std::path::Path,
@@ -1744,8 +1769,17 @@ pub async fn get_blob(
         .filter(|r| !r.is_empty())
         .unwrap_or("HEAD");
     let git_ref = resolve_view_ref(&path, git_ref).await;
-    let spec = format!("{git_ref}:{}", params.path);
-    let (bytes, size, truncated) = read_blob(&path, &spec).await?;
+    Ok(Json(read_blob_content(&path, &git_ref, params.path).await?))
+}
+
+pub(crate) async fn read_blob_content(
+    repository: &std::path::Path,
+    commit: &str,
+    file: String,
+) -> Result<BlobContent, ApiError> {
+    let path = repository;
+    let spec = format!("{commit}:{file}");
+    let (bytes, size, truncated) = read_blob(path, &spec).await?;
     let binary = bytes.iter().take(8000).any(|b| *b == 0);
     let content = if binary {
         String::new()
@@ -1762,14 +1796,14 @@ pub async fn get_blob(
     let sha = String::from_utf8_lossy(&sha_output.stdout)
         .trim()
         .to_string();
-    Ok(Json(BlobContent {
-        path: params.path,
+    Ok(BlobContent {
+        path: file,
         sha,
         size,
         content,
         binary,
         truncated,
-    }))
+    })
 }
 
 const MAX_BLOB_LEN: usize = 512 * 1024;

@@ -38,6 +38,7 @@ pub async fn migrations_from_path(
 ) -> Result<sqlx::migrate::Migrator, sqlx::migrate::MigrateError> {
     migration_catalog::load(path).await
 }
+pub mod background_source;
 pub(crate) mod candidate_evidence;
 pub mod delivery_configs;
 pub mod development_workspaces;

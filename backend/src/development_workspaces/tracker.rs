@@ -80,12 +80,9 @@ async fn reader(
 
 pub(super) async fn read_assignment(
     namespace: &NamespaceRef,
-    tracker: Uuid,
-    project: Uuid,
+    workspace: &cicd_infra::development_workspace::Workspace,
     task: Uuid,
     subject: Uuid,
-    repository: Uuid,
-    workspace: Uuid,
     access: super::assignment::AssignmentAccess,
 ) -> Result<
     (
@@ -94,6 +91,9 @@ pub(super) async fn read_assignment(
     ),
     ApiError,
 > {
+    let tracker = workspace.tracker_instance_id;
+    let project = workspace.tracker_project_id;
+    let repository = workspace.repository_id;
     let (client, base, token) = reader(namespace, tracker).await?;
     let mut url = base
         .join(&format!("api/v1/namespace-tasks/{task}"))
@@ -115,7 +115,15 @@ pub(super) async fn read_assignment(
         return Err(ApiError::forbidden());
     }
     super::assignment::DeveloperAssignment::read(
-        &context, namespace, tracker, project, task, subject, repository, workspace, access,
+        &context,
+        namespace,
+        tracker,
+        project,
+        task,
+        subject,
+        repository,
+        workspace.id,
+        access,
     )
 }
 

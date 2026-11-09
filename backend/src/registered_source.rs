@@ -138,7 +138,7 @@ pub(crate) fn full_branch(value: &str) -> bool {
             .all(|part| !part.is_empty() && !part.starts_with('.') && !part.ends_with(".lock"))
 }
 
-fn validate_catalog(
+pub(crate) fn validate_catalog(
     command: &OwnerCommand,
     namespace: &NamespaceRef,
     group: Uuid,

@@ -413,6 +413,7 @@ pub(crate) fn build_router_with_cors(
         .merge(crate::namespace::routes())
         .merge(super::identity_deletion::routes())
         .merge(crate::registered_devops_evidence::routes())
+        .merge(crate::background_source::routes())
         .merge(super::sdlc_workspace::task_pipeline::renewal::routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
