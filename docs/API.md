@@ -2448,3 +2448,22 @@ Read endpoints используют обычный Repository/Space/Project admi
 замечания использует существующее право Developer/RepositoryWrite, включая
 native scoped identity. API не выдаёт права на Task и не запускает CI.
 Миграция, CLI и границы исполнения: [ADR-0047](adr/0047-task-bound-reviewer.md).
+
+## Чтение исходников фоновым исполнением Fleet
+
+`GET /api/v1/background/runs/{run}/repositories/{repository}/tree` принимает
+`branch`, необязательный `path`, `offset` и `limit` (1–200).
+`GET /api/v1/background/runs/{run}/repositories/{repository}/blob` принимает
+`branch` и `path`. Обычный CLI предоставляет `background --run-id <UUID> tree/blob`.
+
+Нужен service-account PAT с `ci-cd:background:read`. Forge сверяет актуальный
+Fleet admission: субъект, запуск, проект, разрешённые repository/branch и namespace.
+Чтение bare Git не создаёт workspace и не выполняет код. До возврата содержимого
+Forge записывает фактический commit SHA в журнал запуска Fleet; перемещение ветки
+после закрепления версии не подменяет уже исследованный источник.
+Эти права не дают записи в Git, создания Tracker-задач или доступа к чужому проекту.
+
+Сервер использует `CICD_BACKGROUND__FLEET_URL` и отдельный
+`CICD_BACKGROUND__FLEET_READER_TOKEN`; токен не передаётся агенту.
+Контракты Fleet и Workflow описаны в Base `docs/platform/BACKGROUND_TASKS.md`.
+Исходники подготовлены; установка и сквозная приёмка отмечаются отдельно.

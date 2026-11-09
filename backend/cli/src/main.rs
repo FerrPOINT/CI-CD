@@ -1,3 +1,4 @@
+mod background;
 mod commands;
 mod dev_workspace;
 mod support;
@@ -119,6 +120,13 @@ fn resolve_profile(flag: &Option<String>) -> Option<ProfileOverrides> {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Чтение разрешённых исходников фонового запуска Fleet без workspace.
+    Background {
+        #[arg(long)]
+        run_id: uuid::Uuid,
+        #[command(subcommand)]
+        command: background::Command,
+    },
     /// Управляемые окружения разработки проекта.
     DevWorkspace {
         #[command(subcommand)]
@@ -1140,6 +1148,7 @@ fn classify_error(err: &anyhow::Error) -> u8 {
 
 async fn execute(api: &ApiClient, command: Command) -> anyhow::Result<Value> {
     match command {
+        Command::Background { run_id, command } => background::execute(api, run_id, command).await,
         Command::Work(command) => commands::execute(api, command).await,
         Command::DevWorkspace { command } => dev_workspace::execute(api, command).await,
         // Completions is handled in main() before the API client exists.
