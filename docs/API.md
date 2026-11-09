@@ -3,6 +3,9 @@
 Отдельное семейство `/development-workspaces`: реестр, сессии, именованные
 проверки и original-key async lifecycle. [Контракт и recovery](DEVELOPMENT_WORKSPACES.md).
 Существующие project/task workspace routes и identifiers сохраняются.
+Ответ карточки содержит вычисляемый `busy: boolean`: сессия, операция либо
+незавершённая проверка/сборка/delivery удерживают окружение. Новое поле не
+добавляет сохранённого состояния; разрешения действий возвращаются отдельно.
 
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и
 сохранённый владелец CI: [ADR-0041](adr/0041-sync-admission-and-automation-owner.md).

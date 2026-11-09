@@ -132,17 +132,10 @@ async fn run_inner(
             .fetch_one(pool)
             .await
             .map_err(ApiError::internal)?;
-    if let Some(Value::Object(vars)) = vars {
-        for (key, value) in vars {
-            env.push((
-                format!("CICD_VAR_{}", key.to_uppercase().replace('-', "_")),
-                value
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or(value.to_string()),
-            ));
-        }
-    }
+    env.extend(
+        cicd_domain::pipeline_variables::from_variables(vars.as_ref(), &job.required_secrets)
+            .map_err(ApiError::bad_request)?,
+    );
     let pipeline = config
         .artifacts
         .root

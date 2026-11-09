@@ -446,7 +446,7 @@ impl Execution {
                 == seal.authored_spec_sha256,
             "observed Pod differs from sealed authored spec"
         );
-        let terminal = super::terminal(value, &uid)?.is_some();
+        let terminal = self.observed_terminal(value, &uid)?.is_some();
         if !terminal {
             let finalizers = value["metadata"]["finalizers"]
                 .as_array()
