@@ -26,6 +26,8 @@ pub enum WorkspaceAction {
     Observe {},
     Start {},
     Stop {},
+    Close {},
+    ConvertToStand {},
     BeginSession {
         task: String,
     },
@@ -82,6 +84,7 @@ impl WorkspaceAction {
         matches!(
             self,
             Self::Register {} | Self::Create {} | Self::Stop {} | Self::BeginSession { .. }
+                | Self::Close {} | Self::ConvertToStand {}
         )
     }
 

@@ -11,6 +11,7 @@ use axum::http::{HeaderMap, HeaderValue};
 use axum::{Extension, Json};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path as FsPath;
@@ -238,7 +239,48 @@ async fn create_pipeline_bound(
         resolve_commit_sha(storage_name.as_deref(), &git_ref, git_root).await
     };
     let config_ref = commit_sha.as_deref().unwrap_or(&git_ref);
-    let (config_source, raw_config) = if let Some(recipe) = workspace_recipe {
+    let publication = if source == "deployment-approval" {
+        let operation = variables.get("deployment_id").and_then(Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok());
+        sqlx::query_as::<_, (Uuid, Uuid, String, Value)>(
+            "SELECT d.environment_id,d.source_pipeline_id,d.git_ref,d.publication_target
+             FROM deployments d JOIN environments e ON e.id=d.environment_id
+             WHERE d.id=$1 AND e.project_id=$2 AND e.purpose='stand'
+             AND d.source_pipeline_id IS NOT NULL AND d.status='pending'",
+        ).bind(operation).bind(project_id).fetch_optional(pool).await.map_err(ApiError::internal)?
+    } else {
+        None
+    };
+    let rollback_config = if matches!(source, "deployment-rollback" | "deployment-approval")
+        && variables.get("rollback_of_deployment_id").is_some_and(|value| !value.is_null())
+    {
+        let operation = variables.get("deployment_id").and_then(Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok());
+        sqlx::query_scalar::<_, String>(
+            "SELECT pp.raw_config FROM deployments d JOIN environments e ON e.id=d.environment_id
+             JOIN deployments previous ON previous.id=d.rollback_of_id AND previous.environment_id=e.id
+             JOIN pipeline_plans pp ON pp.pipeline_id=previous.pipeline_id
+             WHERE d.id=$1 AND e.project_id=$2 AND previous.runtime_input IS NOT NULL
+             AND previous.runtime_phase='finished' AND previous.status='success'",
+        ).bind(operation).bind(project_id).fetch_optional(pool).await.map_err(ApiError::internal)?
+    } else {
+        None
+    };
+    let (config_source, raw_config) = if let Some((environment, publication_id, sha, target)) = publication {
+        if commit_sha.as_deref() != Some(sha.as_str()) {
+            return Err(ApiError::conflict("Stand release commit differs from its approved input"));
+        }
+        let target: crate::domain::helm_deploy::KubernetesTarget = serde_json::from_value(target)
+            .map_err(|_| ApiError::conflict("Invalid stand target"))?;
+        target.validate().map_err(ApiError::conflict)?;
+        let recipe = json!({"version":1,"jobs":{"deploy":{"helm_deploy":{
+            "environment_id":environment,"source_pipeline_id":publication_id,
+            "images":target.publication_images,"receipt_artifact":".forge-output/release-receipt.json"
+        }}}});
+        ("repository", recipe.to_string())
+    } else if let Some(recipe) = rollback_config {
+        ("repository", recipe)
+    } else if let Some(recipe) = workspace_recipe {
         ("development_workspace", recipe.to_owned())
     } else {
         match read_local_forge_ci_config(storage_name.as_deref(), config_ref, git_root).await {

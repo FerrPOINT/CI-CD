@@ -17,6 +17,8 @@ pub struct KubernetesTarget {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub files: BTreeMap<String, String>,
     pub health_url: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub publication_images: BTreeMap<String, ImageBinding>,
 }
 fn dns(value: &str) -> bool {
     !value.is_empty()
@@ -39,6 +41,9 @@ fn value_key(value: &str) -> bool {
 }
 impl KubernetesTarget {
     pub fn validate(&self) -> Result<(), String> {
+        if !self.publication_images.is_empty() {
+            validate_image_bindings(&self.publication_images)?;
+        }
         if self.schema != "forge/kubernetes-environment/v1"
             || !dns(&self.cluster)
             || !dns(&self.namespace)
@@ -108,21 +113,28 @@ impl HelmDeploySpec {
                 "helm_deploy requires an environment identity and 1..16 image bindings".into(),
             );
         }
-        for (value_path, binding) in &self.images {
-            if !value_key(value_path)
-                || binding.job.is_empty()
-                || binding.job.len() > 63
-                || !binding.job.bytes().enumerate().all(|(i, b)| {
-                    b.is_ascii_alphabetic()
-                        || (i > 0 && (b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.')))
-                })
-                || !valid_relative_path(&binding.artifact, false)
-            {
-                return Err("invalid Helm image binding".into());
-            }
-        }
-        Ok(())
+        validate_image_bindings(&self.images)
     }
+}
+
+fn validate_image_bindings(images: &BTreeMap<String, ImageBinding>) -> Result<(), String> {
+    if images.len() > 16 {
+        return Err("helm_deploy accepts at most 16 image bindings".into());
+    }
+    for (value_path, binding) in images {
+        if !value_key(value_path)
+            || binding.job.is_empty()
+            || binding.job.len() > 63
+            || !binding.job.bytes().enumerate().all(|(i, b)| {
+                b.is_ascii_alphabetic()
+                    || (i > 0 && (b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.')))
+            })
+            || !valid_relative_path(&binding.artifact, false)
+        {
+            return Err("invalid Helm image binding".into());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -138,6 +150,7 @@ mod tests {
             values: vec!["deploy/dev-values.yaml".into()],
             files: BTreeMap::new(),
             health_url: "https://r1-dev.example.test/health".into(),
+            publication_images: BTreeMap::new(),
         }
     }
     #[test]
@@ -185,6 +198,8 @@ pub struct DeploymentOffer {
     pub pipeline_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_pipeline_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_bootstrap: Option<WorkspaceBootstrap>,
     pub job_id: Uuid,
     pub attempt_id: Uuid,
     pub lease_id: Uuid,
@@ -196,6 +211,15 @@ pub struct DeploymentOffer {
     pub receipt_artifact: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollback: Option<RollbackRelease>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceBootstrap {
+    pub reservation_id: Uuid,
+    pub namespace_uid: Uuid,
+    pub release: String,
+    pub revision: i32,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -304,6 +328,12 @@ impl DeploymentOffer {
         .any(Uuid::is_nil)
             || self.generation <= 0
             || self.pipeline_order <= 0
+            || self.workspace_bootstrap.as_ref().is_some_and(|receipt| {
+                receipt.reservation_id.is_nil()
+                    || receipt.namespace_uid.is_nil()
+                    || receipt.release != self.target.release
+                    || receipt.revision != 1
+            })
             || !crate::image_build::valid_commit(&self.source_commit)
             || !valid_relative_path(&self.receipt_artifact, false)
             || self.images.is_empty()

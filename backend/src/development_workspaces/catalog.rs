@@ -184,6 +184,8 @@ pub(crate) fn operation_plan(
         WorkspaceAction::BeginSession { .. }
             | WorkspaceAction::EndSession { .. }
             | WorkspaceAction::RecoverSession { .. }
+            | WorkspaceAction::Close {}
+            | WorkspaceAction::ConvertToStand {}
     ) {
         return Ok(serde_json::json!({}));
     }
@@ -276,31 +278,34 @@ pub(crate) fn operation_plan(
     let jobs = pipeline["jobs"]
         .as_object_mut()
         .ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
-    let job_count = jobs.len();
-    let mut uses_publication = false;
-    for job in jobs.values_mut() {
-        if let Some(deployment) = job.get_mut("helm_deploy") {
+    let mut delivery_job = None;
+    for (name, job) in jobs.iter() {
+        if let Some(deployment) = job.get("helm_deploy") {
             if deployment["environment_id"] != workspace.environment_id.to_string() {
                 return Err(ApiError::conflict("workspace_recipe_environment_mismatch"));
             }
-            if let Some(source) = deployment.get("source_pipeline_id") {
-                if !source.is_null() || job_count != 1 {
-                    return Err(ApiError::conflict("workspace_recipe_invalid_source_pipeline_input"));
-                }
-                let id = source_pipeline_id
-                    .ok_or_else(|| ApiError::bad_request("workspace_source_pipeline_required"))?;
-                deployment
-                    .as_object_mut()
-                    .ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?
-                    .insert("source_pipeline_id".into(), serde_json::json!(id));
-                uses_publication = true;
+            if deployment.get("source_pipeline_id").is_some()
+                || (delivery_job.is_some() && source_pipeline_id.is_some())
+            {
+                return Err(ApiError::conflict("workspace_recipe_invalid_source_pipeline_input"));
             }
+            delivery_job = Some(name.clone());
         }
     }
-    if source_pipeline_id.is_some() && !uses_publication {
-        return Err(ApiError::bad_request(
-            "workspace_recipe_does_not_accept_source_pipeline",
-        ));
+    if let Some(id) = source_pipeline_id {
+        let name = delivery_job.filter(|_| check.is_some_and(|item| item["executor"] == "forge-delivery"))
+            .ok_or_else(|| ApiError::bad_request("workspace_recipe_does_not_accept_source_pipeline"))?;
+        if jobs.iter().any(|(key, job)| key != &name && job.get("image_publish").is_none()) {
+            return Err(ApiError::conflict("workspace_recipe_requires_non_publication_jobs"));
+        }
+        let mut delivery = jobs.remove(&name).ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
+        let job = delivery.as_object_mut().ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
+        job.remove("needs");
+        let deployment = job.get_mut("helm_deploy").and_then(Value::as_object_mut)
+            .ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
+        deployment.insert("source_pipeline_id".into(), serde_json::json!(id));
+        jobs.clear();
+        jobs.insert(name, delivery);
     }
     plan["recipe"] = serde_json::json!(recipe);
     plan["recipeHash"] = serde_json::json!(

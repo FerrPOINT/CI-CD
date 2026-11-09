@@ -33,9 +33,10 @@ pub(crate) async fn prepare(
     // The instance row is the common delivery/lifecycle fence. Admission is
     // checked before Helm can apply replicas from an ordinary manifest.
     let workspace: Option<(Uuid,String,String,String)> = sqlx::query_as(
-        "SELECT id,desired_runtime,runtime,environment_hash FROM development_workspaces WHERE environment_id=$1 FOR UPDATE",
+        "SELECT id,desired_runtime,runtime,environment_hash FROM development_workspaces WHERE environment_id=$1 AND retired_at IS NULL FOR UPDATE",
     ).bind(spec.environment_id).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
     let bound_environment_hash = workspace.as_ref().map(|row| row.3.clone());
+    let workspace_id = workspace.as_ref().map(|row| row.0);
     if let Some((workspace, desired, observed, _)) = workspace {
         if desired != "running" || observed != "running" {
             return Err(ApiError::conflict("workspace_must_be_running_for_delivery"));
@@ -97,9 +98,9 @@ pub(crate) async fn prepare(
         }
     }
 
-    let (target, project_id, protected, approvals): (Option<Value>, Uuid, bool, i32) =
+    let (target, project_id, protected, approvals, purpose): (Option<Value>, Uuid, bool, i32, String) =
         sqlx::query_as(
-            "SELECT e.kubernetes_target,e.project_id,e.protected,e.required_approvals
+            "SELECT e.kubernetes_target,e.project_id,e.protected,e.required_approvals,e.purpose
          FROM environments e JOIN pipelines p ON p.project_id=e.project_id
          WHERE e.id=$1 AND p.id=$2 FOR UPDATE OF e",
         )
@@ -109,6 +110,9 @@ pub(crate) async fn prepare(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::conflict("Environment belongs to another CI project"))?;
+    if purpose == "workspace_target" && workspace_id.is_none() {
+        return Err(ApiError::conflict("workspace_delivery_target_closed"));
+    }
     if let Some(expected) = bound_environment_hash {
         let observed = cicd_infra::development_workspace::request_hash(
             target
@@ -120,9 +124,8 @@ pub(crate) async fn prepare(
             return Err(ApiError::conflict("workspace_environment_target_drift"));
         }
     }
-    let target: KubernetesTarget = serde_json::from_value(
-        target.ok_or_else(|| ApiError::conflict("Environment has no Kubernetes target"))?,
-    )
+    let target_config = target.ok_or_else(|| ApiError::conflict("Environment has no Kubernetes target"))?;
+    let target: KubernetesTarget = serde_json::from_value(target_config.clone())
     .map_err(|_| ApiError::conflict("Invalid Kubernetes environment"))?;
     target.validate().map_err(ApiError::conflict)?;
     let requested:Option<(Uuid,Option<Uuid>,Option<Uuid>)>=sqlx::query_as(
@@ -135,6 +138,16 @@ pub(crate) async fn prepare(
          FOR UPDATE OF d")
         .bind(pipeline_id).bind(spec.environment_id).bind(project_id)
         .fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
+    if let Some((id, None, _)) = requested {
+        let frozen: Option<(Uuid, Value)> = sqlx::query_as(
+            "SELECT source_pipeline_id,publication_target FROM deployments WHERE id=$1 AND source_pipeline_id IS NOT NULL",
+        ).bind(id).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
+        if let Some((publication, frozen)) = frozen {
+            if spec.source_pipeline_id != Some(publication) || frozen != target_config {
+                return Err(ApiError::conflict("Approved stand publication target changed"));
+            }
+        }
+    }
     if protected && approvals > 0 {
         let id = requested
             .as_ref()
@@ -355,11 +368,24 @@ pub(crate) async fn prepare(
         .filter(|row| row.2.is_none())
         .map(|row| row.0)
         .unwrap_or_else(Uuid::new_v4);
+    let workspace_bootstrap = if let Some(workspace_id) = workspace_id {
+        let receipt: Option<Value> = sqlx::query_scalar(
+            "SELECT COALESCE(o.result->'result'->'bootstrap',o.result->'bootstrap')
+             FROM development_workspace_operations o JOIN development_workspaces w ON w.id=o.workspace_id
+             WHERE w.id=$1 AND o.state='succeeded' AND o.request->>'action'='create'
+             AND COALESCE(o.result->'result'->'bootstrap',o.result->'bootstrap')->>'reservationId'=w.catalog_target_id::text",
+        ).bind(workspace_id).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
+        receipt.map(serde_json::from_value).transpose()
+            .map_err(|_| ApiError::conflict("Invalid workspace bootstrap receipt"))?
+    } else {
+        None
+    };
     let offer = DeploymentOffer {
         environment_id: spec.environment_id,
         deployment_id: id,
         pipeline_id,
         source_pipeline_id,
+        workspace_bootstrap,
         job_id,
         attempt_id,
         lease_id,

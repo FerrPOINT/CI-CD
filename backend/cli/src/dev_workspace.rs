@@ -65,6 +65,14 @@ pub enum Command {
         #[command(flatten)]
         mutation: Mutation,
     },
+    Close {
+        #[command(flatten)]
+        mutation: Mutation,
+    },
+    ConvertToStand {
+        #[command(flatten)]
+        mutation: Mutation,
+    },
     BeginSession {
         #[command(flatten)]
         mutation: Mutation,
@@ -197,6 +205,8 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
         Command::Observe { mutation } => mutate(api, mutation, json!({"action":"observe"})).await,
         Command::Start { mutation } => mutate(api, mutation, json!({"action":"start"})).await,
         Command::Stop { mutation } => mutate(api, mutation, json!({"action":"stop"})).await,
+        Command::Close { mutation } => mutate(api, mutation, json!({"action":"close"})).await,
+        Command::ConvertToStand { mutation } => mutate(api, mutation, json!({"action":"convert_to_stand"})).await,
         Command::BeginSession { mutation, task } => {
             mutate(api, mutation, json!({"action":"begin_session","task":task})).await
         }

@@ -65,6 +65,30 @@ class HelmCustody(unittest.TestCase):
                     deploy.apply(self.target,None,self.offer,root)
                 helm.assert_not_called()
 
+    def test_initial_workspace_release_requires_matching_creator_receipt(self):
+        self.target.grant["namespaceUid"] = "uid"
+        self.offer["workspaceBootstrap"] = {
+            "namespaceUid": "uid", "reservationId": "reservation", "revision": 1, "release": "app",
+        }
+        current = {"version": 1, "info": {"status": "deployed", "description": "forge-workspace:reservation"},
+                   "observedValues": {}}
+        with self.workspace() as root, patch.object(deploy, "release", return_value=current), \
+             patch.object(deploy.subprocess, "check_output", return_value="a"*40), \
+             patch.object(deploy, "portable", return_value=root), \
+             patch.object(deploy, "helm") as helm, patch.object(deploy, "validate_manifest"), \
+             patch.object(deploy, "effect_marker"), \
+             patch.object(deploy, "readback", return_value={"phase": "deployed"}):
+            helm.return_value.returncode = 0
+            self.assertEqual(deploy.apply(self.target, None, self.offer, root)["phase"], "deployed")
+            self.assertEqual(helm.call_count, 2)
+            helm.reset_mock()
+            for key, value in [("namespaceUid", "foreign"), ("revision", 2), ("reservationId", "other")]:
+                foreign = copy.deepcopy(self.offer)
+                foreign["workspaceBootstrap"][key] = value
+                with self.assertRaisesRegex(ValueError, "unowned Helm release"):
+                    deploy.apply(self.target, None, foreign, root)
+            helm.assert_not_called()
+
     def test_repository_paths_reject_escape_but_allow_nested_chart(self):
         with self.workspace() as root:
             (root/"deploy/chart").mkdir(parents=True)

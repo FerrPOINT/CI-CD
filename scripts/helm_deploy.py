@@ -339,17 +339,25 @@ def apply(target, config, offer, root):
         return state
     if current:
         metadata = current["observedValues"].get("_forge")
-        if not isinstance(metadata, dict):
-            raise ValueError("Refuse adoption of an unowned Helm release")
-        if metadata.get("deploymentId") == offer["deploymentId"]:
-            return readback(target, config, offer)  # Exact retry performs no new effect.
         if current["info"]["status"].startswith("pending"):
             raise ValueError("Existing release operation remains unresolved")
-        if metadata.get("pipelineOrder", -1) > offer["pipelineOrder"]:
-            raise ValueError("A newer pipeline is already deployed")
-        if (metadata.get("pipelineOrder") == offer["pipelineOrder"]
-                and metadata.get("pipelineId") != offer["pipelineId"]):
-            raise ValueError("Pipeline ordering identity differs")
+        if isinstance(metadata, dict):
+            if metadata.get("deploymentId") == offer["deploymentId"]:
+                return readback(target, config, offer)
+            if metadata.get("pipelineOrder", -1) > offer["pipelineOrder"]:
+                raise ValueError("A newer pipeline is already deployed")
+            if (metadata.get("pipelineOrder") == offer["pipelineOrder"]
+                    and metadata.get("pipelineId") != offer["pipelineId"]):
+                raise ValueError("Pipeline ordering identity differs")
+        else:
+            bootstrap = offer.get("workspaceBootstrap")
+            if (metadata is not None or not bootstrap
+                    or bootstrap["namespaceUid"] != target.grant["namespaceUid"]
+                    or bootstrap["release"] != target.grant["release"]
+                    or bootstrap["revision"] != current["version"]
+                    or current["info"]["status"] != "deployed"
+                    or current["info"].get("description") != "forge-workspace:" + bootstrap["reservationId"]):
+                raise ValueError("Refuse adoption of an unowned Helm release")
     chart = portable(root, offer["target"]["chart"])
     with tempfile.TemporaryDirectory(prefix="forge-helm-values-") as temporary:
         overlay = Path(temporary) / "images.json"

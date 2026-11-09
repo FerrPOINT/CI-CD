@@ -7451,6 +7451,11 @@ components:
           - string
           - 'null'
           format: uuid
+        source_pipeline_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         status:
           type:
           - string
@@ -7977,6 +7982,11 @@ components:
           - string
           - 'null'
         runtime_receipt: {}
+        source_pipeline_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         status:
           type: string
     DeploymentApproval:
@@ -8114,6 +8124,10 @@ components:
           format: uuid
         target:
           $ref: '#/components/schemas/KubernetesTarget'
+        workspaceBootstrap:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/WorkspaceBootstrap'
       additionalProperties: false
     DeploymentReceipt:
       type: object
@@ -8299,6 +8313,11 @@ components:
         repository_id:
           type: string
           format: uuid
+        retired_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
         runtime:
           type: string
         sources: {}
@@ -8599,6 +8618,7 @@ components:
       - project_id
       - name
       - status
+      - purpose
       - protected
       - required_approvals
       - created_at
@@ -8620,6 +8640,8 @@ components:
           format: uuid
         protected:
           type: boolean
+        purpose:
+          type: string
         required_approvals:
           type: integer
           format: int32
@@ -8795,6 +8817,17 @@ components:
           type:
           - string
           - 'null'
+    ImageBinding:
+      type: object
+      required:
+      - job
+      - artifact
+      properties:
+        artifact:
+          type: string
+        job:
+          type: string
+      additionalProperties: false
     ImagePublishSpec:
       type: object
       required:
@@ -9058,6 +9091,12 @@ components:
           type: string
         namespace:
           type: string
+        publication_images:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ImageBinding'
+          propertyNames:
+            type: string
         release:
           type: string
         schema:
@@ -12342,6 +12381,22 @@ components:
             - stop
       - type: object
         required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - close
+      - type: object
+        required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - convert_to_stand
+      - type: object
+        required:
         - task
         - action
         properties:
@@ -12405,6 +12460,26 @@ components:
             - build
           source_commit:
             type: string
+    WorkspaceBootstrap:
+      type: object
+      required:
+      - reservationId
+      - namespaceUid
+      - release
+      - revision
+      properties:
+        namespaceUid:
+          type: string
+          format: uuid
+        release:
+          type: string
+        reservationId:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          format: int32
+      additionalProperties: false
     WorkspaceOperationBlocker:
       type: string
       enum:

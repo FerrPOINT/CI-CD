@@ -844,7 +844,7 @@ impl Fixture {
         let other_workspace = Uuid::new_v4();
         let environment = Uuid::new_v4();
         for (id, environment) in [(workspace, environment), (other_workspace, Uuid::new_v4())] {
-            sqlx::query("INSERT INTO environments(id,project_id,name) VALUES($1,$2,$3)")
+            sqlx::query("INSERT INTO environments(id,project_id,name,purpose) VALUES($1,$2,$3,'workspace_target')")
                 .bind(environment)
                 .bind(project)
                 .bind(id.to_string())
@@ -902,6 +902,33 @@ impl Fixture {
             .await
             .unwrap();
         self.admin.close().await;
+    }
+}
+
+#[tokio::test]
+async fn workspace_retirement_preserves_the_target_and_original_operation() {
+    for (action, runtime, expected_purpose) in [
+        (WorkspaceAction::Close {}, "stopped", "workspace_target"),
+        (WorkspaceAction::ConvertToStand {}, "running", "stand"),
+    ] {
+        let f = Fixture::new().await;
+        let id = Uuid::new_v4();
+        let version = f.version().await;
+        assert!(matches!(f.enqueue(id, f.actor, version, action.clone()).await,
+            Err(store::Error::Conflict("workspace_retirement_runtime_unconfirmed"))));
+        sqlx::query("UPDATE development_workspaces SET runtime=$2,desired_runtime=$2,observed_at=now() WHERE id=$1")
+            .bind(f.workspace).bind(runtime).execute(&f.pool).await.unwrap();
+        let first = f.enqueue(id, f.actor, version, action.clone()).await.unwrap();
+        let replay = f.enqueue(id, f.actor, version, action).await.unwrap();
+        assert_eq!(first.state, "succeeded");
+        assert_eq!(first.result, replay.result);
+        assert_eq!(f.version().await, version + 1);
+        let purpose: String = sqlx::query_scalar("SELECT purpose FROM environments WHERE id=$1")
+            .bind(f.environment).fetch_one(&f.pool).await.unwrap();
+        assert_eq!(purpose, expected_purpose);
+        assert!(matches!(f.enqueue(Uuid::new_v4(), f.actor, version + 1, WorkspaceAction::Start {}).await,
+            Err(store::Error::Conflict("workspace_retired"))));
+        f.close().await;
     }
 }
 
