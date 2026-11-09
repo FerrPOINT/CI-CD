@@ -8107,6 +8107,11 @@ components:
           - $ref: '#/components/schemas/RollbackRelease'
         sourceCommit:
           type: string
+        sourcePipelineId:
+          type:
+          - string
+          - 'null'
+          format: uuid
         target:
           $ref: '#/components/schemas/KubernetesTarget'
       additionalProperties: false
@@ -8172,6 +8177,11 @@ components:
           type: string
         sourceCommit:
           type: string
+        sourcePipelineId:
+          type:
+          - string
+          - 'null'
+          format: uuid
       additionalProperties: false
     DesiredSpaceState:
       type: string
@@ -12379,6 +12389,11 @@ components:
             type: string
           source_commit:
             type: string
+          source_pipeline_id:
+            type:
+            - string
+            - 'null'
+            format: uuid
       - type: object
         required:
         - source_commit

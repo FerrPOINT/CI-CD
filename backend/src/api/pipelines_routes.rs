@@ -1480,7 +1480,15 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
     }
 
     for job in jobs.values() {
-        if let Some(deploy) = &job.helm_deploy {
+        if let Some(deploy) = &job.helm_deploy
+            && deploy.source_pipeline_id.is_some()
+            && (!job.needs.is_empty() || jobs.len() != 1)
+        {
+            return Err("helm_deploy with source_pipeline_id must be a deploy-only pipeline".into());
+        }
+        if let Some(deploy) = &job.helm_deploy
+            && deploy.source_pipeline_id.is_none()
+        {
             for binding in deploy.images.values() {
                 let producer = jobs
                     .get(&binding.job)
@@ -2790,6 +2798,40 @@ jobs:
             );
             assert!(parse_pipeline_config(Some(&source)).is_err(), "{image}");
         }
+    }
+
+    #[test]
+    fn helm_delivery_of_a_completed_publication_has_no_build_jobs() {
+        let source = r#"version: 1
+jobs:
+  deploy:
+    helm_deploy:
+      environment_id: 6d589eaa-95e8-4d1b-99af-5a00686dea77
+      source_pipeline_id: 3a10c3aa-c2f5-45ac-b14f-76651725003b
+      images:
+        images.web:
+          job: build
+          artifact: out/image.json
+      receipt_artifact: out/deploy.json
+"#;
+        let parsed = parse_pipeline_config(Some(source)).unwrap();
+        let snapshot = build_pipeline_plan_snapshot(
+            "main",
+            Some(&"a".repeat(40)),
+            "development_workspace",
+            source.into(),
+            &parsed,
+        );
+        let entries = snapshot.plan["jobs"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0]["helm_deploy"]["source_pipeline_id"],
+            "3a10c3aa-c2f5-45ac-b14f-76651725003b"
+        );
+        assert!(parse_pipeline_config(Some(&source.replace(
+            "  deploy:",
+            "  other:\n    commands: [echo other]\n  deploy:",
+        ))).is_err());
     }
 
     #[test]

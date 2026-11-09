@@ -3108,6 +3108,8 @@ export interface components {
             receiptArtifact: string;
             rollback?: null | components["schemas"]["RollbackRelease"];
             sourceCommit: string;
+            /** Format: uuid */
+            sourcePipelineId?: string | null;
             target: components["schemas"]["KubernetesTarget"];
         };
         DeploymentReceipt: {
@@ -3136,6 +3138,8 @@ export interface components {
             releaseRevision: number;
             schema: string;
             sourceCommit: string;
+            /** Format: uuid */
+            sourcePipelineId?: string | null;
         };
         /** @enum {string} */
         DesiredSpaceState: "active" | "archived";
@@ -4230,6 +4234,7 @@ export interface components {
             artifacts: string[];
             commands: string[];
             commitSha?: string | null;
+            /** @description Нормализованные переменные pipeline CICD_VAR_<KEY>, без служебных полей и секретов. */
             environment: {
                 [key: string]: string;
             };
@@ -4283,6 +4288,7 @@ export interface components {
         };
         RunnerHeartbeatRequest: {
             activeLeaseIds?: string[];
+            /** @description Возможности runner; pipelineVariables=true требуется для заданий с переменными. */
             capabilities?: unknown;
             capacity: components["schemas"]["RunnerCapacity"];
             draining?: boolean;
@@ -4372,6 +4378,7 @@ export interface components {
             waitSeconds?: number;
         };
         RunnerRegisterRequest: {
+            /** @description Возможности runner; pipelineVariables=true требуется для заданий с переменными. */
             capabilities?: unknown;
             name: string;
             /** Format: int32 */
@@ -4840,6 +4847,8 @@ export interface components {
             action: "check";
             recipe: string;
             source_commit: string;
+            /** Format: uuid */
+            source_pipeline_id?: string | null;
         } | {
             /** @enum {string} */
             action: "build";

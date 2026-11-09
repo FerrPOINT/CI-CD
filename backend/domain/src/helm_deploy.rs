@@ -55,6 +55,18 @@ impl KubernetesTarget {
         {
             return Err("invalid Kubernetes environment identity or repository paths".into());
         }
+        if self.health_url.starts_with('/')
+            && self.health_url.len() <= 256
+            && !self.health_url.starts_with("//")
+            && self.health_url[1..].split('/').all(|segment| {
+                !matches!(segment, "." | "..")
+                    && segment.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~')
+                    })
+            })
+        {
+            return Ok(());
+        }
         let url = url::Url::parse(&self.health_url).map_err(|_| "invalid deployment health URL")?;
         if url.scheme() != "https"
             || url.host_str().is_none()
@@ -63,7 +75,7 @@ impl KubernetesTarget {
             || url.query().is_some()
             || url.fragment().is_some()
         {
-            return Err("deployment health requires a credential-free HTTPS URL".into());
+            return Err("deployment health requires a credential-free HTTPS URL or a cluster service path".into());
         }
         Ok(())
     }
@@ -79,12 +91,15 @@ pub struct ImageBinding {
 #[serde(deny_unknown_fields)]
 pub struct HelmDeploySpec {
     pub environment_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pipeline_id: Option<Uuid>,
     pub images: BTreeMap<String, ImageBinding>,
     pub receipt_artifact: String,
 }
 impl HelmDeploySpec {
     pub fn validate(&self) -> Result<(), String> {
         if self.environment_id.is_nil()
+            || self.source_pipeline_id.is_some_and(|id| id.is_nil())
             || self.images.is_empty()
             || self.images.len() > 16
             || !valid_relative_path(&self.receipt_artifact, false)
@@ -145,6 +160,9 @@ mod tests {
             "http://dev.test/health",
             "https://u:p@dev.test/",
             "https://dev.test/?key=x",
+            "//dev.test/health",
+            "/health?token=x",
+            "/api/../health",
         ] {
             let mut t = target();
             t.health_url = url.into();
@@ -153,6 +171,8 @@ mod tests {
         let mut value = serde_json::to_value(target()).unwrap();
         value["kubeconfig"] = serde_json::json!("/operator/admin");
         assert!(serde_json::from_value::<KubernetesTarget>(value).is_err());
+        t.health_url = "/health".into();
+        t.validate().unwrap();
     }
 }
 
@@ -163,6 +183,8 @@ pub struct DeploymentOffer {
     pub environment_id: Uuid,
     pub deployment_id: Uuid,
     pub pipeline_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pipeline_id: Option<Uuid>,
     pub job_id: Uuid,
     pub attempt_id: Uuid,
     pub lease_id: Uuid,
@@ -181,6 +203,8 @@ pub struct DeploymentReceipt {
     pub schema: String,
     pub deployment_id: Uuid,
     pub pipeline_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pipeline_id: Option<Uuid>,
     pub attempt_id: Uuid,
     pub lease_id: Uuid,
     pub generation: i64,
@@ -199,6 +223,7 @@ impl DeploymentReceipt {
         self.schema == "forge/kubernetes-deployment/v1"
             && self.deployment_id == offer.deployment_id
             && self.pipeline_id == offer.pipeline_id
+            && self.source_pipeline_id == offer.source_pipeline_id
             && self.attempt_id == offer.attempt_id
             && self.lease_id == offer.lease_id
             && self.generation == offer.generation

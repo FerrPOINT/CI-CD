@@ -127,13 +127,16 @@ def release(target, config):
     return value
 
 
-def verify_offer(offer, grant):
+def verify_offer(offer, target):
+    grant = target.grant
     for key, value in {"environmentId": offer["environmentId"], "cluster": offer["target"]["cluster"],
                        "namespace": offer["target"]["namespace"], "release": offer["target"]["release"]}.items():
         if grant[key] != value:
             raise ValueError("Deployment offer outside operator target")
     if not offer["images"] or len(offer["images"]) > 16:
         raise ValueError("Bounded publication inputs required")
+    if offer["target"]["health_url"].startswith("/") and target.health_service is None:
+        raise ValueError("Private health path requires an operator health service")
 
 
 def observed_images(target, offer):
@@ -187,14 +190,16 @@ def application_http(target, offer):
                               "/services/" + service["name"])
         annotations = observed["metadata"].get("annotations", {})
         ports = observed["spec"].get("ports", [])
+        service_types = ("ClusterIP", "NodePort") if public.netloc else ("ClusterIP",)
         if (annotations.get("meta.helm.sh/release-name") != target.grant["release"]
                 or annotations.get("meta.helm.sh/release-namespace") != target.grant["namespace"]
                 or not any(port["port"] == service["port"] for port in ports)
-                or observed["spec"].get("type", "ClusterIP") not in ("ClusterIP", "NodePort")):
+                or observed["spec"].get("type", "ClusterIP") not in service_types):
             raise ValueError("Health service is not owned by the expected Helm release")
         address = str(ipaddress.IPv4Address(observed["spec"]["clusterIP"]))
         endpoint = "http://" + address + ":" + str(service["port"]) + service["path"]
-        headers["Host"] = public.netloc
+        if public.netloc:
+            headers["Host"] = public.netloc
         transport = "cluster-service-http"
     # Kubernetes credentials are never passed to the application HTTP request.
     request = urllib.request.Request(endpoint, headers=headers)
@@ -272,6 +277,8 @@ def readback(target, config, offer):
         return {"phase": "failed", "releaseRevision": current["version"]}
     receipt = {key: offer[key] for key in ["deploymentId", "pipelineId", "attemptId",
                "leaseId", "generation", "sourceCommit"]}
+    if "sourcePipelineId" in offer:
+        receipt["sourcePipelineId"] = offer["sourcePipelineId"]
     receipt.update(schema="forge/kubernetes-deployment/v1",
         cluster=target.grant["cluster"], namespace=target.grant["namespace"],
         namespaceUid=target.grant["namespaceUid"], release=target.grant["release"],
@@ -380,8 +387,8 @@ def main():
     parser.add_argument("--readback", action="store_true")
     args = parser.parse_args()
     offer, grant = json.loads(args.offer), json.loads(args.grant)
-    verify_offer(offer, grant)
     target = Target(args.target, grant)
+    verify_offer(offer, target)
     with tempfile.TemporaryDirectory(prefix="forge-helm-target-") as directory:
         config = Path(directory) / "kubeconfig.json"
         config.write_text(json.dumps(target.config))

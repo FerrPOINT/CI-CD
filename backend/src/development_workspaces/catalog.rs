@@ -266,23 +266,47 @@ pub(crate) fn operation_plan(
     {
         return Err(ApiError::conflict("workspace_published_pipeline_invalid"));
     }
-    for job in pipeline["jobs"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .map(|(_, job)| job)
-    {
-        if let Some(deployment) = job.get("helm_deploy") {
+    let source_pipeline_id = match action {
+        WorkspaceAction::Check {
+            source_pipeline_id, ..
+        } => *source_pipeline_id,
+        _ => None,
+    };
+    let mut pipeline = pipeline.clone();
+    let jobs = pipeline["jobs"]
+        .as_object_mut()
+        .ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
+    let job_count = jobs.len();
+    let mut uses_publication = false;
+    for job in jobs.values_mut() {
+        if let Some(deployment) = job.get_mut("helm_deploy") {
             if deployment["environment_id"] != workspace.environment_id.to_string() {
                 return Err(ApiError::conflict("workspace_recipe_environment_mismatch"));
             }
+            if let Some(source) = deployment.get("source_pipeline_id") {
+                if !source.is_null() || job_count != 1 {
+                    return Err(ApiError::conflict("workspace_recipe_invalid_source_pipeline_input"));
+                }
+                let id = source_pipeline_id
+                    .ok_or_else(|| ApiError::bad_request("workspace_source_pipeline_required"))?;
+                deployment
+                    .as_object_mut()
+                    .ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?
+                    .insert("source_pipeline_id".into(), serde_json::json!(id));
+                uses_publication = true;
+            }
         }
     }
+    if source_pipeline_id.is_some() && !uses_publication {
+        return Err(ApiError::bad_request(
+            "workspace_recipe_does_not_accept_source_pipeline",
+        ));
+    }
     plan["recipe"] = serde_json::json!(recipe);
-    plan["pipeline"] = pipeline.clone();
     plan["recipeHash"] = serde_json::json!(
-        cicd_infra::development_workspace::request_hash(pipeline).map_err(super::error)?
+        cicd_infra::development_workspace::request_hash(&pipeline).map_err(super::error)?
     );
+    plan["pipeline"] = pipeline;
     Ok(plan)
 }
 

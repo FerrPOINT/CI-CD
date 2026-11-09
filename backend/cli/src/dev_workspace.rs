@@ -102,6 +102,8 @@ pub enum Command {
         recipe: String,
         #[arg(long)]
         commit: String,
+        #[arg(long)]
+        source_pipeline: Option<Uuid>,
     },
     Build {
         #[command(flatten)]
@@ -218,11 +220,18 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
             mutation,
             recipe,
             commit,
+            source_pipeline,
         } => {
             mutate(
                 api,
                 mutation,
-                json!({"action":"check","recipe":recipe,"source_commit":commit}),
+                {
+                    let mut command = json!({"action":"check","recipe":recipe,"source_commit":commit});
+                    if let Some(id) = source_pipeline {
+                        command["source_pipeline_id"] = json!(id);
+                    }
+                    command
+                },
             )
             .await
         }

@@ -161,6 +161,13 @@ Typed jobs `image_publish` и `helm_deploy` исполняют закреплё�
 `legacy_template` не допускается к typed jobs. Изменение каталога не меняет
 уже сохранённый план и не требует повторной отправки pipeline.
 
+Для опубликованного deploy-only рецепта владелец сессии передаёт ID
+завершённой сборки через `dev-workspace check --source-pipeline UUID` (поле
+`source_pipeline_id` команды `check`). В закрытом каталоге такой рецепт
+помечается `helm_deploy.source_pipeline_id: null`. Forge закрепляет полученный
+UUID в плане операции. Другие рецепты и машинные сессии этот параметр не
+принимают. Квитанция доставки содержит `sourcePipelineId`.
+
 Владельца workspace delivery определяет исходная операция, связанная с этим
 pipeline: её workspace, actor и subject должны совпадать с активной сессией;
 version исходной команды должна принадлежать этой сессии, а source оставаться

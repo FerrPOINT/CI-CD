@@ -98,5 +98,40 @@ class HelmCustody(unittest.TestCase):
             self.assertEqual(observed,{"phase":"failed","releaseRevision":3})
             self.assertNotIn("receipt",observed)
 
+    def test_private_health_requires_a_release_owned_cluster_ip(self):
+        self.offer["target"]["health_url"] = "/health"
+        self.target.grant.update(environmentId=self.offer["environmentId"], cluster="pdlc")
+        self.target.health_service = None
+        with self.assertRaisesRegex(ValueError, "requires an operator health service"):
+            deploy.verify_offer(self.offer, self.target)
+
+        self.target.health_service = {"name": "app", "port": 80, "path": "/health"}
+        self.target.api = lambda _: {
+            "metadata": {"annotations": {
+                "meta.helm.sh/release-name": "app",
+                "meta.helm.sh/release-namespace": "app-dev",
+            }},
+            "spec": {"type": "ClusterIP", "ports": [{"port": 80}], "clusterIP": "10.43.0.8"},
+        }
+        deploy.verify_offer(self.offer, self.target)
+        with patch.object(deploy.urllib.request, "build_opener") as build_opener:
+            build_opener.return_value.open.return_value.__enter__.return_value.status = 200
+            self.assertEqual(deploy.application_http(self.target, self.offer), (200, "cluster-service-http"))
+            request = build_opener.return_value.open.call_args.args[0]
+            self.assertEqual(request.full_url, "http://10.43.0.8:80/health")
+            self.assertNotIn("Authorization", request.headers)
+
+    def test_receipt_identifies_the_original_publication_pipeline(self):
+        self.offer["sourcePipelineId"] = "publication"
+        self.target.grant.update(cluster="pdlc", namespaceUid="namespace-uid")
+        current = {"version": 3, "info": {"status": "deployed"},
+                   "observedValues": {"_forge": deploy.image_values(self.offer)["_forge"]}}
+        with patch.object(deploy, "release", return_value=current), \
+             patch.object(deploy, "observed_images"), \
+             patch.object(deploy, "application_http", return_value=(200, "cluster-service-http")):
+            receipt = deploy.readback(self.target, None, self.offer)["receipt"]
+        self.assertEqual(receipt["sourcePipelineId"], "publication")
+        self.assertEqual(receipt["pipelineId"], self.offer["pipelineId"])
+
 if __name__=="__main__":
     unittest.main()
