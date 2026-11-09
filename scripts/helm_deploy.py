@@ -339,11 +339,11 @@ def apply(target, config, offer, root):
         return state
     if current:
         metadata = current["observedValues"].get("_forge")
+        if isinstance(metadata, dict) and metadata.get("deploymentId") == offer["deploymentId"]:
+            return readback(target, config, offer)
         if current["info"]["status"].startswith("pending"):
             raise ValueError("Existing release operation remains unresolved")
         if isinstance(metadata, dict):
-            if metadata.get("deploymentId") == offer["deploymentId"]:
-                return readback(target, config, offer)
             if metadata.get("pipelineOrder", -1) > offer["pipelineOrder"]:
                 raise ValueError("A newer pipeline is already deployed")
             if (metadata.get("pipelineOrder") == offer["pipelineOrder"]
