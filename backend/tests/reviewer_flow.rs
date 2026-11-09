@@ -665,6 +665,10 @@ async fn reviewer_native_commands_reuse_project_membership_with_active_space_pol
                 "http://reviewer-auth.example.invalid",
             )
             .env("CICD_AUTH__CENTRAL_APPLICATION_ACCESS_REQUIRED", "false")
+            .env(
+                "CICD_NAMESPACE__PUBLIC_GIT_ORIGIN",
+                "http://forge.example.invalid",
+            )
             .env("NO_PROXY", "127.0.0.1,localhost")
             .kill_on_drop(true)
             .output()
@@ -754,6 +758,10 @@ async fn reviewer_native_commands_reuse_project_membership_with_active_space_pol
         .unwrap();
     let router = app(pool.clone(), root.path());
     let prefix = format!("/api/v1/catalog/repositories/{repository}/pulls/1");
+    let metadata_path = format!("/api/v1/catalog/repositories/{repository}");
+    let metadata = ok(&router, TOKEN, "GET", &metadata_path, Value::Null).await;
+    assert_eq!(metadata["id"], repository.to_string());
+    assert_eq!(metadata["storage_name"], "native");
     let context = ok(
         &router,
         TOKEN,
@@ -793,12 +801,15 @@ async fn reviewer_native_commands_reuse_project_membership_with_active_space_pol
         .execute(&pool)
         .await
         .unwrap();
-    let ci_paths = [
+    let read_paths = [
+        metadata_path,
+        "/api/v1/repos/native/tree?ref=task".to_string(),
+        "/api/v1/repos/native/blob?ref=task&path=data.txt".to_string(),
         format!("/api/v1/pipelines/{pipeline}"),
         format!("/api/v1/jobs/{job}/attempts"),
         format!("/api/v1/jobs/{job}/logs/page?limit=100"),
     ];
-    for path in &ci_paths {
+    for path in &read_paths {
         ok(&router, TOKEN, "GET", path, Value::Null).await;
     }
     let checks = ok(
@@ -814,9 +825,15 @@ async fn reviewer_native_commands_reuse_project_membership_with_active_space_pol
     .await;
     assert_eq!(checks[0]["pipeline_id"], pipeline.to_string());
     let other_project = Uuid::new_v4();
+    let other_repository = Uuid::new_v4();
     let other_pipeline = Uuid::new_v4();
-    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,'Other CI','https://example.invalid/other.git')")
-        .bind(other_project).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,'other-native')")
+        .bind(other_repository)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO projects(id,name,repository_url,repository_id) VALUES($1,'Other CI','https://example.invalid/other.git',$2)")
+        .bind(other_project).bind(other_repository).execute(&pool).await.unwrap();
     sqlx::query(
         "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','success')",
     )
@@ -825,6 +842,22 @@ async fn reviewer_native_commands_reuse_project_membership_with_active_space_pol
     .execute(&pool)
     .await
     .unwrap();
+    for (method, path) in [
+        (
+            "GET",
+            format!("/api/v1/catalog/repositories/{other_repository}"),
+        ),
+        ("GET", "/api/v1/catalog/repositories".to_string()),
+        (
+            "PUT",
+            format!("/api/v1/catalog/repositories/{repository}/group"),
+        ),
+    ] {
+        assert_eq!(
+            call(&router, TOKEN, method, &path, Value::Null).await.0,
+            StatusCode::FORBIDDEN
+        );
+    }
     assert_eq!(
         call(
             &router,
@@ -908,7 +941,7 @@ async fn reviewer_native_commands_reuse_project_membership_with_active_space_pol
         .execute(&pool)
         .await
         .unwrap();
-    for path in &ci_paths {
+    for path in &read_paths {
         assert_eq!(
             call(&router, TOKEN, "GET", path, Value::Null).await.0,
             StatusCode::FORBIDDEN

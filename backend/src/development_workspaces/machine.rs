@@ -94,6 +94,9 @@ fn target(method: &str, path: &str) -> Option<Target> {
     match parts.as_slice() {
         ["auth", "principal"] if method == "GET" => Some(Target::Identity),
         ["task-pulls"] if method == "GET" => Some(Target::TaskPulls),
+        ["catalog", "repositories", repository] if method == "GET" => {
+            Some(Target::Repository(canonical(repository)?))
+        }
         ["catalog", "repositories", repository, "pulls"] if matches!(method, "GET" | "POST") => {
             Some(Target::Repository(canonical(repository)?))
         }
@@ -568,6 +571,10 @@ mod tests {
     #[test]
     fn pr_routes_allow_review_reads_and_metadata_writes_without_execution_actions() {
         let repository = Uuid::new_v4();
+        assert!(handles(
+            "GET",
+            &format!("/api/v1/catalog/repositories/{repository}")
+        ));
         let root = format!("/api/v1/catalog/repositories/{repository}/pulls");
         for method in ["GET", "POST"] {
             assert!(handles(method, &root));
@@ -624,7 +631,8 @@ mod tests {
                 format!("/api/v1/development-workspaces/{id}/operations/{id}/reconcile"),
             ),
             ("POST", format!("/api/v1/projects/{id}/pipelines")),
-            ("GET", format!("/api/v1/catalog/repositories/{id}")),
+            ("GET", "/api/v1/catalog/repositories".to_string()),
+            ("PUT", format!("/api/v1/catalog/repositories/{id}")),
             (
                 "GET",
                 format!("/api/v1/development-workspaces/{id}/../{id}"),
