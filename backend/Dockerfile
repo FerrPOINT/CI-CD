@@ -13,6 +13,7 @@ COPY CI-CD/backend/Cargo.toml CI-CD/backend/Cargo.lock* ./
 COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
 COPY CI-CD/backend/infra/Cargo.toml infra/Cargo.toml
+COPY CI-CD/backend/infra/tests/repository_sync_schedule.rs infra/tests/repository_sync_schedule.rs
 COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
 COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml

@@ -45,6 +45,17 @@ class BackendDockerfileTests(unittest.TestCase):
             with self.subTest(dockerfile=name):
                 self.assertEqual(staged_paths(build, required, destinations), required)
 
+    def test_explicit_sync_test_target_is_staged_before_dependency_build(self) -> None:
+        path = "CI-CD/backend/infra/tests/repository_sync_schedule.rs"
+        for name in ("Dockerfile", "Dockerfile.umbrella"):
+            recipe = (DOCKERFILE.parent / name).read_text(encoding="utf-8")
+            prewarm = recipe.split("/usr/local/cargo/bin/cargo build --locked", 1)[0]
+            with self.subTest(dockerfile=name):
+                self.assertEqual(
+                    staged_paths(prewarm, {path}, {path: "infra/tests/repository_sync_schedule.rs"}),
+                    {path},
+                )
+
     def test_embedded_workspace_validators_are_staged_in_both_recipes(self) -> None:
         root = DOCKERFILE.parents[1]
         source = (root / "backend/src/runner_image_build/workspace_deploy.rs").read_text(encoding="utf-8")
