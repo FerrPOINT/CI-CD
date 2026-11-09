@@ -234,8 +234,16 @@ async fn verify_repository_reads(
             number, 1,
             "fixture allocates through the real repository counter"
         );
-        sqlx::query("INSERT INTO pull_requests(id,repository_name,number,title,source_branch,target_branch,status,created_by) VALUES($1,$2,1,$3,'task/current','main','open','fixture')")
-            .bind(Uuid::new_v4()).bind(storage).bind(title).execute(pool).await.unwrap();
+        crate::pull_fixture::insert(
+            pool,
+            storage,
+            1,
+            title,
+            ("task/current", "main"),
+            "open",
+            "fixture",
+        )
+        .await;
         let count: i64 =
             sqlx::query_scalar("SELECT count(*) FROM pull_requests WHERE repository_id=$1")
                 .bind(id)
@@ -995,7 +1003,7 @@ pub(super) async fn verify(
     profile.write().unwrap().scopes = vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"];
     let archived_write=http.post(format!("{origin}/api/v1/catalog/repositories/{repository}/pulls"))
         .bearer_auth("sdlc_pat_fixture_product_roles")
-        .json(&serde_json::json!({"title":"archived denied","source_branch":"task/current","target_branch":"main"}))
+        .json(&serde_json::json!({"primary_task":{"tracker_instance_id":Uuid::new_v4(),"task_id":Uuid::new_v4()},"title":"archived denied","source_branch":"task/current","target_branch":"main"}))
         .send().await.unwrap();
     assert!(
         matches!(archived_write.status().as_u16(), 409 | 503),

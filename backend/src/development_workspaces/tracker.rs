@@ -25,7 +25,7 @@ pub(super) async fn read_task(
             &token,
             namespace,
             tracker_instance,
-            project,
+            Some(project),
             identifier,
         ),
     )
@@ -76,6 +76,20 @@ async fn reader(
         .build()
         .map_err(|_| unavailable())?;
     Ok((client, base, token.trim().to_owned()))
+}
+
+pub(crate) async fn read_namespace_task(
+    namespace: &NamespaceRef,
+    tracker: Uuid,
+    identifier: &str,
+) -> Result<(Uuid, String), ApiError> {
+    let (client, base, token) = reader(namespace, tracker).await?;
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        resolve(&client, &base, &token, namespace, tracker, None, identifier),
+    )
+    .await
+    .map_err(|_| unavailable())?
 }
 
 pub(super) async fn read_assignment(
@@ -159,7 +173,7 @@ async fn resolve(
     token: &str,
     namespace: &NamespaceRef,
     tracker_instance: Uuid,
-    project: Uuid,
+    project: Option<Uuid>,
     identifier: &str,
 ) -> Result<(Uuid, String), ApiError> {
     if identifier.is_empty()
@@ -225,7 +239,7 @@ async fn resolve(
     if value["schema_version"] != 1
         || value["namespace"] != serde_json::to_value(namespace).map_err(|_| unavailable())?
         || value["tracker_instance_id"] != tracker_instance.to_string()
-        || value["project_id"] != project.to_string()
+        || project.is_some_and(|project| value["project_id"] != project.to_string())
         || value["task_id"] != task.to_string()
         || value["state"] != "active"
     {
@@ -326,7 +340,7 @@ mod tests {
                 "fixture-namespace-reader",
                 &namespace,
                 instance,
-                project,
+                Some(project),
                 &identifier,
             )
             .await;

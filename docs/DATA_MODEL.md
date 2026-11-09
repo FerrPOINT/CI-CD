@@ -1369,3 +1369,20 @@ Worker и сохранение подключения используют share
 Сроки считаются по последнему `schedule/git_change` run; ручной run не меняет период.
 Миграция подключает таблицу к существующему original-request commit clock.
 Исторические миграции, подключения, credentials и run snapshots сохраняются.
+
+## PR: основная Task и история замечаний (0116)
+
+`pull_requests.primary_tracker_instance_id` / `primary_task_id` — совместно
+nullable только для неразобранной истории. Deferred composite FK ссылается на
+`pull_task_links(pull_request_id, tracker_instance_id, task_id)`. Deferred trigger
+не допускает новый PR без основной Task и очистку выбранной связи. Номер PR,
+основная Task и существующая таблица связей сохраняются одной транзакцией.
+Однозначные прежние связи мигрируют автоматически; несколько/ноль сохраняются
+до явного подтверждения. Существующие задачи, PR и комментарии не удаляются.
+
+`pull_comments`: id, pull_request_id, author_id, operation_id, base_sha, head_sha,
+severity, body, nullable anchor jsonb, created_at. Unique PR/author/operation,
+FK на PR/пользователя, неизменяемая история и существующие identity deletion
+fences. Anchor хранит путь, old/new и исходную строку. SHA не обновляются при push.
+Постраничное чтение не ограничивает суммарную историю.
+Подробности: [ADR-0047](adr/0047-task-bound-reviewer.md).

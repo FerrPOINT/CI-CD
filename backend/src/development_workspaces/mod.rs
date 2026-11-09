@@ -5,7 +5,7 @@ mod catalog;
 pub(crate) mod machine;
 pub(crate) mod machine_git;
 mod native;
-mod tracker;
+pub(crate) mod tracker;
 pub mod worker;
 use crate::api::{ApiError, AppState, authz_mw::VerifiedRequestIdentity};
 use crate::space_admission::RepositoryWrite;

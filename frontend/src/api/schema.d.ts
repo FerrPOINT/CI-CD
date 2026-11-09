@@ -452,6 +452,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog/repositories/{id}/pulls/{number}/checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_pull_checks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/pulls/{number}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_pull_comment_list"];
+        put?: never;
+        post: operations["forge_pull_comment_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/pulls/{number}/patch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_pull_patch"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/pulls/{number}/review-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_pull_review_context"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks": {
         parameters: {
             query?: never;
@@ -1951,6 +2015,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/repos/{repo}/task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_repository_task_lookup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/repos/{repo}/tree": {
         parameters: {
             query?: never;
@@ -2359,6 +2439,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["human_window"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/task-pulls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_task_pull_catalog"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2817,6 +2913,14 @@ export interface components {
         ChangeStatus: {
             status: components["schemas"]["JobStatus"];
         };
+        CommentAnchor: {
+            /** Format: int32 */
+            line: number;
+            path: string;
+            side: components["schemas"]["DiffSide"];
+        };
+        /** @enum {string} */
+        CommentSeverity: "note" | "P0" | "P1" | "P2" | "P3";
         CommitInfo: {
             author: string;
             date: string;
@@ -2867,14 +2971,25 @@ export interface components {
         };
         CreatePull: {
             description?: string | null;
+            primary_task: components["schemas"]["TaskRef"];
             source_branch: string;
             target_branch: string;
             title: string;
+        };
+        CreatePullComment: {
+            anchor?: null | components["schemas"]["CommentAnchor"];
+            base_sha: string;
+            body: string;
+            head_sha: string;
+            /** Format: uuid */
+            operation_id: string;
+            severity: components["schemas"]["CommentSeverity"];
         };
         CreatePullRequest: {
             /** @description Optional author label; overridden by the authenticated identity. */
             author?: string | null;
             description?: string | null;
+            primary_task: components["schemas"]["TaskRef"];
             repository_name: string;
             source_branch: string;
             target_branch: string;
@@ -3305,6 +3420,8 @@ export interface components {
             patch_truncated: boolean;
             to: string;
         };
+        /** @enum {string} */
+        DiffSide: "old" | "new";
         Environment: {
             /** Format: date-time */
             created_at: string;
@@ -3497,6 +3614,13 @@ export interface components {
             namespaceUid: string;
             podUid: string;
             workspaceClaimUid: string;
+        };
+        LinkTaskRequest: {
+            primary?: boolean;
+            /** Format: uuid */
+            task_id: string;
+            /** Format: uuid */
+            tracker_instance_id: string;
         };
         LocalPreparation: {
             /** Format: uuid */
@@ -3891,6 +4015,24 @@ export interface components {
             schema: string;
             sourceCommit: string;
         };
+        PullComment: {
+            anchor?: null | components["schemas"]["CommentAnchor"];
+            author?: string | null;
+            /** Format: uuid */
+            author_id: string;
+            base_sha: string;
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            head_sha: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            operation_id: string;
+            /** Format: uuid */
+            pull_request_id: string;
+            severity: string;
+        };
         PullRequest: {
             /** Format: date-time */
             created_at: string;
@@ -3903,6 +4045,10 @@ export interface components {
             merged_at?: string | null;
             /** Format: int32 */
             number: number;
+            /** Format: uuid */
+            primary_task_id?: string | null;
+            /** Format: uuid */
+            primary_tracker_instance_id?: string | null;
             /** Format: uuid */
             repository_id?: string | null;
             repository_name: string;
@@ -3921,6 +4067,13 @@ export interface components {
             offset: number;
             /** Format: int64 */
             total: number;
+        };
+        PullReviewContext: {
+            base_sha: string;
+            head_sha: string;
+            merge_base: string;
+            /** Format: uuid */
+            pull_request_id: string;
         };
         PullTaskLink: {
             namespace: components["schemas"]["NamespaceRef"];
@@ -4230,6 +4383,7 @@ export interface components {
             artifacts: string[];
             commands: string[];
             commitSha?: string | null;
+            /** @description Нормализованные переменные pipeline CICD_VAR_<KEY>, без служебных полей и секретов. */
             environment: {
                 [key: string]: string;
             };
@@ -4283,6 +4437,7 @@ export interface components {
         };
         RunnerHeartbeatRequest: {
             activeLeaseIds?: string[];
+            /** @description Возможности runner; pipelineVariables=true требуется для заданий с переменными. */
             capabilities?: unknown;
             capacity: components["schemas"]["RunnerCapacity"];
             draining?: boolean;
@@ -4372,6 +4527,7 @@ export interface components {
             waitSeconds?: number;
         };
         RunnerRegisterRequest: {
+            /** @description Возможности runner; pipelineVariables=true требуется для заданий с переменными. */
             capabilities?: unknown;
             name: string;
             /** Format: int32 */
@@ -4618,6 +4774,10 @@ export interface components {
             trackerInstanceId: string;
             /** Format: uuid */
             trackerProjectId: string;
+        };
+        TaskLookup: {
+            task: components["schemas"]["TaskRef"];
+            task_key: string;
         };
         TaskPullEvidence: {
             checks: components["schemas"]["RepositoryCheckRef"][];
@@ -5849,6 +6009,144 @@ export interface operations {
             };
         };
     };
+    forge_pull_checks: {
+        parameters: {
+            query: {
+                head_sha: string;
+                offset?: number | null;
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryCheckRef"][];
+                };
+            };
+        };
+    };
+    forge_pull_comment_list: {
+        parameters: {
+            query?: {
+                offset?: number | null;
+                limit?: number | null;
+                operation_id?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullComment"][];
+                };
+            };
+        };
+    };
+    forge_pull_comment_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePullComment"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullComment"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_pull_patch: {
+        parameters: {
+            query: {
+                base_sha: string;
+                head_sha: string;
+                path?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    forge_pull_review_context: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullReviewContext"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     forge_pull_task_links: {
         parameters: {
             query?: {
@@ -5890,7 +6188,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TaskRef"];
+                "application/json": components["schemas"]["LinkTaskRequest"];
             };
         };
         responses: {
@@ -9759,6 +10057,29 @@ export interface operations {
             };
         };
     };
+    forge_repository_task_lookup: {
+        parameters: {
+            query: {
+                identifier: string;
+            };
+            header?: never;
+            path: {
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskLookup"];
+                };
+            };
+        };
+    };
     list_tree: {
         parameters: {
             query?: {
@@ -10955,6 +11276,30 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    forge_task_pull_catalog: {
+        parameters: {
+            query: {
+                tracker_instance_id: string;
+                task_id: string;
+                offset?: number | null;
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestPage"];
+                };
             };
         };
     };

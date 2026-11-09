@@ -352,3 +352,11 @@ Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` prox
 
 Приостановка producers и source-owned writer closure перед backup описаны в
 [FORGE_QUIESCENCE](FORGE_QUIESCENCE.md) и [ADR-0033](adr/0033-product-local-quiescence.md).
+
+## Минимальный Reviewer
+
+[ADR-0047](adr/0047-task-bound-reviewer.md) использует существующие Task links,
+каталог, Git, CI и RepositoryWrite. Forge владеет обязательной основной Task PR,
+полным чтением diff и неизменяемыми замечаниями. Workflow владеет инструкциями,
+Tracker — результатом/назначением, Fleet — фактическим завершением native run.
+Новый сервис, очередь ревью, workspace или исполнитель проверок не добавляются.
