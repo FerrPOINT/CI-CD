@@ -269,6 +269,24 @@ pub(crate) fn build_router_with_cors(
             get(crate::task_links::list).post(crate::task_links::link),
         )
         .route(
+            "/api/v1/catalog/repositories/{id}/pulls/{number}/comments",
+            get(crate::pull_comments::list).post(crate::pull_comments::create),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/pulls/{number}/review-context",
+            get(crate::pull_comments::review_context),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/pulls/{number}/patch",
+            get(crate::pull_comments::patch),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/pulls/{number}/checks",
+            get(crate::pull_comments::checks),
+        )
+        .route("/api/v1/task-pulls", get(crate::task_links::task_pulls))
+        .route("/api/v1/repos/{repo}/task", get(crate::task_links::lookup))
+        .route(
             "/api/v1/projects/{project_id}",
             get(get_project)
                 .patch(update_project)

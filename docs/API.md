@@ -426,6 +426,9 @@ Project-bound service account с `api:read` может прочитать точ
 чужой репозиторий и изменения метаданных не получают такого разрешения.
 CLI: `cicd-cli repository get --id <uuid>`; возвращённый `public_name` используется
 как единое значение `--repo` в Tree/Blob вместе с закреплённым commit.
+Central machine credential с `ci-cd:read` использует для этого же точного GET
+существующее членство в проекте, как чтение PR и исходников; чужая metadata,
+коллекция каталога и запись по этому пути остаются закрыты.
 
 | Endpoint | Назначение |
 | --- | --- |
@@ -656,8 +659,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 113,
-    "latest_required_version": 113,
+    "latest_applied_version": 117,
+    "latest_required_version": 117,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -2363,3 +2366,34 @@ Forge → «Конфигурация сервера» сохраняет нас�
 При сохранении следующий срок считается от последнего автоматического запуска;
 ручные запуски не сдвигают его. Очередь/активные запуски не отменяются.
 Детали владения и совместимости: [ADR-0045](adr/0045-global-sync-schedule.md).
+
+## PR, обязательная Task и замечания Reviewer
+
+Source-контракт 2026-11-08: POST `/api/v1/repos/{repo}/pulls` и
+`/api/v1/catalog/repositories/{id}/pulls` требует
+`primary_task: {tracker_instance_id, task_id}`. Ответ PR включает nullable
+`primary_tracker_instance_id`/`primary_task_id` для чтения сохранённой истории.
+Task проверяется прежним namespace-reader; PR и связь коммитятся атомарно.
+
+| Метод и путь | Данные / результат |
+| --- | --- |
+| GET `/api/v1/repos/{repo}/task?identifier=<key-or-uuid>` | Проверенный `{task: TaskRef, task_key}` для формы создания |
+| GET `/api/v1/task-pulls?tracker_instance_id=&task_id=&offset=&limit=` | `PullRequestPage`, limit 1..100, все связанные PR без фильтра статуса |
+| GET `/api/v1/catalog/repositories/{id}/pulls/{number}/review-context` | `{pull_request_id, base_sha, head_sha, merge_base}` |
+| GET `…/patch?base_sha=&head_sha=&path=` | Полный поток text/plain; path необязателен и трактуется буквально |
+| GET `…/checks?head_sha=&offset=&limit=` | Страница готовых `{pipeline_id, commit_sha, status}` для этого head, limit до 100 |
+| GET `…/comments?offset=&limit=&operation_id=` | Страница замечаний; operation_id ищет исходную запись текущего автора |
+| POST `…/comments` | `{operation_id, base_sha, head_sha, body, severity, anchor}` |
+| POST `…/tasks` | Прежний TaskRef и необязательный `primary: true` для подтверждённой миграции |
+
+Важность: note/P0/P1/P2/P3. Anchor: null для общего комментария либо
+`{path, side: old|new, line}` с положительной строкой diff. Ответ содержит автора,
+SHA и дату. Одинаковая операция PR/автора возвращает исходную запись; другое тело
+с тем же ключом — 409. Новая запись/patch/checks с изменившейся версией — 409.
+Неизвестное сохранение проверять GET по operation_id, затем повторять исходное
+тело с тем же ключом. Старые записи сохраняются после изменения SHA/restart.
+
+Read endpoints используют обычный Repository/Space/Project admission. Запись
+замечания использует существующее право Developer/RepositoryWrite, включая
+native scoped identity. API не выдаёт права на Task и не запускает CI.
+Миграция, CLI и границы исполнения: [ADR-0047](adr/0047-task-bound-reviewer.md).

@@ -278,6 +278,7 @@ async fn sync_guard_serializes_concurrent_pr_merge_without_duplicate_commit() {
                 "user.email=qa@example.invalid",
             ])
             .args(args)
+            .stdin(std::process::Stdio::null())
             .output()
             .await
             .unwrap();
@@ -318,8 +319,16 @@ async fn sync_guard_serializes_concurrent_pr_merge_without_duplicate_commit() {
     .await;
     git(&local, &["update-ref", "refs/heads/main", &initial]).await;
     git(&local, &["update-ref", "refs/heads/feature", &feature]).await;
-    sqlx::query("INSERT INTO pull_requests(id,repository_id,repository_name,number,title,source_branch,target_branch) VALUES($1,$2,$3,1,'QA concurrent merge','feature','main')")
-        .bind(Uuid::new_v4()).bind(repository).bind(&name).execute(&pool).await.unwrap();
+    crate::pull_fixture::insert(
+        &pool,
+        &name,
+        1,
+        "QA concurrent merge",
+        ("feature", "main"),
+        "open",
+        "",
+    )
+    .await;
     // Count native target publications rather than treating an idempotent HTTP
     // confirmation as a second merge. Durable recovery returns the original OID.
     let publications = root.join("main-publications");

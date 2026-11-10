@@ -226,6 +226,13 @@ async fn child(data: serde_json::Value) {
     config.secrets.key = Some([7; 32]);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     config.http.bind = listener.local_addr().unwrap().to_string();
+    // This isolated child owns the Git HTTP server and its public origin.
+    unsafe {
+        std::env::set_var(
+            "CICD_NAMESPACE__PUBLIC_GIT_ORIGIN",
+            format!("http://{}", config.http.bind),
+        );
+    }
     config.git.root = data["git_root"].as_str().unwrap().into();
     config.git.internal_token = Some("workspace-fixture-internal".into());
     config.runner.registration_token = Some("workspace-runner-fixture".into());

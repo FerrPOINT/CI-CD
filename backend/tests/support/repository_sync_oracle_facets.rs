@@ -222,12 +222,15 @@ async fn manual_mode_real_receive_and_merge_stay_idle_beyond_interval_then_manua
         previous
     );
     let storage = f.local.file_stem().unwrap().to_str().unwrap();
+    let (primary_task, task_reader, _token_file) =
+        crate::pull_fixture::task_reader(&f.pool, storage).await;
     let response = f.api.clone().oneshot(Request::post(format!("/api/v1/repos/{storage}/pulls"))
         .header("authorization",format!("Bearer {authorization}"))
         .header("content-type","application/json")
-        .body(Body::from(serde_json::json!({"repository_name":storage,"title":"QA manual merge signal","source_branch":feature.strip_prefix("refs/heads/").unwrap(),"target_branch":base.strip_prefix("refs/heads/").unwrap()}).to_string())).unwrap()).await.unwrap();
+        .body(Body::from(serde_json::json!({"primary_task":primary_task,"repository_name":storage,"title":"QA manual merge signal","source_branch":feature.strip_prefix("refs/heads/").unwrap(),"target_branch":base.strip_prefix("refs/heads/").unwrap()}).to_string())).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let pr = response_json(response).await;
+    task_reader.abort();
     let response = f
         .api
         .clone()

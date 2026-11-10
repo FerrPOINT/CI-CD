@@ -1011,6 +1011,206 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PullRequest'
+  /api/v1/catalog/repositories/{id}/pulls/{number}/checks:
+    get:
+      tags:
+      - pulls
+      operationId: forge_pull_checks
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: head_sha
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RepositoryCheckRef'
+  /api/v1/catalog/repositories/{id}/pulls/{number}/comments:
+    get:
+      tags:
+      - pulls
+      operationId: forge_pull_comment_list
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: operation_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PullComment'
+    post:
+      tags:
+      - pulls
+      operationId: forge_pull_comment_create
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePullComment'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullComment'
+        '409':
+          description: ''
+  /api/v1/catalog/repositories/{id}/pulls/{number}/patch:
+    get:
+      tags:
+      - pulls
+      operationId: forge_pull_patch
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: base_sha
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: head_sha
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: path
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      responses:
+        '200':
+          description: ''
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/v1/catalog/repositories/{id}/pulls/{number}/review-context:
+    get:
+      tags:
+      - pulls
+      operationId: forge_pull_review_context
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullReviewContext'
+        '409':
+          description: ''
   /api/v1/catalog/repositories/{id}/pulls/{number}/tasks:
     get:
       tags:
@@ -1104,7 +1304,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TaskRef'
+              $ref: '#/components/schemas/LinkTaskRequest'
         required: true
       responses:
         '200':
@@ -5195,6 +5395,29 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/TagInfo'
+  /api/v1/repos/{repo}/task:
+    get:
+      tags:
+      - pulls
+      operationId: forge_repository_task_lookup
+      parameters:
+      - name: repo
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: identifier
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskLookup'
   /api/v1/repos/{repo}/tree:
     get:
       tags:
@@ -6139,6 +6362,47 @@ paths:
           description: ''
         '503':
           description: ''
+  /api/v1/task-pulls:
+    get:
+      tags:
+      - pulls
+      operationId: forge_task_pull_catalog
+      parameters:
+      - name: tracker_instance_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: task_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequestPage'
   /api/v1/users:
     get:
       tags:
@@ -7376,6 +7640,30 @@ components:
       properties:
         status:
           $ref: '#/components/schemas/JobStatus'
+    CommentAnchor:
+      type: object
+      required:
+      - path
+      - side
+      - line
+      properties:
+        line:
+          type: integer
+          format: int32
+          minimum: 0
+        path:
+          type: string
+        side:
+          $ref: '#/components/schemas/DiffSide'
+      additionalProperties: false
+    CommentSeverity:
+      type: string
+      enum:
+      - note
+      - P0
+      - P1
+      - P2
+      - P3
     CommitInfo:
       type: object
       required:
@@ -7507,6 +7795,7 @@ components:
     CreatePull:
       type: object
       required:
+      - primary_task
       - title
       - source_branch
       - target_branch
@@ -7515,6 +7804,8 @@ components:
           type:
           - string
           - 'null'
+        primary_task:
+          $ref: '#/components/schemas/TaskRef'
         source_branch:
           type: string
         target_branch:
@@ -7522,9 +7813,35 @@ components:
         title:
           type: string
       additionalProperties: false
+    CreatePullComment:
+      type: object
+      required:
+      - operation_id
+      - base_sha
+      - head_sha
+      - body
+      - severity
+      properties:
+        anchor:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/CommentAnchor'
+        base_sha:
+          type: string
+        body:
+          type: string
+        head_sha:
+          type: string
+        operation_id:
+          type: string
+          format: uuid
+        severity:
+          $ref: '#/components/schemas/CommentSeverity'
+      additionalProperties: false
     CreatePullRequest:
       type: object
       required:
+      - primary_task
       - repository_name
       - title
       - source_branch
@@ -7539,6 +7856,8 @@ components:
           type:
           - string
           - 'null'
+        primary_task:
+          $ref: '#/components/schemas/TaskRef'
         repository_name:
           type: string
         source_branch:
@@ -8611,6 +8930,11 @@ components:
           type: boolean
         to:
           type: string
+    DiffSide:
+      type: string
+      enum:
+      - old
+      - new
     Environment:
       type: object
       required:
@@ -9122,6 +9446,21 @@ components:
           type: string
         workspaceClaimUid:
           type: string
+      additionalProperties: false
+    LinkTaskRequest:
+      type: object
+      required:
+      - tracker_instance_id
+      - task_id
+      properties:
+        primary:
+          type: boolean
+        task_id:
+          type: string
+          format: uuid
+        tracker_instance_id:
+          type: string
+          format: uuid
       additionalProperties: false
     LocalPreparation:
       type: object
@@ -10101,6 +10440,50 @@ components:
         sourceCommit:
           type: string
       additionalProperties: false
+    PullComment:
+      type: object
+      required:
+      - id
+      - pull_request_id
+      - author_id
+      - operation_id
+      - base_sha
+      - head_sha
+      - body
+      - severity
+      - created_at
+      properties:
+        anchor:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/CommentAnchor'
+        author:
+          type:
+          - string
+          - 'null'
+        author_id:
+          type: string
+          format: uuid
+        base_sha:
+          type: string
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        head_sha:
+          type: string
+        id:
+          type: string
+          format: uuid
+        operation_id:
+          type: string
+          format: uuid
+        pull_request_id:
+          type: string
+          format: uuid
+        severity:
+          type: string
     PullRequest:
       type: object
       required:
@@ -10138,6 +10521,16 @@ components:
         number:
           type: integer
           format: int32
+        primary_task_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        primary_tracker_instance_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         repository_id:
           type:
           - string
@@ -10180,6 +10573,23 @@ components:
         total:
           type: integer
           format: int64
+    PullReviewContext:
+      type: object
+      required:
+      - pull_request_id
+      - base_sha
+      - head_sha
+      - merge_base
+      properties:
+        base_sha:
+          type: string
+        head_sha:
+          type: string
+        merge_base:
+          type: string
+        pull_request_id:
+          type: string
+          format: uuid
     PullTaskLink:
       type: object
       required:
@@ -11883,6 +12293,16 @@ components:
           type: string
           format: uuid
       additionalProperties: false
+    TaskLookup:
+      type: object
+      required:
+      - task
+      - task_key
+      properties:
+        task:
+          $ref: '#/components/schemas/TaskRef'
+        task_key:
+          type: string
     TaskPullEvidence:
       type: object
       required:

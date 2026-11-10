@@ -1925,9 +1925,12 @@ async fn actual_receive_pack_and_pr_merge_signal_automatic_sync() {
         }
     }).await.expect("coalesced receive-pack signals finish before PR merge");
     let storage = f.local.file_stem().unwrap().to_str().unwrap();
-    let response=f.api.clone().oneshot(Request::post(format!("/api/v1/repos/{storage}/pulls")).header("authorization",format!("Bearer {git_authorization}")).header("content-type","application/json").body(Body::from(serde_json::json!({"repository_name":storage,"title":"QA actual merge automatic signal","source_branch":feature.strip_prefix("refs/heads/").unwrap(),"target_branch":base.strip_prefix("refs/heads/").unwrap()}).to_string())).unwrap()).await.unwrap();
+    let (primary_task, task_reader, _token_file) =
+        crate::pull_fixture::task_reader(&f.pool, storage).await;
+    let response=f.api.clone().oneshot(Request::post(format!("/api/v1/repos/{storage}/pulls")).header("authorization",format!("Bearer {git_authorization}")).header("content-type","application/json").body(Body::from(serde_json::json!({"primary_task":primary_task,"repository_name":storage,"title":"QA actual merge automatic signal","source_branch":feature.strip_prefix("refs/heads/").unwrap(),"target_branch":base.strip_prefix("refs/heads/").unwrap()}).to_string())).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let pr = response_json(response).await;
+    task_reader.abort();
     let previous = f.store.runs(f.repository, 1, 0).await.unwrap().1;
     let response = f
         .api

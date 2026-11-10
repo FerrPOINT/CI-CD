@@ -80,7 +80,10 @@ impl KubernetesTarget {
             || url.query().is_some()
             || url.fragment().is_some()
         {
-            return Err("deployment health requires a credential-free HTTPS URL or a cluster service path".into());
+            return Err(
+                "deployment health requires a credential-free HTTPS URL or a cluster service path"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -135,58 +138,6 @@ fn validate_image_bindings(images: &BTreeMap<String, ImageBinding>) -> Result<()
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn target() -> KubernetesTarget {
-        KubernetesTarget {
-            schema: "forge/kubernetes-environment/v1".into(),
-            cluster: "pdlc".into(),
-            namespace: "r1-dev".into(),
-            release: "r1".into(),
-            chart: "deploy/helm/r1".into(),
-            values: vec!["deploy/dev-values.yaml".into()],
-            files: BTreeMap::new(),
-            health_url: "https://r1-dev.example.test/health".into(),
-            publication_images: BTreeMap::new(),
-        }
-    }
-    #[test]
-    fn environment_does_not_depend_on_project_display_name() {
-        target().validate().unwrap();
-        let mut another = target();
-        another.cluster = "other-platform".into();
-        another.namespace = "project-two-dev".into();
-        another.release = "application".into();
-        another.validate().unwrap();
-    }
-    #[test]
-    fn target_rejects_host_paths_credentials_and_injected_helm_options() {
-        for path in ["../chart", "/chart", "-chart", "C:/chart"] {
-            let mut t = target();
-            t.chart = path.into();
-            assert!(t.validate().is_err());
-        }
-        for url in [
-            "http://dev.test/health",
-            "https://u:p@dev.test/",
-            "https://dev.test/?key=x",
-            "//dev.test/health",
-            "/health?token=x",
-            "/api/../health",
-        ] {
-            let mut t = target();
-            t.health_url = url.into();
-            assert!(t.validate().is_err());
-        }
-        let mut value = serde_json::to_value(target()).unwrap();
-        value["kubeconfig"] = serde_json::json!("/operator/admin");
-        assert!(serde_json::from_value::<KubernetesTarget>(value).is_err());
-        t.health_url = "/health".into();
-        t.validate().unwrap();
-    }
 }
 
 /// Immutable execution input; never contains a kubeconfig or service-account token.
@@ -400,5 +351,58 @@ impl DeploymentObservation {
                 matches!(self.phase.as_str(), "failed" | "no-effect" | "superseded")
                     && self.receipt.is_none()
             }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn target() -> KubernetesTarget {
+        KubernetesTarget {
+            schema: "forge/kubernetes-environment/v1".into(),
+            cluster: "pdlc".into(),
+            namespace: "r1-dev".into(),
+            release: "r1".into(),
+            chart: "deploy/helm/r1".into(),
+            values: vec!["deploy/dev-values.yaml".into()],
+            files: BTreeMap::new(),
+            health_url: "https://r1-dev.example.test/health".into(),
+            publication_images: BTreeMap::new(),
+        }
+    }
+    #[test]
+    fn environment_does_not_depend_on_project_display_name() {
+        target().validate().unwrap();
+        let mut another = target();
+        another.cluster = "other-platform".into();
+        another.namespace = "project-two-dev".into();
+        another.release = "application".into();
+        another.validate().unwrap();
+    }
+    #[test]
+    fn target_rejects_host_paths_credentials_and_injected_helm_options() {
+        for path in ["../chart", "/chart", "-chart", "C:/chart"] {
+            let mut t = target();
+            t.chart = path.into();
+            assert!(t.validate().is_err());
+        }
+        for url in [
+            "http://dev.test/health",
+            "https://u:p@dev.test/",
+            "https://dev.test/?key=x",
+            "//dev.test/health",
+            "/health?token=x",
+            "/api/../health",
+        ] {
+            let mut t = target();
+            t.health_url = url.into();
+            assert!(t.validate().is_err());
+        }
+        let mut value = serde_json::to_value(target()).unwrap();
+        value["kubeconfig"] = serde_json::json!("/operator/admin");
+        assert!(serde_json::from_value::<KubernetesTarget>(value).is_err());
+        let mut t = target();
+        t.health_url = "/health".into();
+        t.validate().unwrap();
     }
 }

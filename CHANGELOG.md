@@ -15,6 +15,12 @@
 
 ## [Unreleased]
 
+- Новые PR требуют основную Task. Reviewer читает все связанные PR, полный diff
+  и готовые CI точных SHA, публикует общие и построчные замечания без дубликатов
+  при повторе операции. Карточка PR и CLI используют тот же контракт.
+- При обновлении сохраняются main, Kubernetes v1 и ранее установленная история
+  Reviewer: явный migration directory сохраняет исходные SQLx checksums.
+
 - `cicd-cli repository get --id` получает разрешённый репозиторий из UUID Tracker;
   project-bound reader использует существующую связь с проектом. Чтение Tree/Blob
   и остальных Git refs корректно передаёт квалифицированное имя `group/repository`.

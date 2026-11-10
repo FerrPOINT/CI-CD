@@ -19,6 +19,7 @@ const SOURCES: &[&str] = &[
     "service_accounts",
     "tenants",
     "pull_task_links",
+    "pull_comments",
     "repository_attach_operations",
     "delivery_configuration_operations",
     "repository_sync_operations",

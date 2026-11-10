@@ -211,7 +211,9 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
         Command::Start { mutation } => mutate(api, mutation, json!({"action":"start"})).await,
         Command::Stop { mutation } => mutate(api, mutation, json!({"action":"stop"})).await,
         Command::Close { mutation } => mutate(api, mutation, json!({"action":"close"})).await,
-        Command::ConvertToStand { mutation } => mutate(api, mutation, json!({"action":"convert_to_stand"})).await,
+        Command::ConvertToStand { mutation } => {
+            mutate(api, mutation, json!({"action":"convert_to_stand"})).await
+        }
         Command::BeginSession { mutation, task } => {
             mutate(api, mutation, json!({"action":"begin_session","task":task})).await
         }
@@ -237,17 +239,13 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
             commit,
             source_pipeline,
         } => {
-            mutate(
-                api,
-                mutation,
-                {
-                    let mut command = json!({"action":"check","recipe":recipe,"source_commit":commit});
-                    if let Some(id) = source_pipeline {
-                        command["source_pipeline_id"] = json!(id);
-                    }
-                    command
-                },
-            )
+            mutate(api, mutation, {
+                let mut command = json!({"action":"check","recipe":recipe,"source_commit":commit});
+                if let Some(id) = source_pipeline {
+                    command["source_pipeline_id"] = json!(id);
+                }
+                command
+            })
             .await
         }
         Command::Build { mutation, commit } => {
@@ -327,12 +325,17 @@ fn validate_machine_source_root(root: &Path) -> Result<()> {
     let root = root
         .canonicalize()
         .context("Корень workspace агента недоступен")?;
-    ensure!(root.is_dir(), "Корень workspace агента должен быть каталогом");
+    ensure!(
+        root.is_dir(),
+        "Корень workspace агента должен быть каталогом"
+    );
     for directory in root.ancestors() {
         match directory.join(".git").symlink_metadata() {
             Ok(_) => bail!("Передайте корень workspace агента, расположенный вне Git checkout"),
             Err(error) if error.kind() == ErrorKind::NotFound => (),
-            Err(error) => return Err(error).context("Не удалось проверить корень workspace агента"),
+            Err(error) => {
+                return Err(error).context("Не удалось проверить корень workspace агента");
+            }
         }
     }
     Ok(())
@@ -497,6 +500,19 @@ async fn prepare(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn register(
+    api: &ApiClient,
+    project: Uuid,
+    workspace: Uuid,
+    operation_id: Uuid,
+    target: Uuid,
+    name: String,
+    create: bool,
+) -> Result<Value> {
+    api.json(api.post(&format!("/projects/{project}/development-workspaces")).json(&json!({"id":workspace,"operation_id":operation_id,"catalog_target_id":target,"name":name,"create":create}))).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate_machine_source_root;
@@ -513,17 +529,4 @@ mod tests {
         assert!(validate_machine_source_root(&checkout).is_err());
         assert!(validate_machine_source_root(&nested).is_err());
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn register(
-    api: &ApiClient,
-    project: Uuid,
-    workspace: Uuid,
-    operation_id: Uuid,
-    target: Uuid,
-    name: String,
-    create: bool,
-) -> Result<Value> {
-    api.json(api.post(&format!("/projects/{project}/development-workspaces")).json(&json!({"id":workspace,"operation_id":operation_id,"catalog_target_id":target,"name":name,"create":create}))).await
 }

@@ -291,21 +291,37 @@ pub(crate) fn operation_plan(
             if deployment.get("source_pipeline_id").is_some()
                 || (delivery_job.is_some() && source_pipeline_id.is_some())
             {
-                return Err(ApiError::conflict("workspace_recipe_invalid_source_pipeline_input"));
+                return Err(ApiError::conflict(
+                    "workspace_recipe_invalid_source_pipeline_input",
+                ));
             }
             delivery_job = Some(name.clone());
         }
     }
     if let Some(id) = source_pipeline_id {
-        let name = delivery_job.filter(|_| check.is_some_and(|item| item["executor"] == "forge-delivery"))
-            .ok_or_else(|| ApiError::bad_request("workspace_recipe_does_not_accept_source_pipeline"))?;
-        if jobs.iter().any(|(key, job)| key != &name && job.get("image_publish").is_none()) {
-            return Err(ApiError::conflict("workspace_recipe_requires_non_publication_jobs"));
+        let name = delivery_job
+            .filter(|_| check.is_some_and(|item| item["executor"] == "forge-delivery"))
+            .ok_or_else(|| {
+                ApiError::bad_request("workspace_recipe_does_not_accept_source_pipeline")
+            })?;
+        if jobs
+            .iter()
+            .any(|(key, job)| key != &name && job.get("image_publish").is_none())
+        {
+            return Err(ApiError::conflict(
+                "workspace_recipe_requires_non_publication_jobs",
+            ));
         }
-        let mut delivery = jobs.remove(&name).ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
-        let job = delivery.as_object_mut().ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
+        let mut delivery = jobs
+            .remove(&name)
+            .ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
+        let job = delivery
+            .as_object_mut()
+            .ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
         job.remove("needs");
-        let deployment = job.get_mut("helm_deploy").and_then(Value::as_object_mut)
+        let deployment = job
+            .get_mut("helm_deploy")
+            .and_then(Value::as_object_mut)
             .ok_or_else(|| ApiError::conflict("workspace_published_pipeline_invalid"))?;
         deployment.insert("source_pipeline_id".into(), serde_json::json!(id));
         jobs.clear();

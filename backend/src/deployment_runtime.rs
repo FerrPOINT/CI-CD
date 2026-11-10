@@ -98,18 +98,23 @@ pub(crate) async fn prepare(
         }
     }
 
-    let (target, project_id, protected, approvals, purpose): (Option<Value>, Uuid, bool, i32, String) =
-        sqlx::query_as(
-            "SELECT e.kubernetes_target,e.project_id,e.protected,e.required_approvals,e.purpose
+    let (target, project_id, protected, approvals, purpose): (
+        Option<Value>,
+        Uuid,
+        bool,
+        i32,
+        String,
+    ) = sqlx::query_as(
+        "SELECT e.kubernetes_target,e.project_id,e.protected,e.required_approvals,e.purpose
          FROM environments e JOIN pipelines p ON p.project_id=e.project_id
          WHERE e.id=$1 AND p.id=$2 FOR UPDATE OF e",
-        )
-        .bind(spec.environment_id)
-        .bind(pipeline_id)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::conflict("Environment belongs to another CI project"))?;
+    )
+    .bind(spec.environment_id)
+    .bind(pipeline_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::conflict("Environment belongs to another CI project"))?;
     if purpose == "workspace_target" && workspace_id.is_none() {
         return Err(ApiError::conflict("workspace_delivery_target_closed"));
     }
@@ -124,9 +129,10 @@ pub(crate) async fn prepare(
             return Err(ApiError::conflict("workspace_environment_target_drift"));
         }
     }
-    let target_config = target.ok_or_else(|| ApiError::conflict("Environment has no Kubernetes target"))?;
+    let target_config =
+        target.ok_or_else(|| ApiError::conflict("Environment has no Kubernetes target"))?;
     let target: KubernetesTarget = serde_json::from_value(target_config.clone())
-    .map_err(|_| ApiError::conflict("Invalid Kubernetes environment"))?;
+        .map_err(|_| ApiError::conflict("Invalid Kubernetes environment"))?;
     target.validate().map_err(ApiError::conflict)?;
     let requested:Option<(Uuid,Option<Uuid>,Option<Uuid>)>=sqlx::query_as(
         "SELECT d.id,d.rollback_of_id,d.execution_attempt_id FROM deployments d
@@ -144,7 +150,9 @@ pub(crate) async fn prepare(
         ).bind(id).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
         if let Some((publication, frozen)) = frozen {
             if spec.source_pipeline_id != Some(publication) || frozen != target_config {
-                return Err(ApiError::conflict("Approved stand publication target changed"));
+                return Err(ApiError::conflict(
+                    "Approved stand publication target changed",
+                ));
             }
         }
     }
@@ -249,7 +257,11 @@ pub(crate) async fn prepare(
                 ));
             }
             let (source_plan, plan_hash, config_hash, raw_config, config_source): (
-                Value, String, String, String, String,
+                Value,
+                String,
+                String,
+                String,
+                String,
             ) = sqlx::query_as(
                 "SELECT pp.plan,pp.plan_sha256,pp.config_sha256,pp.raw_config,pp.config_source
                  FROM pipelines p JOIN pipeline_plans pp ON pp.pipeline_id=p.id
@@ -264,7 +276,11 @@ pub(crate) async fn prepare(
             .fetch_optional(&mut **tx)
             .await
             .map_err(ApiError::internal)?
-            .ok_or_else(|| ApiError::conflict("Completed publication pipeline for this project and commit required"))?;
+            .ok_or_else(|| {
+                ApiError::conflict(
+                    "Completed publication pipeline for this project and commit required",
+                )
+            })?;
             let encoded = serde_json::to_vec(&source_plan)
                 .map_err(|_| ApiError::conflict("Invalid publication execution plan"))?;
             if source_plan["format"] != "v1-dag"
@@ -375,7 +391,9 @@ pub(crate) async fn prepare(
              WHERE w.id=$1 AND o.state='succeeded' AND o.request->>'action'='create'
              AND COALESCE(o.result->'result'->'bootstrap',o.result->'bootstrap')->>'reservationId'=w.catalog_target_id::text",
         ).bind(workspace_id).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
-        receipt.map(serde_json::from_value).transpose()
+        receipt
+            .map(serde_json::from_value)
+            .transpose()
             .map_err(|_| ApiError::conflict("Invalid workspace bootstrap receipt"))?
     } else {
         None

@@ -240,21 +240,32 @@ async fn create_pipeline_bound(
     };
     let config_ref = commit_sha.as_deref().unwrap_or(&git_ref);
     let publication = if source == "deployment-approval" {
-        let operation = variables.get("deployment_id").and_then(Value::as_str)
+        let operation = variables
+            .get("deployment_id")
+            .and_then(Value::as_str)
             .and_then(|value| Uuid::parse_str(value).ok());
         sqlx::query_as::<_, (Uuid, Uuid, String, Value)>(
             "SELECT d.environment_id,d.source_pipeline_id,d.git_ref,d.publication_target
              FROM deployments d JOIN environments e ON e.id=d.environment_id
              WHERE d.id=$1 AND e.project_id=$2 AND e.purpose='stand'
              AND d.source_pipeline_id IS NOT NULL AND d.status='pending'",
-        ).bind(operation).bind(project_id).fetch_optional(pool).await.map_err(ApiError::internal)?
+        )
+        .bind(operation)
+        .bind(project_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?
     } else {
         None
     };
     let rollback_config = if matches!(source, "deployment-rollback" | "deployment-approval")
-        && variables.get("rollback_of_deployment_id").is_some_and(|value| !value.is_null())
+        && variables
+            .get("rollback_of_deployment_id")
+            .is_some_and(|value| !value.is_null())
     {
-        let operation = variables.get("deployment_id").and_then(Value::as_str)
+        let operation = variables
+            .get("deployment_id")
+            .and_then(Value::as_str)
             .and_then(|value| Uuid::parse_str(value).ok());
         sqlx::query_scalar::<_, String>(
             "SELECT pp.raw_config FROM deployments d JOIN environments e ON e.id=d.environment_id
@@ -266,12 +277,17 @@ async fn create_pipeline_bound(
     } else {
         None
     };
-    let (config_source, raw_config) = if let Some((environment, publication_id, sha, target)) = publication {
+    let (config_source, raw_config) = if let Some((environment, publication_id, sha, target)) =
+        publication
+    {
         if commit_sha.as_deref() != Some(sha.as_str()) {
-            return Err(ApiError::conflict("Stand release commit differs from its approved input"));
+            return Err(ApiError::conflict(
+                "Stand release commit differs from its approved input",
+            ));
         }
-        let target: crate::domain::helm_deploy::KubernetesTarget = serde_json::from_value(target)
-            .map_err(|_| ApiError::conflict("Invalid stand target"))?;
+        let target: crate::domain::helm_deploy::KubernetesTarget =
+            serde_json::from_value(target)
+                .map_err(|_| ApiError::conflict("Invalid stand target"))?;
         target.validate().map_err(ApiError::conflict)?;
         let recipe = json!({"version":1,"jobs":{"deploy":{"helm_deploy":{
             "environment_id":environment,"source_pipeline_id":publication_id,
@@ -1526,7 +1542,9 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
             && deploy.source_pipeline_id.is_some()
             && (!job.needs.is_empty() || jobs.len() != 1)
         {
-            return Err("helm_deploy with source_pipeline_id must be a deploy-only pipeline".into());
+            return Err(
+                "helm_deploy with source_pipeline_id must be a deploy-only pipeline".into(),
+            );
         }
         if let Some(deploy) = &job.helm_deploy
             && deploy.source_pipeline_id.is_none()
@@ -2870,10 +2888,13 @@ jobs:
             entries[0]["helm_deploy"]["source_pipeline_id"],
             "3a10c3aa-c2f5-45ac-b14f-76651725003b"
         );
-        assert!(parse_pipeline_config(Some(&source.replace(
-            "  deploy:",
-            "  other:\n    commands: [echo other]\n  deploy:",
-        ))).is_err());
+        assert!(
+            parse_pipeline_config(Some(&source.replace(
+                "  deploy:",
+                "  other:\n    commands: [echo other]\n  deploy:",
+            )))
+            .is_err()
+        );
     }
 
     #[test]

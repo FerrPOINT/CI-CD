@@ -83,8 +83,12 @@ impl WorkspaceAction {
     pub fn requires_free_workspace(&self) -> bool {
         matches!(
             self,
-            Self::Register {} | Self::Create {} | Self::Stop {} | Self::BeginSession { .. }
-                | Self::Close {} | Self::ConvertToStand {}
+            Self::Register {}
+                | Self::Create {}
+                | Self::Stop {}
+                | Self::BeginSession { .. }
+                | Self::Close {}
+                | Self::ConvertToStand {}
         )
     }
 

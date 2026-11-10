@@ -1,5 +1,8 @@
 //! Real owner storage qualification in a dedicated PostgreSQL schema.
 #![cfg(feature = "integration")]
+#[path = "support/pull_fixture.rs"]
+mod pull_fixture;
+
 use cicd::store::identity_deletion::{IdentityDeletionStore, OwnerError};
 use pdlc_shared::{identity_lifecycle::DeletionRequest, space_access::CentralIdentity};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -271,8 +274,16 @@ async fn verify(pool: &PgPool) {
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO pull_requests(id,repository_name,number,title,source_branch,target_branch,created_by) VALUES($1,'identity-fixture',1,'Fixture','feature','main','known-current-user')")
-        .bind(Uuid::new_v4()).execute(pool).await.unwrap();
+    pull_fixture::insert(
+        pool,
+        "identity-fixture",
+        1,
+        "Fixture",
+        ("feature", "main"),
+        "open",
+        "known-current-user",
+    )
+    .await;
     sqlx::query("UPDATE users SET username='renamed-current-user' WHERE id=$1")
         .bind(user)
         .execute(pool)
@@ -578,6 +589,7 @@ async fn verify_sources(pool: &PgPool, target: &DeletionRequest, user: Uuid) {
         ("forge_confirmed_user_roles", "user_id"),
         ("tenants", "created_by"),
         ("pull_task_links", "created_by_user_id"),
+        ("pull_comments", "author_id"),
         ("repository_attach_operations", "actor_id"),
         ("delivery_configuration_operations", "actor_id"),
         ("repository_sync_operations", "actor_id"),

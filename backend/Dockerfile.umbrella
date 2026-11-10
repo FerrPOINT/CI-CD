@@ -102,6 +102,7 @@ COPY CI-CD/backend/migration-lineages /tmp/forge-lineages/backend/migration-line
 COPY CI-CD/scripts/migration_lineages.py /tmp/forge-lineages/scripts/migration_lineages.py
 RUN ln -s /app/migrations /tmp/forge-lineages/backend/migrations \
  && python3 /tmp/forge-lineages/scripts/migration_lineages.py --output /app/migrations-kubernetes-v1 \
+ && python3 /tmp/forge-lineages/scripts/migration_lineages.py --lineage reviewer-v1 --output /app/migrations-reviewer-v1 \
  && rm -r /tmp/forge-lineages
 RUN mkdir -p /var/lib/forge/git /var/lib/forge/artifacts /workspaces \
  && chown -R cicd:cicd /var/lib/forge /workspaces

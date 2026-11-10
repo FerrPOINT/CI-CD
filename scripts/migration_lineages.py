@@ -52,19 +52,41 @@ def project(backend: Path) -> dict[str, bytes]:
     return result
 
 
+def reviewer_v1(backend: Path) -> dict[str, bytes]:
+    """Retain the installed Reviewer 0116; shared forward history starts at 0118."""
+    project(backend)  # Verify the released histories and canonical inventory first.
+    result = {p.name: p.read_bytes() for p in (backend / "migrations").glob("*.sql")}
+    manifest = json.loads((backend / "migration-lineages/manifest.json").read_text(encoding="utf-8"))
+    retained = {}
+    for entry in manifest["reviewerV1"]:
+        source, target = entry["canonicalFile"], entry["file"]
+        if any(Path(name).name != name or not name.endswith(".sql") for name in (source, target)):
+            raise ValueError("invalid Reviewer migration path")
+        payload = result.pop(source)
+        if hashlib.sha384(payload).hexdigest() != entry["sha384"]:
+            raise ValueError(f"released Reviewer migration checksum changed: {target}")
+        retained[target] = payload
+    result.update(retained)
+    versions = [int(name.split("_", 1)[0]) for name in result]
+    if len(versions) != len(set(versions)):
+        raise ValueError("Reviewer migration lineage contains duplicate versions")
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", type=Path, default=Path(__file__).resolve().parents[1] / "backend")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--lineage", choices=("kubernetes-v1", "reviewer-v1"), default="kubernetes-v1")
     args = parser.parse_args()
-    projected = project(args.backend)
+    projected = reviewer_v1(args.backend) if args.lineage == "reviewer-v1" else project(args.backend)
     args.output.mkdir(parents=True, exist_ok=True)
     existing = {path.name for path in args.output.iterdir()}
     if existing - projected.keys():
         raise ValueError("output contains unexpected files; use an empty destination")
     for name, payload in projected.items():
         (args.output / name).write_bytes(payload)
-    print(f"kubernetes-v1: {len(projected)} checksum-verified migrations")
+    print(f"{args.lineage}: {len(projected)} checksum-verified migrations")
 
 
 if __name__ == "__main__":

@@ -890,17 +890,19 @@ pub async fn pull(
 #[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreatePull {
+    pub primary_task: pdlc_shared::resource_context::TaskRef,
     pub title: String,
     pub description: Option<String>,
     pub source_branch: String,
     pub target_branch: String,
 }
 #[utoipa::path(post,operation_id="forge_repository_catalog_create_pull",path="/api/v1/catalog/repositories/{id}/pulls",tag="pulls",params(("id"=Uuid,Path)),request_body=CreatePull,responses((status=200,body=crate::pulls::PullRequest)))]
-pub async fn create_pull(
+pub(crate) async fn create_pull(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     permit: Option<axum::Extension<crate::pulls::RepositoryWrite>>,
+    identity: Option<axum::Extension<crate::api::authz_mw::VerifiedRequestIdentity>>,
     Json(input): Json<CreatePull>,
 ) -> Result<Json<crate::pulls::PullRequest>, ApiError> {
     let storage = storage_by_id(state.pool.as_ref().ok_or_else(ApiError::unavailable)?, id).await?;
@@ -909,7 +911,9 @@ pub async fn create_pull(
         Path(storage.clone()),
         claims,
         permit,
+        identity,
         Json(crate::pulls::CreatePullRequest {
+            primary_task: input.primary_task,
             repository_name: storage,
             title: input.title,
             description: input.description,

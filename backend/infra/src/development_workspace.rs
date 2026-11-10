@@ -186,7 +186,15 @@ pub async fn enqueue(
     if let Some(original) = original(tx, workspace, operation, actor, owner, &hash).await? {
         return Ok(original);
     }
-    let actual: Option<(i64, Option<DateTime<Utc>>, String, String, Option<DateTime<Utc>>, Uuid)> =
+    type LockedWorkspace = (
+        i64,
+        Option<DateTime<Utc>>,
+        String,
+        String,
+        Option<DateTime<Utc>>,
+        Uuid,
+    );
+    let actual: Option<LockedWorkspace> =
         sqlx::query_as("SELECT version,retired_at,runtime,desired_runtime,observed_at,environment_id FROM development_workspaces WHERE id=$1 FOR UPDATE")
             .bind(workspace)
             .fetch_optional(&mut **tx)
@@ -202,14 +210,24 @@ pub async fn enqueue(
     if version != expected_version {
         return Err(Error::Conflict("workspace_version_conflict"));
     }
-    let retirement = matches!(action, WorkspaceAction::Close {} | WorkspaceAction::ConvertToStand {});
+    let retirement = matches!(
+        action,
+        WorkspaceAction::Close {} | WorkspaceAction::ConvertToStand {}
+    );
     if retirement {
-        let purpose: String = sqlx::query_scalar("SELECT purpose FROM environments WHERE id=$1 FOR UPDATE")
-            .bind(environment).fetch_one(&mut **tx).await?;
+        let purpose: String =
+            sqlx::query_scalar("SELECT purpose FROM environments WHERE id=$1 FOR UPDATE")
+                .bind(environment)
+                .fetch_one(&mut **tx)
+                .await?;
         if purpose != "workspace_target" {
             return Err(Error::Conflict("workspace_environment_purpose_changed"));
         }
-        let required = if matches!(action, WorkspaceAction::Close {}) { "stopped" } else { "running" };
+        let required = if matches!(action, WorkspaceAction::Close {}) {
+            "stopped"
+        } else {
+            "running"
+        };
         if observed_at.is_none() || runtime != required || desired != required {
             return Err(Error::Conflict("workspace_retirement_runtime_unconfirmed"));
         }
@@ -267,10 +285,14 @@ pub async fn enqueue(
         let promote = matches!(action, WorkspaceAction::ConvertToStand {});
         if promote {
             sqlx::query("UPDATE environments SET purpose='stand' WHERE id=$1")
-                .bind(environment).execute(&mut **tx).await?;
+                .bind(environment)
+                .execute(&mut **tx)
+                .await?;
         }
         sqlx::query("UPDATE development_workspaces SET retired_at=clock_timestamp() WHERE id=$1")
-            .bind(workspace).execute(&mut **tx).await?;
+            .bind(workspace)
+            .execute(&mut **tx)
+            .await?;
         operation = sqlx::query_as("UPDATE development_workspace_operations SET state='succeeded',finished_at=clock_timestamp(),result=$2 WHERE id=$1 RETURNING *")
             .bind(operation.id)
             .bind(serde_json::json!({"state":"succeeded","environmentId":environment,"convertedToStand":promote}))

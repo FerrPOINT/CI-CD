@@ -8,6 +8,7 @@ import {
   TextLink,
 } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
+import { api } from "@/api/client";
 import {
   Select,
   NamespaceLink as Link,
@@ -61,11 +62,13 @@ function CreatePullRequestForm({
   const { t } = useTranslation();
   const createPullRequest = useCreatePullRequest(repo);
   const [form, setForm] = useState({
+    task: "",
     title: "",
     description: "",
     source_branch: "",
     target_branch: "",
   });
+  const [resolvingTask, setResolvingTask] = useState(false);
   const deferredSource = useDebouncedValue(form.source_branch.trim());
   const deferredTarget = useDebouncedValue(form.target_branch.trim());
   const sourceRefs = useRepositoryRefs(repo, {
@@ -85,17 +88,24 @@ function CreatePullRequestForm({
     form.source_branch.trim() === form.target_branch.trim(),
   );
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (
       sameBranch ||
+      !form.task.trim() ||
       !form.title.trim() ||
       !form.source_branch.trim() ||
       !form.target_branch.trim()
     )
       return;
+    setResolvingTask(true);
+    try {
+    const selected = await api<{ task: { tracker_instance_id: string; task_id: string } }>(
+      `/repos/${encodeURIComponent(repo)}/task?identifier=${encodeURIComponent(form.task.trim())}`,
+    );
     createPullRequest.mutate(
       {
+        primary_task: selected.task,
         repository_name: repo,
         title: form.title.trim(),
         description: form.description.trim() || undefined,
@@ -111,6 +121,11 @@ function CreatePullRequestForm({
         onError: (error) => toast.error(error.message),
       },
     );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось выбрать задачу");
+    } finally {
+      setResolvingTask(false);
+    }
   }
 
   return (
@@ -120,6 +135,10 @@ function CreatePullRequestForm({
         onSubmit={handleSubmit}
         className="grid gap-4 sm:grid-cols-2"
       >
+        <FormField id="pr-task" label="Задача" required hint="Номер задачи из Tracker, например PROJECT-123">
+          {(attrs) => <Input {...attrs} value={form.task} disabled={resolvingTask || createPullRequest.isPending}
+            onChange={(event) => setForm({ ...form, task: event.target.value })} />}
+        </FormField>
         <div className="sm:col-span-2">
           <FormField id="pr-title" label={t("pulls.titleField")} required>
             {(attrs) => (
@@ -242,7 +261,7 @@ function CreatePullRequestForm({
           <Button
             type="submit"
 
-            disabled={createPullRequest.isPending || sameBranch}
+            disabled={resolvingTask || createPullRequest.isPending || sameBranch}
           >
             {t("pulls.create")}
           </Button>
