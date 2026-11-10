@@ -186,7 +186,15 @@ pub async fn enqueue(
     if let Some(original) = original(tx, workspace, operation, actor, owner, &hash).await? {
         return Ok(original);
     }
-    let actual: Option<(i64, Option<DateTime<Utc>>, String, String, Option<DateTime<Utc>>, Uuid)> =
+    type LockedWorkspace = (
+        i64,
+        Option<DateTime<Utc>>,
+        String,
+        String,
+        Option<DateTime<Utc>>,
+        Uuid,
+    );
+    let actual: Option<LockedWorkspace> =
         sqlx::query_as("SELECT version,retired_at,runtime,desired_runtime,observed_at,environment_id FROM development_workspaces WHERE id=$1 FOR UPDATE")
             .bind(workspace)
             .fetch_optional(&mut **tx)
