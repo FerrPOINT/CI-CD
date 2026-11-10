@@ -33,9 +33,10 @@ pub(crate) async fn prepare(
     // The instance row is the common delivery/lifecycle fence. Admission is
     // checked before Helm can apply replicas from an ordinary manifest.
     let workspace: Option<(Uuid,String,String,String)> = sqlx::query_as(
-        "SELECT id,desired_runtime,runtime,environment_hash FROM development_workspaces WHERE environment_id=$1 FOR UPDATE",
+        "SELECT id,desired_runtime,runtime,environment_hash FROM development_workspaces WHERE environment_id=$1 AND retired_at IS NULL FOR UPDATE",
     ).bind(spec.environment_id).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
     let bound_environment_hash = workspace.as_ref().map(|row| row.3.clone());
+    let workspace_id = workspace.as_ref().map(|row| row.0);
     if let Some((workspace, desired, observed, _)) = workspace {
         if desired != "running" || observed != "running" {
             return Err(ApiError::conflict("workspace_must_be_running_for_delivery"));
@@ -97,18 +98,26 @@ pub(crate) async fn prepare(
         }
     }
 
-    let (target, project_id, protected, approvals): (Option<Value>, Uuid, bool, i32) =
-        sqlx::query_as(
-            "SELECT e.kubernetes_target,e.project_id,e.protected,e.required_approvals
+    let (target, project_id, protected, approvals, purpose): (
+        Option<Value>,
+        Uuid,
+        bool,
+        i32,
+        String,
+    ) = sqlx::query_as(
+        "SELECT e.kubernetes_target,e.project_id,e.protected,e.required_approvals,e.purpose
          FROM environments e JOIN pipelines p ON p.project_id=e.project_id
          WHERE e.id=$1 AND p.id=$2 FOR UPDATE OF e",
-        )
-        .bind(spec.environment_id)
-        .bind(pipeline_id)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::conflict("Environment belongs to another CI project"))?;
+    )
+    .bind(spec.environment_id)
+    .bind(pipeline_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::conflict("Environment belongs to another CI project"))?;
+    if purpose == "workspace_target" && workspace_id.is_none() {
+        return Err(ApiError::conflict("workspace_delivery_target_closed"));
+    }
     if let Some(expected) = bound_environment_hash {
         let observed = cicd_infra::development_workspace::request_hash(
             target
@@ -120,10 +129,10 @@ pub(crate) async fn prepare(
             return Err(ApiError::conflict("workspace_environment_target_drift"));
         }
     }
-    let target: KubernetesTarget = serde_json::from_value(
-        target.ok_or_else(|| ApiError::conflict("Environment has no Kubernetes target"))?,
-    )
-    .map_err(|_| ApiError::conflict("Invalid Kubernetes environment"))?;
+    let target_config =
+        target.ok_or_else(|| ApiError::conflict("Environment has no Kubernetes target"))?;
+    let target: KubernetesTarget = serde_json::from_value(target_config.clone())
+        .map_err(|_| ApiError::conflict("Invalid Kubernetes environment"))?;
     target.validate().map_err(ApiError::conflict)?;
     let requested:Option<(Uuid,Option<Uuid>,Option<Uuid>)>=sqlx::query_as(
         "SELECT d.id,d.rollback_of_id,d.execution_attempt_id FROM deployments d
@@ -135,6 +144,18 @@ pub(crate) async fn prepare(
          FOR UPDATE OF d")
         .bind(pipeline_id).bind(spec.environment_id).bind(project_id)
         .fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
+    if let Some((id, None, _)) = requested {
+        let frozen: Option<(Uuid, Value)> = sqlx::query_as(
+            "SELECT source_pipeline_id,publication_target FROM deployments WHERE id=$1 AND source_pipeline_id IS NOT NULL",
+        ).bind(id).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
+        if let Some((publication, frozen)) = frozen {
+            if spec.source_pipeline_id != Some(publication) || frozen != target_config {
+                return Err(ApiError::conflict(
+                    "Approved stand publication target changed",
+                ));
+            }
+        }
+    }
     if protected && approvals > 0 {
         let id = requested
             .as_ref()
@@ -187,7 +208,7 @@ pub(crate) async fn prepare(
         return Ok(None);
     }
     let rollback_source = requested.as_ref().and_then(|row| row.1);
-    let (images, rollback) = if let Some(source) = rollback_source {
+    let (images, rollback, source_pipeline_id) = if let Some(source) = rollback_source {
         let (input, observed): (Value, Value) = sqlx::query_as(
             "SELECT runtime_input,runtime_receipt FROM deployments
              WHERE id=$1 AND environment_id=$2 AND status='success' AND runtime_phase='finished'",
@@ -225,11 +246,70 @@ pub(crate) async fn prepare(
                 expected_current_revision: current_revision,
                 metadata: ReleaseMetadata::installed(&previous),
             }),
+            previous.source_pipeline_id,
         )
     } else {
+        let producer_pipeline = spec.source_pipeline_id.unwrap_or(pipeline_id);
+        let external_plan: Option<Value> = if let Some(source) = spec.source_pipeline_id {
+            if source == pipeline_id {
+                return Err(ApiError::conflict(
+                    "Deployment requires a separate completed publication pipeline",
+                ));
+            }
+            let (source_plan, plan_hash, config_hash, raw_config, config_source): (
+                Value,
+                String,
+                String,
+                String,
+                String,
+            ) = sqlx::query_as(
+                "SELECT pp.plan,pp.plan_sha256,pp.config_sha256,pp.raw_config,pp.config_source
+                 FROM pipelines p JOIN pipeline_plans pp ON pp.pipeline_id=p.id
+                 WHERE p.id=$1 AND p.project_id=$2 AND p.status='success'
+                 AND p.commit_sha=$3 AND pp.resolved_commit_sha=$3
+                 AND pp.config_source IN ('repository','development_workspace')
+                 FOR SHARE OF p, pp",
+            )
+            .bind(source)
+            .bind(project_id)
+            .bind(commit)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(|| {
+                ApiError::conflict(
+                    "Completed publication pipeline for this project and commit required",
+                )
+            })?;
+            let encoded = serde_json::to_vec(&source_plan)
+                .map_err(|_| ApiError::conflict("Invalid publication execution plan"))?;
+            if source_plan["format"] != "v1-dag"
+                || source_plan["version"] != 1
+                || source_plan["resolved_commit_sha"] != commit
+                || source_plan["config_source"] != config_source
+                || format!("{:x}", Sha256::digest(encoded)) != plan_hash
+                || format!("{:x}", Sha256::digest(raw_config.as_bytes())) != config_hash
+            {
+                return Err(ApiError::conflict(
+                    "Publication pipeline differs from its immutable execution plan",
+                ));
+            }
+            Some(source_plan)
+        } else {
+            None
+        };
+        let producer_plan = external_plan.as_ref().unwrap_or(plan);
+        let current = plan["jobs"]
+            .as_array()
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry["key"].as_str() == Some(job_key))
+            })
+            .ok_or_else(|| ApiError::conflict("Deployment job absent from immutable plan"))?;
         let mut images = BTreeMap::new();
         for (value_path, binding) in &spec.images {
-            let entry = plan["jobs"]
+            let entry = producer_plan["jobs"]
                 .as_array()
                 .and_then(|entries| {
                     entries
@@ -242,20 +322,13 @@ pub(crate) async fn prepare(
             let build: ImagePublishSpec = serde_json::from_value(entry["image_publish"].clone())
                 .map_err(|_| ApiError::conflict("Deployment image is not a typed publication"))?;
             build.validate().map_err(ApiError::conflict)?;
-            let current = plan["jobs"]
-                .as_array()
-                .and_then(|entries| {
-                    entries
-                        .iter()
-                        .find(|entry| entry["key"].as_str() == Some(job_key))
-                })
-                .ok_or_else(|| ApiError::conflict("Deployment job absent from immutable plan"))?;
             if binding.artifact != build.published_artifact
-                || !current["needs"].as_array().is_some_and(|needs| {
-                    needs
-                        .iter()
-                        .any(|v| v.as_str() == Some(binding.job.as_str()))
-                })
+                || (external_plan.is_none()
+                    && !current["needs"].as_array().is_some_and(|needs| {
+                        needs
+                            .iter()
+                            .any(|v| v.as_str() == Some(binding.job.as_str()))
+                    }))
             {
                 return Err(ApiError::conflict(
                     "Deployment image binding differs from its required producer",
@@ -265,9 +338,10 @@ pub(crate) async fn prepare(
                 "SELECT j.id,a.id FROM jobs j JOIN stages s ON s.id=j.stage_id
              JOIN execution_attempts a ON a.job_id=j.id
              WHERE s.pipeline_id=$1 AND j.name=$2 AND j.status='success'
+             AND j.command='forge:image-publish'
              AND a.status='success' ORDER BY a.attempt_no DESC LIMIT 1",
             )
-            .bind(pipeline_id)
+            .bind(producer_pipeline)
             .bind(&binding.job)
             .fetch_optional(&mut **tx)
             .await
@@ -303,17 +377,33 @@ pub(crate) async fn prepare(
             images.insert(value_path.clone(), published);
         }
 
-        (images, None)
+        (images, None, spec.source_pipeline_id)
     };
     let id = requested
         .as_ref()
         .filter(|row| row.2.is_none())
         .map(|row| row.0)
         .unwrap_or_else(Uuid::new_v4);
+    let workspace_bootstrap = if let Some(workspace_id) = workspace_id {
+        let receipt: Option<Value> = sqlx::query_scalar(
+            "SELECT COALESCE(o.result->'result'->'bootstrap',o.result->'bootstrap')
+             FROM development_workspace_operations o JOIN development_workspaces w ON w.id=o.workspace_id
+             WHERE w.id=$1 AND o.state='succeeded' AND o.request->>'action'='create'
+             AND COALESCE(o.result->'result'->'bootstrap',o.result->'bootstrap')->>'reservationId'=w.catalog_target_id::text",
+        ).bind(workspace_id).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
+        receipt
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| ApiError::conflict("Invalid workspace bootstrap receipt"))?
+    } else {
+        None
+    };
     let offer = DeploymentOffer {
         environment_id: spec.environment_id,
         deployment_id: id,
         pipeline_id,
+        source_pipeline_id,
+        workspace_bootstrap,
         job_id,
         attempt_id,
         lease_id,

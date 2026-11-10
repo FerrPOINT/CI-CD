@@ -129,7 +129,7 @@ pub(crate) async fn admit(
         if write {
             AssignmentAccess::Active
         } else {
-            AssignmentAccess::Preparing
+            AssignmentAccess::Reading
         },
     )
     .await?;
@@ -238,10 +238,15 @@ async fn check_callback(
 const PRE_RECEIVE: &str = r#"set -eu
 umask 077
 cat > "$dir/input"
-test "$(wc -l < "$dir/input")" -eq 1 || exit 1
+if test "$(wc -l < "$dir/input")" -ne 1; then
+    printf '%s\n' 'Forge: workspace push must update exactly one branch.' >&2
+    exit 1
+fi
 read -r old new ref extra < "$dir/input"
-test -z "$extra" || exit 1
-test "$ref" = "$(cat "$dir/candidate-ref")" || exit 1
+if test -n "$extra" || test "$ref" != "$(cat "$dir/candidate-ref")"; then
+    printf '%s\n' 'Forge: workspace push does not match the assigned candidate branch.' >&2
+    exit 1
+fi
 printf '%s %s %s\n' "$old" "$new" "$ref" > "$dir/expected-update"
 "$dir/protected-pre-receive" "$@" < "$dir/input"
 "$dir/task-check" < "$dir/input"

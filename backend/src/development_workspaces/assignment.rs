@@ -29,6 +29,7 @@ pub(super) struct WorkspacePreparation {
 pub(super) enum AssignmentAccess {
     Active,
     Preparing,
+    Reading,
     Closing,
 }
 
@@ -74,9 +75,17 @@ impl DeveloperAssignment {
         let source = &execution["source_binding"];
         let preparation = if execution["status"] == "InProgress"
             || (access == AssignmentAccess::Closing && execution["status"] == "Ready")
+            || (matches!(
+                access,
+                AssignmentAccess::Reading | AssignmentAccess::Closing
+            ) && execution["status"] == "Completed")
         {
             None
-        } else if access == AssignmentAccess::Preparing && execution["status"] == "Ready" {
+        } else if matches!(
+            access,
+            AssignmentAccess::Preparing | AssignmentAccess::Reading
+        ) && execution["status"] == "Ready"
+        {
             Some(WorkspacePreparation {
                 expires_at: execution["workspace_preparation_expires_at"]
                     .as_str()
@@ -242,6 +251,29 @@ mod tests {
         };
         let saved = read(&initial).unwrap();
         saved.require_same(&saved).unwrap();
+        let mut completed = initial.clone();
+        completed["execution"]["status"] = json!("Completed");
+        for access in [
+            AssignmentAccess::Active,
+            AssignmentAccess::Preparing,
+            AssignmentAccess::Reading,
+            AssignmentAccess::Closing,
+        ] {
+            let result = DeveloperAssignment::read(
+                &completed, &namespace, tracker, project, task, actor, repository, workspace,
+                access,
+            );
+            if matches!(
+                access,
+                AssignmentAccess::Reading | AssignmentAccess::Closing
+            ) {
+                let (closing, deadline) = result.unwrap();
+                closing.require_same(&saved).unwrap();
+                assert!(deadline.is_none());
+            } else {
+                assert!(result.is_err());
+            }
+        }
         let mut rework = initial.clone();
         rework["execution"]["stage"] = json!("Rework");
         let repaired = read(&rework).unwrap();
@@ -374,7 +406,8 @@ mod tests {
         }));
         assert!(developer_action(&WorkspaceAction::Check {
             recipe: "backend-unit".into(),
-            source_commit: "a".repeat(40)
+            source_commit: "a".repeat(40),
+            source_pipeline_id: None,
         }));
         for action in [
             WorkspaceAction::Register {},

@@ -354,14 +354,22 @@ pub(crate) async fn lock_repository(
 }
 
 fn allowed_check(workspace: &Workspace, action: &WorkspaceAction) -> bool {
-    if let WorkspaceAction::Check { recipe, .. } = action {
-        return workspace.profile["checks"]
-            .as_array()
-            .is_some_and(|checks| {
-                checks.iter().any(|c| {
-                    c["key"] == *recipe && c["executor"] == "forge" && c["requiresRuntime"] == false
-                })
-            });
+    if let WorkspaceAction::Check {
+        recipe,
+        source_pipeline_id,
+        ..
+    } = action
+    {
+        return source_pipeline_id.is_none()
+            && workspace.profile["checks"]
+                .as_array()
+                .is_some_and(|checks| {
+                    checks.iter().any(|c| {
+                        c["key"] == *recipe
+                            && c["executor"] == "forge"
+                            && c["requiresRuntime"] == false
+                    })
+                });
     }
     true
 }

@@ -856,13 +856,20 @@ pub(crate) async fn create_pull_request(
     .await
     .map_err(ApiError::internal)?;
     require_write(write.as_ref())?;
-    let author = match confirmed_author {
-        Some(username) => username,
-        None => sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
-            .bind(actor)
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(ApiError::internal)?,
+    let author = match (confirmed_author, claims.as_ref().map(|c| &c.0)) {
+        (Some(username), _) => username,
+        (None, Some(claims)) if claims.service_account_name.is_some() => {
+            claims.service_account_name.clone().unwrap_or_default()
+        }
+        (None, Some(claims)) => {
+            sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
+                .bind(claims.sub)
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(ApiError::internal)?
+                .unwrap_or_default()
+        }
+        (None, None) => input.author.clone().unwrap_or_default(),
     };
     let pr = sqlx::query_as::<_, PullRequest>(
         "INSERT INTO pull_requests (id, repository_name, number, title, description, source_branch, target_branch, status, created_by,primary_tracker_instance_id,primary_task_id) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8,$9,$10) RETURNING id,repository_name,repository_id,number,title,description,source_branch,target_branch,status,created_by,created_at,updated_at,merged_at,merge_commit_sha,primary_tracker_instance_id,primary_task_id",

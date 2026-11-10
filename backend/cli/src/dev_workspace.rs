@@ -3,7 +3,12 @@ use super::ApiClient;
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
-use std::{io::Write, path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    io::{ErrorKind, Write},
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 use uuid::Uuid;
 
 #[derive(Args)]
@@ -65,6 +70,14 @@ pub enum Command {
         #[command(flatten)]
         mutation: Mutation,
     },
+    Close {
+        #[command(flatten)]
+        mutation: Mutation,
+    },
+    ConvertToStand {
+        #[command(flatten)]
+        mutation: Mutation,
+    },
     BeginSession {
         #[command(flatten)]
         mutation: Mutation,
@@ -102,6 +115,8 @@ pub enum Command {
         recipe: String,
         #[arg(long)]
         commit: String,
+        #[arg(long)]
+        source_pipeline: Option<Uuid>,
     },
     Build {
         #[command(flatten)]
@@ -195,6 +210,10 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
         Command::Observe { mutation } => mutate(api, mutation, json!({"action":"observe"})).await,
         Command::Start { mutation } => mutate(api, mutation, json!({"action":"start"})).await,
         Command::Stop { mutation } => mutate(api, mutation, json!({"action":"stop"})).await,
+        Command::Close { mutation } => mutate(api, mutation, json!({"action":"close"})).await,
+        Command::ConvertToStand { mutation } => {
+            mutate(api, mutation, json!({"action":"convert_to_stand"})).await
+        }
         Command::BeginSession { mutation, task } => {
             mutate(api, mutation, json!({"action":"begin_session","task":task})).await
         }
@@ -218,12 +237,15 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
             mutation,
             recipe,
             commit,
+            source_pipeline,
         } => {
-            mutate(
-                api,
-                mutation,
-                json!({"action":"check","recipe":recipe,"source_commit":commit}),
-            )
+            mutate(api, mutation, {
+                let mut command = json!({"action":"check","recipe":recipe,"source_commit":commit});
+                if let Some(id) = source_pipeline {
+                    command["source_pipeline_id"] = json!(id);
+                }
+                command
+            })
             .await
         }
         Command::Build { mutation, commit } => {
@@ -299,6 +321,26 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
         }
     }
 }
+fn validate_machine_source_root(root: &Path) -> Result<()> {
+    let root = root
+        .canonicalize()
+        .context("Корень workspace агента недоступен")?;
+    ensure!(
+        root.is_dir(),
+        "Корень workspace агента должен быть каталогом"
+    );
+    for directory in root.ancestors() {
+        match directory.join(".git").symlink_metadata() {
+            Ok(_) => bail!("Передайте корень workspace агента, расположенный вне Git checkout"),
+            Err(error) if error.kind() == ErrorKind::NotFound => (),
+            Err(error) => {
+                return Err(error).context("Не удалось проверить корень workspace агента");
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn prepare(
     api: &ApiClient,
     mutation: &Mutation,
@@ -320,6 +362,7 @@ async fn prepare(
                 && std::env::var("CICD_API_TOKEN").is_ok_and(|s| !s.trim().is_empty()),
             "Подготовка агента требует настроенной identity текущего исполнителя"
         );
+        validate_machine_source_root(&root)?;
     }
     let workspace = &detail["workspace"];
     let project = workspace["project_id"]
@@ -455,6 +498,24 @@ async fn prepare(
         mutation,
         json!({"action":"prepare","sources":server_sources,"local":{"machine_id":machine,"profile_hash":workspace["profile_hash"],"repositories":repositories,"tools":report["tools"]}}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_machine_source_root;
+
+    #[test]
+    fn machine_prepare_rejects_roots_inside_a_git_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("checkout");
+        let nested = checkout.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(checkout.join(".git"), "gitdir: ../metadata\n").unwrap();
+
+        assert!(validate_machine_source_root(root.path()).is_ok());
+        assert!(validate_machine_source_root(&checkout).is_err());
+        assert!(validate_machine_source_root(&nested).is_err());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

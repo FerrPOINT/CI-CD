@@ -17,6 +17,8 @@ pub struct KubernetesTarget {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub files: BTreeMap<String, String>,
     pub health_url: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub publication_images: BTreeMap<String, ImageBinding>,
 }
 fn dns(value: &str) -> bool {
     !value.is_empty()
@@ -39,6 +41,9 @@ fn value_key(value: &str) -> bool {
 }
 impl KubernetesTarget {
     pub fn validate(&self) -> Result<(), String> {
+        if !self.publication_images.is_empty() {
+            validate_image_bindings(&self.publication_images)?;
+        }
         if self.schema != "forge/kubernetes-environment/v1"
             || !dns(&self.cluster)
             || !dns(&self.namespace)
@@ -55,6 +60,18 @@ impl KubernetesTarget {
         {
             return Err("invalid Kubernetes environment identity or repository paths".into());
         }
+        if self.health_url.starts_with('/')
+            && self.health_url.len() <= 256
+            && !self.health_url.starts_with("//")
+            && self.health_url[1..].split('/').all(|segment| {
+                !matches!(segment, "." | "..")
+                    && segment.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~')
+                    })
+            })
+        {
+            return Ok(());
+        }
         let url = url::Url::parse(&self.health_url).map_err(|_| "invalid deployment health URL")?;
         if url.scheme() != "https"
             || url.host_str().is_none()
@@ -63,7 +80,10 @@ impl KubernetesTarget {
             || url.query().is_some()
             || url.fragment().is_some()
         {
-            return Err("deployment health requires a credential-free HTTPS URL".into());
+            return Err(
+                "deployment health requires a credential-free HTTPS URL or a cluster service path"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -79,12 +99,15 @@ pub struct ImageBinding {
 #[serde(deny_unknown_fields)]
 pub struct HelmDeploySpec {
     pub environment_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pipeline_id: Option<Uuid>,
     pub images: BTreeMap<String, ImageBinding>,
     pub receipt_artifact: String,
 }
 impl HelmDeploySpec {
     pub fn validate(&self) -> Result<(), String> {
         if self.environment_id.is_nil()
+            || self.source_pipeline_id.is_some_and(|id| id.is_nil())
             || self.images.is_empty()
             || self.images.len() > 16
             || !valid_relative_path(&self.receipt_artifact, false)
@@ -93,21 +116,28 @@ impl HelmDeploySpec {
                 "helm_deploy requires an environment identity and 1..16 image bindings".into(),
             );
         }
-        for (value_path, binding) in &self.images {
-            if !value_key(value_path)
-                || binding.job.is_empty()
-                || binding.job.len() > 63
-                || !binding.job.bytes().enumerate().all(|(i, b)| {
-                    b.is_ascii_alphabetic()
-                        || (i > 0 && (b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.')))
-                })
-                || !valid_relative_path(&binding.artifact, false)
-            {
-                return Err("invalid Helm image binding".into());
-            }
-        }
-        Ok(())
+        validate_image_bindings(&self.images)
     }
+}
+
+fn validate_image_bindings(images: &BTreeMap<String, ImageBinding>) -> Result<(), String> {
+    if images.len() > 16 {
+        return Err("helm_deploy accepts at most 16 image bindings".into());
+    }
+    for (value_path, binding) in images {
+        if !value_key(value_path)
+            || binding.job.is_empty()
+            || binding.job.len() > 63
+            || !binding.job.bytes().enumerate().all(|(i, b)| {
+                b.is_ascii_alphabetic()
+                    || (i > 0 && (b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.')))
+            })
+            || !valid_relative_path(&binding.artifact, false)
+        {
+            return Err("invalid Helm image binding".into());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -123,6 +153,7 @@ mod tests {
             values: vec!["deploy/dev-values.yaml".into()],
             files: BTreeMap::new(),
             health_url: "https://r1-dev.example.test/health".into(),
+            publication_images: BTreeMap::new(),
         }
     }
     #[test]
@@ -145,6 +176,9 @@ mod tests {
             "http://dev.test/health",
             "https://u:p@dev.test/",
             "https://dev.test/?key=x",
+            "//dev.test/health",
+            "/health?token=x",
+            "/api/../health",
         ] {
             let mut t = target();
             t.health_url = url.into();
@@ -153,6 +187,8 @@ mod tests {
         let mut value = serde_json::to_value(target()).unwrap();
         value["kubeconfig"] = serde_json::json!("/operator/admin");
         assert!(serde_json::from_value::<KubernetesTarget>(value).is_err());
+        t.health_url = "/health".into();
+        t.validate().unwrap();
     }
 }
 
@@ -163,6 +199,10 @@ pub struct DeploymentOffer {
     pub environment_id: Uuid,
     pub deployment_id: Uuid,
     pub pipeline_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pipeline_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_bootstrap: Option<WorkspaceBootstrap>,
     pub job_id: Uuid,
     pub attempt_id: Uuid,
     pub lease_id: Uuid,
@@ -175,12 +215,23 @@ pub struct DeploymentOffer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollback: Option<RollbackRelease>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceBootstrap {
+    pub reservation_id: Uuid,
+    pub namespace_uid: Uuid,
+    pub release: String,
+    pub revision: i32,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeploymentReceipt {
     pub schema: String,
     pub deployment_id: Uuid,
     pub pipeline_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pipeline_id: Option<Uuid>,
     pub attempt_id: Uuid,
     pub lease_id: Uuid,
     pub generation: i64,
@@ -199,6 +250,7 @@ impl DeploymentReceipt {
         self.schema == "forge/kubernetes-deployment/v1"
             && self.deployment_id == offer.deployment_id
             && self.pipeline_id == offer.pipeline_id
+            && self.source_pipeline_id == offer.source_pipeline_id
             && self.attempt_id == offer.attempt_id
             && self.lease_id == offer.lease_id
             && self.generation == offer.generation
@@ -279,6 +331,12 @@ impl DeploymentOffer {
         .any(Uuid::is_nil)
             || self.generation <= 0
             || self.pipeline_order <= 0
+            || self.workspace_bootstrap.as_ref().is_some_and(|receipt| {
+                receipt.reservation_id.is_nil()
+                    || receipt.namespace_uid.is_nil()
+                    || receipt.release != self.target.release
+                    || receipt.revision != 1
+            })
             || !crate::image_build::valid_commit(&self.source_commit)
             || !valid_relative_path(&self.receipt_artifact, false)
             || self.images.is_empty()

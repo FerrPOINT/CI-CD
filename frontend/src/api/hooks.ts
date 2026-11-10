@@ -593,7 +593,7 @@ export function useDeployments(environmentId: string | undefined) {
 export function useCreateDeployment(environmentId: string | undefined) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { git_ref: string; status?: 'pending' | 'running' | 'success' | 'failed' }) =>
+    mutationFn: (input: { git_ref: string; source_pipeline_id?: string; status?: 'pending' | 'running' | 'success' | 'failed' }) =>
       api<Deployment>(`/environments/${environmentId}/deployments`, { method: 'POST', body: JSON.stringify(input) }),
     onSuccess: () => { invalidateExecutionViews(qc); void qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deployments(environmentId ?? '') }) },
   })

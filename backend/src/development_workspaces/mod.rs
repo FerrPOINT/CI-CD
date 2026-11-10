@@ -391,15 +391,15 @@ pub(crate) async fn register(
         {
             return Err(ApiError::conflict("workspace_target_binding_mismatch"));
         }
-        let environment_matches: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM environments WHERE id=$1 AND project_id=$2)",
+        let environment_matches = sqlx::query(
+            "UPDATE environments SET purpose='workspace_target' WHERE id=$1 AND project_id=$2",
         )
         .bind(choice.environment_id)
         .bind(project)
-        .fetch_one(&mut *tx)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
-        if !environment_matches {
+        if environment_matches.rows_affected() != 1 {
             return Err(ApiError::conflict(
                 "workspace_execution_environment_binding_mismatch",
             ));
@@ -473,7 +473,15 @@ pub(crate) async fn submit(
         return Err(ApiError::bad_request("invalid_workspace_operation"));
     }
     let workspace = store::workspace(pool(&state)?, id).await.map_err(error)?;
-    if matches!(input.command, WorkspaceAction::RecoverSession { .. }) {
+    if matches!(
+        input.command,
+        WorkspaceAction::RecoverSession { .. }
+            | WorkspaceAction::Close {}
+            | WorkspaceAction::ConvertToStand {}
+    ) {
+        if machine::principal(&identity) {
+            return Err(ApiError::forbidden());
+        }
         require_maintainer(
             pool(&state)?,
             identity.claims.sub,
@@ -668,6 +676,8 @@ fn action_availability(
         "observe",
         "start",
         "stop",
+        "close",
+        "convert_to_stand",
         "begin_session",
         "end_session",
         "prepare",
@@ -678,7 +688,13 @@ fn action_availability(
     ]
     .into_iter()
     .map(|action| {
-        let reason = if matches!(action, "recover_session" | "reconcile") && !maintainer {
+        let reason = if workspace.retired_at.is_some() {
+            Some("Рабочее окружение закрыто")
+        } else if matches!(
+            action,
+            "recover_session" | "reconcile" | "close" | "convert_to_stand"
+        ) && !maintainer
+        {
             Some("Требуются права сопровождающего проекта")
         } else if !writable {
             Some("Доступно только чтение")
@@ -687,12 +703,30 @@ fn action_availability(
         } else if jobs
             && matches!(
                 action,
-                "start" | "stop" | "begin_session" | "end_session" | "recover_session"
+                "start"
+                    | "stop"
+                    | "begin_session"
+                    | "end_session"
+                    | "recover_session"
+                    | "close"
+                    | "convert_to_stand"
             )
         {
             Some("Проверка, сборка или доставка ещё удерживает окружение")
-        } else if action == "stop" && session.is_some() {
+        } else if matches!(action, "stop" | "close" | "convert_to_stand") && session.is_some() {
             Some("Сначала закончите рабочую сессию")
+        } else if action == "close"
+            && (workspace.runtime != "stopped"
+                || workspace.desired_runtime != "stopped"
+                || workspace.observed_at.is_none())
+        {
+            Some("Сначала подтвердите остановку окружения")
+        } else if action == "convert_to_stand"
+            && (workspace.runtime != "running"
+                || workspace.desired_runtime != "running"
+                || workspace.observed_at.is_none())
+        {
+            Some("Сначала подтвердите работу окружения")
         } else if action == "begin_session" && session.is_some() {
             Some("В окружении уже есть рабочая сессия")
         } else if !matches!(action, "observe" | "reconcile" | "recover_session")

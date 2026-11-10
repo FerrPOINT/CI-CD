@@ -205,8 +205,9 @@ export function DevelopmentWorkspacesPage() {
                 <CardContent className="space-y-3">
                   <CardTitle>{workspace.name}</CardTitle>
                   <p>
-                    {stateName(workspace.runtime)} ·{" "}
-                    {stateName(workspace.preparation)}
+                    {workspace.retired_at ? "Закрыт" : (
+                      <>{stateName(workspace.runtime)} · {stateName(workspace.preparation)}</>
+                    )}
                   </p>
                   <p className="text-sm text-text-muted">
                     Профиль{" "}
@@ -460,6 +461,7 @@ function WorkspaceCard({
     await Promise.all([
       cache.invalidateQueries({ queryKey: keys.detail(id) }),
       cache.invalidateQueries({ queryKey: keys.operations(id) }),
+      cache.invalidateQueries({ queryKey: ["environments", workspace.project_id] }),
       cache.invalidateQueries({
         queryKey: ["development-workspaces", workspace.project_id],
       }),
@@ -513,6 +515,9 @@ function WorkspaceCard({
     <Card>
       <CardContent className="space-y-5">
         <CardTitle>{workspace.name}</CardTitle>
+        {workspace.retired_at && (
+          <Notice tone="neutral" appearance="inline">Workspace закрыт. История операций доступна ниже.</Notice>
+        )}
         <p className="break-words text-sm text-text-muted">
           Владелец окружения: {workspace.owner_name ?? workspace.created_by}
         </p>
@@ -579,6 +584,10 @@ function WorkspaceCard({
           {button("observe", "Обновить состояние", { action: "observe" })}
           {button("start", "Включить", { action: "start" })}
           {button("stop", "Выключить", { action: "stop" })}
+          {!workspace.retired_at && capability("close")?.allowed &&
+            button("close", "Закрыть workspace", { action: "close" })}
+          {!workspace.retired_at && capability("convert_to_stand")?.allowed &&
+            button("convert_to_stand", "Перевести в стенд", { action: "convert_to_stand" })}
         </ActionGroup>
         <section className="space-y-3">
           <SectionHeader level={4} title="Рабочая сессия" />

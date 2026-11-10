@@ -118,7 +118,7 @@ async fn reviewer_http_git_migration_paging_comments_and_restart() {
         migrations: Cow::Owned(
             catalog
                 .iter()
-                .filter(|m| m.version < 116)
+                .filter(|m| m.version < 117)
                 .cloned()
                 .collect(),
         ),

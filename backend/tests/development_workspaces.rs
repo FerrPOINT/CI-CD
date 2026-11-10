@@ -6,7 +6,7 @@ use axum::{
 };
 use cicd_domain::development_workspace::WorkspaceAction;
 use cicd_infra::development_workspace as store;
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::{
     PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
@@ -172,6 +172,8 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
         stale_source: bool,
         unknown: bool,
         machine: bool,
+        publication: Option<(&'static str, bool, bool)>,
+        tampered_artifact: bool,
         allowed: bool,
     }
     let current = Case {
@@ -187,6 +189,8 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
         stale_source: false,
         unknown: false,
         machine: false,
+        publication: None,
+        tampered_artifact: false,
         allowed: true,
     };
     let retry = Case {
@@ -197,6 +201,36 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
     };
     for case in [
         current,
+        Case {
+            name: "completed publication from a separate pipeline",
+            publication: Some(("success", false, false)),
+            ..current
+        },
+        Case {
+            name: "publication pipeline still running",
+            publication: Some(("running", false, false)),
+            allowed: false,
+            ..current
+        },
+        Case {
+            name: "publication pipeline for another commit",
+            publication: Some(("success", true, false)),
+            allowed: false,
+            ..current
+        },
+        Case {
+            name: "publication pipeline for another project",
+            publication: Some(("success", false, true)),
+            allowed: false,
+            ..current
+        },
+        Case {
+            name: "publication artifact changed after upload",
+            publication: Some(("success", false, false)),
+            tampered_artifact: true,
+            allowed: false,
+            ..current
+        },
         Case {
             name: "foreign central subject",
             original_subject: false,
@@ -326,18 +360,51 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             .bind(if case.stale_session { 3_i64 } else { 1_i64 }).execute(&f.pool).await.unwrap();
         let pipeline = Uuid::new_v4();
         let stage = Uuid::new_v4();
+        let publication_pipeline = case.publication.map(|_| Uuid::new_v4());
+        let publication_stage = publication_pipeline
+            .map(|_| Uuid::new_v4())
+            .unwrap_or(stage);
         let producer = Uuid::new_v4();
         let producer_attempt = Uuid::new_v4();
         let job = Uuid::new_v4();
         let attempt = Uuid::new_v4();
         let raw = "frozen owner recipe";
-        let plan = json!({"format":"v1-dag","version":1,"config_source":source,"resolved_commit_sha":commit,"jobs":[
+        let mut plan = json!({"format":"v1-dag","version":1,"config_source":source,"resolved_commit_sha":commit,"jobs":[
             {"key":"publish","image_publish":{"context":".","dockerfile":"Dockerfile","repository":"registry.example.test/team/application","descriptor_artifact":"out/build.json","published_artifact":"out/image.json"}},
             {"key":"deploy","command":"forge:helm-deploy","image":"forge:runner-helm-deploy","commands":[],"required_secrets":[],"allow_failure":false,"artifact_paths":["out/release.json"],"needs":["publish"],"helm_deploy":{"environment_id":f.environment,"images":{"image":{"job":"publish","artifact":"out/image.json"}},"receipt_artifact":"out/release.json"}}
         ]});
         let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
         sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status) VALUES($1,$2,$3,$3,'queued')")
             .bind(pipeline).bind(f.project).bind(&commit).execute(&f.pool).await.unwrap();
+        if let (Some(publication_id), Some((status, wrong_commit, wrong_project))) =
+            (publication_pipeline, case.publication)
+        {
+            let publication_commit = if wrong_commit {
+                "b".repeat(40)
+            } else {
+                commit.clone()
+            };
+            let mut publication_plan = plan.clone();
+            publication_plan["resolved_commit_sha"] = json!(publication_commit);
+            publication_plan["jobs"].as_array_mut().unwrap().pop();
+            let publication_project = if wrong_project {
+                let id = Uuid::new_v4();
+                sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,'Foreign publication','https://example.invalid/foreign.git')")
+                    .bind(id).execute(&f.pool).await.unwrap();
+                id
+            } else {
+                f.project
+            };
+            sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status) VALUES($1,$2,$3,$3,$4)")
+                .bind(publication_id).bind(publication_project).bind(&publication_commit).bind(status).execute(&f.pool).await.unwrap();
+            sqlx::query("INSERT INTO pipeline_plans(pipeline_id,config_source,parser_version,git_ref,resolved_commit_sha,config_sha256,plan_sha256,raw_config,plan) VALUES($1,$2,'v1',$3,$3,$4,$5,$6,$7)")
+                .bind(publication_id).bind(source).bind(&publication_commit).bind(hash(raw.as_bytes())).bind(hash(&serde_json::to_vec(&publication_plan).unwrap())).bind(raw).bind(&publication_plan).execute(&f.pool).await.unwrap();
+            sqlx::query("INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'publication',0,$3)")
+                .bind(publication_stage).bind(publication_id).bind(status).execute(&f.pool).await.unwrap();
+            plan["jobs"].as_array_mut().unwrap().remove(0);
+            plan["jobs"][0]["needs"] = json!([]);
+            plan["jobs"][0]["helm_deploy"]["source_pipeline_id"] = json!(publication_id);
+        }
         sqlx::query("INSERT INTO pipeline_plans(pipeline_id,config_source,parser_version,git_ref,resolved_commit_sha,config_sha256,plan_sha256,raw_config,plan) VALUES($1,$2,'v1',$3,$3,$4,$5,$6,$7)")
             .bind(pipeline).bind(source).bind(&commit).bind(hash(raw.as_bytes())).bind(hash(&serde_json::to_vec(&plan).unwrap())).bind(raw).bind(&plan).execute(&f.pool).await.unwrap();
         if case.pipeline_owner {
@@ -390,7 +457,7 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             ),
         ] {
             sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,required_tags,artifact_paths,position,status) VALUES($1,$2,$3,$4,$5,ARRAY['linux'],ARRAY['out/release.json'],$6,$7)")
-                .bind(id).bind(stage).bind(name).bind(image).bind(command).bind(position).bind(status).execute(&f.pool).await.unwrap();
+                .bind(id).bind(if id == producer { publication_stage } else { stage }).bind(name).bind(image).bind(command).bind(position).bind(status).execute(&f.pool).await.unwrap();
             let retrying = id == job && case.retry;
             if retrying {
                 sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,'canceled','initial')")
@@ -422,6 +489,9 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             std::fs::write(&path, &bytes).unwrap();
             sqlx::query("INSERT INTO artifacts(id,job_id,attempt_id,name,storage_path,size_bytes,sha256,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '1 hour')")
                 .bind(Uuid::new_v4()).bind(producer).bind(producer_attempt).bind(cicd_domain::artifact_names::artifact_name_from_declared_path(name)).bind(path.to_str().unwrap()).bind(bytes.len() as i64).bind(hash(&bytes)).execute(&f.pool).await.unwrap();
+            if case.tampered_artifact && name == "out/image.json" {
+                std::fs::write(&path, vec![b' '; bytes.len()]).unwrap();
+            }
         }
         sqlx::query("INSERT INTO job_queue(id,job_id,attempt_id,pipeline_id,stage_id,state,priority,required_tags) VALUES($1,$2,$3,$4,$5,'queued',100,ARRAY['linux'])")
             .bind(Uuid::new_v4()).bind(job).bind(attempt).bind(pipeline).bind(stage).execute(&f.pool).await.unwrap();
@@ -443,6 +513,21 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             .await
             .unwrap();
         assert_eq!(leases, i64::from(case.allowed), "{}", case.name);
+        if case.allowed
+            && let Some(publication_id) = publication_pipeline
+        {
+            let input: Value =
+                sqlx::query_scalar("SELECT runtime_input FROM deployments WHERE pipeline_id=$1")
+                    .bind(pipeline)
+                    .fetch_one(&f.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(input["sourcePipelineId"], json!(publication_id));
+            assert_eq!(
+                input["images"]["image"]["imageRef"],
+                json!(published.image_ref)
+            );
+        }
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id=$1")
                 .bind(producer)
@@ -774,7 +859,7 @@ impl Fixture {
         let other_workspace = Uuid::new_v4();
         let environment = Uuid::new_v4();
         for (id, environment) in [(workspace, environment), (other_workspace, Uuid::new_v4())] {
-            sqlx::query("INSERT INTO environments(id,project_id,name) VALUES($1,$2,$3)")
+            sqlx::query("INSERT INTO environments(id,project_id,name,purpose) VALUES($1,$2,$3,'workspace_target')")
                 .bind(environment)
                 .bind(project)
                 .bind(id.to_string())
@@ -832,6 +917,51 @@ impl Fixture {
             .await
             .unwrap();
         self.admin.close().await;
+    }
+}
+
+#[tokio::test]
+async fn workspace_retirement_preserves_the_target_and_original_operation() {
+    for (action, runtime, expected_purpose) in [
+        (WorkspaceAction::Close {}, "stopped", "workspace_target"),
+        (WorkspaceAction::ConvertToStand {}, "running", "stand"),
+    ] {
+        let f = Fixture::new().await;
+        let id = Uuid::new_v4();
+        let version = f.version().await;
+        assert!(matches!(
+            f.enqueue(id, f.actor, version, action.clone()).await,
+            Err(store::Error::Conflict(
+                "workspace_retirement_runtime_unconfirmed"
+            ))
+        ));
+        sqlx::query("UPDATE development_workspaces SET runtime=$2,desired_runtime=$2,observed_at=now() WHERE id=$1")
+            .bind(f.workspace).bind(runtime).execute(&f.pool).await.unwrap();
+        let first = f
+            .enqueue(id, f.actor, version, action.clone())
+            .await
+            .unwrap();
+        let replay = f.enqueue(id, f.actor, version, action).await.unwrap();
+        assert_eq!(first.state, "succeeded");
+        assert_eq!(first.result, replay.result);
+        assert_eq!(f.version().await, version + 1);
+        let purpose: String = sqlx::query_scalar("SELECT purpose FROM environments WHERE id=$1")
+            .bind(f.environment)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+        assert_eq!(purpose, expected_purpose);
+        assert!(matches!(
+            f.enqueue(
+                Uuid::new_v4(),
+                f.actor,
+                version + 1,
+                WorkspaceAction::Start {}
+            )
+            .await,
+            Err(store::Error::Conflict("workspace_retired"))
+        ));
+        f.close().await;
     }
 }
 

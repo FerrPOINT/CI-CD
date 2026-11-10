@@ -5,11 +5,28 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from migration_lineages import project
+from migration_lineages import project, reviewer_v1
 
 
 class MigrationLineagesTest(unittest.TestCase):
     backend = Path(__file__).resolve().parents[1] / "backend"
+
+    def test_installed_reviewer_history_preserves_checksum_and_shared_future(self):
+        files = reviewer_v1(self.backend)
+        self.assertEqual(hashlib.sha384(files["0116_pull_task_and_comments.sql"]).hexdigest(),
+                         "ba466b28c6fb6ec05ededcbd71022365fe048f944d781cc7abfaa10691ac0a3b6ea852152a327bd1ac2adf15f8c1c7eb")
+        self.assertEqual(files["0117_environment_purpose.sql"],
+                         (self.backend / "migrations/0116_environment_purpose.sql").read_bytes())
+        self.assertNotIn("0117_pull_task_and_comments.sql", files)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(self.backend / "migrations", root / "migrations")
+            shutil.copytree(self.backend / "migration-lineages", root / "migration-lineages")
+            (root / "migrations/0118_future.sql").write_bytes(b"SELECT 1;\n")
+            self.assertEqual(reviewer_v1(root)["0118_future.sql"], b"SELECT 1;\n")
+            (root / "migrations/0117_pull_task_and_comments.sql").write_bytes(b"SELECT 2;\n")
+            with self.assertRaisesRegex(ValueError, "Reviewer migration checksum changed"):
+                reviewer_v1(root)
 
     def test_native_applied_history_and_shared_future(self):
         files = project(self.backend)

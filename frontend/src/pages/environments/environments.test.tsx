@@ -16,6 +16,7 @@ vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<type
 
 const projectId = '22222222-2222-4222-8222-222222222222'
 const environmentId = '66666666-6666-4666-8666-666666666666'
+const workspaceEnvironmentId = '55555555-5555-4555-8555-555555555555'
 const pendingDeploymentId = '77777777-7777-4777-8777-777777777777'
 const successDeploymentId = '99999999-9999-4999-8999-999999999999'
 const pipelineId = '11111111-1111-4111-8111-111111111111'
@@ -36,8 +37,20 @@ function renderEnvironmentsPage(requests: string[], override?: (url: string, met
           name: 'production',
           url: 'https://prod.example.invalid',
           status: 'available',
+          purpose: 'stand',
           protected: true,
           required_approvals: 1,
+          created_at: now,
+        },
+        {
+          id: workspaceEnvironmentId,
+          project_id: projectId,
+          name: 'temporary workspace',
+          url: null,
+          status: 'available',
+          purpose: 'workspace_target',
+          protected: false,
+          required_approvals: 0,
           created_at: now,
         },
       ])
@@ -141,6 +154,15 @@ afterEach(() => {
 })
 
 describe('EnvironmentsPage protected delivery controls', () => {
+  it('lists permanent stands and preserves direct links to workspace delivery history', async () => {
+    renderEnvironmentsPage([])
+    await screen.findByText('production')
+    expect(screen.queryByText('temporary workspace')).not.toBeInTheDocument()
+    cleanup()
+    renderEnvironmentsPage([], undefined, `?environment_id=${workspaceEnvironmentId}`)
+    expect(await screen.findByText('temporary workspace')).toBeInTheDocument()
+  })
+
   it('opens and focuses the exact deployment from a workspace link', async () => {
     HTMLElement.prototype.scrollIntoView = vi.fn()
     renderEnvironmentsPage([], undefined, `?environment_id=${environmentId}&deployment_id=${successDeploymentId}`)
