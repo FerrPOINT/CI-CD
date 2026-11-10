@@ -821,11 +821,14 @@ pub async fn create_pull_request(
     // Author: authenticated identity wins; explicit input is a fallback for
     // trusted-network mode where no claims exist.
     require_write(write.as_ref())?;
-    let author = match (confirmed_author, claims.as_ref().map(|c| c.0.sub)) {
+    let author = match (confirmed_author, claims.as_ref().map(|c| &c.0)) {
         (Some(username), _) => username,
-        (None, Some(user_id)) => {
+        (None, Some(claims)) if claims.service_account_name.is_some() => {
+            claims.service_account_name.clone().unwrap_or_default()
+        }
+        (None, Some(claims)) => {
             sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
-                .bind(user_id)
+                .bind(claims.sub)
                 .fetch_optional(&mut *transaction)
                 .await
                 .map_err(ApiError::internal)?

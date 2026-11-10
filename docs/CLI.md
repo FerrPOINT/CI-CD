@@ -24,10 +24,16 @@ cargo +1.88.0 build --locked --release -p cicd-cli
 |---|---|---|
 | `CICD_API_URL` | `http://127.0.0.1:7711` | Базовый URL API локального стенда |
 | `CICD_API_TOKEN` / `SDLC_API_TOKEN` | - | Личный токен Central Auth; эквивалентно `--token` |
+| `CICD_PR_API_TOKEN` | - | Отдельный токен только для группы `pr` |
 | `CICD_TIMEOUT_SECONDS` | `60` | Общий timeout HTTP-запроса; эквивалентно `--timeout-seconds` |
 | `CICD_OUTPUT` | `json` | Формат вывода: `json`, `ndjson` или `table`; эквивалентно `--output` |
 | `CICD_PROFILE` | - | Имя профиля из `~/.config/forge-cli/config.toml`; эквивалентно `--profile` |
 | `CICD_CONFIG` | `~/.config/forge-cli/config.toml` | Путь к TOML-конфигу профилей |
+
+Управляемый агент с отдельной учёткой PR получает токен через ссылку на секрет
+в конфигурации исполнения. Для `pr` заданный `CICD_PR_API_TOKEN` определяет
+учётку. Некорректное значение даёт ошибку до HTTP-запроса. Остальные команды
+используют свои обычные учётные данные. Права на PR проверяет Forge.
 
 Source candidate: `repository prepare-checkout`, `prepare-candidate` и
 `push-candidate [--readback]` исполняются до общего API-клиента. Подготовка
@@ -375,3 +381,5 @@ CICD_TEST_DATABASE_URL=postgres://... cargo test -p cicd-cli --features integrat
 Установка, platform requirements, source/checksum и ограничения локального candidate: [CLI_INSTALL.md](CLI_INSTALL.md).
 
 Текущие Linux/WSL candidates и установка: [CLI_INSTALL.md](CLI_INSTALL.md). Проверки против образов с PostgreSQL, границы fixture execution и блокеры обновления sdlc1: [CLI_VALIDATION.md](CLI_VALIDATION.md). Перед использованием с рабочим стендом требуется подтверждённая совместимость его backend и применённых миграций.
+
+Scope `pull:create` разрешает только POST создания PR при наличии доступа к репозиторию и необходимой роли. Права на merge и выпуск проверяются отдельно.
