@@ -33,7 +33,7 @@ cargo +1.88.0 build --locked --release -p cicd-cli
 Developer в управляемом workspace использует свой Central PAT
 (`CICD_API_TOKEN`) для создания PR и чтения PR задачи через `pr for-task`.
 Forge проверяет членство этой identity в проекте и связь PR с задачей.
-В конфигурации такого Developer поле `CICD_PR_API_TOKEN` оставляют пустым.
+В конфигурации такого Developer переменную `CICD_PR_API_TOKEN` не задают.
 Если отдельный токен задан для другого клиента, CLI использует его только
 для команд `pr`. Некорректное значение даёт ошибку до HTTP-запроса.
 
