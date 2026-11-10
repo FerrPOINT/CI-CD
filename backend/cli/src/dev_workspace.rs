@@ -500,6 +500,19 @@ async fn prepare(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn register(
+    api: &ApiClient,
+    project: Uuid,
+    workspace: Uuid,
+    operation_id: Uuid,
+    target: Uuid,
+    name: String,
+    create: bool,
+) -> Result<Value> {
+    api.json(api.post(&format!("/projects/{project}/development-workspaces")).json(&json!({"id":workspace,"operation_id":operation_id,"catalog_target_id":target,"name":name,"create":create}))).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate_machine_source_root;
@@ -516,17 +529,4 @@ mod tests {
         assert!(validate_machine_source_root(&checkout).is_err());
         assert!(validate_machine_source_root(&nested).is_err());
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn register(
-    api: &ApiClient,
-    project: Uuid,
-    workspace: Uuid,
-    operation_id: Uuid,
-    target: Uuid,
-    name: String,
-    create: bool,
-) -> Result<Value> {
-    api.json(api.post(&format!("/projects/{project}/development-workspaces")).json(&json!({"id":workspace,"operation_id":operation_id,"catalog_target_id":target,"name":name,"create":create}))).await
 }
