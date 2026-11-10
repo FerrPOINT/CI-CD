@@ -64,6 +64,9 @@ credential. Сам вход с машинным PAT не выдаёт членс
 Тот же PAT используется для `cicd-cli pr create` и `cicd-cli pr for-task`.
 Forge проверяет членство Developer и привязку PR к задаче. Отдельный
 `CICD_PR_API_TOKEN` в конфигурации этой роли переопределил бы identity.
+После дополнительного push Developer продолжает работу с тем же PR.
+Текущий SHA его ветки показывает `cicd-cli pr review-context`; ссылка
+на задачу сохраняет SHA на момент привязки.
 
 Доступны чтение проекта, своя сессия, prepare и опубликованные Forge-проверки
 без runtime-доставки. Create/register, Start/Stop, Build, recovery, reconcile,
