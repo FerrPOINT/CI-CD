@@ -3242,6 +3242,112 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
 }
 
 #[tokio::test]
+async fn pipeline_trigger_rejects_invalid_legacy_timeout_without_persisting_jobs() {
+    let pool = test_pool().await;
+    let repository_id = Uuid::new_v4();
+    let repo_name = format!("it_invalid_timeout_{}", repository_id.simple());
+    let root = tempfile::tempdir().expect("owned Git fixture");
+    let worktree = root.path().join("worktree");
+    let bare_repo = root.path().join(format!("{repo_name}.git"));
+    run_git(
+        &["init", "--quiet", "--initial-branch=main"],
+        Some(&worktree),
+    )
+    .await;
+    tokio::fs::write(
+        worktree.join(".forge-ci.yml"),
+        "stages:\n  - name: private-stage-name\n    jobs:\n      - name: valid\n        command: echo ok\n      - name: private-job-name\n        command: echo ok\n        timeout: private-duration-value\n",
+    )
+    .await
+    .expect("write invalid legacy duration");
+    run_git(
+        &["-C", worktree.to_str().unwrap(), "add", ".forge-ci.yml"],
+        None,
+    )
+    .await;
+    run_git(
+        &[
+            "-C",
+            worktree.to_str().unwrap(),
+            "-c",
+            "user.name=Forge CI",
+            "-c",
+            "user.email=ci@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "invalid duration fixture",
+        ],
+        None,
+    )
+    .await;
+    run_git(
+        &["clone", "--bare", "--quiet", worktree.to_str().unwrap()],
+        Some(&bare_repo),
+    )
+    .await;
+    sqlx::query("INSERT INTO repositories (id, name) VALUES ($1, $2)")
+        .bind(repository_id)
+        .bind(&repo_name)
+        .execute(&pool)
+        .await
+        .expect("register existing bare repository identity");
+    let project_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url, repository_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(project_id)
+    .bind(format!("it-invalid-timeout-{project_id}"))
+    .bind(format!("http://127.0.0.1/git/{repo_name}.git"))
+    .bind(repository_id)
+    .execute(&pool)
+    .await
+    .expect("insert project");
+    let app = authenticated_app_with_git(
+        pool.clone(),
+        cicd::git_host::GitConfig {
+            root: root.path().to_owned(),
+            ..Default::default()
+        },
+    )
+    .await;
+    let response = app
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/pipelines"))
+                .header("content-type", "application/json")
+                .header("Idempotency-Key", Uuid::new_v4().to_string())
+                .body(Body::from(r#"{"git_ref":"main"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(response).await;
+    assert_eq!(
+        body["error"]["message"],
+        ".forge-ci.yml stages[0].jobs[1].timeout: требуется положительная длительность в секундах, минутах или часах"
+    );
+    let serialized = body.to_string();
+    for private in [
+        "private-stage-name",
+        "private-job-name",
+        "private-duration-value",
+    ] {
+        assert!(!serialized.contains(private));
+    }
+    let counts: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM pipelines), (SELECT count(*) FROM stages), \
+         (SELECT count(*) FROM jobs), (SELECT count(*) FROM pipeline_plans), \
+         (SELECT count(*) FROM job_queue), (SELECT count(*) FROM pipeline_triggers)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read persisted pipeline state after refusal");
+    assert_eq!(counts, (0, 0, 0, 0, 0, 0));
+    fixture_cleanup::projects(&pool).await;
+}
+
+#[tokio::test]
 async fn pipeline_trigger_reads_v1_dag_config_from_bare_repository() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();
@@ -5184,11 +5290,24 @@ async fn embedded_runner_closes_lease_when_prepare_fails() {
     assert_eq!(queue_state, "completed");
     assert!(queue_completed_at.is_some());
 
+    let completion: (bool, bool) = sqlx::query_as(
+        "SELECT acknowledged_at IS NOT NULL, completion_received_at IS NOT NULL FROM job_leases WHERE attempt_id=$1",
+    )
+    .bind(attempt_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(completion, (false, false));
+
     fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
 async fn embedded_workspace_uses_pin_and_retains_failed_attempt_without_deleting_old_files() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_test_writer()
+        .try_init();
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();
     let pipeline_id = Uuid::new_v4();
@@ -5268,13 +5387,29 @@ async fn embedded_workspace_uses_pin_and_retains_failed_attempt_without_deleting
         config.clone(),
     )
     .await;
-    let (status, terminal, generation): (String, String, i64) = sqlx::query_as(
+    let (status, terminal, generation): (String, Option<String>, i64) = sqlx::query_as(
         "SELECT a.status, l.terminal_status, l.generation FROM execution_attempts a JOIN job_leases l ON l.attempt_id = a.id WHERE a.id = $1")
         .bind(attempt_id).fetch_one(&pool).await.unwrap();
+    let logs: String = sqlx::query_scalar(
+        "SELECT COALESCE(string_agg(message, E'\\n' ORDER BY sequence), '') FROM job_logs WHERE attempt_id = $1",
+    )
+    .bind(attempt_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(
-        (status.as_str(), terminal.as_str(), generation),
-        ("success", "success", 1)
+        (status.as_str(), terminal.as_deref(), generation),
+        ("success", Some("success"), 1),
+        "attempt logs: {logs}"
     );
+    let completion: (bool, bool) = sqlx::query_as(
+        "SELECT acknowledged_at IS NOT NULL, completion_received_at IS NOT NULL FROM job_leases WHERE attempt_id=$1",
+    )
+    .bind(attempt_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(completion, (true, true));
     assert!(
         attempts(attempt_id).is_empty(),
         "cleanup follows persisted completion"
@@ -5283,13 +5418,6 @@ async fn embedded_workspace_uses_pin_and_retains_failed_attempt_without_deleting
         std::fs::read_to_string(old_directory.join("do-not-delete")).unwrap(),
         "foreign previous workspace"
     );
-    let logs: String = sqlx::query_scalar(
-        "SELECT string_agg(message, E'\\n' ORDER BY sequence) FROM job_logs WHERE attempt_id = $1",
-    )
-    .bind(attempt_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
     assert!(logs.contains("verified-pinned-old"));
 
     let retry_id = Uuid::new_v4();
@@ -8238,16 +8366,55 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
         })
     };
 
+    // Claim authority must use its transaction's connection, not borrow a
+    // second one while the remaining pool slots are legitimately occupied.
+    let held_connections = [
+        pool.acquire().await.unwrap(),
+        pool.acquire().await.unwrap(),
+        pool.acquire().await.unwrap(),
+    ];
+    let single = poll(app.clone(), credentials[0].clone()).await;
+    drop(held_connections);
+    let single_status = single.status();
+    let single = response_json(single).await;
+    assert_eq!(
+        single_status,
+        StatusCode::OK,
+        "single poll with one available connection: {single}"
+    );
+    let lease_id = Uuid::parse_str(single["leaseId"].as_str().unwrap()).unwrap();
+    sqlx::query("UPDATE job_leases SET ack_deadline = now() - interval '1 second' WHERE id = $1")
+        .bind(lease_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cicd::runner::reconcile_unacknowledged_leases(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+
     // Each round races two runner identities against one project slot. Requeue
     // the unacknowledged offer so the next round tests a fresh claim.
-    for round in 0..8 {
+    for round in 0..20 {
         let (first, second, third, fourth) = tokio::join!(
             poll(app.clone(), credentials[0].clone()),
             poll(app.clone(), credentials[1].clone()),
             poll(app.clone(), credentials[0].clone()),
             poll(app.clone(), credentials[1].clone()),
         );
-        let responses = [first, second, third, fourth];
+        let mut responses = [first, second, third, fourth];
+        for response in &mut responses {
+            if response.status().is_server_error() {
+                let body = std::mem::replace(response.body_mut(), Body::empty());
+                let body = to_bytes(body, 16 * 1024).await.unwrap();
+                panic!(
+                    "round {round}: unexpected server error: {}",
+                    String::from_utf8_lossy(&body)
+                );
+            }
+        }
         let statuses = responses.each_ref().map(|response| response.status());
         assert_eq!(
             statuses
@@ -8278,7 +8445,7 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
         .expect("count active leases");
         assert_eq!(lease_count, 1, "round {round}: project cap exceeded");
 
-        if round < 7 {
+        if round < 19 {
             let offer = responses
                 .into_iter()
                 .find(|response| response.status() == StatusCode::OK)
@@ -9195,7 +9362,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let released = sqlx::migrate::Migrator::new(path.as_path()).await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=40).chain(90..=116).collect::<Vec<_>>()
+        (1..=40).chain(90..=118).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -9232,7 +9399,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=40).chain(90..=116).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=40).chain(90..=118).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);

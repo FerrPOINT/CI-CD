@@ -660,6 +660,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/deployments/{deployment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_deployment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/deployments/{deployment_id}/approvals": {
         parameters: {
             query?: never;
@@ -670,6 +686,22 @@ export interface paths {
         get: operations["list_deployment_approvals"];
         put?: never;
         post: operations["record_deployment_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/deployments/{deployment_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cancel_deployment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -786,6 +818,22 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["update_environment"];
+        trace?: never;
+    };
+    "/api/v1/environments/{environment_id}/deployment-requests/{request_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_deployment_request"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/environments/{environment_id}/deployments": {
@@ -2949,6 +2997,11 @@ export interface components {
             git_ref: string;
             /** Format: uuid */
             pipeline_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Optional retry identity, scoped to this environment and bound to the verified actor and payload.
+             */
+            request_key?: string | null;
             /** Format: uuid */
             source_pipeline_id?: string | null;
             status?: string | null;
@@ -4374,6 +4427,8 @@ export interface components {
         };
         RollbackDeployment: {
             git_ref?: string | null;
+            /** Format: uuid */
+            request_key?: string | null;
         };
         RollbackRelease: {
             /** Format: int32 */
@@ -6592,6 +6647,33 @@ export interface operations {
             };
         };
     };
+    get_deployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_deployment_approvals: {
         parameters: {
             query?: never;
@@ -6654,6 +6736,50 @@ export interface operations {
                 };
                 content?: never;
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancel_deployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Terminal result confirmed; a failed deployment without a pipeline confirms a previously accepted cancellation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            /** @description Cancellation accepted; execution termination is not yet confirmed */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Already failed without an accepted cancellation, or pipeline ownership is unconfirmed */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6892,6 +7018,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Environment"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_deployment_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                environment_id: string;
+                request_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
                 };
             };
             404: {
@@ -7556,6 +7710,13 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description transition or execution custody conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

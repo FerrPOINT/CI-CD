@@ -1423,7 +1423,7 @@ async fn claim_next_work(
             Err(error) => return Err(ApiError::internal(error)),
         };
         let owner_clock =
-            crate::pipeline_authority::confirm(db, row.pipeline_id, row.attempt_id).await?;
+            crate::pipeline_authority::confirm(&mut tx, row.pipeline_id, row.attempt_id).await?;
         if let Some(clock) = owner_clock {
             clock.bind_commit_clock(&mut tx).await?;
         }
@@ -2909,7 +2909,12 @@ async fn lease_owner_clock(
         }
         return Err(ApiError::gone("lease is no longer active"));
     };
-    crate::pipeline_authority::confirm(db, pipeline, attempt).await
+    crate::pipeline_authority::confirm(
+        &mut *db.acquire().await.map_err(ApiError::internal)?,
+        pipeline,
+        attempt,
+    )
+    .await
 }
 
 #[cfg(test)]

@@ -1353,6 +1353,24 @@ checksums нет. Значение `forge.request_valid_until` задаётся 
 Новые таблицы также должны получить этот guard. Полный контракт:
 [HUMAN_APPLICATION_ACCESS](HUMAN_APPLICATION_ACCESS.md#обычные-sql-записи-и-исходный-срок-подтверждения).
 
+## Deployment cancellation и request replay
+
+Аддитивная `0118_deployment_cancel_intent.sql` добавляет к существующим
+`deployments` только `cancel_requested_at` и `request_fingerprint`. Историческая
+0036 уже хранит UUID `request_key` и unique `(environment_id, request_key)`;
+второй реестр операций не вводится. Nullable fingerprint сохраняет старые
+записи, но запрещает автоматически считать неизвестный legacy key доказанным
+повтором. Fingerprint связывает нормализованный запрос, его вид и target с
+проверенным автором. Создание/rollback и audit author сохраняются одной
+транзакцией. Request readback проверяет исходного автора по этому атомарному
+audit event; обычное чтение Deployment по ID сохраняет project access.
+
+Cancel timestamp является намерением, а не physical completion receipt.
+Pipeline publication берёт блокировку исходной deployment row; принятая отмена
+закрывает запуск и retry. Существующий runner ledger и custody подтверждают
+окончание работы. Не удаляются deployment history, данные, pipeline или
+репозитории. Совместимость и порядок rollback: [ADR-0046](adr/0046-deployment-request-lifecycle.md).
+
 ### Общее расписание синхронизаций
 
 Миграция 0114 добавляет append-only `repository_sync_schedule`: UUID команды,

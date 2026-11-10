@@ -354,6 +354,19 @@ pub async fn emit_pipeline_event(
     status: &str,
 ) -> Result<Uuid, sqlx::Error> {
     let mut tx = pool.begin().await?;
+    let event =
+        emit_pipeline_event_tx(&mut tx, project_id, pipeline_id, event_type, status).await?;
+    tx.commit().await?;
+    Ok(event)
+}
+
+pub(crate) async fn emit_pipeline_event_tx(
+    connection: &mut sqlx::PgConnection,
+    project_id: Uuid,
+    pipeline_id: Uuid,
+    event_type: &str,
+    status: &str,
+) -> Result<Uuid, sqlx::Error> {
     let event_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO domain_events (id, event_type, aggregate_type, aggregate_id, payload) \
@@ -363,14 +376,14 @@ pub async fn emit_pipeline_event(
     .bind(event_type)
     .bind(pipeline_id)
     .bind(serde_json::json!({ "project_id": project_id, "status": status }))
-    .execute(&mut *tx)
+    .execute(&mut *connection)
     .await?;
 
     let hooks = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
         "SELECT id, url, secret FROM webhooks WHERE project_id = $1 AND enabled",
     )
     .bind(project_id)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *connection)
     .await?;
     for (hook_id, url, secret) in hooks {
         sqlx::query(
@@ -383,7 +396,7 @@ pub async fn emit_pipeline_event(
         .bind(format!("webhook:{hook_id}"))
         .bind(url)
         .bind(serde_json::json!({ "event": event_type, "pipeline_id": pipeline_id, "status": status, "signed": secret.is_some() }))
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await?;
     }
 
@@ -392,14 +405,14 @@ pub async fn emit_pipeline_event(
          WHERE project_id = $1 AND enabled AND lower(channel) = 'email'",
     )
     .bind(project_id)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *connection)
     .await?;
     for (config_id, _channel, target, window_secs) in emails {
-        if !rules_allow(&mut tx, project_id, event_type, status, "email").await? {
+        if !rules_allow(&mut *connection, project_id, event_type, status, "email").await? {
             continue;
         }
         if try_aggregate(
-            &mut tx,
+            &mut *connection,
             project_id,
             &format!("notification:{config_id}"),
             status,
@@ -410,7 +423,7 @@ pub async fn emit_pipeline_event(
             continue;
         }
         let (subject_tpl, body_tpl) =
-            match template_for(&mut tx, project_id, "email").await? {
+            match template_for(&mut *connection, project_id, "email").await? {
                 Some((subject_tpl, body_tpl)) => (subject_tpl, body_tpl),
                 None => (
                     "Forge pipeline {{status}}".to_string(),
@@ -433,7 +446,7 @@ pub async fn emit_pipeline_event(
         .bind(format!("notification:{config_id}"))
         .bind(target)
         .bind(payload)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await?;
     }
 
@@ -442,14 +455,14 @@ pub async fn emit_pipeline_event(
          WHERE project_id = $1 AND enabled AND lower(channel) IN ('slack_webhook', 'generic_webhook')",
     )
     .bind(project_id)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *connection)
     .await?;
     for (config_id, channel, target, window_secs) in external {
-        if !rules_allow(&mut tx, project_id, event_type, status, &channel).await? {
+        if !rules_allow(&mut *connection, project_id, event_type, status, &channel).await? {
             continue;
         }
         if try_aggregate(
-            &mut tx,
+            &mut *connection,
             project_id,
             &format!("notification:{config_id}"),
             status,
@@ -481,7 +494,7 @@ pub async fn emit_pipeline_event(
         .bind(format!("notification:{config_id}"))
         .bind(target)
         .bind(payload)
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await?;
     }
 
@@ -490,14 +503,14 @@ pub async fn emit_pipeline_event(
          WHERE project_id = $1 AND enabled AND lower(channel) IN ('in_app', 'sse')",
     )
     .bind(project_id)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *connection)
     .await?;
     for (config_id, channel, target, window_secs) in notifications {
-        if !rules_allow(&mut tx, project_id, event_type, status, &channel).await? {
+        if !rules_allow(&mut *connection, project_id, event_type, status, &channel).await? {
             continue;
         }
         if try_aggregate(
-            &mut tx,
+            &mut *connection,
             project_id,
             &format!("notification:{config_id}"),
             status,
@@ -507,7 +520,7 @@ pub async fn emit_pipeline_event(
         {
             continue;
         }
-        let message = match template_for(&mut tx, project_id, &channel).await? {
+        let message = match template_for(&mut *connection, project_id, &channel).await? {
             Some((_, body_tpl)) => {
                 render_template(&body_tpl, event_type, project_id, pipeline_id, status)
             }
@@ -534,10 +547,9 @@ pub async fn emit_pipeline_event(
             "target": target,
             "message": message,
         }))
-        .execute(&mut *tx)
+        .execute(&mut *connection)
         .await?;
     }
-    tx.commit().await?;
     Ok(event_id)
 }
 
