@@ -3180,6 +3180,112 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
 }
 
 #[tokio::test]
+async fn pipeline_trigger_rejects_invalid_legacy_timeout_without_persisting_jobs() {
+    let pool = test_pool().await;
+    let repository_id = Uuid::new_v4();
+    let repo_name = format!("it_invalid_timeout_{}", repository_id.simple());
+    let root = tempfile::tempdir().expect("owned Git fixture");
+    let worktree = root.path().join("worktree");
+    let bare_repo = root.path().join(format!("{repo_name}.git"));
+    run_git(
+        &["init", "--quiet", "--initial-branch=main"],
+        Some(&worktree),
+    )
+    .await;
+    tokio::fs::write(
+        worktree.join(".forge-ci.yml"),
+        "stages:\n  - name: private-stage-name\n    jobs:\n      - name: valid\n        command: echo ok\n      - name: private-job-name\n        command: echo ok\n        timeout: private-duration-value\n",
+    )
+    .await
+    .expect("write invalid legacy duration");
+    run_git(
+        &["-C", worktree.to_str().unwrap(), "add", ".forge-ci.yml"],
+        None,
+    )
+    .await;
+    run_git(
+        &[
+            "-C",
+            worktree.to_str().unwrap(),
+            "-c",
+            "user.name=Forge CI",
+            "-c",
+            "user.email=ci@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "invalid duration fixture",
+        ],
+        None,
+    )
+    .await;
+    run_git(
+        &["clone", "--bare", "--quiet", worktree.to_str().unwrap()],
+        Some(&bare_repo),
+    )
+    .await;
+    sqlx::query("INSERT INTO repositories (id, name) VALUES ($1, $2)")
+        .bind(repository_id)
+        .bind(&repo_name)
+        .execute(&pool)
+        .await
+        .expect("register existing bare repository identity");
+    let project_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url, repository_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(project_id)
+    .bind(format!("it-invalid-timeout-{project_id}"))
+    .bind(format!("http://127.0.0.1/git/{repo_name}.git"))
+    .bind(repository_id)
+    .execute(&pool)
+    .await
+    .expect("insert project");
+    let app = authenticated_app_with_git(
+        pool.clone(),
+        cicd::git_host::GitConfig {
+            root: root.path().to_owned(),
+            ..Default::default()
+        },
+    )
+    .await;
+    let response = app
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/pipelines"))
+                .header("content-type", "application/json")
+                .header("Idempotency-Key", Uuid::new_v4().to_string())
+                .body(Body::from(r#"{"git_ref":"main"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response_json(response).await;
+    assert_eq!(
+        body["error"]["message"],
+        ".forge-ci.yml stages[0].jobs[1].timeout: требуется положительная длительность в секундах, минутах или часах"
+    );
+    let serialized = body.to_string();
+    for private in [
+        "private-stage-name",
+        "private-job-name",
+        "private-duration-value",
+    ] {
+        assert!(!serialized.contains(private));
+    }
+    let counts: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM pipelines), (SELECT count(*) FROM stages), \
+         (SELECT count(*) FROM jobs), (SELECT count(*) FROM pipeline_plans), \
+         (SELECT count(*) FROM job_queue), (SELECT count(*) FROM pipeline_triggers)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read persisted pipeline state after refusal");
+    assert_eq!(counts, (0, 0, 0, 0, 0, 0));
+    fixture_cleanup::projects(&pool).await;
+}
+
+#[tokio::test]
 async fn pipeline_trigger_reads_v1_dag_config_from_bare_repository() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();

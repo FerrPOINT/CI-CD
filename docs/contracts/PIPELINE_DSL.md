@@ -32,6 +32,14 @@ stages:
 
 Пустые stages отбрасываются; после этого нужен хотя бы один job. `image` по умолчанию `alpine:3.21`. Legacy режим сохраняет immutable `legacy-linear` snapshot и остаётся compatibility behaviour.
 
+В существующем unversioned формате отсутствие `timeout` сохраняет прежний
+default исполнителя. Явно заданная длительность должна быть положительной:
+поддерживаются прежние единицы секунд, минут и часов, включая число без единицы
+как секунды. Пустое, неправильное, нулевое, отрицательное или переполненное
+значение отклоняется до создания executable jobs. Ошибка содержит путь
+`stages[i].jobs[j].timeout`, без значений и пользовательских имён. Правила v1,
+шаблон пайплайна и действующие ограничения исполнения этим не меняются.
+
 Текущий v1 MVP принимает `version: 1`, `defaults.image`, `defaults.timeout`, `defaults.tags`, top-level `jobs`, `jobs.*.needs`, `jobs.*.image`, `jobs.*.commands`, `jobs.*.timeout`, `jobs.*.tags`, `jobs.*.secrets` и `jobs.*.allow_failure`:
 
 ```yaml

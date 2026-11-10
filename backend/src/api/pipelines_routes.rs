@@ -1186,25 +1186,36 @@ fn parse_legacy_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, Strin
     let mut stages: Vec<CiStage> = parsed
         .stages
         .into_iter()
-        .map(|stage| CiStage {
-            name: stage.name,
-            jobs: stage
+        .enumerate()
+        .map(|(stage_index, stage)| {
+            let jobs = stage
                 .jobs
                 .into_iter()
-                .map(|job| CiJob {
-                    name: job.name,
-                    image: job.image,
-                    command: job.command,
-                    required_tags: Vec::new(),
-                    required_secrets: Vec::new(),
-                    artifact_paths: Vec::new(),
-                    timeout_seconds: parse_timeout(job.timeout.as_deref()),
-                    allow_failure: job.allow_failure,
-                    manual: job.when.as_deref() == Some("manual"),
+                .enumerate()
+                .map(|(job_index, job)| {
+                    let timeout_seconds = parse_timeout(
+                        &format!("stages[{stage_index}].jobs[{job_index}].timeout"),
+                        job.timeout.as_deref(),
+                    )?;
+                    Ok(CiJob {
+                        name: job.name,
+                        image: job.image,
+                        command: job.command,
+                        required_tags: Vec::new(),
+                        required_secrets: Vec::new(),
+                        artifact_paths: Vec::new(),
+                        timeout_seconds,
+                        allow_failure: job.allow_failure,
+                        manual: job.when.as_deref() == Some("manual"),
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(CiStage {
+                name: stage.name,
+                jobs,
+            })
         })
-        .collect();
+        .collect::<Result<_, String>>()?;
     // Drop stages without jobs (nothing to execute).
     stages.retain(|stage| !stage.jobs.is_empty());
     validate_ci_stages(&stages)?;
@@ -1863,19 +1874,29 @@ fn compute_v1_job_levels(
     Ok(levels)
 }
 
-fn parse_timeout(raw: Option<&str>) -> Option<i32> {
-    let raw = raw?.trim();
-    if raw.is_empty() {
-        return None;
-    }
+fn parse_timeout(field: &str, raw: Option<&str>) -> Result<Option<i32>, String> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let invalid = || {
+        format!(
+            ".forge-ci.yml {field}: требуется положительная длительность в секундах, минутах или часах"
+        )
+    };
+    let raw = raw.trim();
     let (value, unit) = raw.split_at(raw.find(|c: char| !c.is_ascii_digit()).unwrap_or(raw.len()));
-    let value: i32 = value.parse().ok()?;
-    match unit.trim() {
+    let value: i32 = value.parse().map_err(|_| invalid())?;
+    if value <= 0 {
+        return Err(invalid());
+    }
+    let seconds = match unit.trim() {
         "s" | "sec" | "secs" | "" => Some(value),
         "m" | "min" | "mins" => value.checked_mul(60),
         "h" | "hour" | "hours" => value.checked_mul(3600),
         _ => None,
     }
+    .ok_or_else(invalid)?;
+    Ok(Some(seconds))
 }
 
 fn parse_v1_timeout(field: &str, raw: Option<&str>) -> Result<Option<i32>, String> {
@@ -2546,6 +2567,76 @@ stages:
         ))
         .expect("valid");
         assert_eq!(stages[0].jobs[0].timeout_seconds, Some(300));
+    }
+
+    #[test]
+    fn legacy_timeout_preserves_missing_units_and_whitespace() {
+        for (timeout, expected) in [
+            (None, None),
+            (Some("30"), Some(30)),
+            (Some("30s"), Some(30)),
+            (Some("30sec"), Some(30)),
+            (Some("30secs"), Some(30)),
+            (Some("5m"), Some(300)),
+            (Some("5min"), Some(300)),
+            (Some("5mins"), Some(300)),
+            (Some("2h"), Some(7200)),
+            (Some("2hour"), Some(7200)),
+            (Some("2hours"), Some(7200)),
+            (Some(" \t5 mins \n"), Some(300)),
+            (Some("25h"), Some(90_000)),
+            (Some("2147483647s"), Some(i32::MAX)),
+        ] {
+            let mut job = serde_json::json!({"name":"job", "command":"echo ok"});
+            if let Some(timeout) = timeout {
+                job["timeout"] = serde_json::json!(timeout);
+            }
+            let raw = serde_yaml::to_string(&serde_json::json!({
+                "stages":[{"name":"stage", "jobs":[job]}]
+            }))
+            .unwrap();
+            let stages = parse_forge_ci(Some(&raw)).expect("valid legacy duration");
+            assert_eq!(stages[0].jobs[0].timeout_seconds, expected);
+        }
+    }
+
+    #[test]
+    fn legacy_timeout_rejects_invalid_values_with_only_schema_path() {
+        for timeout in [
+            "",
+            " \t\n",
+            "private-duration-value",
+            "0",
+            "0s",
+            "0m",
+            "-1s",
+            "1d",
+            "1.5h",
+            "2147483648s",
+            "35791395m",
+            "596524h",
+            "999999999999999999999999999999999s",
+        ] {
+            let raw = serde_yaml::to_string(&serde_json::json!({"stages":[
+                {"name":"first", "jobs":[{"name":"first", "command":"echo ok"}]},
+                {"name":"private-stage-name", "jobs":[
+                    {"name":"first", "command":"echo ok"},
+                    {"name":"private-job-name", "command":"echo ok", "timeout":timeout}
+                ]}
+            ]}))
+            .unwrap();
+            let error = match parse_forge_ci(Some(&raw)) {
+                Err(error) => error,
+                Ok(_) => panic!("invalid duration must be rejected"),
+            };
+            assert_eq!(
+                error,
+                ".forge-ci.yml stages[1].jobs[1].timeout: требуется положительная длительность в секундах, минутах или часах"
+            );
+            assert!(!error.contains("private-stage-name"));
+            assert!(!error.contains("private-job-name"));
+            assert!(!error.contains("private-duration-value"));
+        }
     }
 
     #[test]
