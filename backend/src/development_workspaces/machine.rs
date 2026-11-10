@@ -421,12 +421,9 @@ pub(super) async fn seal(
     };
     let (assignment, preparation) = tracker::read_assignment(
         &namespace,
-        workspace.tracker_instance_id,
-        workspace.tracker_project_id,
+        workspace,
         task,
         subject,
-        workspace.repository_id,
-        workspace.id,
         AssignmentAccess::for_action(action),
     )
     .await?;
@@ -536,17 +533,8 @@ pub(super) async fn confirm_identity(
     }
     project_access(pool, actor, workspace.project_id, write).await?;
     let namespace = namespace(pool, workspace).await?;
-    let (assignment, preparation) = tracker::read_assignment(
-        &namespace,
-        workspace.tracker_instance_id,
-        workspace.tracker_project_id,
-        saved.task_id,
-        subject,
-        workspace.repository_id,
-        workspace.id,
-        access,
-    )
-    .await?;
+    let (assignment, preparation) =
+        tracker::read_assignment(&namespace, workspace, saved.task_id, subject, access).await?;
     assignment.require_same(saved)?;
     let clock = GitDeadline::identity(&verified);
     let clock = match &preparation {
