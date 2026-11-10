@@ -5,7 +5,7 @@ use cicd_domain::development_workspace::WorkspaceAction;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgExecutor, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +48,7 @@ pub struct Workspace {
     #[sqlx(default)]
     pub owner_name: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub retired_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -87,10 +88,10 @@ pub struct Operation {
     pub finished_at: Option<DateTime<Utc>>,
 }
 
-pub async fn workspace(pool: &PgPool, id: Uuid) -> Result<Workspace, Error> {
+pub async fn workspace(database: impl PgExecutor<'_>, id: Uuid) -> Result<Workspace, Error> {
     sqlx::query_as("SELECT w.*,u.username AS owner_name FROM development_workspaces w JOIN users u ON u.id=w.created_by WHERE w.id=$1")
         .bind(id)
-        .fetch_optional(pool)
+        .fetch_optional(database)
         .await?
         .ok_or(Error::NotFound)
 }
@@ -185,20 +186,51 @@ pub async fn enqueue(
     if let Some(original) = original(tx, workspace, operation, actor, owner, &hash).await? {
         return Ok(original);
     }
-    let actual: Option<i64> =
-        sqlx::query_scalar("SELECT version FROM development_workspaces WHERE id=$1 FOR UPDATE")
+    type LockedWorkspace = (
+        i64,
+        Option<DateTime<Utc>>,
+        String,
+        String,
+        Option<DateTime<Utc>>,
+        Uuid,
+    );
+    let actual: Option<LockedWorkspace> =
+        sqlx::query_as("SELECT version,retired_at,runtime,desired_runtime,observed_at,environment_id FROM development_workspaces WHERE id=$1 FOR UPDATE")
             .bind(workspace)
             .fetch_optional(&mut **tx)
             .await?;
     if let Some(original) = original(tx, workspace, operation, actor, owner, &hash).await? {
         return Ok(original);
     }
-    if actual != Some(expected_version) {
-        return Err(if actual.is_none() {
-            Error::NotFound
+    let (version, retired_at, runtime, desired, observed_at, environment) =
+        actual.ok_or(Error::NotFound)?;
+    if retired_at.is_some() {
+        return Err(Error::Conflict("workspace_retired"));
+    }
+    if version != expected_version {
+        return Err(Error::Conflict("workspace_version_conflict"));
+    }
+    let retirement = matches!(
+        action,
+        WorkspaceAction::Close {} | WorkspaceAction::ConvertToStand {}
+    );
+    if retirement {
+        let purpose: String =
+            sqlx::query_scalar("SELECT purpose FROM environments WHERE id=$1 FOR UPDATE")
+                .bind(environment)
+                .fetch_one(&mut **tx)
+                .await?;
+        if purpose != "workspace_target" {
+            return Err(Error::Conflict("workspace_environment_purpose_changed"));
+        }
+        let required = if matches!(action, WorkspaceAction::Close {}) {
+            "stopped"
         } else {
-            Error::Conflict("workspace_version_conflict")
-        });
+            "running"
+        };
+        if observed_at.is_none() || runtime != required || desired != required {
+            return Err(Error::Conflict("workspace_retirement_runtime_unconfirmed"));
+        }
     }
     let busy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM development_workspace_operations WHERE workspace_id=$1 AND state IN ('queued','running','unknown'))")
         .bind(workspace).fetch_one(&mut **tx).await?;
@@ -240,13 +272,32 @@ pub async fn enqueue(
             | WorkspaceAction::EndSession { .. }
             | WorkspaceAction::RecoverSession { .. }
             | WorkspaceAction::BeginSession { .. }
+            | WorkspaceAction::Close {}
+            | WorkspaceAction::ConvertToStand {}
     ) && jobs
     {
         return Err(Error::Conflict("workspace_has_active_pipeline"));
     }
-    let operation: Operation = sqlx::query_as("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,execution_plan) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *")
+    let mut operation: Operation = sqlx::query_as("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,execution_plan) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *")
         .bind(operation).bind(workspace).bind(actor).bind(owner).bind(hash).bind(request)
         .bind(expected_version).bind(execution_plan).fetch_one(&mut **tx).await?;
+    if retirement {
+        let promote = matches!(action, WorkspaceAction::ConvertToStand {});
+        if promote {
+            sqlx::query("UPDATE environments SET purpose='stand' WHERE id=$1")
+                .bind(environment)
+                .execute(&mut **tx)
+                .await?;
+        }
+        sqlx::query("UPDATE development_workspaces SET retired_at=clock_timestamp() WHERE id=$1")
+            .bind(workspace)
+            .execute(&mut **tx)
+            .await?;
+        operation = sqlx::query_as("UPDATE development_workspace_operations SET state='succeeded',finished_at=clock_timestamp(),result=$2 WHERE id=$1 RETURNING *")
+            .bind(operation.id)
+            .bind(serde_json::json!({"state":"succeeded","environmentId":environment,"convertedToStand":promote}))
+            .fetch_one(&mut **tx).await?;
+    }
     sqlx::query("UPDATE development_workspaces SET version=version+1 WHERE id=$1")
         .bind(workspace)
         .execute(&mut **tx)

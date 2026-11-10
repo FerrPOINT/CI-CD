@@ -149,7 +149,7 @@ Dashboard использует общий `PlatformHeader` из `@pdlc/ui`: он
 actions содержит тему и аккаунт с central logout. Sidebar начинается под
 Header и содержит только локальную навигацию. Полная identity не дублируется
 в sidebar и не участвует в геометрии Header. Контекстные `PageFrame` режимы
-рабочих страниц сохраняются; API-only и Pulse не становятся UI-приложениями.
+рабочих страниц сохраняются; API-only не становятся UI-приложениями.
 Приёмка и неизменяемые границы: [план Header](../plans/2026-10-01-platform-header.md).
 
 - PostgreSQL 17, Docker Compose.
@@ -364,3 +364,11 @@ upload session в существующем порядке retry/cancel. Посл
 Недоступная сверка сохраняет bytes; новый upload автоматически не запускается.
 Скачивание сохраняет containment и checksum, а filesystem/hash выполняет вне
 async executor. Прежний HTTP DTO и оригинальный admission deadline сохранены.
+
+## Минимальный Reviewer
+
+[ADR-0047](adr/0047-task-bound-reviewer.md) использует существующие Task links,
+каталог, Git, CI и RepositoryWrite. Forge владеет обязательной основной Task PR,
+полным чтением diff и неизменяемыми замечаниями. Workflow владеет инструкциями,
+Tracker — результатом/назначением, Fleet — фактическим завершением native run.
+Новый сервис, очередь ревью, workspace или исполнитель проверок не добавляются.

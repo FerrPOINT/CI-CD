@@ -10,6 +10,7 @@
 - [ARCHITECTURE_INDEX](ARCHITECTURE_INDEX.md) — вход в архитектурные решения и bounded contexts.
 - [USER_GUIDE](USER_GUIDE.md) — пользовательские сценарии Dashboard.
 - [DEVELOPMENT_GUIDE](DEVELOPMENT_GUIDE.md) — локальная разработка и проверки.
+- [ANALYST_TOOLS_QA](ANALYST_TOOLS_QA.md) — проверенный доступ Analyst к инструментам Forge.
 - [OPERATIONS](OPERATIONS.md) и [TROUBLESHOOTING](TROUBLESHOOTING.md) — эксплуатация и диагностика.
 
 ## Архитектура и контракты

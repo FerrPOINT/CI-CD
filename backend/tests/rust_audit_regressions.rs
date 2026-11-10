@@ -1021,6 +1021,17 @@ async fn deployment_request_key_replays_original_identity_and_rejects_payload_re
         StatusCode::CONFLICT
     );
     assert_eq!(
+        f.request(
+            0,
+            "POST",
+            &path,
+            json!({"git_ref":"main","request_key":key,"source_pipeline_id":Uuid::new_v4()})
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
         f.request(1, "POST", &path, payload).await.status(),
         StatusCode::CONFLICT
     );

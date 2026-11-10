@@ -168,7 +168,7 @@ async fn execute(
     let developer = if local_role == "service_account" && !work.reconcile_only {
         Some(
             super::machine::verify(
-                pool,
+                &mut *pool.acquire().await.map_err(ApiError::internal)?,
                 &workspace,
                 work.id,
                 actor,
@@ -273,6 +273,9 @@ async fn execute(
             return Ok(None);
         }
         let result = match &action {
+            WorkspaceAction::Close {} | WorkspaceAction::ConvertToStand {} => {
+                return Err(ApiError::conflict("workspace_retirement_must_complete_on_submission"));
+            }
             WorkspaceAction::BeginSession{task} => {
                 let (registry_instance_id,namespace_id):(Uuid,Uuid)=sqlx::query_as("SELECT registry_instance_id,namespace_id FROM forge_workspace_projects WHERE tracker_instance_id=$1 AND tracker_project_id=$2 AND state='active'")
                     .bind(workspace.tracker_instance_id).bind(workspace.tracker_project_id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
@@ -387,7 +390,7 @@ async fn launch_pipeline(
         let action =
             serde_json::from_value(work.request.clone()).map_err(|_| ApiError::forbidden())?;
         let proof = super::machine::verify(
-            pool,
+            &mut *pool.acquire().await.map_err(ApiError::internal)?,
             workspace,
             work.id,
             work.actor_id,

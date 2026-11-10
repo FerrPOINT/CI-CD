@@ -1011,6 +1011,206 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PullRequest'
+  /api/v1/catalog/repositories/{id}/pulls/{number}/checks:
+    get:
+      tags:
+      - pulls
+      operationId: forge_pull_checks
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: head_sha
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RepositoryCheckRef'
+  /api/v1/catalog/repositories/{id}/pulls/{number}/comments:
+    get:
+      tags:
+      - pulls
+      operationId: forge_pull_comment_list
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: operation_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PullComment'
+    post:
+      tags:
+      - pulls
+      operationId: forge_pull_comment_create
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePullComment'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullComment'
+        '409':
+          description: ''
+  /api/v1/catalog/repositories/{id}/pulls/{number}/patch:
+    get:
+      tags:
+      - pulls
+      operationId: forge_pull_patch
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: base_sha
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: head_sha
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: path
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      responses:
+        '200':
+          description: ''
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/v1/catalog/repositories/{id}/pulls/{number}/review-context:
+    get:
+      tags:
+      - pulls
+      operationId: forge_pull_review_context
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullReviewContext'
+        '409':
+          description: ''
   /api/v1/catalog/repositories/{id}/pulls/{number}/tasks:
     get:
       tags:
@@ -1104,7 +1304,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TaskRef'
+              $ref: '#/components/schemas/LinkTaskRequest'
         required: true
       responses:
         '200':
@@ -5274,6 +5474,29 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/TagInfo'
+  /api/v1/repos/{repo}/task:
+    get:
+      tags:
+      - pulls
+      operationId: forge_repository_task_lookup
+      parameters:
+      - name: repo
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: identifier
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskLookup'
   /api/v1/repos/{repo}/tree:
     get:
       tags:
@@ -6218,6 +6441,47 @@ paths:
           description: ''
         '503':
           description: ''
+  /api/v1/task-pulls:
+    get:
+      tags:
+      - pulls
+      operationId: forge_task_pull_catalog
+      parameters:
+      - name: tracker_instance_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: task_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequestPage'
   /api/v1/users:
     get:
       tags:
@@ -7455,6 +7719,30 @@ components:
       properties:
         status:
           $ref: '#/components/schemas/JobStatus'
+    CommentAnchor:
+      type: object
+      required:
+      - path
+      - side
+      - line
+      properties:
+        line:
+          type: integer
+          format: int32
+          minimum: 0
+        path:
+          type: string
+        side:
+          $ref: '#/components/schemas/DiffSide'
+      additionalProperties: false
+    CommentSeverity:
+      type: string
+      enum:
+      - note
+      - P0
+      - P1
+      - P2
+      - P3
     CommitInfo:
       type: object
       required:
@@ -7536,6 +7824,11 @@ components:
           - 'null'
           format: uuid
           description: Optional retry identity, scoped to this environment and bound to the verified actor and payload.
+        source_pipeline_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         status:
           type:
           - string
@@ -7587,6 +7880,7 @@ components:
     CreatePull:
       type: object
       required:
+      - primary_task
       - title
       - source_branch
       - target_branch
@@ -7595,6 +7889,8 @@ components:
           type:
           - string
           - 'null'
+        primary_task:
+          $ref: '#/components/schemas/TaskRef'
         source_branch:
           type: string
         target_branch:
@@ -7602,9 +7898,35 @@ components:
         title:
           type: string
       additionalProperties: false
+    CreatePullComment:
+      type: object
+      required:
+      - operation_id
+      - base_sha
+      - head_sha
+      - body
+      - severity
+      properties:
+        anchor:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/CommentAnchor'
+        base_sha:
+          type: string
+        body:
+          type: string
+        head_sha:
+          type: string
+        operation_id:
+          type: string
+          format: uuid
+        severity:
+          $ref: '#/components/schemas/CommentSeverity'
+      additionalProperties: false
     CreatePullRequest:
       type: object
       required:
+      - primary_task
       - repository_name
       - title
       - source_branch
@@ -7619,6 +7941,8 @@ components:
           type:
           - string
           - 'null'
+        primary_task:
+          $ref: '#/components/schemas/TaskRef'
         repository_name:
           type: string
         source_branch:
@@ -8062,6 +8386,11 @@ components:
           - string
           - 'null'
         runtime_receipt: {}
+        source_pipeline_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         status:
           type: string
     DeploymentApproval:
@@ -8192,8 +8521,17 @@ components:
           - $ref: '#/components/schemas/RollbackRelease'
         sourceCommit:
           type: string
+        sourcePipelineId:
+          type:
+          - string
+          - 'null'
+          format: uuid
         target:
           $ref: '#/components/schemas/KubernetesTarget'
+        workspaceBootstrap:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/WorkspaceBootstrap'
       additionalProperties: false
     DeploymentReceipt:
       type: object
@@ -8257,6 +8595,11 @@ components:
           type: string
         sourceCommit:
           type: string
+        sourcePipelineId:
+          type:
+          - string
+          - 'null'
+          format: uuid
       additionalProperties: false
     DesiredSpaceState:
       type: string
@@ -8374,6 +8717,11 @@ components:
         repository_id:
           type: string
           format: uuid
+        retired_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
         runtime:
           type: string
         sources: {}
@@ -8667,6 +9015,11 @@ components:
           type: boolean
         to:
           type: string
+    DiffSide:
+      type: string
+      enum:
+      - old
+      - new
     Environment:
       type: object
       required:
@@ -8674,6 +9027,7 @@ components:
       - project_id
       - name
       - status
+      - purpose
       - protected
       - required_approvals
       - created_at
@@ -8695,6 +9049,8 @@ components:
           format: uuid
         protected:
           type: boolean
+        purpose:
+          type: string
         required_approvals:
           type: integer
           format: int32
@@ -8870,6 +9226,17 @@ components:
           type:
           - string
           - 'null'
+    ImageBinding:
+      type: object
+      required:
+      - job
+      - artifact
+      properties:
+        artifact:
+          type: string
+        job:
+          type: string
+      additionalProperties: false
     ImagePublishSpec:
       type: object
       required:
@@ -9133,6 +9500,12 @@ components:
           type: string
         namespace:
           type: string
+        publication_images:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ImageBinding'
+          propertyNames:
+            type: string
         release:
           type: string
         schema:
@@ -9158,6 +9531,21 @@ components:
           type: string
         workspaceClaimUid:
           type: string
+      additionalProperties: false
+    LinkTaskRequest:
+      type: object
+      required:
+      - tracker_instance_id
+      - task_id
+      properties:
+        primary:
+          type: boolean
+        task_id:
+          type: string
+          format: uuid
+        tracker_instance_id:
+          type: string
+          format: uuid
       additionalProperties: false
     LocalPreparation:
       type: object
@@ -10137,6 +10525,50 @@ components:
         sourceCommit:
           type: string
       additionalProperties: false
+    PullComment:
+      type: object
+      required:
+      - id
+      - pull_request_id
+      - author_id
+      - operation_id
+      - base_sha
+      - head_sha
+      - body
+      - severity
+      - created_at
+      properties:
+        anchor:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/CommentAnchor'
+        author:
+          type:
+          - string
+          - 'null'
+        author_id:
+          type: string
+          format: uuid
+        base_sha:
+          type: string
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        head_sha:
+          type: string
+        id:
+          type: string
+          format: uuid
+        operation_id:
+          type: string
+          format: uuid
+        pull_request_id:
+          type: string
+          format: uuid
+        severity:
+          type: string
     PullRequest:
       type: object
       required:
@@ -10174,6 +10606,16 @@ components:
         number:
           type: integer
           format: int32
+        primary_task_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        primary_tracker_instance_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         repository_id:
           type:
           - string
@@ -10216,6 +10658,23 @@ components:
         total:
           type: integer
           format: int64
+    PullReviewContext:
+      type: object
+      required:
+      - pull_request_id
+      - base_sha
+      - head_sha
+      - merge_base
+      properties:
+        base_sha:
+          type: string
+        head_sha:
+          type: string
+        merge_base:
+          type: string
+        pull_request_id:
+          type: string
+          format: uuid
     PullTaskLink:
       type: object
       required:
@@ -11004,6 +11463,7 @@ components:
           - 'null'
         environment:
           type: object
+          description: Нормализованные переменные pipeline CICD_VAR_<KEY>, без служебных полей и секретов.
           additionalProperties:
             type: string
           propertyNames:
@@ -11126,7 +11586,8 @@ components:
           items:
             type: string
             format: uuid
-        capabilities: {}
+        capabilities:
+          description: Возможности runner; pipelineVariables=true требуется для заданий с переменными.
         capacity:
           $ref: '#/components/schemas/RunnerCapacity'
         draining:
@@ -11334,7 +11795,8 @@ components:
       - registrationToken
       - name
       properties:
-        capabilities: {}
+        capabilities:
+          description: Возможности runner; pipelineVariables=true требуется для заданий с переменными.
         name:
           type: string
         protocolVersion:
@@ -11921,6 +12383,16 @@ components:
           type: string
           format: uuid
       additionalProperties: false
+    TaskLookup:
+      type: object
+      required:
+      - task
+      - task_key
+      properties:
+        task:
+          $ref: '#/components/schemas/TaskRef'
+        task_key:
+          type: string
     TaskPullEvidence:
       type: object
       required:
@@ -12419,6 +12891,22 @@ components:
             - stop
       - type: object
         required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - close
+      - type: object
+        required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - convert_to_stand
+      - type: object
+        required:
         - task
         - action
         properties:
@@ -12466,6 +12954,11 @@ components:
             type: string
           source_commit:
             type: string
+          source_pipeline_id:
+            type:
+            - string
+            - 'null'
+            format: uuid
       - type: object
         required:
         - source_commit
@@ -12477,6 +12970,26 @@ components:
             - build
           source_commit:
             type: string
+    WorkspaceBootstrap:
+      type: object
+      required:
+      - reservationId
+      - namespaceUid
+      - release
+      - revision
+      properties:
+        namespaceUid:
+          type: string
+          format: uuid
+        release:
+          type: string
+        reservationId:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          format: int32
+      additionalProperties: false
     WorkspaceOperationBlocker:
       type: string
       enum:

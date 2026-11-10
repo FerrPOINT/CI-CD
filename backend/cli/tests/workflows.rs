@@ -354,6 +354,10 @@ async fn repositories_pr_payload_and_actions() {
                 &[
                     "pr",
                     "create",
+                    "--tracker-instance-id",
+                    "00000000-0000-4000-8000-000000000001",
+                    "--task-id",
+                    "00000000-0000-4000-8000-000000000002",
                     "--repo",
                     "demo",
                     "--title",
@@ -380,6 +384,10 @@ async fn repositories_pr_payload_and_actions() {
     assert_eq!(
         serde_json::from_slice::<Value>(&req[3].body).unwrap()["description"],
         "Описание PR\nиз stdin"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&req[3].body).unwrap()["primary_task"],
+        json!({"tracker_instance_id":"00000000-0000-4000-8000-000000000001","task_id":"00000000-0000-4000-8000-000000000002"})
     );
     assert_eq!(req[6].path, "/api/v1/repos/demo/pulls/1/action");
     assert_eq!(
@@ -1095,4 +1103,55 @@ fn help_hides_token_environment_value() {
     assert!(stdout.contains("CICD_API_TOKEN"));
     assert!(!stdout.contains("help-only-fixture-token"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("help-only-fixture-token"));
+}
+
+#[tokio::test]
+async fn reviewer_task_pull_catalog_walks_all_pages_without_status_selection() {
+    let server = Server::start(vec![
+        (200, json!({"total":3,"items":[{"id":"one","status":"closed"},{"id":"two","status":"merged"}]})),
+        (200, json!({"total":3,"items":[{"id":"three","status":"open"}]})),
+    ]).await;
+    let output = server
+        .run(
+            &[
+                "pr",
+                "for-task",
+                "--tracker-instance-id",
+                "00000000-0000-4000-8000-000000000001",
+                "--task-id",
+                "00000000-0000-4000-8000-000000000002",
+            ],
+            None,
+        )
+        .await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["items"].as_array().unwrap().len(), 3);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].path.contains("offset=2"));
+    assert!(!requests[0].path.contains("status="));
+}
+
+#[tokio::test]
+async fn reviewer_task_pull_catalog_rejects_incomplete_page() {
+    let server = Server::start(vec![(200, json!({"total":1,"items":[]}))]).await;
+    let output = server
+        .run(
+            &[
+                "pr",
+                "for-task",
+                "--tracker-instance-id",
+                "00000000-0000-4000-8000-000000000001",
+                "--task-id",
+                "00000000-0000-4000-8000-000000000002",
+            ],
+            None,
+        )
+        .await;
+    assert!(!output.status.success());
 }

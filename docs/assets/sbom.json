@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T01:30:11Z",
+    "timestamp": "2026-11-10T20:06:58Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -338,6 +338,13 @@
       "name": "const-oid",
       "version": "0.9.6",
       "purl": "pkg:cargo/const-oid@0.9.6",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "core-foundation",
+      "version": "0.10.1",
+      "purl": "pkg:cargo/core-foundation@0.10.1",
       "license": "unknown"
     },
     {
@@ -1091,6 +1098,13 @@
     },
     {
       "type": "library",
+      "name": "openssl-probe",
+      "version": "0.2.1",
+      "purl": "pkg:cargo/openssl-probe@0.2.1",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "opentelemetry",
       "version": "0.33.0",
       "purl": "pkg:cargo/opentelemetry@0.33.0",
@@ -1483,6 +1497,13 @@
     },
     {
       "type": "library",
+      "name": "rustls-native-certs",
+      "version": "0.8.5",
+      "purl": "pkg:cargo/rustls-native-certs@0.8.5",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "rustls-pki-types",
       "version": "1.15.1",
       "purl": "pkg:cargo/rustls-pki-types@1.15.1",
@@ -1511,9 +1532,30 @@
     },
     {
       "type": "library",
+      "name": "schannel",
+      "version": "0.1.29",
+      "purl": "pkg:cargo/schannel@0.1.29",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "scopeguard",
       "version": "1.2.0",
       "purl": "pkg:cargo/scopeguard@1.2.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "security-framework",
+      "version": "3.7.0",
+      "purl": "pkg:cargo/security-framework@3.7.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "security-framework-sys",
+      "version": "2.17.0",
+      "purl": "pkg:cargo/security-framework-sys@2.17.0",
       "license": "unknown"
     },
     {
@@ -2741,8 +2783,8 @@
     {
       "type": "library",
       "name": "vite",
-      "version": "6.4.4",
-      "purl": "pkg:npm/vite@6.4.4",
+      "version": "6.4.5",
+      "purl": "pkg:npm/vite@6.4.5",
       "license": "unknown",
       "scope": "development"
     },

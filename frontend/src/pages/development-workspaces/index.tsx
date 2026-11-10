@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -77,6 +77,23 @@ export function DevelopmentWorkspacesPage() {
     queryFn: ({ signal }) =>
       service.configurations(ref!, search, configOffset, signal),
   });
+  const onlyConfigurationId =
+    ref &&
+    !search &&
+    configOffset === 0 &&
+    configurations.isSuccess &&
+    configurations.data.total === 1
+      ? configurations.data.items[0]?.id
+      : undefined;
+  useEffect(() => {
+    if (!project && onlyConfigurationId) {
+      setParams((current) => {
+        const next = new URLSearchParams(current);
+        next.set("workspace_configuration", onlyConfigurationId);
+        return next;
+      }, { replace: true });
+    }
+  }, [onlyConfigurationId, project, setParams]);
   const configuration = useQuery({
     queryKey: keys.configuration(project),
     enabled: !!project,
@@ -120,7 +137,7 @@ export function DevelopmentWorkspacesPage() {
     <section className="space-y-5" aria-label="Рабочие окружения">
       <SectionHeader
         title="Рабочие окружения"
-        context="Исходники, инструменты, сервисы и данные сохраняются между рабочими сессиями."
+        context="Здесь можно открыть workspace и перейти к списку стендов проекта."
       />
       <SearchableSelect
         label="Конфигурация проекта"
@@ -150,6 +167,13 @@ export function DevelopmentWorkspacesPage() {
         onRetry={() => void configurations.refetch()}
         onChange={(value) => select("workspace_configuration", value)}
       />
+      {correctProject && (
+        <TextLink asChild>
+          <Link to={`/delivery-configs/${encodeURIComponent(project)}/environments`}>
+            Стенды и адреса приложений
+          </Link>
+        </TextLink>
+      )}
       {project && (configuration.isError || repository.isError) && (
         <ErrorState message="Конфигурация проекта недоступна." />
       )}
@@ -181,8 +205,9 @@ export function DevelopmentWorkspacesPage() {
                 <CardContent className="space-y-3">
                   <CardTitle>{workspace.name}</CardTitle>
                   <p>
-                    {stateName(workspace.runtime)} ·{" "}
-                    {stateName(workspace.preparation)}
+                    {workspace.retired_at ? "Закрыт" : (
+                      <>{stateName(workspace.runtime)} · {stateName(workspace.preparation)}</>
+                    )}
                   </p>
                   <p className="text-sm text-text-muted">
                     Профиль{" "}
@@ -436,6 +461,7 @@ function WorkspaceCard({
     await Promise.all([
       cache.invalidateQueries({ queryKey: keys.detail(id) }),
       cache.invalidateQueries({ queryKey: keys.operations(id) }),
+      cache.invalidateQueries({ queryKey: ["environments", workspace.project_id] }),
       cache.invalidateQueries({
         queryKey: ["development-workspaces", workspace.project_id],
       }),
@@ -469,12 +495,12 @@ function WorkspaceCard({
       setBusy(false);
     }
   }
-  const button = (action: string, label: string, command: WorkspaceCommand) => (
+  const button = (action: string, label: string, onClick: () => void) => (
     <span className="inline-flex flex-col gap-1">
       <Button
         disabled={disabled(action)}
         title={capability(action)?.reason ?? undefined}
-        onClick={() => void submit(command)}
+        onClick={onClick}
       >
         {label}
       </Button>
@@ -489,6 +515,9 @@ function WorkspaceCard({
     <Card>
       <CardContent className="space-y-5">
         <CardTitle>{workspace.name}</CardTitle>
+        {workspace.retired_at && (
+          <Notice tone="neutral" appearance="inline">Workspace закрыт. История операций доступна ниже.</Notice>
+        )}
         <p className="break-words text-sm text-text-muted">
           Владелец окружения: {workspace.owner_name ?? workspace.created_by}
         </p>
@@ -552,9 +581,13 @@ function WorkspaceCard({
           </Notice>
         )}
         <ActionGroup>
-          {button("observe", "Обновить состояние", { action: "observe" })}
-          {button("start", "Включить", { action: "start" })}
-          {button("stop", "Выключить", { action: "stop" })}
+          {button("observe", "Обновить состояние", () => void submit({ action: "observe" }))}
+          {button("start", "Включить", () => void submit({ action: "start" }))}
+          {button("stop", "Выключить", () => void submit({ action: "stop" }))}
+          {!workspace.retired_at && capability("close")?.allowed &&
+            button("close", "Закрыть workspace", () => void submit({ action: "close" }))}
+          {!workspace.retired_at && capability("convert_to_stand")?.allowed &&
+            button("convert_to_stand", "Перевести в стенд", () => void submit({ action: "convert_to_stand" }))}
         </ActionGroup>
         <section className="space-y-3">
           <SectionHeader level={4} title="Рабочая сессия" />
@@ -574,14 +607,14 @@ function WorkspaceCard({
                 · с {new Date(session.started_at).toLocaleString("ru-RU")}
               </p>
               <ActionGroup>
-                {button("end_session", "Закончить работу", {
+                {button("end_session", "Закончить работу", () => void submit({
                   action: "end_session",
                   session_id: session.id,
-                })}
-                {button("recover_session", "Восстановить занятую сессию", {
+                }))}
+                {button("recover_session", "Восстановить занятую сессию", () => void submit({
                   action: "recover_session",
                   session_id: session.id,
-                })}
+                }))}
               </ActionGroup>
             </>
           ) : (
@@ -626,7 +659,7 @@ function WorkspaceCard({
             незакоммиченные файлы остаются локально.
           </p>
           <ActionGroup>
-            {button("prepare", "Проверить подготовленность", {
+            {button("prepare", "Проверить подготовленность", () => void submit({
               action: "prepare",
               sources: workspace.sources as Extract<
                 WorkspaceCommand,
@@ -636,7 +669,7 @@ function WorkspaceCard({
                 WorkspaceCommand,
                 { action: "prepare" }
               >["local"],
-            })}
+            }))}
           </ActionGroup>
           <p>
             <TextLink

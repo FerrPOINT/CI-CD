@@ -111,6 +111,7 @@ pub(crate) struct RunnerRegisterRequest {
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default = "default_capabilities")]
+    /// Возможности runner; pipelineVariables=true требуется для заданий с переменными.
     capabilities: serde_json::Value,
 }
 
@@ -136,6 +137,7 @@ pub(crate) struct RunnerHeartbeatRequest {
     #[serde(default)]
     tags: Option<Vec<String>>,
     #[serde(default = "default_capabilities")]
+    /// Возможности runner; pipelineVariables=true требуется для заданий с переменными.
     capabilities: serde_json::Value,
     #[serde(default)]
     active_lease_ids: Vec<Uuid>,
@@ -196,6 +198,7 @@ pub(crate) struct RunnerAttemptSpec {
     executor: String,
     image: String,
     commands: Vec<String>,
+    /// Нормализованные переменные pipeline CICD_VAR_<KEY>, без служебных полей и секретов.
     environment: BTreeMap<String, String>,
     secrets: Vec<String>,
     timeout_seconds: i32,
@@ -341,6 +344,7 @@ struct ClaimedWork {
     attempt_id: Uuid,
     attempt_no: i32,
     pipeline_id: Uuid,
+    pipeline_variables: Option<serde_json::Value>,
     job_name: String,
     image: String,
     command: String,
@@ -1283,7 +1287,7 @@ async fn claim_next_work(
              SELECT q.id AS queue_id, q.attempt_id, \
                     j.id AS job_id, j.stage_id, j.name AS job_name, j.image, j.command, \
                     LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::integer AS timeout_seconds, \
-                    s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, rc.kind AS catalog_kind, rc.external_url AS catalog_external_url, rc.slug AS catalog_slug, gg.slug AS catalog_group_slug, j.required_secrets, j.artifact_paths, \
+                    s.pipeline_id, p.variables AS pipeline_variables, p.git_ref, p.commit_sha, pr.repository_url, rc.kind AS catalog_kind, rc.external_url AS catalog_external_url, rc.slug AS catalog_slug, gg.slug AS catalog_group_slug, j.required_secrets, j.artifact_paths, \
                     pp.plan_sha256 \
              FROM job_queue q \
              JOIN jobs j ON j.id = q.job_id \
@@ -1297,6 +1301,7 @@ async fn claim_next_work(
              WHERE q.state = 'queued' AND NOT EXISTS (SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                 AND NOT EXISTS(SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                 AND j.command <> 'forge:image-build' \
+                AND ($12::boolean OR p.variables IS NULL OR p.variables IN ('null'::jsonb, '{}'::jsonb)) \
                 AND (j.command <> 'forge:image-publish' OR $9::boolean) \
                 AND (j.command <> 'forge:helm-deploy' OR ($10::boolean AND EXISTS( \
                   SELECT 1 FROM jsonb_array_elements(COALESCE(pp.plan->'jobs','[]'::jsonb)) granted \
@@ -1383,7 +1388,7 @@ async fn claim_next_work(
              RETURNING cl.lease_id, cl.generation, cl.lease_expires_at, cl.ack_deadline \
          ) \
          SELECT cq.lease_id, c.job_id, c.stage_id, ca.id AS attempt_id, ca.attempt_no, \
-                c.pipeline_id, c.job_name, c.image, c.command, c.timeout_seconds, \
+                c.pipeline_id, c.pipeline_variables, c.job_name, c.image, c.command, c.timeout_seconds, \
                 c.git_ref, c.commit_sha, c.repository_url, c.catalog_kind, c.catalog_external_url, c.catalog_slug, c.catalog_group_slug, c.required_secrets, c.artifact_paths, cq.generation, \
                 cq.lease_expires_at, cq.ack_deadline, c.plan_sha256 \
          FROM candidate c \
@@ -1401,6 +1406,7 @@ async fn claim_next_work(
     .bind(runner_supports_job(&runner.capabilities, "image-publish-v1") && selected_executor(&runner.capabilities)==Some("kubernetes"))
     .bind(runner_supports_job(&runner.capabilities, "helm-deploy-v1") && selected_executor(&runner.capabilities)==Some("kubernetes"))
     .bind(runner_helm_targets(&runner.capabilities))
+    .bind(runner.capabilities.get("pipelineVariables").and_then(serde_json::Value::as_bool) == Some(true))
         .fetch_optional(&mut *tx)
         .await;
         let row = match row {
@@ -1417,10 +1423,26 @@ async fn claim_next_work(
             Err(error) => return Err(ApiError::internal(error)),
         };
         let owner_clock =
-            crate::pipeline_authority::confirm(db, row.pipeline_id, row.attempt_id).await?;
+            crate::pipeline_authority::confirm(&mut tx, row.pipeline_id, row.attempt_id).await?;
         if let Some(clock) = owner_clock {
             clock.bind_commit_clock(&mut tx).await?;
         }
+        let environment = match cicd_domain::pipeline_variables::from_variables(
+            row.pipeline_variables.as_ref(),
+            &row.required_secrets,
+        ) {
+            Ok(environment) => environment,
+            Err(error) => {
+                refuse_undispatched(&mut tx, &row, &error).await?;
+                match tx.commit().await {
+                    Ok(()) => {}
+                    Err(error) if is_claim_serialization_failure(&error) => continue,
+                    Err(error) => return Err(ApiError::internal(error)),
+                }
+                crate::api::refresh_statuses(db, row.stage_id).await?;
+                continue;
+            }
+        };
         let checkout_url = match row.catalog_kind.as_deref() {
             Some("external") => row
                 .catalog_external_url
@@ -1438,21 +1460,22 @@ async fn claim_next_work(
             row.command.as_str(),
             "forge:image-publish" | "forge:helm-deploy"
         ) {
-            let (plan, plan_hash, config_hash, raw_config, resolved_commit): (
+            let (plan, plan_hash, config_hash, raw_config, resolved_commit, config_source): (
                 serde_json::Value,
                 String,
                 String,
                 String,
                 Option<String>,
+                String,
             ) = sqlx::query_as(
-                "SELECT plan, plan_sha256, config_sha256, raw_config, resolved_commit_sha
-                     FROM pipeline_plans WHERE pipeline_id=$1 AND config_source='repository'",
+                "SELECT plan, plan_sha256, config_sha256, raw_config, resolved_commit_sha, config_source
+                     FROM pipeline_plans WHERE pipeline_id=$1",
             )
             .bind(row.pipeline_id)
             .fetch_optional(&mut *tx)
             .await
             .map_err(ApiError::internal)?
-            .ok_or_else(|| ApiError::conflict("Typed build requires a repository plan"))?;
+            .ok_or_else(|| ApiError::conflict("Typed job requires an immutable execution plan"))?;
             if row.command == "forge:image-publish" {
                 (
                     Some(validated_image_publish(
@@ -1462,6 +1485,7 @@ async fn claim_next_work(
                         &config_hash,
                         &raw_config,
                         resolved_commit.as_deref(),
+                        &config_source,
                     )?),
                     None,
                 )
@@ -1473,6 +1497,7 @@ async fn claim_next_work(
                     &config_hash,
                     &raw_config,
                     resolved_commit.as_deref(),
+                    &config_source,
                 )?;
                 let prepared = crate::deployment_runtime::prepare(
                     &mut tx,
@@ -1541,7 +1566,7 @@ async fn claim_next_work(
                     .to_string(),
                 image: row.image,
                 commands: vec![row.command],
-                environment: BTreeMap::new(),
+                environment,
                 secrets: row.required_secrets,
                 timeout_seconds: row.timeout_seconds,
                 workspace: RunnerWorkspace {
@@ -1838,6 +1863,15 @@ fn validate_capabilities(value: &serde_json::Value) -> Result<(), ApiError> {
         return Err(ApiError::bad_request("capabilities must be an object"));
     };
 
+    if object
+        .get("pipelineVariables")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(ApiError::bad_request(
+            "capabilities.pipelineVariables must be a boolean",
+        ));
+    }
+
     if let Some(targets) = object.get("helmTargets") {
         let array = targets
             .as_array()
@@ -1913,6 +1947,12 @@ fn runner_supports_job(capabilities: &serde_json::Value, kind: &str) -> bool {
         .is_some_and(|kinds| kinds.iter().any(|value| value.as_str() == Some(kind)))
 }
 
+/// Both sources contain frozen owner-admitted plans, unlike legacy templates.
+fn valid_typed_plan_source(plan: &serde_json::Value, config_source: &str) -> bool {
+    matches!(config_source, "repository" | "development_workspace")
+        && plan["config_source"].as_str() == Some(config_source)
+}
+
 /// Validate before committing the claim. The lease and source identities remain
 /// server-owned; an ordinary repository build never invents a task intent.
 fn validated_image_publish(
@@ -1922,10 +1962,11 @@ fn validated_image_publish(
     config_hash: &str,
     raw_config: &str,
     resolved_commit: Option<&str>,
+    config_source: &str,
 ) -> Result<crate::domain::image_publish::ImagePublishSpec, ApiError> {
     use sha2::{Digest, Sha256};
     let invalid =
-        || ApiError::conflict("Image publication differs from its immutable repository plan");
+        || ApiError::conflict("Image publication differs from its immutable execution plan");
     let entry = plan["jobs"]
         .as_array()
         .and_then(|jobs| {
@@ -1943,7 +1984,7 @@ fn validated_image_publish(
     ];
     if plan["format"] != "v1-dag"
         || plan["version"] != 1
-        || plan["config_source"] != "repository"
+        || !valid_typed_plan_source(plan, config_source)
         || row
             .commit_sha
             .as_deref()
@@ -1976,9 +2017,10 @@ fn validated_helm_deploy(
     config_hash: &str,
     raw_config: &str,
     resolved_commit: Option<&str>,
+    config_source: &str,
 ) -> Result<crate::domain::helm_deploy::HelmDeploySpec, ApiError> {
     let invalid =
-        || ApiError::conflict("Helm deployment differs from its immutable repository plan");
+        || ApiError::conflict("Helm deployment differs from its immutable execution plan");
     let entry = plan["jobs"]
         .as_array()
         .and_then(|entries| {
@@ -1993,7 +2035,7 @@ fn validated_helm_deploy(
     let artifacts = vec![spec.receipt_artifact.clone()];
     if plan["format"] != "v1-dag"
         || plan["version"] != 1
-        || plan["config_source"] != "repository"
+        || !valid_typed_plan_source(plan, config_source)
         || row
             .commit_sha
             .as_deref()
@@ -2025,6 +2067,94 @@ fn validated_helm_deploy(
 #[cfg(test)]
 mod typed_job_capability_tests {
     use super::*;
+    #[test]
+    fn typed_deployment_preserves_plan_source_and_commit_fences() {
+        let commit = "a".repeat(40);
+        let raw = "published owner recipe";
+        let config_hash = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        let mut row = ClaimedWork {
+            lease_id: Uuid::new_v4(),
+            job_id: Uuid::new_v4(),
+            stage_id: Uuid::new_v4(),
+            attempt_id: Uuid::new_v4(),
+            attempt_no: 1,
+            pipeline_id: Uuid::new_v4(),
+            pipeline_variables: None,
+            job_name: "deploy".into(),
+            image: "forge:runner-helm-deploy".into(),
+            command: "forge:helm-deploy".into(),
+            timeout_seconds: 60,
+            git_ref: "main".into(),
+            commit_sha: Some(commit.clone()),
+            repository_url: "https://example.test/source.git".into(),
+            catalog_kind: None,
+            catalog_external_url: None,
+            catalog_slug: None,
+            catalog_group_slug: None,
+            required_secrets: vec![],
+            artifact_paths: vec!["out/release.json".into()],
+            generation: 1,
+            lease_expires_at: Utc::now(),
+            ack_deadline: Utc::now(),
+            plan_sha256: None,
+        };
+        for (stored_source, plan_source, allowed) in [
+            ("repository", "repository", true),
+            ("development_workspace", "development_workspace", true),
+            ("repository", "development_workspace", false),
+            ("development_workspace", "repository", false),
+            ("legacy_template", "legacy_template", false),
+        ] {
+            let plan = serde_json::json!({"format":"v1-dag","version":1,"config_source":plan_source,
+                "resolved_commit_sha":commit,"jobs":[{"key":"deploy","command":row.command,
+                    "image":row.image,"commands":[],"required_secrets":[],"allow_failure":false,
+                    "artifact_paths":row.artifact_paths,"helm_deploy":{"environment_id":Uuid::new_v4(),
+                        "receipt_artifact":"out/release.json","images":{"image":{"job":"publish","artifact":"out/image.json"}}}}]});
+            let hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&plan).unwrap()));
+            row.plan_sha256 = Some(hash.clone());
+            assert_eq!(
+                validated_helm_deploy(
+                    &row,
+                    &plan,
+                    &hash,
+                    &config_hash,
+                    raw,
+                    Some(&commit),
+                    stored_source
+                )
+                .is_ok(),
+                allowed,
+                "stored={stored_source}, plan={plan_source}"
+            );
+            if allowed {
+                assert!(
+                    validated_helm_deploy(
+                        &row,
+                        &plan,
+                        &hash,
+                        &config_hash,
+                        raw,
+                        Some(&"b".repeat(40)),
+                        stored_source
+                    )
+                    .is_err()
+                );
+                assert!(
+                    validated_helm_deploy(
+                        &row,
+                        &plan,
+                        &"0".repeat(64),
+                        &config_hash,
+                        raw,
+                        Some(&commit),
+                        stored_source
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+
     #[test]
     fn legacy_runner_has_no_implicit_build_or_deploy_capability() {
         for value in [
@@ -2779,12 +2909,37 @@ async fn lease_owner_clock(
         }
         return Err(ApiError::gone("lease is no longer active"));
     };
-    crate::pipeline_authority::confirm(db, pipeline, attempt).await
+    crate::pipeline_authority::confirm(
+        &mut *db.acquire().await.map_err(ApiError::internal)?,
+        pipeline,
+        attempt,
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pipeline_variable_capability_is_explicit_and_boolean() {
+        for capabilities in [
+            serde_json::json!({}),
+            serde_json::json!({"pipelineVariables": false}),
+            serde_json::json!({"pipelineVariables": true}),
+        ] {
+            assert!(validate_capabilities(&capabilities).is_ok());
+        }
+        for value in [
+            serde_json::json!("true"),
+            serde_json::json!(1),
+            serde_json::Value::Null,
+        ] {
+            assert!(
+                validate_capabilities(&serde_json::json!({"pipelineVariables": value})).is_err()
+            );
+        }
+    }
 
     #[test]
     fn runner_tag_validation_matches_protocol_subset() {

@@ -25,7 +25,7 @@ pub(super) async fn read_task(
             &token,
             namespace,
             tracker_instance,
-            project,
+            Some(project),
             identifier,
         ),
     )
@@ -78,16 +78,34 @@ async fn reader(
     Ok((client, base, token.trim().to_owned()))
 }
 
-pub(super) async fn read_assignment(
+pub(crate) async fn read_namespace_task(
     namespace: &NamespaceRef,
     tracker: Uuid,
-    project: Uuid,
+    identifier: &str,
+) -> Result<(Uuid, String), ApiError> {
+    let (client, base, token) = reader(namespace, tracker).await?;
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        resolve(&client, &base, &token, namespace, tracker, None, identifier),
+    )
+    .await
+    .map_err(|_| unavailable())?
+}
+
+pub(super) async fn read_assignment(
+    namespace: &NamespaceRef,
+    workspace: &cicd_infra::development_workspace::Workspace,
     task: Uuid,
     subject: Uuid,
-    repository: Uuid,
-    workspace: Uuid,
-) -> Result<super::assignment::DeveloperAssignment, ApiError> {
-    let (client, base, token) = reader(namespace, tracker).await?;
+    access: super::assignment::AssignmentAccess,
+) -> Result<
+    (
+        super::assignment::DeveloperAssignment,
+        Option<super::assignment::WorkspacePreparation>,
+    ),
+    ApiError,
+> {
+    let (client, base, token) = reader(namespace, workspace.tracker_instance_id).await?;
     let mut url = base
         .join(&format!("api/v1/namespace-tasks/{task}"))
         .map_err(|_| unavailable())?;
@@ -108,7 +126,15 @@ pub(super) async fn read_assignment(
         return Err(ApiError::forbidden());
     }
     super::assignment::DeveloperAssignment::read(
-        &context, namespace, tracker, project, task, subject, repository, workspace,
+        &context,
+        namespace,
+        workspace.tracker_instance_id,
+        workspace.tracker_project_id,
+        task,
+        subject,
+        workspace.repository_id,
+        workspace.id,
+        access,
     )
 }
 
@@ -152,7 +178,7 @@ async fn resolve(
     token: &str,
     namespace: &NamespaceRef,
     tracker_instance: Uuid,
-    project: Uuid,
+    project: Option<Uuid>,
     identifier: &str,
 ) -> Result<(Uuid, String), ApiError> {
     if identifier.is_empty()
@@ -218,7 +244,7 @@ async fn resolve(
     if value["schema_version"] != 1
         || value["namespace"] != serde_json::to_value(namespace).map_err(|_| unavailable())?
         || value["tracker_instance_id"] != tracker_instance.to_string()
-        || value["project_id"] != project.to_string()
+        || project.is_some_and(|project| value["project_id"] != project.to_string())
         || value["task_id"] != task.to_string()
         || value["state"] != "active"
     {
@@ -319,7 +345,7 @@ mod tests {
                 "fixture-namespace-reader",
                 &namespace,
                 instance,
-                project,
+                Some(project),
                 &identifier,
             )
             .await;

@@ -456,6 +456,8 @@ enum DeploymentCommand {
         #[arg(long)]
         pipeline: Option<String>,
         #[arg(long)]
+        source_pipeline: Option<String>,
+        #[arg(long)]
         status: Option<String>,
     },
     Approvals {
@@ -728,6 +730,21 @@ impl ApiClient {
         Ok(self.get(&self.endpoint_with_query(path, params)?))
     }
 
+    fn get_segments(
+        &self,
+        segments: &[&str],
+        params: &[(&str, Option<String>)],
+    ) -> anyhow::Result<RequestBuilder> {
+        let pairs: Vec<_> = params
+            .iter()
+            .filter_map(|(key, value)| value.as_deref().map(|value| (*key, value)))
+            .collect();
+        Ok(self
+            .transport
+            .request_segments(Method::GET, segments)?
+            .query(&pairs))
+    }
+
     fn post(&self, path: &str) -> RequestBuilder {
         self.transport.request_builder(Method::POST, path)
     }
@@ -876,6 +893,16 @@ async fn main() -> std::process::ExitCode {
     }
     let output = cli.output;
     let timeout = Duration::from_secs(cli.timeout_seconds);
+    if let Some(token) = std::env::var_os("CICD_PR_API_TOKEN") {
+        match pr_token(&cli.command, token) {
+            Ok(Some(token)) => cli.token = Some(token),
+            Ok(None) => {}
+            Err(error) => {
+                support::report(&error, error_format, &[]);
+                return exit(exit_code::USAGE);
+            }
+        }
+    }
     let mut api = match ApiClient::new(cli.api_url, cli.token, timeout) {
         Ok(api) => api,
         Err(err) => {
@@ -907,6 +934,36 @@ async fn main() -> std::process::ExitCode {
         return exit(exit_code::NETWORK_OR_SERVER);
     }
     exit(exit_code::OK)
+}
+
+fn pr_token(command: &Command, token: std::ffi::OsString) -> anyhow::Result<Option<String>> {
+    if !matches!(command, Command::Work(commands::WorkCommand::Pr { .. })) {
+        return Ok(None);
+    }
+    let token = token
+        .into_string()
+        .map_err(|_| anyhow::anyhow!("Invalid CICD_PR_API_TOKEN"))?;
+    anyhow::ensure!(
+        !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_graphic()),
+        "Invalid CICD_PR_API_TOKEN"
+    );
+    Ok(Some(token))
+}
+
+#[cfg(test)]
+#[test]
+fn configured_pr_token_is_required_only_for_pr_commands() {
+    let pr = Cli::parse_from(["cicd", "pr", "get", "--repo", "example", "--number", "1"]);
+    let other = Cli::parse_from(["cicd", "project", "list"]);
+    assert!(pr_token(&pr.command, "".into()).is_err());
+    assert!(pr_token(&other.command, "".into()).unwrap().is_none());
+    assert!(pr_token(&pr.command, "fixture\ntoken".into()).is_err());
+    assert_eq!(
+        pr_token(&pr.command, "fixture-token".into())
+            .unwrap()
+            .as_deref(),
+        Some("fixture-token")
+    );
 }
 
 fn exit(code: u8) -> std::process::ExitCode {
@@ -1341,11 +1398,13 @@ async fn deployment(api: &ApiClient, command: DeploymentCommand) -> anyhow::Resu
             environment,
             git_ref,
             pipeline,
+            source_pipeline,
             status,
         } => {
             let mut body = Map::new();
             body.insert("git_ref".into(), Value::String(git_ref));
             insert_optional(&mut body, "pipeline_id", pipeline);
+            insert_optional(&mut body, "source_pipeline_id", source_pipeline);
             insert_optional(&mut body, "status", status);
             api.json(
                 api.post(&format!("/environments/{environment}/deployments"))

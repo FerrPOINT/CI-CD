@@ -15,10 +15,25 @@
 
 ## [Unreleased]
 
+- Проверка владельца при выдаче runner job использует соединение уже открытой
+  транзакции: занятые остальные pool slots не вызывают вложенный acquire.
+  Проверки доступа, project cap и COMMIT fence сохранены. Embedded completion
+  receipt записывается вместе с реальным ACK workspace journal, не раньше него.
+- Исправлены advisory в frontend tooling: Vite 6 и транзитивные Zod/minimatch;
+  существующие js-yaml/source-map-js overrides сохранены.
 - Явно заданный неправильный `timeout` в существующем unversioned pipeline
   отклоняется до создания задач, вместо молчаливого использования default.
   Ошибка показывает только путь поля. Корректные длительности, отсутствие
   настройки, v1, шаблоны и ограничения исполнителя сохранены.
+- Новые PR требуют основную Task. Reviewer читает все связанные PR, полный diff
+  и готовые CI точных SHA, публикует общие и построчные замечания без дубликатов
+  при повторе операции. Карточка PR и CLI используют тот же контракт.
+- При обновлении сохраняются main, Kubernetes v1 и ранее установленная история
+  Reviewer: явный migration directory сохраняет исходные SQLx checksums.
+
+- `cicd-cli repository get --id` получает разрешённый репозиторий из UUID Tracker;
+  project-bound reader использует существующую связь с проектом. Чтение Tree/Blob
+  и остальных Git refs корректно передаёт квалифицированное имя `group/repository`.
 
 - Синхронизации соблюдают общий допуск пространств; архивное пространство не
   блокирует очередь остальных репозиториев. У отключённого подключения можно
@@ -138,7 +153,7 @@
   owned volume preparation, all-service stop и historical validation receipt.
   Общие parser/runner подключения и backend image sources включены;
   Rust/PG/native qualification pending;
-  readonly OCI и Pulse business logic не меняются.
+  readonly OCI и предметная логика не меняются.
 
 - Меню сервисов CI/CD использует адреса только из собственного runtime-каталога.
   Пока каталог загружается или недоступен, названия остаются видимыми без

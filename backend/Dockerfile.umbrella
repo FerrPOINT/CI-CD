@@ -25,7 +25,7 @@ RUN mkdir -p src/bin domain/src app/src infra/src infra/tests api/src cli/src mi
  && printf '\n' > domain/src/lib.rs \
  && printf '\n' > app/src/lib.rs \
  && printf '\n' > infra/src/lib.rs \
- && printf '\n' > infra/tests/repository_sync_schedule.rs \
+ && mkdir -p infra/tests && printf '\n' > infra/tests/repository_sync_schedule.rs \
  && printf '\n' > api/src/lib.rs \
  && printf 'fn main() {}\n' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs \
@@ -103,6 +103,7 @@ COPY CI-CD/backend/migration-lineages /tmp/forge-lineages/backend/migration-line
 COPY CI-CD/scripts/migration_lineages.py /tmp/forge-lineages/scripts/migration_lineages.py
 RUN ln -s /app/migrations /tmp/forge-lineages/backend/migrations \
  && python3 /tmp/forge-lineages/scripts/migration_lineages.py --input-format git-blob --output /app/migrations-kubernetes-v1 \
+ && python3 /tmp/forge-lineages/scripts/migration_lineages.py --input-format git-blob --lineage reviewer-v1 --output /app/migrations-reviewer-v1 \
  && rm -r /tmp/forge-lineages
 RUN mkdir -p /var/lib/forge/git /var/lib/forge/artifacts /workspaces \
  && chown -R cicd:cicd /var/lib/forge /workspaces

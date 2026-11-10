@@ -26,6 +26,8 @@ pub enum WorkspaceAction {
     Observe {},
     Start {},
     Stop {},
+    Close {},
+    ConvertToStand {},
     BeginSession {
         task: String,
     },
@@ -38,6 +40,8 @@ pub enum WorkspaceAction {
     Check {
         recipe: String,
         source_commit: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_pipeline_id: Option<Uuid>,
     },
     Build {
         source_commit: String,
@@ -79,7 +83,12 @@ impl WorkspaceAction {
     pub fn requires_free_workspace(&self) -> bool {
         matches!(
             self,
-            Self::Register {} | Self::Create {} | Self::Stop {} | Self::BeginSession { .. }
+            Self::Register {}
+                | Self::Create {}
+                | Self::Stop {}
+                | Self::BeginSession { .. }
+                | Self::Close {}
+                | Self::ConvertToStand {}
         )
     }
 
@@ -118,7 +127,13 @@ impl WorkspaceAction {
             Self::Check {
                 recipe,
                 source_commit,
-            } if !key(recipe) || !commit(source_commit) => Err("invalid_check_selection"),
+                source_pipeline_id,
+            } if !key(recipe)
+                || !commit(source_commit)
+                || source_pipeline_id.is_some_and(|id| id.is_nil()) =>
+            {
+                Err("invalid_check_selection")
+            }
             Self::Build { source_commit } if !commit(source_commit) => Err("invalid_build_source"),
             Self::Prepare { sources, local } => {
                 if local.machine_id.is_nil()
@@ -171,7 +186,8 @@ mod tests {
         assert!(
             WorkspaceAction::Check {
                 recipe: "unit".into(),
-                source_commit: "a".repeat(40)
+                source_commit: "a".repeat(40),
+                source_pipeline_id: None,
             }
             .requires_session()
         );

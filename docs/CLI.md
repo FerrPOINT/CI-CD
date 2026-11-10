@@ -24,10 +24,16 @@ cargo +1.88.0 build --locked --release -p cicd-cli
 |---|---|---|
 | `CICD_API_URL` | `http://127.0.0.1:7711` | Базовый URL API локального стенда |
 | `CICD_API_TOKEN` / `SDLC_API_TOKEN` | - | Личный токен Central Auth; эквивалентно `--token` |
+| `CICD_PR_API_TOKEN` | - | Отдельный токен только для группы `pr` |
 | `CICD_TIMEOUT_SECONDS` | `60` | Общий timeout HTTP-запроса; эквивалентно `--timeout-seconds` |
 | `CICD_OUTPUT` | `json` | Формат вывода: `json`, `ndjson` или `table`; эквивалентно `--output` |
 | `CICD_PROFILE` | - | Имя профиля из `~/.config/forge-cli/config.toml`; эквивалентно `--profile` |
 | `CICD_CONFIG` | `~/.config/forge-cli/config.toml` | Путь к TOML-конфигу профилей |
+
+Управляемый агент с отдельной учёткой PR получает токен через ссылку на секрет
+в конфигурации исполнения. Для `pr` заданный `CICD_PR_API_TOKEN` определяет
+учётку. Некорректное значение даёт ошибку до HTTP-запроса. Остальные команды
+используют свои обычные учётные данные. Права на PR проверяет Forge.
 
 Source candidate: `repository prepare-checkout`, `prepare-candidate` и
 `push-candidate [--readback]` исполняются до общего API-клиента. Подготовка
@@ -325,7 +331,14 @@ cicd-cli repository commits --repo service --branch main --limit 25 --offset 0
 cicd-cli repository compare --repo service --from main --to feature
 cicd-cli pr list --repo service --status open --search fix --limit 25 --offset 0
 cicd-cli pr get --repo service --number 1
-cicd-cli pr create --repo service --title "Изменение" --source-branch feature --target-branch main --from-file pr.md
+cicd-cli pr create --repo service --title "Изменение" --source-branch feature --target-branch main --from-file pr.md --tracker-instance-id <tracker-id> --task-id <task-id>
+cicd-cli pr for-task --tracker-instance-id <tracker-id> --task-id <task-id>
+cicd-cli pr review-context --repository-id <repository-id> --number 1
+cicd-cli pr patch --repository-id <repository-id> --number 1 --base-sha <base-sha> --head-sha <head-sha> --output review.patch
+cicd-cli pr checks --repository-id <repository-id> --number 1 --head-sha <head-sha> --limit 100 --offset 0
+cicd-cli pr comments --repository-id <repository-id> --number 1 --limit 100 --offset 0
+cicd-cli pr comment --repository-id <repository-id> --number 1 --from-file comment.json
+cicd-cli pr link-task --repository-id <repository-id> --number 1 --tracker-instance-id <tracker-id> --task-id <task-id> --primary
 cicd-cli pr close --repo service --number 1
 cicd-cli pr reopen --repo service --number 1
 cicd-cli pr merge --repo service --number 1
@@ -376,9 +389,4 @@ CICD_TEST_DATABASE_URL=postgres://... cargo test -p cicd-cli --features integrat
 
 Текущие Linux/WSL candidates и установка: [CLI_INSTALL.md](CLI_INSTALL.md). Проверки против образов с PostgreSQL, границы fixture execution и блокеры обновления sdlc1: [CLI_VALIDATION.md](CLI_VALIDATION.md). Перед использованием с рабочим стендом требуется подтверждённая совместимость его backend и применённых миграций.
 
-Каталог backend включает ранее применённые migrations 36/37 для чтения
-исторических deployment records и точную migration 38 для совместимости с
-сохранённой схемой pipelines/messaging_outbox. Исторический checksum migration
-38 зависит от CRLF; файл нельзя нормализовать в LF. CLI-команды, API и роли не менялись. Pulse
-остаётся тестовым Git/pipeline приложением внутри CI/CD; специальный deploy
-runner и отдельный постоянный Pulse-стенд этим пакетом не создаются.
+Scope `pull:create` разрешает только POST создания PR при наличии доступа к репозиторию и необходимой роли. Права на merge и выпуск проверяются отдельно.

@@ -564,6 +564,8 @@ pub struct PullRequest {
     pub updated_at: DateTime<Utc>,
     pub merged_at: Option<DateTime<Utc>>,
     pub merge_commit_sha: Option<String>,
+    pub primary_tracker_instance_id: Option<Uuid>,
+    pub primary_task_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -646,6 +648,7 @@ impl PullRequestListParams {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreatePullRequest {
+    pub primary_task: pdlc_shared::resource_context::TaskRef,
     pub repository_name: String,
     pub title: String,
     pub description: Option<String>,
@@ -670,7 +673,7 @@ pub async fn list_pull_requests(
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let repo = crate::repository_catalog::resolve_storage(pool, &repo).await?;
     let prs = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha, primary_tracker_instance_id, primary_task_id \
          FROM pull_requests WHERE repository_name = $1 ORDER BY number DESC",
     )
     .bind(&repo)
@@ -708,7 +711,7 @@ pub async fn list_pull_request_page(
     .await
     .map_err(ApiError::internal)?;
     let prs = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha, primary_tracker_instance_id, primary_task_id \
          FROM pull_requests \
          WHERE repository_name = $1 \
            AND ($2::text IS NULL OR status = $2) \
@@ -749,7 +752,7 @@ pub async fn get_pull_request(
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let repo = crate::repository_catalog::resolve_storage(pool, &repo).await?;
     let pr = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha, primary_tracker_instance_id, primary_task_id \
          FROM pull_requests WHERE repository_name = $1 AND number = $2",
     )
     .bind(&repo)
@@ -769,11 +772,12 @@ pub async fn get_pull_request(
     params(("repo" = String, Path, description = "Repository name")),
     responses((status = 200, body = PullRequest), (status = 400)),
 )]
-pub async fn create_pull_request(
+pub(crate) async fn create_pull_request(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     permit: Option<axum::Extension<RepositoryWrite>>,
+    identity: Option<axum::Extension<crate::api::authz_mw::VerifiedRequestIdentity>>,
     Json(mut input): Json<CreatePullRequest>,
 ) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
@@ -786,9 +790,30 @@ pub async fn create_pull_request(
     input.repository_name = repository;
     let _namespace_lease =
         crate::repository_catalog::write_lease(&state, &input.repository_name).await?;
-    let write =
-        RepositoryWrite::for_repository(pool, &input.repository_name, permit.map(|p| p.0)).await?;
+    let native = identity
+        .as_ref()
+        .filter(|i| crate::development_workspaces::machine::principal(&i.0));
+    if claims.as_ref().is_some_and(|c| c.role == "service_account") && native.is_none() {
+        return Err(ApiError::forbidden());
+    }
+    let write = if native.is_some() {
+        None
+    } else {
+        RepositoryWrite::for_repository(pool, &input.repository_name, permit.map(|p| p.0)).await?
+    };
     let mut transaction = pool.begin().await.map_err(ApiError::internal)?;
+    let native_clock = if let Some(identity) = native {
+        Some(
+            crate::development_workspaces::machine::lock_repository(
+                &mut transaction,
+                &input.repository_name,
+                &identity.0,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     let confirmed_author = match write.as_ref() {
         Some(permit) => Some(permit.lock(&mut transaction).await?),
         None => None,
@@ -810,6 +835,18 @@ pub async fn create_pull_request(
     }
     input.source_branch = source_name;
     input.target_branch = target_name;
+    let actor = claims.as_ref().ok_or_else(ApiError::forbidden)?.0.sub;
+    let (repository_id, namespace, task_key) =
+        crate::task_links::verify_primary_task(pool, &input.repository_name, &input.primary_task)
+            .await?;
+    let source_sha = crate::pull_comments::resolve_commit(
+        &state
+            .git
+            .root
+            .join(format!("{}.git", input.repository_name)),
+        &source_reference,
+    )
+    .await?;
     require_write(write.as_ref())?;
     let next_number: i32 = sqlx::query_scalar(
         "SELECT allocate_repository_pr_number(id) FROM repository_catalog WHERE storage_name=$1",
@@ -818,14 +855,15 @@ pub async fn create_pull_request(
     .fetch_one(&mut *transaction)
     .await
     .map_err(ApiError::internal)?;
-    // Author: authenticated identity wins; explicit input is a fallback for
-    // trusted-network mode where no claims exist.
     require_write(write.as_ref())?;
-    let author = match (confirmed_author, claims.as_ref().map(|c| c.0.sub)) {
+    let author = match (confirmed_author, claims.as_ref().map(|c| &c.0)) {
         (Some(username), _) => username,
-        (None, Some(user_id)) => {
+        (None, Some(claims)) if claims.service_account_name.is_some() => {
+            claims.service_account_name.clone().unwrap_or_default()
+        }
+        (None, Some(claims)) => {
             sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
-                .bind(user_id)
+                .bind(claims.sub)
                 .fetch_optional(&mut *transaction)
                 .await
                 .map_err(ApiError::internal)?
@@ -834,7 +872,7 @@ pub async fn create_pull_request(
         (None, None) => input.author.clone().unwrap_or_default(),
     };
     let pr = sqlx::query_as::<_, PullRequest>(
-        "INSERT INTO pull_requests (id, repository_name, number, title, description, source_branch, target_branch, status, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8) RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
+        "INSERT INTO pull_requests (id, repository_name, number, title, description, source_branch, target_branch, status, created_by,primary_tracker_instance_id,primary_task_id) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8,$9,$10) RETURNING id,repository_name,repository_id,number,title,description,source_branch,target_branch,status,created_by,created_at,updated_at,merged_at,merge_commit_sha,primary_tracker_instance_id,primary_task_id",
     )
     .bind(Uuid::new_v4())
     .bind(&input.repository_name)
@@ -844,10 +882,26 @@ pub async fn create_pull_request(
     .bind(input.source_branch.trim())
     .bind(input.target_branch.trim())
     .bind(&author)
+    .bind(input.primary_task.tracker_instance_id)
+    .bind(input.primary_task.task_id)
     .fetch_one(&mut *transaction)
     .await
     .map_err(ApiError::internal)?;
+    crate::task_links::insert_link(
+        &mut transaction,
+        pr.id,
+        repository_id,
+        &namespace,
+        &input.primary_task,
+        &task_key,
+        &source_sha,
+        actor,
+    )
+    .await?;
     require_write(write.as_ref())?;
+    if let Some(clock) = native_clock {
+        clock.require()?;
+    }
     transaction.commit().await.map_err(ApiError::internal)?;
     Ok(Json(pr))
 }
@@ -954,7 +1008,7 @@ async fn pr_action_owned(
         permit.lock(&mut transaction).await?;
     }
     let pr = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 AND number = $2 FOR UPDATE",
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha, primary_tracker_instance_id, primary_task_id FROM pull_requests WHERE repository_name = $1 AND number = $2 FOR UPDATE",
     )
     .bind(&repo)
     .bind(number)
@@ -1186,7 +1240,7 @@ async fn pr_action_owned(
                 return Err(ApiError::conflict("pull request is not open"));
             }
             let updated = sqlx::query_as::<_, PullRequest>(
-                "UPDATE pull_requests SET status = 'closed', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
+                "UPDATE pull_requests SET status = 'closed', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha, primary_tracker_instance_id, primary_task_id",
             )
             .bind(pr.id)
             .fetch_one(&mut *transaction)
@@ -1203,7 +1257,7 @@ async fn pr_action_owned(
                 ));
             }
             let updated = sqlx::query_as::<_, PullRequest>(
-                "UPDATE pull_requests SET status = 'open', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
+                "UPDATE pull_requests SET status = 'open', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha, primary_tracker_instance_id, primary_task_id",
             )
             .bind(pr.id)
             .fetch_one(&mut *transaction)
@@ -1229,7 +1283,7 @@ async fn complete_merge(
 ) -> Result<PullRequest, ApiError> {
     let updated = sqlx::query_as::<_, PullRequest>(
         "UPDATE pull_requests SET status='merged',merged_at=now(),updated_at=now(),merge_commit_sha=$2 \
-         WHERE id=$1 AND status='open' RETURNING id,repository_id,repository_name,number,title,description,source_branch,target_branch,status,created_by,created_at,updated_at,merged_at,merge_commit_sha",
+         WHERE id=$1 AND status='open' RETURNING id,repository_id,repository_name,number,title,description,source_branch,target_branch,status,created_by,created_at,updated_at,merged_at,merge_commit_sha,primary_tracker_instance_id,primary_task_id",
     )
     .bind(pull)
     .bind(&attempt.merge_oid)

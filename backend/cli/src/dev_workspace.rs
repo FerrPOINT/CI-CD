@@ -3,7 +3,12 @@ use super::ApiClient;
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
-use std::{io::Write, path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    io::{ErrorKind, Write},
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 use uuid::Uuid;
 
 #[derive(Args)]
@@ -65,6 +70,14 @@ pub enum Command {
         #[command(flatten)]
         mutation: Mutation,
     },
+    Close {
+        #[command(flatten)]
+        mutation: Mutation,
+    },
+    ConvertToStand {
+        #[command(flatten)]
+        mutation: Mutation,
+    },
     BeginSession {
         #[command(flatten)]
         mutation: Mutation,
@@ -92,6 +105,8 @@ pub enum Command {
         sources: Vec<(String, String)>,
         #[arg(long, default_value = "pdlc-dev-workspace-operator")]
         source_helper: PathBuf,
+        #[arg(long, hide = true)]
+        request_only: bool,
     },
     Check {
         #[command(flatten)]
@@ -100,6 +115,8 @@ pub enum Command {
         recipe: String,
         #[arg(long)]
         commit: String,
+        #[arg(long)]
+        source_pipeline: Option<Uuid>,
     },
     Build {
         #[command(flatten)]
@@ -135,12 +152,20 @@ pub enum Command {
 fn path(workspace: Uuid) -> String {
     format!("/development-workspaces/{workspace}")
 }
-async fn mutate(api: &ApiClient, mutation: Mutation, command: Value) -> Result<Value> {
+fn operation_request(mutation: &Mutation, command: Value) -> Result<Value> {
     ensure!(
         !mutation.operation_id.is_nil() && mutation.expected_version > 0,
         "Нужны исходный UUID операции и текущая версия workspace"
     );
-    let body = json!({"operation_id":mutation.operation_id,"expected_version":mutation.expected_version,"command":command});
+    Ok(
+        json!({"operation_id":mutation.operation_id,"expected_version":mutation.expected_version,"command":command}),
+    )
+}
+async fn mutate(api: &ApiClient, mutation: Mutation, command: Value) -> Result<Value> {
+    let body = operation_request(&mutation, command)?;
+    submit(api, mutation, body).await
+}
+async fn submit(api: &ApiClient, mutation: Mutation, body: Value) -> Result<Value> {
     // Never invent a replacement key after a lost response. The caller can
     // read this exact UUID using `operation`, `wait` or `reconcile`.
     api.json(
@@ -185,6 +210,10 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
         Command::Observe { mutation } => mutate(api, mutation, json!({"action":"observe"})).await,
         Command::Start { mutation } => mutate(api, mutation, json!({"action":"start"})).await,
         Command::Stop { mutation } => mutate(api, mutation, json!({"action":"stop"})).await,
+        Command::Close { mutation } => mutate(api, mutation, json!({"action":"close"})).await,
+        Command::ConvertToStand { mutation } => {
+            mutate(api, mutation, json!({"action":"convert_to_stand"})).await
+        }
         Command::BeginSession { mutation, task } => {
             mutate(api, mutation, json!({"action":"begin_session","task":task})).await
         }
@@ -208,12 +237,15 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
             mutation,
             recipe,
             commit,
+            source_pipeline,
         } => {
-            mutate(
-                api,
-                mutation,
-                json!({"action":"check","recipe":recipe,"source_commit":commit}),
-            )
+            mutate(api, mutation, {
+                let mut command = json!({"action":"check","recipe":recipe,"source_commit":commit});
+                if let Some(id) = source_pipeline {
+                    command["source_pipeline_id"] = json!(id);
+                }
+                command
+            })
             .await
         }
         Command::Build { mutation, commit } => {
@@ -229,7 +261,15 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
             root,
             sources,
             source_helper,
-        } => prepare(api, mutation, root, sources, source_helper).await,
+            request_only,
+        } => {
+            let body = prepare(api, &mutation, root, sources, source_helper).await?;
+            if request_only {
+                Ok(body)
+            } else {
+                submit(api, mutation, body).await
+            }
+        }
         Command::Operations { workspace } => {
             api.json(api.get(&format!("{}/operations", path(workspace))))
                 .await
@@ -281,9 +321,29 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
         }
     }
 }
+fn validate_machine_source_root(root: &Path) -> Result<()> {
+    let root = root
+        .canonicalize()
+        .context("Корень workspace агента недоступен")?;
+    ensure!(
+        root.is_dir(),
+        "Корень workspace агента должен быть каталогом"
+    );
+    for directory in root.ancestors() {
+        match directory.join(".git").symlink_metadata() {
+            Ok(_) => bail!("Передайте корень workspace агента, расположенный вне Git checkout"),
+            Err(error) if error.kind() == ErrorKind::NotFound => (),
+            Err(error) => {
+                return Err(error).context("Не удалось проверить корень workspace агента");
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn prepare(
     api: &ApiClient,
-    mutation: Mutation,
+    mutation: &Mutation,
     root: PathBuf,
     sources: Vec<(String, String)>,
     helper: PathBuf,
@@ -302,6 +362,7 @@ async fn prepare(
                 && std::env::var("CICD_API_TOKEN").is_ok_and(|s| !s.trim().is_empty()),
             "Подготовка агента требует настроенной identity текущего исполнителя"
         );
+        validate_machine_source_root(&root)?;
     }
     let workspace = &detail["workspace"];
     let project = workspace["project_id"]
@@ -351,6 +412,7 @@ async fn prepare(
     serde_json::to_writer(&mut profile, &workspace["profile"])?;
     profile.flush()?;
     let request = json!({"root":root,"repositories":selected,"operationId":mutation.operation_id});
+    let workspace_id = mutation.workspace;
     let output = tokio::task::spawn_blocking(move || -> Result<std::process::Output> {
         let mut command = std::process::Command::new(helper);
         if machine {
@@ -367,7 +429,7 @@ async fn prepare(
                 .env(format!("GIT_CONFIG_KEY_{count}"), "credential.username")
                 .env(
                     format!("GIT_CONFIG_VALUE_{count}"),
-                    format!("workspace-{}", mutation.workspace),
+                    format!("workspace-{workspace_id}"),
                 );
         } else {
             command.env_remove("CICD_API_TOKEN");
@@ -432,7 +494,10 @@ async fn prepare(
         .iter()
         .map(|item| json!({"key":item["key"],"commit":item["commit"],"dirty":item["dirty"]}))
         .collect::<Vec<_>>();
-    mutate(api,mutation,json!({"action":"prepare","sources":server_sources,"local":{"machine_id":machine,"profile_hash":workspace["profile_hash"],"repositories":repositories,"tools":report["tools"]}})).await
+    operation_request(
+        mutation,
+        json!({"action":"prepare","sources":server_sources,"local":{"machine_id":machine,"profile_hash":workspace["profile_hash"],"repositories":repositories,"tools":report["tools"]}}),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -446,4 +511,22 @@ async fn register(
     create: bool,
 ) -> Result<Value> {
     api.json(api.post(&format!("/projects/{project}/development-workspaces")).json(&json!({"id":workspace,"operation_id":operation_id,"catalog_target_id":target,"name":name,"create":create}))).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_machine_source_root;
+
+    #[test]
+    fn machine_prepare_rejects_roots_inside_a_git_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("checkout");
+        let nested = checkout.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(checkout.join(".git"), "gitdir: ../metadata\n").unwrap();
+
+        assert!(validate_machine_source_root(root.path()).is_ok());
+        assert!(validate_machine_source_root(&checkout).is_err());
+        assert!(validate_machine_source_root(&nested).is_err());
+    }
 }

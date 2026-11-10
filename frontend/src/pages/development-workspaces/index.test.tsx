@@ -145,19 +145,36 @@ function mount(
   cache = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   }),
+  entry = `/?workspace_configuration=${configuration}&development_workspace=${id}`,
 ) {
   return render(
     <QueryClientProvider client={cache}>
-      <MemoryRouter
-        initialEntries={[
-          `/?workspace_configuration=${configuration}&development_workspace=${id}`,
-        ]}
-      >
+      <MemoryRouter initialEntries={[entry]}>
         <DevelopmentWorkspacesPage />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
+
+it("opens workspaces and provides the stands link when the project has one configuration", async () => {
+  mount(undefined, "/");
+  expect(await screen.findByText(workspace.name)).toBeVisible();
+  expect(screen.getByRole("link", { name: "Стенды и адреса приложений" }))
+    .toHaveAttribute("href", `/delivery-configs/${configuration}/environments`);
+});
+
+it("requires a choice when multiple configurations exist", async () => {
+  vi.mocked(service.configurations).mockResolvedValue({
+    items: [config, { ...config, id, name: "Verification" }],
+    total: 2,
+  });
+  mount(undefined, "/");
+  fireEvent.click(screen.getByRole("button", { name: /Конфигурация проекта/ }));
+  expect(await screen.findByText("r1/r1 / Verification")).toBeVisible();
+  expect(service.configuration).not.toHaveBeenCalled();
+  expect(screen.queryByRole("link", { name: "Стенды и адреса приложений" }))
+    .not.toBeInTheDocument();
+});
 
 it("keeps runtime, source readiness and current session separate", async () => {
   mount();

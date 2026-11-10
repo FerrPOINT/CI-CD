@@ -20,6 +20,42 @@ pub(super) struct DeveloperAssignment {
     pub source: Value,
 }
 
+pub(super) struct WorkspacePreparation {
+    pub expires_at: i64,
+    commit: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum AssignmentAccess {
+    Active,
+    Preparing,
+    Reading,
+    Closing,
+}
+
+impl AssignmentAccess {
+    pub fn for_action(action: &WorkspaceAction) -> Self {
+        match action {
+            WorkspaceAction::BeginSession { .. } | WorkspaceAction::Prepare { .. } => {
+                Self::Preparing
+            }
+            WorkspaceAction::EndSession { .. } => Self::Closing,
+            _ => Self::Active,
+        }
+    }
+}
+
+impl WorkspacePreparation {
+    pub fn require_source(&self, action: &WorkspaceAction) -> Result<(), ApiError> {
+        if let WorkspaceAction::Prepare { sources, .. } = action
+            && (sources.len() != 1 || sources[0].commit != self.commit)
+        {
+            return Err(ApiError::forbidden());
+        }
+        Ok(())
+    }
+}
+
 impl DeveloperAssignment {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn read(
@@ -31,11 +67,42 @@ impl DeveloperAssignment {
         subject: Uuid,
         repository: Uuid,
         workspace: Uuid,
-    ) -> Result<Self, ApiError> {
+        access: AssignmentAccess,
+    ) -> Result<(Self, Option<WorkspacePreparation>), ApiError> {
         let denied = ApiError::forbidden;
         let execution = &context["execution"];
         let assignment = &execution["assignment"];
         let source = &execution["source_binding"];
+        let preparation = if execution["status"] == "InProgress"
+            || (access == AssignmentAccess::Closing && execution["status"] == "Ready")
+            || (matches!(
+                access,
+                AssignmentAccess::Reading | AssignmentAccess::Closing
+            ) && execution["status"] == "Completed")
+        {
+            None
+        } else if matches!(
+            access,
+            AssignmentAccess::Preparing | AssignmentAccess::Reading
+        ) && execution["status"] == "Ready"
+        {
+            Some(WorkspacePreparation {
+                expires_at: execution["workspace_preparation_expires_at"]
+                    .as_str()
+                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                    .map(|time| time.timestamp())
+                    .filter(|deadline| *deadline > chrono::Utc::now().timestamp())
+                    .ok_or_else(denied)?,
+                commit: execution["workspace_preparation_commit"]
+                    .as_str()
+                    .filter(|sha| commit_sha(sha))
+                    .filter(|sha| execution["stage"] == "Rework" || source["base_commit"] == *sha)
+                    .ok_or_else(denied)?
+                    .into(),
+            })
+        } else {
+            return Err(denied());
+        };
         if context["schema_version"] != 1
             || context["namespace"] != serde_json::to_value(namespace).map_err(|_| denied())?
             || context["tracker_instance_id"] != tracker.to_string()
@@ -44,7 +111,6 @@ impl DeveloperAssignment {
             || context["state"] != "active"
             || execution["interaction_protocol"] != "configured-cli-v1"
             || execution["root_task_id"] != task.to_string()
-            || execution["status"] != "InProgress"
             || !matches!(execution["stage"].as_str(), Some("Development" | "Rework"))
             || assignment["machine_subject"] != subject.to_string()
             || subject.is_nil()
@@ -65,11 +131,7 @@ impl DeveloperAssignment {
                 .as_str()
                 .is_some_and(crate::registered_source::full_branch)
             || source["base_ref"] == source["candidate_ref"]
-            || !source["base_commit"].as_str().is_some_and(|s| {
-                s.len() == 40
-                    && s.bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            })
+            || !source["base_commit"].as_str().is_some_and(commit_sha)
         {
             return Err(denied());
         }
@@ -86,17 +148,20 @@ impl DeveloperAssignment {
                 .filter(|v| *v > 0 && *v <= 9_007_199_254_740_991)
                 .ok_or_else(denied)
         };
-        Ok(Self {
-            task_id: task,
-            assignment_id: id("assignment_id")?,
-            execution_id: id("execution_id")?,
-            agent_id: id("agent_id")?,
-            version: version(&assignment["version"])?,
-            machine_subject: subject,
-            requirement_revision: version(&execution["requirement_revision"])?,
-            stage: execution["stage"].as_str().ok_or_else(denied)?.to_owned(),
-            source: source.clone(),
-        })
+        Ok((
+            Self {
+                task_id: task,
+                assignment_id: id("assignment_id")?,
+                execution_id: id("execution_id")?,
+                agent_id: id("agent_id")?,
+                version: version(&assignment["version"])?,
+                machine_subject: subject,
+                requirement_revision: version(&execution["requirement_revision"])?,
+                stage: execution["stage"].as_str().ok_or_else(denied)?.to_owned(),
+                source: source.clone(),
+            },
+            preparation,
+        ))
     }
 
     pub(super) fn require_same(&self, saved: &Self) -> Result<(), ApiError> {
@@ -106,6 +171,13 @@ impl DeveloperAssignment {
             Err(ApiError::forbidden())
         }
     }
+}
+
+fn commit_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 pub(super) fn developer_action(action: &WorkspaceAction) -> bool {
@@ -165,15 +237,87 @@ mod tests {
         );
         let read = |v: &Value| {
             DeveloperAssignment::read(
-                v, &namespace, tracker, project, task, actor, repository, workspace,
+                v,
+                &namespace,
+                tracker,
+                project,
+                task,
+                actor,
+                repository,
+                workspace,
+                AssignmentAccess::Active,
             )
+            .map(|(assignment, _)| assignment)
         };
         let saved = read(&initial).unwrap();
         saved.require_same(&saved).unwrap();
+        let mut completed = initial.clone();
+        completed["execution"]["status"] = json!("Completed");
+        for access in [
+            AssignmentAccess::Active,
+            AssignmentAccess::Preparing,
+            AssignmentAccess::Reading,
+            AssignmentAccess::Closing,
+        ] {
+            let result = DeveloperAssignment::read(
+                &completed, &namespace, tracker, project, task, actor, repository, workspace,
+                access,
+            );
+            if matches!(
+                access,
+                AssignmentAccess::Reading | AssignmentAccess::Closing
+            ) {
+                let (closing, deadline) = result.unwrap();
+                closing.require_same(&saved).unwrap();
+                assert!(deadline.is_none());
+            } else {
+                assert!(result.is_err());
+            }
+        }
         let mut rework = initial.clone();
         rework["execution"]["stage"] = json!("Rework");
         let repaired = read(&rework).unwrap();
         assert!(repaired.require_same(&saved).is_err());
+        let mut reserved = initial.clone();
+        reserved["execution"]["status"] = json!("Ready");
+        let read_preparation = |v: &Value| {
+            DeveloperAssignment::read(
+                v,
+                &namespace,
+                tracker,
+                project,
+                task,
+                actor,
+                repository,
+                workspace,
+                AssignmentAccess::Preparing,
+            )
+        };
+        assert!(read_preparation(&reserved).is_err());
+        let (closing, deadline) = DeveloperAssignment::read(
+            &reserved,
+            &namespace,
+            tracker,
+            project,
+            task,
+            actor,
+            repository,
+            workspace,
+            AssignmentAccess::Closing,
+        )
+        .unwrap();
+        closing.require_same(&saved).unwrap();
+        assert!(deadline.is_none());
+        reserved["execution"]["workspace_preparation_expires_at"] =
+            json!(chrono::Utc::now() + chrono::Duration::seconds(30));
+        reserved["execution"]["workspace_preparation_commit"] = json!("a".repeat(40));
+        assert!(read(&reserved).is_err());
+        let (preparing, deadline) = read_preparation(&reserved).unwrap();
+        preparing.require_same(&saved).unwrap();
+        assert!(deadline.is_some());
+        reserved["execution"]["workspace_preparation_expires_at"] =
+            json!(chrono::Utc::now() - chrono::Duration::seconds(1));
+        assert!(read_preparation(&reserved).is_err());
         for (pointer, value) in [
             ("/schema_version", json!(2)),
             ("/tracker_instance_id", json!(Uuid::new_v4())),
@@ -262,7 +406,8 @@ mod tests {
         }));
         assert!(developer_action(&WorkspaceAction::Check {
             recipe: "backend-unit".into(),
-            source_commit: "a".repeat(40)
+            source_commit: "a".repeat(40),
+            source_pipeline_id: None,
         }));
         for action in [
             WorkspaceAction::Register {},

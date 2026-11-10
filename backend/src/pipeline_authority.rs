@@ -3,7 +3,7 @@ use crate::{
     api::{ApiError, authz_mw::VerifiedRequestIdentity},
     git_host::GitDeadline,
 };
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgConnection, Postgres, Transaction};
 use std::future::Future;
 use uuid::Uuid;
 #[derive(Clone, Copy)]
@@ -133,12 +133,13 @@ pub(crate) async fn replay(
 /// New preparation/spawn/runner stages confirm the immutable owner again.
 /// Task pipelines retain their stricter native Tracker/child/lease adapter.
 pub(crate) async fn confirm(
-    pool: &PgPool,
+    connection: &mut PgConnection,
     pipeline: Uuid,
     attempt: Uuid,
 ) -> Result<Option<GitDeadline>, ApiError> {
     if let Some(clock) =
-        crate::development_workspaces::machine::pipeline_clock(pool, pipeline, attempt).await?
+        crate::development_workspaces::machine::pipeline_clock(&mut *connection, pipeline, attempt)
+            .await?
     {
         return Ok(Some(clock));
     }
@@ -149,7 +150,7 @@ pub(crate) async fn confirm(
         "SELECT EXISTS(SELECT 1 FROM task_pipeline_intents WHERE pipeline_id=$1)",
     )
     .bind(pipeline)
-    .fetch_one(pool)
+    .fetch_one(&mut *connection)
     .await
     .map_err(ApiError::internal)?;
     if task {
@@ -159,7 +160,7 @@ pub(crate) async fn confirm(
         "SELECT COALESCE(o.owner_subject,CASE WHEN a.attempt_no=1 THEN p.owner_subject END),COALESCE(o.requires_admin,p.requires_admin,false) FROM execution_attempts a JOIN jobs j ON j.id=a.job_id JOIN stages s ON s.id=j.stage_id LEFT JOIN execution_attempt_human_owners o ON o.attempt_id=a.id LEFT JOIN pipeline_human_owners p ON p.pipeline_id=s.pipeline_id WHERE s.pipeline_id=$1 AND a.id=$2",
     )
     .bind(pipeline).bind(attempt)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *connection)
     .await
     .map_err(ApiError::internal)?
     ;

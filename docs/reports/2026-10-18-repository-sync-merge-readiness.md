@@ -102,9 +102,9 @@ manual/automatic и увеличивают версию `1 → 2 → 3`. Ист�
 
 | Экран | 375 px | 1920 px | 2560 px |
 |---|---|---|---|
-| Список | [PNG](../screenshots/repository-sync-20261020/sync-list-375.png) | [PNG](../screenshots/repository-sync-20261020/sync-list-1920.png) | [PNG](../screenshots/repository-sync-20261020/sync-list-2560.png) |
-| Подключение | [PNG](../screenshots/repository-sync-20261020/sync-connection-375.png) | [PNG](../screenshots/repository-sync-20261020/sync-connection-1920.png) | [PNG](../screenshots/repository-sync-20261020/sync-connection-2560.png) |
-| История | [PNG](../screenshots/repository-sync-20261020/sync-history-375.png) | [PNG](../screenshots/repository-sync-20261020/sync-history-1920.png) | [PNG](../screenshots/repository-sync-20261020/sync-history-2560.png) |
+| Список | [PNG](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/repository-sync-20261020/sync-list-375.png) | [PNG](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/repository-sync-20261020/sync-list-1920.png) | [PNG](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/repository-sync-20261020/sync-list-2560.png) |
+| Подключение | [PNG](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/repository-sync-20261020/sync-connection-375.png) | [PNG](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/repository-sync-20261020/sync-connection-1920.png) | [PNG](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/repository-sync-20261020/sync-connection-2560.png) |
+| История | [PNG](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/repository-sync-20261020/sync-history-375.png) | [PNG](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/repository-sync-20261020/sync-history-1920.png) | [PNG](https://github.com/FerrPOINT/CI-CD/blob/6b8b4785d8744811cd3af23b7db4ab75b0aa3b5f/docs/screenshots/repository-sync-20261020/sync-history-2560.png) |
 
 SHA256 проверенного frontend bundle:
 `fe897faa4563f97bddb97da18fd21a3903bb85d59942a51be85b33cf8d9ac258`;

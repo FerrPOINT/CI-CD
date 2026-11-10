@@ -2,8 +2,8 @@
 
 Source-only ignored target: backend/tests/kubernetes_server_canary.rs.
 Owner выполняет build/native gate. Сценарий проверяет local-auth и ordinary
-embedded CI через настоящий main, PostgreSQL и общий Kubernetes executor.
-Central SSO, external runner protocol и фактические задания пользователя остаются
+embedded/external CI через настоящий main, PostgreSQL и общий Kubernetes executor.
+Central SSO и фактические задания пользователя остаются
 отдельными gates. Image build/deploy recipes исключены.
 
 ## Owner build и staging
@@ -94,3 +94,17 @@ failed test is not permission to delete Pod/PVC or kill main.
 Evidence includes planned.json, child.json, private main logs, cancel-marker.json,
 http-cases.json, held.json, exited.json, result.json. PASS requires both HTTP cases
 and actual normal exit. No datasets/control/evidence are automatically deleted/resumed.
+
+## External runner
+
+The external profile uses the actual CLI registration and authenticated heartbeat.
+Its process-local credential must not be printed or parsed from logs. Checkout
+uses the real fixture user's session obtained through local authentication.
+Both success and cancel jobs assert a pipeline variable delivered by the runner.
+
+The controller's isolated namespace role needs get/list/watch/create/patch/delete
+on Pods, get on pods/log and get on its workspace PVC; namespace identity readback
+needs get on that one namespace. Jobs receive a separate service account without
+API credentials. The patch permission is required for owned finalizer release.
+A failed fixture is not a successful image qualification; retain unknown custody
+until the exact original effect is reconciled.

@@ -142,7 +142,9 @@ pub(super) async fn verify(
         "/api/v1/catalog/repositories/{}/pulls",
         repository.to_string().replace('-', "%2D")
     );
-    let input = json!({"title":"Actual protected review","source_branch":"qa-pr-source","target_branch":"qa-pr-target"});
+    let (primary_task, task_reader, _token_file) =
+        crate::pull_fixture::task_reader(pool, name).await;
+    let input = json!({"primary_task":primary_task,"title":"Actual protected review","source_branch":"qa-pr-source","target_branch":"qa-pr-target"});
     post(&http, origin, &collection, &input, 403).await;
     profile.write().unwrap().scopes = vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"];
     sqlx::query("UPDATE users SET role='viewer' WHERE central_sub=$1")
@@ -455,7 +457,7 @@ pub(super) async fn verify(
     );
     // Timeout after ref publication is explicitly unknown, never an automatic retry.
     git(&bare, &["update-ref", "refs/heads/qa-pr-unknown", &base]).await;
-    let unknown_input = json!({"title":"Unknown publication review","source_branch":"qa-pr-source","target_branch":"qa-pr-unknown"});
+    let unknown_input = json!({"primary_task":primary_task,"title":"Unknown publication review","source_branch":"qa-pr-source","target_branch":"qa-pr-unknown"});
     let unknown = post(&http, origin, &collection, &unknown_input, 200).await;
     let number = unknown["number"].as_i64().unwrap();
     let unknown_id: Uuid = unknown["id"].as_str().unwrap().parse().unwrap();
@@ -636,7 +638,7 @@ pub(super) async fn verify(
     hook(&hook_path, b"#!/bin/sh\ncat >/dev/null\nexit 0\n").await;
     git(&bare, &["update-ref", "refs/heads/qa-pr-sql", &base]).await;
     let sql_review = post(&http, origin, &collection,
-        &json!({"title":"SQL commit interruption","source_branch":"qa-pr-source","target_branch":"qa-pr-sql"}), 200).await;
+        &json!({"primary_task":primary_task,"title":"SQL commit interruption","source_branch":"qa-pr-source","target_branch":"qa-pr-sql"}), 200).await;
     let sql_id: Uuid = sql_review["id"].as_str().unwrap().parse().unwrap();
     let sql_number = sql_review["number"].as_i64().unwrap();
     let sql_action = format!("/api/v1/catalog/repositories/{repository}/pulls/{sql_number}/action");
@@ -690,6 +692,7 @@ pub(super) async fn verify(
             }
         }
     }
+    task_reader.abort();
     *profile.write().unwrap() = saved;
     println!(
         "PR durable merge intent, exact refs, authority and concurrent recovery without republication: PASS"

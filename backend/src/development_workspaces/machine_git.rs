@@ -1,5 +1,8 @@
 //! Ordinary Git transport for the assigned workspace, using permanent identity.
-use super::{assignment::DeveloperAssignment, machine};
+use super::{
+    assignment::{AssignmentAccess, DeveloperAssignment},
+    machine,
+};
 use crate::{
     api::{ApiError, AppState},
     git_host::GitDeadline,
@@ -85,8 +88,14 @@ pub(crate) async fn admit(
         "/api/v1/development-workspaces/{workspace_id}{}",
         if write { "/operations" } else { "" }
     );
-    let identity =
-        machine::authenticate(pool, verified, if write { "POST" } else { "GET" }, &path).await?;
+    let identity = machine::authenticate(
+        pool,
+        verified,
+        if write { "POST" } else { "GET" },
+        &path,
+        None,
+    )
+    .await?;
     let workspace = store::workspace(pool, workspace_id)
         .await
         .map_err(super::error)?;
@@ -111,12 +120,17 @@ pub(crate) async fn admit(
     let verified = identity.central.ok_or_else(ApiError::forbidden)?;
     let issuer = verified.issuer.clone();
     let proof = machine::confirm_identity(
-        pool,
+        &mut *pool.acquire().await.map_err(ApiError::internal)?,
         &workspace,
         identity.claims.sub,
         verified,
         &assignment,
         write,
+        if write {
+            AssignmentAccess::Active
+        } else {
+            AssignmentAccess::Reading
+        },
     )
     .await?;
     let sealed = if write {
@@ -205,12 +219,13 @@ async fn check_callback(
         return Err(ApiError::forbidden());
     }
     let proof = machine::confirm_identity(
-        pool,
+        &mut *pool.acquire().await.map_err(ApiError::internal)?,
         &workspace,
         ticket.actor,
         verified,
         &ticket.assignment,
         true,
+        AssignmentAccess::Active,
     )
     .await?;
     proof.clock.cap_until(ticket.until).require()?;
@@ -223,10 +238,15 @@ async fn check_callback(
 const PRE_RECEIVE: &str = r#"set -eu
 umask 077
 cat > "$dir/input"
-test "$(wc -l < "$dir/input")" -eq 1 || exit 1
+if test "$(wc -l < "$dir/input")" -ne 1; then
+    printf '%s\n' 'Forge: workspace push must update exactly one branch.' >&2
+    exit 1
+fi
 read -r old new ref extra < "$dir/input"
-test -z "$extra" || exit 1
-test "$ref" = "$(cat "$dir/candidate-ref")" || exit 1
+if test -n "$extra" || test "$ref" != "$(cat "$dir/candidate-ref")"; then
+    printf '%s\n' 'Forge: workspace push does not match the assigned candidate branch.' >&2
+    exit 1
+fi
 printf '%s %s %s\n' "$old" "$new" "$ref" > "$dir/expected-update"
 "$dir/protected-pre-receive" "$@" < "$dir/input"
 "$dir/task-check" < "$dir/input"

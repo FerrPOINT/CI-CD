@@ -1,8 +1,13 @@
 //! Forge product-local admission and backup closure.
 #[path = "quiescence/kernel.rs"]
 mod kernel;
+#[path = "quiescence/retained_unsubmitted.rs"]
+mod retained_unsubmitted;
+#[path = "quiescence/root_views.rs"]
+mod root_views;
 use anyhow::{Context, ensure};
 pub use kernel::*;
+pub use root_views::RootView;
 use std::{fs, path::Path};
 use uuid::Uuid;
 /// Admit every request before auth/cache DB effects; only exact existing-execution continuations survive drain.
@@ -597,6 +602,54 @@ mod tests {
         fs::remove_dir_all(path).unwrap();
     }
     #[test]
+    fn controller_shutdown_keeps_exact_boots_and_does_not_weaken_ordinary_exit() {
+        let (path, gate) = fixture();
+        let (participant, identity) = gate.register("server", "server", vec![]).unwrap();
+        let expected = std::slice::from_ref(&identity);
+        let owner = Coordinator::request(gate.clone(), Uuid::new_v4()).unwrap();
+        let fence = owner.try_fence().unwrap().unwrap();
+        owner.publish_held(&fence, expected).unwrap();
+        drop(participant);
+        assert!(owner.request_exit(&fence, expected).is_err());
+        owner.request_controller_exit(&fence, expected).unwrap();
+        assert!(gate.all_exited(expected).unwrap());
+        let mut foreign = identity.clone();
+        foreign.boot_id = Uuid::new_v4();
+        assert!(owner.request_controller_exit(&fence, &[foreign]).is_err());
+        drop(fence);
+        owner.resume().unwrap();
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn sealed_controller_exit_survives_holder_death_and_exact_cold_resume() {
+        let (path, gate) = fixture();
+        let (participant, identity) = gate.register("server", "server", vec![]).unwrap();
+        let expected = std::slice::from_ref(&identity);
+        let operation = Uuid::new_v4();
+        let owner = Coordinator::request(gate.clone(), operation).unwrap();
+        let fence = owner.try_fence().unwrap().unwrap();
+        owner.publish_held(&fence, expected).unwrap();
+        owner.request_controller_exit(&fence, expected).unwrap();
+        drop(participant);
+        assert!(gate.all_exited(expected).unwrap());
+        drop(fence);
+        drop(owner);
+        assert!(path.join("held.json").exists() && path.join("exit.json").exists());
+        let next = Coordinator::request(gate.clone(), operation).unwrap();
+        next.resume_closed().unwrap();
+        assert!(
+            !path.join("held.json").exists()
+                && !path.join("exit.json").exists()
+                && !path.join("request.json").exists()
+        );
+        let (_new, fresh) = gate.register("server", "server", vec![]).unwrap();
+        assert_ne!(fresh.boot_id, identity.boot_id);
+        assert!(gate.enter(true).is_ok());
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
     fn controlled_exit_process_fixture() {
         use std::io::Write;
         if std::env::var_os("FORGE_QUIESCENCE_EXIT_FIXTURE").is_none() {
@@ -881,22 +934,37 @@ pub async fn verify_idle(
     expected: &[Identity],
 ) -> anyhow::Result<()> {
     verify_database_idle(pool).await?;
-    verify_roots(pool, expected, None, &[]).await
+    verify_roots(pool, expected, None, &[], None).await
 }
 async fn verify_database_idle(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    verify_database_idle_with_retained(pool, None).await
+}
+async fn verify_database_idle_with_retained(
+    pool: &sqlx::PgPool,
+    retained: Option<&[Identity]>,
+) -> anyhow::Result<()> {
     let workspace_busy:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM development_workspace_operations WHERE state IN ('running','unknown'))").fetch_one(pool).await?;
     ensure!(
         !workspace_busy,
         "development workspace native outcome remains unconfirmed"
     );
     let (jobs,attempts,leases,leased_queue,unacked,sync_runs,unknown_refs,uploads):(i64,i64,i64,i64,i64,i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM jobs WHERE status='running'),(SELECT count(*) FROM execution_attempts WHERE status='running'),(SELECT count(*) FROM job_leases WHERE lease_status='active'),(SELECT count(*) FROM job_queue WHERE state='leased'),(SELECT count(*) FROM job_leases WHERE runner_id IS NOT NULL AND completion_received_at IS NULL),(SELECT count(*) FROM repository_sync_runs WHERE state IN ('running','stopping','reconciling')),(SELECT count(*) FROM repository_sync_refs WHERE state='unknown'),(SELECT count(*) FROM artifact_upload_sessions WHERE status='open')").fetch_one(pool).await?;
+    // Retain native submission locks until every database/activity check finishes.
+    // No completion timestamp, job outcome or receipt is written by this reader.
+    let unsubmitted = match retained {
+        Some(expected) => retained_unsubmitted::verify(pool, expected).await?,
+        None => Vec::new(),
+    };
+    ensure!(
+        unacked == unsubmitted.len() as i64,
+        "unconfirmed execution lacks native never-prepared closure"
+    );
     ensure!(
         [
             jobs,
             attempts,
             leases,
             leased_queue,
-            unacked,
             sync_runs,
             unknown_refs,
             uploads
@@ -919,6 +987,7 @@ async fn verify_roots(
     expected: &[Identity],
     adoption: Option<&AdoptionHandoff>,
     retired: &[RetiredCompose],
+    views: Option<&[RootView]>,
 ) -> anyhow::Result<()> {
     let mut roots = std::collections::BTreeSet::new();
     for identity in expected {
@@ -940,7 +1009,11 @@ async fn verify_roots(
                                 retired,
                             )?;
                         } else {
-                            workspace_idle_bound(&root.path, &root.path, None, None, retired)?;
+                            let recorded = match views {
+                                Some(views) => root_views::recorded(identity, root, views)?,
+                                None => root,
+                            };
+                            workspace_idle_bound(&root.path, &recorded.path, None, None, retired)?;
                         }
                     }
                     "local-delivery" => delivery_idle(&root.path)?,
@@ -1190,7 +1263,7 @@ pub async fn adoption_preflight(
         })
         .collect();
     let inherited = inherited_compose(gate, handoff)?;
-    verify_roots(pool, &mapped, Some(handoff), &inherited).await?;
+    verify_roots(pool, &mapped, Some(handoff), &inherited, None).await?;
     let mut seals = vec![];
     for binding in bindings
         .iter()
@@ -1259,10 +1332,65 @@ pub async fn verify_idle_at(
 ) -> anyhow::Result<()> {
     verify_database_idle(pool).await?;
     let retired = retired_compose_all(gate)?;
-    verify_roots(pool, expected, None, &retired).await?;
+    verify_roots(pool, expected, None, &retired, None).await?;
     if require_recoverable {
         verify_no_pending_work(pool).await?;
     }
     let _ = fence;
     Ok(())
+}
+
+/// Same-installation restart only: preserve exact terminal never-prepared records.
+/// Generation adoption continues to use the strict reader above.
+pub async fn verify_idle_at_preserving_unsubmitted(
+    fence: &Fence,
+    pool: &sqlx::PgPool,
+    expected: &[Identity],
+    gate: &Gate,
+    require_recoverable: bool,
+) -> anyhow::Result<()> {
+    verify_database_idle_with_retained(pool, Some(expected)).await?;
+    let retired = retired_compose_all(gate)?;
+    verify_roots(pool, expected, None, &retired, None).await?;
+    if require_recoverable {
+        verify_no_pending_work(pool).await?;
+    }
+    let _ = fence;
+    Ok(())
+}
+
+/// The owner must verify every view against the actual participant mount namespace.
+pub async fn verify_idle_at_views(
+    fence: &Fence,
+    pool: &sqlx::PgPool,
+    expected: &[Identity],
+    gate: &Gate,
+    require_recoverable: bool,
+    preserve_unsubmitted: bool,
+    views: &[RootView],
+) -> anyhow::Result<()> {
+    let mapped = root_views::map(expected, views)?;
+    verify_database_idle_with_retained(pool, preserve_unsubmitted.then_some(mapped.as_slice()))
+        .await?;
+    let retired = retired_compose_all(gate)?;
+    verify_roots(pool, &mapped, None, &retired, Some(views)).await?;
+    if require_recoverable {
+        verify_no_pending_work(pool).await?;
+    }
+    let _ = fence;
+    Ok(())
+}
+
+/// Diagnostic only: an observation is never a held or backup acknowledgement.
+pub async fn inspect_maintenance_idle(
+    pool: &sqlx::PgPool,
+    expected: &[Identity],
+    gate: &Gate,
+    views: &[RootView],
+) -> anyhow::Result<()> {
+    let mapped = root_views::map(expected, views)?;
+    verify_database_idle_with_retained(pool, Some(&mapped)).await?;
+    let retired = retired_compose_all(gate)?;
+    verify_roots(pool, &mapped, None, &retired, Some(views)).await?;
+    verify_no_pending_work(pool).await
 }

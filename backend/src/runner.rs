@@ -437,9 +437,10 @@ async fn complete_lease_by_id(
 ) -> Result<u64, sqlx::Error> {
     let lease_status = lease_status_for_terminal(terminal_status);
     let bounded_tail = error_tail.map(|value| truncate_error_tail(value.to_owned()));
+    // The confirmed workspace journal ACK owns completion_received_at.
     let recorded: Option<String> = sqlx::query_scalar(
         "UPDATE job_leases SET lease_status=CASE WHEN lease_status='active' THEN $2 ELSE lease_status END,
-         completed_at=COALESCE(completed_at,now()),completion_received_at=COALESCE(completion_received_at,now()),
+         completed_at=COALESCE(completed_at,now()),
          terminal_status=CASE WHEN lease_status='active' THEN $3 ELSE COALESCE(terminal_status,$3) END,
          error_tail=COALESCE(error_tail,$4) WHERE id=$1 AND runner_id IS NULL RETURNING terminal_status")
         .bind(lease_id).bind(lease_status).bind(terminal_status).bind(bounded_tail.as_deref())
@@ -838,6 +839,8 @@ pub async fn reconcile_queue_timeouts_with_config(
                    AND NOT r.draining \
                    AND r.credential_hash IS NOT NULL \
                    AND (r.credential_expires_at IS NULL OR r.credential_expires_at > now()) \
+                   AND (p.variables IS NULL OR p.variables IN ('null'::jsonb, '{}'::jsonb) OR \
+                        r.capabilities->'pipelineVariables' = 'true'::jsonb) \
                    AND q.required_tags <@ r.tags \
                    AND (j.command <> 'forge:image-publish' OR \
                         r.capabilities->'jobKinds' @> '[\"image-publish-v1\"]'::jsonb AND r.capabilities->'executorKinds' @> '[\"kubernetes\"]'::jsonb) \
@@ -1249,7 +1252,12 @@ async fn run_job_inner(
         let attempt:Uuid=sqlx::query_scalar("SELECT id FROM execution_attempts WHERE job_id=$1 AND status IN ('queued','running') ORDER BY attempt_no DESC LIMIT 1").bind(job_id).fetch_optional(&pool).await.map_err(ApiError::internal)?.ok_or_else(||ApiError::service_unavailable("Current execution attempt unavailable"))?;
         (
             Some(attempt),
-            crate::pipeline_authority::confirm(&pool, job.pipeline_id, attempt).await?,
+            crate::pipeline_authority::confirm(
+                &mut *pool.acquire().await.map_err(ApiError::internal)?,
+                job.pipeline_id,
+                attempt,
+            )
+            .await?,
         )
     } else {
         (None, None)
@@ -1370,18 +1378,16 @@ async fn run_job_inner(
 
     let command_shell = shell_capture_command(&job.command);
 
-    // P1-8: pipeline run variables -> CICD_VAR_<KEY>.
-    let run_vars: serde_json::Map<String, serde_json::Value> =
-        sqlx::query_scalar::<_, Option<serde_json::Value>>(
-            "SELECT variables FROM pipelines WHERE id = $1",
-        )
-        .bind(job.pipeline_id)
-        .fetch_one(&pool)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
+    let variables = sqlx::query_scalar::<_, Option<serde_json::Value>>(
+        "SELECT variables FROM pipelines WHERE id = $1",
+    )
+    .bind(job.pipeline_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(ApiError::internal)?;
+    let run_vars =
+        cicd_domain::pipeline_variables::from_variables(variables.as_ref(), &job.required_secrets)
+            .map_err(ApiError::bad_request)?;
 
     // P0-1: GitLab/Jenkins-style CI variables, CICD_-prefixed.
     let mut envs: Vec<(String, String)> = vec![
@@ -1405,15 +1411,7 @@ async fn run_job_inner(
             pipeline_artifacts.display().to_string(),
         ),
     ];
-    for (key, value) in &run_vars {
-        if let Ok(s) = serde_json::to_string(value) {
-            let trimmed = s.trim_matches('"').to_string();
-            envs.push((
-                format!("CICD_VAR_{}", key.to_uppercase().replace('-', "_")),
-                trimmed,
-            ));
-        }
-    }
+    envs.extend(run_vars);
     envs.extend(secrets.iter().cloned());
 
     let deployment = crate::runner_image_build::workspace_deploy::prepare_requested(

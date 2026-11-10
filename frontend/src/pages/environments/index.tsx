@@ -86,6 +86,7 @@ export function EnvironmentsPage() {
   const query = search.trim().toLocaleLowerCase();
   const filtered = environments.filter(
     (env) =>
+      (env.purpose !== "workspace_target" || env.id === selectedEnvId) &&
       (status === "all" || env.status === status) &&
       (env.name.toLocaleLowerCase().includes(query) ||
         env.url?.toLocaleLowerCase().includes(query)),
@@ -165,6 +166,8 @@ export function EnvironmentsPage() {
           </Button>
         }
       />
+
+      <p className="text-sm text-text-muted">{t("environments.statusContext")}</p>
 
       {showForm && (
         <ContentSection asChild dividers="both">
@@ -421,7 +424,9 @@ export function EnvironmentsPage() {
                                 id={`deployments-${env.id}`}
                                 className="ml-6 mt-3"
                               >
-                                <DeploymentsSection environmentId={env.id} />
+                                <DeploymentsSection environmentId={env.id} acceptsPublication={
+                                  env.purpose === "stand" && !!Object.keys(env.kubernetes_target?.publication_images ?? {}).length
+                                } />
                               </div>
                             </ContentSection>
                           )}
@@ -475,7 +480,7 @@ export function EnvironmentsPage() {
   );
 }
 
-function DeploymentsSection({ environmentId }: { environmentId: string }) {
+function DeploymentsSection({ environmentId, acceptsPublication }: { environmentId: string; acceptsPublication: boolean }) {
   const { t } = useTranslation();
   const [params] = useSearchParams();
   const requestedDeployment = params.get("deployment_id");
@@ -490,11 +495,15 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
   const recordApproval = useRecordDeploymentApproval(environmentId);
   const rollbackDeployment = useRollbackDeployment(environmentId);
   const [gitRef, setGitRef] = useState("");
+  const [sourcePipeline, setSourcePipeline] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [action, setAction] = useState<DeploymentAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const confirmedRelease = deployments.find((item) =>
+    item.status === "success" && item.runtime_receipt?.phase === "deployed" && item.runtime_receipt.receipt,
+  );
   const filtered = deployments.filter((deployment) =>
     deployment.git_ref
       .toLocaleLowerCase()
@@ -528,10 +537,14 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
     event.preventDefault();
     setFormError(null);
     createDep.mutate(
-      { git_ref: gitRef.trim() },
+      {
+        git_ref: gitRef.trim(),
+        ...(acceptsPublication && sourcePipeline.trim() ? { source_pipeline_id: sourcePipeline.trim() } : {}),
+      },
       {
         onSuccess: () => {
           setGitRef("");
+          setSourcePipeline("");
           toast.success(t("deployments.created"));
         },
         onError: () => setFormError(t("deployments.createFailed")),
@@ -571,6 +584,11 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
       className="min-w-0 space-y-3"
     >
       <SectionHeader title={t("environments.deployments")} />
+      {confirmedRelease?.runtime_receipt?.receipt && (
+        <p className="break-all text-sm text-text-muted">
+          Последняя подтверждённая версия {confirmedRelease.runtime_receipt.receipt.sourceCommit}
+        </p>
+      )}
       {!isLoading && !error && requestedDeployment && !selectedDeployment && (
         <Notice role="alert" tone="danger" appearance="inline">
           Указанный деплой не найден в выбранном окружении.
@@ -596,6 +614,11 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
             )}
           </FormField>
         </div>
+        {acceptsPublication && (
+          <FormField id={`source-pipeline-${environmentId}`} label="ID pipeline сборки">
+            {(attrs) => <Input {...attrs} value={sourcePipeline} onChange={(event) => setSourcePipeline(event.target.value)} />}
+          </FormField>
+        )}
         <Button
           type="submit"
           size="sm"

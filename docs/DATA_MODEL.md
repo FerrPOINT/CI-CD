@@ -531,8 +531,6 @@ Base pin в восстановление каталога не входят. С�
 | `plan` | JSONB | NOT NULL | — | Normalised plan: stages, jobs, node keys, `needs` и dependency edges |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время фиксации snapshot |
 
-**CHECK constraints:** `config_source IN ('repository','legacy_template','deployment')`, `parser_version` длиной `1..64`, hash-поля соответствуют `^[0-9a-f]{64}$`. Migration 37 восстанавливает ранее применённый каталог; обычный API продолжает создавать прежние repository/template планы, специальный Pulse runner не добавляется.
-
 **Индексы:**
 - `pipeline_plans_pkey` — PRIMARY KEY (`pipeline_id`)
 - `idx_pipeline_plans_plan_sha256` — диагностика одинаковых normalised plans.
@@ -1357,7 +1355,7 @@ checksums нет. Значение `forge.request_valid_until` задаётся 
 
 ## Deployment cancellation и request replay
 
-Аддитивная `0116_deployment_cancel_intent.sql` добавляет к существующим
+Аддитивная `0118_deployment_cancel_intent.sql` добавляет к существующим
 `deployments` только `cancel_requested_at` и `request_fingerprint`. Историческая
 0036 уже хранит UUID `request_key` и unique `(environment_id, request_key)`;
 второй реестр операций не вводится. Nullable fingerprint сохраняет старые
@@ -1389,3 +1387,20 @@ Worker и сохранение подключения используют share
 Сроки считаются по последнему `schedule/git_change` run; ручной run не меняет период.
 Миграция подключает таблицу к существующему original-request commit clock.
 Исторические миграции, подключения, credentials и run snapshots сохраняются.
+
+## PR: основная Task и история замечаний (0116)
+
+`pull_requests.primary_tracker_instance_id` / `primary_task_id` — совместно
+nullable только для неразобранной истории. Deferred composite FK ссылается на
+`pull_task_links(pull_request_id, tracker_instance_id, task_id)`. Deferred trigger
+не допускает новый PR без основной Task и очистку выбранной связи. Номер PR,
+основная Task и существующая таблица связей сохраняются одной транзакцией.
+Однозначные прежние связи мигрируют автоматически; несколько/ноль сохраняются
+до явного подтверждения. Существующие задачи, PR и комментарии не удаляются.
+
+`pull_comments`: id, pull_request_id, author_id, operation_id, base_sha, head_sha,
+severity, body, nullable anchor jsonb, created_at. Unique PR/author/operation,
+FK на PR/пользователя, неизменяемая история и существующие identity deletion
+fences. Anchor хранит путь, old/new и исходную строку. SHA не обновляются при push.
+Постраничное чтение не ограничивает суммарную историю.
+Подробности: [ADR-0047](adr/0047-task-bound-reviewer.md).

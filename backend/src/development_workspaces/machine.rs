@@ -1,6 +1,6 @@
-//! Assignment-scoped Developer access, never a substitute human administrator.
+//! Native agent access through project membership and assignment-scoped workspace operations.
 use super::{
-    assignment::{DeveloperAssignment, developer_action},
+    assignment::{AssignmentAccess, DeveloperAssignment, developer_action},
     tracker,
 };
 use crate::{
@@ -14,7 +14,7 @@ use pdlc_auth_core::service_bridge::VerifiedCentralToken;
 use pdlc_shared::resource_context::NamespaceRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgExecutor, PgPool};
 use std::future::Future;
 use uuid::Uuid;
 
@@ -78,6 +78,9 @@ fn canonical(value: &str) -> Option<Uuid> {
 
 enum Target {
     Identity,
+    TaskPulls,
+    Repository(Uuid),
+    Storage,
     Project(Uuid),
     Workspace(Uuid),
     Pipeline(Uuid),
@@ -85,12 +88,50 @@ enum Target {
     Artifact(Uuid),
 }
 
-/// Match workspace operations and their own result readers. Resolution below
-/// requires an actual owned workspace operation, not just a project token.
+/// Workspace operations retain assignment checks; PR and ready CI reads use project membership.
 fn target(method: &str, path: &str) -> Option<Target> {
     let parts: Vec<_> = path.strip_prefix("/api/v1/")?.split('/').collect();
     match parts.as_slice() {
         ["auth", "principal"] if method == "GET" => Some(Target::Identity),
+        ["task-pulls"] if method == "GET" => Some(Target::TaskPulls),
+        ["catalog", "repositories", repository] if method == "GET" => {
+            Some(Target::Repository(canonical(repository)?))
+        }
+        ["catalog", "repositories", repository, "pulls"] if matches!(method, "GET" | "POST") => {
+            Some(Target::Repository(canonical(repository)?))
+        }
+        ["catalog", "repositories", repository, "pulls", number]
+            if method == "GET" && number.parse::<u32>().is_ok_and(|n| n > 0) =>
+        {
+            Some(Target::Repository(canonical(repository)?))
+        }
+        [
+            "catalog",
+            "repositories",
+            repository,
+            "pulls",
+            number,
+            operation,
+        ] if number.parse::<u32>().is_ok_and(|n| n > 0)
+            && ((method == "GET"
+                && matches!(
+                    *operation,
+                    "review-context" | "patch" | "comments" | "checks" | "tasks"
+                ))
+                || (method == "POST" && *operation == "comments")) =>
+        {
+            Some(Target::Repository(canonical(repository)?))
+        }
+        ["repos", _storage, operation]
+            if (method == "GET"
+                && matches!(
+                    *operation,
+                    "tree" | "blob" | "compare" | "refs" | "commits" | "task" | "pulls"
+                ))
+                || (method == "POST" && *operation == "pulls") =>
+        {
+            Some(Target::Storage)
+        }
         [
             "projects",
             id,
@@ -112,16 +153,31 @@ fn target(method: &str, path: &str) -> Option<Target> {
         ["jobs", id, "logs" | "attempts" | "artifacts"] if method == "GET" => {
             Some(Target::Job(canonical(id)?))
         }
+        ["jobs", id, "logs", "page"] if method == "GET" => Some(Target::Job(canonical(id)?)),
+        ["jobs", id, "attempts", attempt, "logs"]
+            if method == "GET" && canonical(attempt).is_some() =>
+        {
+            Some(Target::Job(canonical(id)?))
+        }
+        ["jobs", id, "attempts", attempt, "logs", "page"]
+            if method == "GET" && canonical(attempt).is_some() =>
+        {
+            Some(Target::Job(canonical(id)?))
+        }
         ["artifacts", id, "download"] if method == "GET" => Some(Target::Artifact(canonical(id)?)),
         _ => None,
     }
+}
+
+pub(crate) fn repository_path(method: &str, path: &str) -> bool {
+    matches!(target(method, path), Some(Target::Storage))
 }
 
 pub(crate) fn handles(method: &str, path: &str) -> bool {
     target(method, path).is_some()
 }
 
-pub(super) fn principal(identity: &VerifiedRequestIdentity) -> bool {
+pub(crate) fn principal(identity: &VerifiedRequestIdentity) -> bool {
     identity.claims.role == "service_account"
         && identity
             .central
@@ -145,13 +201,13 @@ fn require_token(verified: &VerifiedCentralToken, write: bool) -> Result<Uuid, A
 }
 
 async fn project_access(
-    pool: &PgPool,
+    database: impl PgExecutor<'_>,
     actor: Uuid,
     project: Uuid,
     write: bool,
 ) -> Result<(), ApiError> {
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM project_memberships m JOIN users u ON u.id=m.user_id WHERE m.project_id=$1 AND m.user_id=$2 AND u.enabled AND u.role='service_account' AND (NOT $3 OR m.role IN ('developer','maintainer')))")
-        .bind(project).bind(actor).bind(write).fetch_one(pool).await.map_err(ApiError::internal)?;
+        .bind(project).bind(actor).bind(write).fetch_one(database).await.map_err(ApiError::internal)?;
     if allowed {
         Ok(())
     } else {
@@ -164,6 +220,7 @@ pub(crate) async fn authenticate(
     verified: VerifiedCentralToken,
     method: &str,
     path: &str,
+    decoded_repository: Option<&str>,
 ) -> Result<VerifiedRequestIdentity, ApiError> {
     let selected = target(method, path).ok_or_else(ApiError::forbidden)?;
     let subject = require_token(&verified, method != "GET")?;
@@ -193,16 +250,28 @@ pub(crate) async fn authenticate(
         }
     };
     let project = match selected {
-        Target::Identity => None,
+        Target::Identity | Target::TaskPulls => None,
+        Target::Repository(repository) => {
+            repository_access(pool, actor, repository, method != "GET").await?;
+            None
+        },
+        Target::Storage => {
+            let storage = decoded_repository.ok_or_else(ApiError::forbidden)?;
+            let storage = crate::repository_catalog::resolve_storage(pool, storage).await?;
+            let repository = sqlx::query_scalar("SELECT id FROM repository_catalog WHERE storage_name=$1")
+                .bind(storage).fetch_one(pool).await.map_err(ApiError::internal)?;
+            repository_access(pool, actor, repository, method != "GET").await?;
+            None
+        },
         Target::Project(id) => Some(id),
         Target::Workspace(id) => Some(sqlx::query_scalar("SELECT project_id FROM development_workspaces WHERE id=$1")
             .bind(id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?),
-        Target::Pipeline(id) => Some(sqlx::query_scalar("SELECT w.project_id FROM development_workspace_operations o JOIN development_workspaces w ON w.id=o.workspace_id WHERE o.pipeline_id=$1 AND o.actor_id=$2 AND o.execution_plan ? 'developerAuthority'")
-            .bind(id).bind(actor).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::forbidden)?),
-        Target::Job(id) => Some(sqlx::query_scalar("SELECT w.project_id FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN development_workspace_operations o ON o.pipeline_id=s.pipeline_id JOIN development_workspaces w ON w.id=o.workspace_id WHERE j.id=$1 AND o.actor_id=$2 AND o.execution_plan ? 'developerAuthority'")
-            .bind(id).bind(actor).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::forbidden)?),
-        Target::Artifact(id) => Some(sqlx::query_scalar("SELECT w.project_id FROM artifacts a JOIN jobs j ON j.id=a.job_id JOIN stages s ON s.id=j.stage_id JOIN development_workspace_operations o ON o.pipeline_id=s.pipeline_id JOIN development_workspaces w ON w.id=o.workspace_id WHERE a.id=$1 AND o.actor_id=$2 AND o.execution_plan ? 'developerAuthority'")
-            .bind(id).bind(actor).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::forbidden)?),
+        Target::Pipeline(id) => Some(sqlx::query_scalar("SELECT project_id FROM pipelines WHERE id=$1")
+            .bind(id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::forbidden)?),
+        Target::Job(id) => Some(sqlx::query_scalar("SELECT p.project_id FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id WHERE j.id=$1")
+            .bind(id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::forbidden)?),
+        Target::Artifact(id) => Some(sqlx::query_scalar("SELECT p.project_id FROM artifacts a JOIN jobs j ON j.id=a.job_id JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id WHERE a.id=$1")
+            .bind(id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::forbidden)?),
     };
     if let Some(project) = project {
         project_access(pool, actor, project, method != "GET").await?;
@@ -227,16 +296,19 @@ pub(crate) async fn authenticate(
     })
 }
 
-async fn namespace(pool: &PgPool, workspace: &Workspace) -> Result<NamespaceRef, ApiError> {
+async fn namespace(
+    connection: &mut PgConnection,
+    workspace: &Workspace,
+) -> Result<NamespaceRef, ApiError> {
     let row:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT registry_instance_id,namespace_id FROM forge_workspace_projects WHERE tracker_instance_id=$1 AND tracker_project_id=$2 AND state='active'")
-        .bind(workspace.tracker_instance_id).bind(workspace.tracker_project_id).fetch_optional(pool).await.map_err(ApiError::internal)?;
+        .bind(workspace.tracker_instance_id).bind(workspace.tracker_project_id).fetch_optional(&mut *connection).await.map_err(ApiError::internal)?;
     let (registry_instance_id, namespace_id) = row.ok_or_else(ApiError::forbidden)?;
     let namespace = NamespaceRef {
         registry_instance_id,
         namespace_id,
     };
     let row:Option<(Uuid,Value)>=sqlx::query_as("SELECT r.group_id,b.command FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=$1 AND r.kind='hosted' AND r.ready AND b.state='active'")
-        .bind(workspace.repository_id).fetch_optional(pool).await.map_err(ApiError::internal)?;
+        .bind(workspace.repository_id).fetch_optional(&mut *connection).await.map_err(ApiError::internal)?;
     let (group, command) = row.ok_or_else(ApiError::forbidden)?;
     let command: pdlc_shared::resource_context::OwnerCommand =
         serde_json::from_value(command).map_err(|_| ApiError::forbidden())?;
@@ -250,15 +322,57 @@ async fn namespace(pool: &PgPool, workspace: &Workspace) -> Result<NamespaceRef,
     Ok(namespace)
 }
 
+async fn repository_access(
+    pool: &PgPool,
+    actor: Uuid,
+    repository: Uuid,
+    write: bool,
+) -> Result<(), ApiError> {
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects p JOIN project_memberships m ON m.project_id=p.id JOIN users u ON u.id=m.user_id WHERE p.repository_id=$1 AND m.user_id=$2 AND u.enabled AND u.role='service_account' AND (NOT $3 OR m.role IN ('developer','maintainer')))")
+        .bind(repository).bind(actor).bind(write).fetch_one(pool).await.map_err(ApiError::internal)?;
+    if allowed {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden())
+    }
+}
+
+/// Reuse native identity, project membership and the original request clock at COMMIT.
+/// This is a PR metadata write, never workspace execution or a human Space permit.
+pub(crate) async fn lock_repository(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    storage: &str,
+    identity: &VerifiedRequestIdentity,
+) -> Result<GitDeadline, ApiError> {
+    let verified = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
+    let subject = require_token(verified, true)?;
+    let projects: Vec<Uuid> = sqlx::query_scalar("SELECT p.id FROM projects p JOIN repository_catalog r ON r.id=p.repository_id JOIN project_memberships m ON m.project_id=p.id JOIN users u ON u.id=m.user_id WHERE r.storage_name=$1 AND m.user_id=$2 AND m.role IN ('developer','maintainer') AND u.role='service_account' AND u.enabled AND u.central_sub=$3 FOR SHARE OF p,m,u")
+        .bind(storage).bind(identity.claims.sub).bind(subject.to_string()).fetch_all(&mut **tx).await.map_err(ApiError::internal)?;
+    if projects.is_empty() {
+        return Err(ApiError::forbidden());
+    }
+    let clock = GitDeadline::identity(verified);
+    clock.bind_commit_clock(tx).await?;
+    Ok(clock)
+}
+
 fn allowed_check(workspace: &Workspace, action: &WorkspaceAction) -> bool {
-    if let WorkspaceAction::Check { recipe, .. } = action {
-        return workspace.profile["checks"]
-            .as_array()
-            .is_some_and(|checks| {
-                checks.iter().any(|c| {
-                    c["key"] == *recipe && c["executor"] == "forge" && c["requiresRuntime"] == false
-                })
-            });
+    if let WorkspaceAction::Check {
+        recipe,
+        source_pipeline_id,
+        ..
+    } = action
+    {
+        return source_pipeline_id.is_none()
+            && workspace.profile["checks"]
+                .as_array()
+                .is_some_and(|checks| {
+                    checks.iter().any(|c| {
+                        c["key"] == *recipe
+                            && c["executor"] == "forge"
+                            && c["requiresRuntime"] == false
+                    })
+                });
     }
     true
 }
@@ -290,7 +404,11 @@ pub(super) async fn seal(
     let subject = require_token(verified, true)?;
     let pool = super::pool(state)?;
     project_access(pool, identity.claims.sub, workspace.project_id, true).await?;
-    let namespace = namespace(pool, workspace).await?;
+    let namespace = namespace(
+        &mut *pool.acquire().await.map_err(ApiError::internal)?,
+        workspace,
+    )
+    .await?;
     let task = if let WorkspaceAction::BeginSession { task } = action {
         tracker::read_task(
             &namespace,
@@ -308,16 +426,17 @@ pub(super) async fn seal(
             .ok_or_else(ApiError::forbidden)?
             .task_id
     };
-    let assignment = tracker::read_assignment(
+    let (assignment, preparation) = tracker::read_assignment(
         &namespace,
-        workspace.tracker_instance_id,
-        workspace.tracker_project_id,
+        workspace,
         task,
         subject,
-        workspace.repository_id,
-        workspace.id,
+        AssignmentAccess::for_action(action),
     )
     .await?;
+    if let Some(preparation) = preparation {
+        preparation.require_source(action)?;
+    }
     if !matches!(action, WorkspaceAction::BeginSession { .. }) {
         let saved:Option<Value>=sqlx::query_scalar("SELECT machine_assignment FROM development_workspace_sessions WHERE workspace_id=$1 AND ended_at IS NULL AND actor_id=$2 AND owner_subject=$3")
             .bind(workspace.id).bind(identity.claims.sub).bind(subject).fetch_optional(pool).await.map_err(ApiError::internal)?.flatten();
@@ -347,11 +466,12 @@ pub(super) async fn seal(
 pub(super) struct Confirmed {
     pub assignment: DeveloperAssignment,
     pub clock: GitDeadline,
+    preparation: Option<super::assignment::WorkspacePreparation>,
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn verify(
-    pool: &PgPool,
+    connection: &mut PgConnection,
     workspace: &Workspace,
     operation: Uuid,
     actor: Uuid,
@@ -383,64 +503,70 @@ pub(super) async fn verify(
     if require_token(&verified, true)? != subject || verified.issuer != credential.issuer {
         return Err(ApiError::forbidden());
     }
-    confirm_identity(
-        pool,
+    let proof = confirm_identity(
+        connection,
         workspace,
         actor,
         verified,
         &credential.assignment,
         true,
+        AssignmentAccess::for_action(action),
     )
-    .await
+    .await?;
+    if let Some(preparation) = &proof.preparation {
+        preparation.require_source(action)?;
+    }
+    Ok(proof)
 }
 
 pub(super) async fn confirm_identity(
-    pool: &PgPool,
+    connection: &mut PgConnection,
     workspace: &Workspace,
     actor: Uuid,
     verified: VerifiedCentralToken,
     saved: &DeveloperAssignment,
     write: bool,
+    access: AssignmentAccess,
 ) -> Result<Confirmed, ApiError> {
     let subject = require_token(&verified, write)?;
     let profile: Option<(String, Option<String>, bool)> =
         sqlx::query_as("SELECT role,central_sub,enabled FROM users WHERE id=$1")
             .bind(actor)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *connection)
             .await
             .map_err(ApiError::internal)?;
     if profile != Some(("service_account".into(), Some(subject.to_string()), true)) {
         return Err(ApiError::forbidden());
     }
-    project_access(pool, actor, workspace.project_id, write).await?;
-    let namespace = namespace(pool, workspace).await?;
-    let assignment = tracker::read_assignment(
-        &namespace,
-        workspace.tracker_instance_id,
-        workspace.tracker_project_id,
-        saved.task_id,
-        subject,
-        workspace.repository_id,
-        workspace.id,
-    )
-    .await?;
+    project_access(&mut *connection, actor, workspace.project_id, write).await?;
+    let namespace = namespace(&mut *connection, workspace).await?;
+    let (assignment, preparation) =
+        tracker::read_assignment(&namespace, workspace, saved.task_id, subject, access).await?;
     assignment.require_same(saved)?;
     let clock = GitDeadline::identity(&verified);
+    let clock = match &preparation {
+        Some(preparation) => clock.cap_until(preparation.expires_at),
+        None => clock,
+    };
     clock.require()?;
-    Ok(Confirmed { assignment, clock })
+    Ok(Confirmed {
+        assignment,
+        clock,
+        preparation,
+    })
 }
 
 pub(crate) async fn pipeline_clock(
-    pool: &PgPool,
+    connection: &mut PgConnection,
     pipeline: Uuid,
     attempt: Uuid,
 ) -> Result<Option<GitDeadline>, ApiError> {
     let row:Option<(Uuid,Uuid,Uuid,Uuid,Value,Value)>=sqlx::query_as("SELECT o.id,o.workspace_id,o.actor_id,o.owner_subject,o.request,o.execution_plan FROM development_workspace_operations o JOIN pipelines p ON p.id=o.pipeline_id JOIN stages s ON s.pipeline_id=p.id JOIN jobs j ON j.stage_id=s.id JOIN execution_attempts a ON a.job_id=j.id WHERE p.id=$1 AND a.id=$2 AND o.execution_plan ? 'developerAuthority'")
-        .bind(pipeline).bind(attempt).fetch_optional(pool).await.map_err(ApiError::internal)?;
+        .bind(pipeline).bind(attempt).fetch_optional(&mut *connection).await.map_err(ApiError::internal)?;
     let Some((operation, workspace, actor, subject, request, plan)) = row else {
         return Ok(None);
     };
-    let workspace = store::workspace(pool, workspace)
+    let workspace = store::workspace(&mut *connection, workspace)
         .await
         .map_err(super::error)?;
     let action: WorkspaceAction =
@@ -449,7 +575,7 @@ pub(crate) async fn pipeline_clock(
         ApiError::service_unavailable("workspace_machine_credential_storage_unavailable")
     })?;
     let proof = verify(
-        pool,
+        &mut *connection,
         &workspace,
         operation,
         actor,
@@ -465,6 +591,30 @@ pub(crate) async fn pipeline_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pr_routes_allow_review_reads_and_metadata_writes_without_execution_actions() {
+        let repository = Uuid::new_v4();
+        assert!(handles(
+            "GET",
+            &format!("/api/v1/catalog/repositories/{repository}")
+        ));
+        let root = format!("/api/v1/catalog/repositories/{repository}/pulls");
+        for method in ["GET", "POST"] {
+            assert!(handles(method, &root));
+        }
+        for suffix in ["review-context", "patch", "comments", "checks", "tasks"] {
+            assert!(handles("GET", &format!("{root}/1/{suffix}")));
+        }
+        assert!(handles("GET", "/api/v1/task-pulls"));
+        assert!(handles("POST", &format!("{root}/1/comments")));
+        for suffix in ["action", "merge", "tasks"] {
+            assert!(!handles("POST", &format!("{root}/1/{suffix}")));
+        }
+        for path in ["/api/v1/pipelines", "/api/v1/repos/own/pulls/1/action"] {
+            assert!(!handles("POST", path));
+        }
+    }
+
     #[test]
     fn workspace_routes_do_not_open_registration_recovery_git_or_deployment() {
         let id = Uuid::new_v4();
@@ -504,7 +654,8 @@ mod tests {
                 format!("/api/v1/development-workspaces/{id}/operations/{id}/reconcile"),
             ),
             ("POST", format!("/api/v1/projects/{id}/pipelines")),
-            ("GET", format!("/api/v1/catalog/repositories/{id}")),
+            ("GET", "/api/v1/catalog/repositories".to_string()),
+            ("PUT", format!("/api/v1/catalog/repositories/{id}")),
             (
                 "GET",
                 format!("/api/v1/development-workspaces/{id}/../{id}"),

@@ -209,6 +209,14 @@ jobs:
 ~~~
 
 The operator grants registry repositories and environment targets explicitly.
+For delivery of an existing publication, use a single `helm_deploy` job
+without `needs` and provide `source_pipeline_id` inside `helm_deploy`. Every
+image binding selects the published artifact of a typed producer in that
+completed pipeline. Forge requires the same delivery configuration and
+resolved commit, successful producer attempts and retained, verified
+publication and descriptor artifacts. The release receipt includes
+`sourcePipelineId`. Environment permissions, approvals and runtime admission
+also apply to this form.
 The separate forge/published-image/v1 artifact binds the exact commit, immutable
 registry digest and checksum of the original descriptor. The strict existing
 forge/oci-candidate/v1 is unchanged. CI_COMMIT_SHA expands only as an entire
@@ -219,6 +227,8 @@ The optional environment kubernetes_target uses schema
 forge/kubernetes-environment/v1, cluster, namespace, release, chart, values,
 optional repository files and HTTPS health URL. The API accepts no kubeconfig
 in this field. Credentials and real namespace UID/CA belong to the operator.
+Private targets can set `health_url` to a path such as `/health` instead.
+The operator must grant a release-owned ClusterIP service with that exact path.
 The _forge Helm values are reserved for verified provenance.
 
 Ordinary jobs cannot mount build/deploy credentials. Old runners do not receive
