@@ -495,12 +495,12 @@ function WorkspaceCard({
       setBusy(false);
     }
   }
-  const button = (action: string, label: string, command: WorkspaceCommand) => (
+  const button = (action: string, label: string, onClick: () => void) => (
     <span className="inline-flex flex-col gap-1">
       <Button
         disabled={disabled(action)}
         title={capability(action)?.reason ?? undefined}
-        onClick={() => void submit(command)}
+        onClick={onClick}
       >
         {label}
       </Button>
@@ -581,13 +581,13 @@ function WorkspaceCard({
           </Notice>
         )}
         <ActionGroup>
-          {button("observe", "Обновить состояние", { action: "observe" })}
-          {button("start", "Включить", { action: "start" })}
-          {button("stop", "Выключить", { action: "stop" })}
+          {button("observe", "Обновить состояние", () => void submit({ action: "observe" }))}
+          {button("start", "Включить", () => void submit({ action: "start" }))}
+          {button("stop", "Выключить", () => void submit({ action: "stop" }))}
           {!workspace.retired_at && capability("close")?.allowed &&
-            button("close", "Закрыть workspace", { action: "close" })}
+            button("close", "Закрыть workspace", () => void submit({ action: "close" }))}
           {!workspace.retired_at && capability("convert_to_stand")?.allowed &&
-            button("convert_to_stand", "Перевести в стенд", { action: "convert_to_stand" })}
+            button("convert_to_stand", "Перевести в стенд", () => void submit({ action: "convert_to_stand" }))}
         </ActionGroup>
         <section className="space-y-3">
           <SectionHeader level={4} title="Рабочая сессия" />
@@ -607,14 +607,14 @@ function WorkspaceCard({
                 · с {new Date(session.started_at).toLocaleString("ru-RU")}
               </p>
               <ActionGroup>
-                {button("end_session", "Закончить работу", {
+                {button("end_session", "Закончить работу", () => void submit({
                   action: "end_session",
                   session_id: session.id,
-                })}
-                {button("recover_session", "Восстановить занятую сессию", {
+                }))}
+                {button("recover_session", "Восстановить занятую сессию", () => void submit({
                   action: "recover_session",
                   session_id: session.id,
-                })}
+                }))}
               </ActionGroup>
             </>
           ) : (
@@ -659,7 +659,7 @@ function WorkspaceCard({
             незакоммиченные файлы остаются локально.
           </p>
           <ActionGroup>
-            {button("prepare", "Проверить подготовленность", {
+            {button("prepare", "Проверить подготовленность", () => void submit({
               action: "prepare",
               sources: workspace.sources as Extract<
                 WorkspaceCommand,
@@ -669,7 +669,7 @@ function WorkspaceCard({
                 WorkspaceCommand,
                 { action: "prepare" }
               >["local"],
-            })}
+            }))}
           </ActionGroup>
           <p>
             <TextLink
