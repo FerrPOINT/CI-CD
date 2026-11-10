@@ -749,6 +749,10 @@ impl ApiClient {
         self.transport.request_builder(Method::POST, path)
     }
 
+    fn post_segments(&self, segments: &[&str]) -> anyhow::Result<RequestBuilder> {
+        Ok(self.transport.request_segments(Method::POST, segments)?)
+    }
+
     fn patch(&self, path: &str) -> RequestBuilder {
         self.transport.request_builder(Method::PATCH, path)
     }
@@ -964,6 +968,70 @@ fn configured_pr_token_is_required_only_for_pr_commands() {
             .as_deref(),
         Some("fixture-token")
     );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn qualified_repository_pr_commands_send_the_repository_as_one_segment() {
+    use axum::{Json, Router, extract::Request};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let router = Router::new().fallback(|request: Request| async move {
+        let (parts, body) = request.into_parts();
+        let bytes = axum::body::to_bytes(body, 4096).await.unwrap();
+        Json(json!({
+            "method": parts.method.as_str(),
+            "path": parts.uri.path(),
+            "body": serde_json::from_slice::<Value>(&bytes).ok(),
+        }))
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let api = ApiClient::new(origin, Some("fixture-token".into()), Duration::from_secs(2)).unwrap();
+    let tracker_id = "00000000-0000-4000-8000-000000000001";
+    let task_id = "00000000-0000-4000-8000-000000000002";
+    let create = Cli::parse_from([
+        "cicd",
+        "pr",
+        "create",
+        "--repo",
+        "team/shop",
+        "--tracker-instance-id",
+        tracker_id,
+        "--task-id",
+        task_id,
+        "--title",
+        "Fixture",
+        "--source-branch",
+        "sdlc/example",
+        "--target-branch",
+        "main",
+    ]);
+    let response = execute(&api, create.command).await.unwrap();
+    assert_eq!(response["method"], "POST");
+    assert_eq!(response["path"], "/api/v1/repos/team%2Fshop/pulls");
+    assert_eq!(response["body"]["repository_name"], "team/shop");
+    assert_eq!(
+        response["body"]["primary_task"],
+        json!({ "tracker_instance_id": tracker_id, "task_id": task_id }),
+    );
+
+    let get = Cli::parse_from(["cicd", "pr", "get", "--repo", "team/shop", "--number", "1"]);
+    let response = execute(&api, get.command).await.unwrap();
+    assert_eq!(response["method"], "GET");
+    assert_eq!(response["path"], "/api/v1/repos/team%2Fshop/pulls/1");
+
+    let list = Cli::parse_from(["cicd", "pr", "list", "--repo", "team/shop"]);
+    let response = execute(&api, list.command).await.unwrap();
+    assert_eq!(response["method"], "GET");
+    assert_eq!(response["path"], "/api/v1/repos/team%2Fshop/pulls/page");
+
+    let close = Cli::parse_from(["cicd", "pr", "close", "--repo", "team/shop", "--number", "1"]);
+    let response = execute(&api, close.command).await.unwrap();
+    assert_eq!(response["method"], "POST");
+    assert_eq!(response["path"], "/api/v1/repos/team%2Fshop/pulls/1/action");
+    assert_eq!(response["body"], json!({ "action": "close" }));
+    server.abort();
 }
 
 fn exit(code: u8) -> std::process::ExitCode {
