@@ -3122,7 +3122,9 @@ fn normalize_token_scopes(scopes: Vec<String>) -> Result<Vec<String>, ApiError> 
         if scope.is_empty() {
             continue;
         }
-        if !DEFAULT_TOKEN_SCOPES.contains(&scope) {
+        if !DEFAULT_TOKEN_SCOPES.contains(&scope)
+            && !matches!(scope, "pull:create")
+        {
             return Err(ApiError::bad_request("unsupported token scope"));
         }
         if !normalized.iter().any(|existing| existing == scope) {

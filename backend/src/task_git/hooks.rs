@@ -38,22 +38,30 @@ pub(crate) const CHECK: &str = r#"set -eu
 umask 077
 export GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 GIT_OPTIONAL_LOCKS=0
 cat > "$dir/task-updates"
-cmp -s "$dir/task-updates" "$dir/expected-update" || exit 1
+deny() {
+    printf 'Forge: %s\n' "$1" >&2
+    exit 1
+}
+cmp -s "$dir/task-updates" "$dir/expected-update" || deny 'Git update does not match the authorized candidate.'
 read -r old new ref < "$dir/expected-update"
-default=$(git symbolic-ref --quiet HEAD) || exit 1
-test "$default" != "$ref" || exit 1
-test "$(git cat-file -t "$new")" = commit || exit 1
+default=$(git symbolic-ref --quiet HEAD) || deny 'Repository default branch could not be confirmed.'
+test "$default" != "$ref" || deny 'The candidate cannot update the default branch.'
+test "$(git cat-file -t "$new")" = commit || deny 'The candidate commit is missing in the received pack.'
 base=$(cat "$dir/base")
-git merge-base --is-ancestor "$base" "$new" || exit 1
+git merge-base --is-ancestor "$base" "$new" || deny 'The candidate is not based on the assigned commit.'
 if test "$old" = 0000000000000000000000000000000000000000; then
-    if git show-ref --verify --quiet "$ref"; then exit 1; else test "$?" -eq 1 || exit 1; fi
+    if git show-ref --verify --quiet "$ref"; then
+        deny 'The candidate branch appeared during the push.'
+    else
+        test "$?" -eq 1 || deny 'The candidate branch could not be verified.'
+    fi
 else
-    test "$(git rev-parse --verify "$ref")" = "$old" || exit 1
-    git merge-base --is-ancestor "$old" "$new" || exit 1
+    test "$(git rev-parse --verify "$ref")" = "$old" || deny 'The candidate branch moved during the push.'
+    git merge-base --is-ancestor "$old" "$new" || deny 'The candidate branch update must fast-forward.'
 fi
 curl --disable --silent --fail --max-time 3 --max-redirs 0 --noproxy '*' --proto '=http' \
     --header @"$dir/child-headers" --header 'content-type: application/json' \
-    --data-binary @"$dir/context.json" "$callback" >/dev/null 2>&1 || exit 1
+    --data-binary @"$dir/context.json" "$callback" >/dev/null 2>&1 || deny "Assignment verification failed (curl $?)."
 "#;
 
 pub(crate) fn install(

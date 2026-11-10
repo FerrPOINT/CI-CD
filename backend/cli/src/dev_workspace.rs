@@ -3,7 +3,12 @@ use super::ApiClient;
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
-use std::{io::Write, path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    io::{ErrorKind, Write},
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 use uuid::Uuid;
 
 #[derive(Args)]
@@ -318,6 +323,21 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
         }
     }
 }
+fn validate_machine_source_root(root: &Path) -> Result<()> {
+    let root = root
+        .canonicalize()
+        .context("Корень workspace агента недоступен")?;
+    ensure!(root.is_dir(), "Корень workspace агента должен быть каталогом");
+    for directory in root.ancestors() {
+        match directory.join(".git").symlink_metadata() {
+            Ok(_) => bail!("Передайте корень workspace агента, расположенный вне Git checkout"),
+            Err(error) if error.kind() == ErrorKind::NotFound => (),
+            Err(error) => return Err(error).context("Не удалось проверить корень workspace агента"),
+        }
+    }
+    Ok(())
+}
+
 async fn prepare(
     api: &ApiClient,
     mutation: &Mutation,
@@ -339,6 +359,7 @@ async fn prepare(
                 && std::env::var("CICD_API_TOKEN").is_ok_and(|s| !s.trim().is_empty()),
             "Подготовка агента требует настроенной identity текущего исполнителя"
         );
+        validate_machine_source_root(&root)?;
     }
     let workspace = &detail["workspace"];
     let project = workspace["project_id"]
@@ -474,6 +495,24 @@ async fn prepare(
         mutation,
         json!({"action":"prepare","sources":server_sources,"local":{"machine_id":machine,"profile_hash":workspace["profile_hash"],"repositories":repositories,"tools":report["tools"]}}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_machine_source_root;
+
+    #[test]
+    fn machine_prepare_rejects_roots_inside_a_git_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("checkout");
+        let nested = checkout.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(checkout.join(".git"), "gitdir: ../metadata\n").unwrap();
+
+        assert!(validate_machine_source_root(root.path()).is_ok());
+        assert!(validate_machine_source_root(&checkout).is_err());
+        assert!(validate_machine_source_root(&nested).is_err());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

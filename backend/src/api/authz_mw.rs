@@ -364,7 +364,10 @@ pub(crate) async fn require_auth(
     } else {
         project_scope_allows(&state, &claims, role, &method, &path, scope_ref).await?
     };
-    let allowed = api_token_scope_allows(&claims, &method)
+    let narrow_pull_scope = parts.extensions.get::<axum::extract::MatchedPath>()
+        .and_then(|route| pull_token_scope(&method, route.as_str()));
+    let allowed = (api_token_scope_allows(&claims, &method)
+        || narrow_pull_scope.is_some_and(|scope| bearer_token_has_scope(&claims, scope)))
         && crate::authz::allows(role, &method, &path)
         && scope_allowed;
     if !allowed {
@@ -587,6 +590,24 @@ async fn project_scope_allows(
         return Ok(false);
     };
     Ok(project_role >= min_role)
+}
+
+fn pull_token_scope(method: &str, route: &str) -> Option<&'static str> {
+    match (method, route) {
+        ("POST", "/api/v1/repos/{repo}/pulls") => Some("pull:create"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn pull_token_scopes_allow_only_their_exact_write_routes() {
+    let pulls = "/api/v1/repos/{repo}/pulls";
+    assert_eq!(pull_token_scope("POST", pulls), Some("pull:create"));
+    assert_eq!(
+        pull_token_scope("POST", "/api/v1/repos/{repo}/pulls/{number}/action"),
+        None
+    );
 }
 
 pub(crate) fn api_token_scope_allows(claims: &crate::auth::AccessClaims, method: &str) -> bool {
