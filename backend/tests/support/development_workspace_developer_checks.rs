@@ -5,7 +5,7 @@ use serde_json::Value;
 pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
     let workspace = store::workspace(pool, id).await.unwrap();
     let profile = json!({"apiVersion":"pdlc.dev/workspace/v1", "repositories":[{"key":"source"}],
-        "tools":[], "preparationChecks":["unit"],
+        "tools":[], "preparationChecks":["unit"], "requiredDeveloperChecks":["unit"],
         "checks":[{"key":"unit","executor":"forge","requiresRuntime":false,"commands":["test -f README.md"]}]});
     let profile_hash = store::request_hash(&profile).unwrap();
     let environment: Value = sqlx::query_scalar("SELECT jsonb_build_object('adapter','compose','environmentId',id,'projectId',project_id,'url',url) FROM environments WHERE id=$1")
