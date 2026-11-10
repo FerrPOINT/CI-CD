@@ -442,6 +442,9 @@ fn native_repository_ref(method: &str, path: &str) -> Option<ProjectScopeRef> {
     let repository = Uuid::parse_str(parts.first()?).ok()?;
     let allowed = match (method, &parts[1..]) {
         ("GET", []) => true,
+        ("GET", ["pulls", number]) => number
+            .parse::<i32>()
+            .is_ok_and(|value| value > 0 && value.to_string() == *number),
         ("GET" | "PUT", ["sync"])
         | ("POST", ["sync", "check"])
         | ("GET" | "POST", ["sync", "runs"]) => true,
@@ -469,11 +472,18 @@ mod native_repository_tests {
             native_repository_ref("GET", &format!("{path}/sync")),
             Some(ProjectScopeRef::CatalogRepository(id))
         );
+        assert_eq!(
+            native_repository_ref("GET", &format!("{path}/pulls/17")),
+            Some(ProjectScopeRef::CatalogRepository(id))
+        );
         for (method, path) in [
             ("POST", path.clone()),
             ("PUT", path.clone()),
             ("DELETE", path.clone()),
             ("GET", format!("{path}/pulls")),
+            ("POST", format!("{path}/pulls/17")),
+            ("GET", format!("{path}/pulls/0")),
+            ("GET", format!("{path}/pulls/17/action")),
             ("GET", format!("{path}/group")),
             ("GET", "/api/v1/catalog/repositories".into()),
             ("GET", "/api/v1/catalog/repositories/not-a-uuid".into()),
