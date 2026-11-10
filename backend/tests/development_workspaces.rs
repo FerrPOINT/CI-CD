@@ -17,6 +17,8 @@ use uuid::Uuid;
 
 #[path = "support/development_workspace_developer.rs"]
 mod developer;
+#[path = "support/pull_fixture.rs"]
+mod pull_fixture;
 
 struct Fixture {
     pool: PgPool,
@@ -714,16 +716,19 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
         .await
         .unwrap();
     for repository in [assigned_repo, foreign_repo] {
-        sqlx::query(
-            "INSERT INTO pull_requests(id,repository_id,repository_name,number,title,source_branch,target_branch)
-             SELECT $1,id,storage_name,1,'Workspace candidate','feature','main'
-             FROM repository_catalog WHERE id=$2",
+        let storage = cicd::repository_catalog::storage_by_id(&f.pool, repository)
+            .await
+            .unwrap();
+        pull_fixture::insert(
+            &f.pool,
+            &storage,
+            1,
+            "Workspace candidate",
+            ("feature", "main"),
+            "open",
+            "fixture",
         )
-        .bind(Uuid::new_v4())
-        .bind(repository)
-        .execute(&f.pool)
-        .await
-        .unwrap();
+        .await;
     }
     let pulls = format!("/api/v1/catalog/repositories/{assigned_repo}/pulls");
     let (status, pull) = http(
