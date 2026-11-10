@@ -667,7 +667,7 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
         Uuid::new_v4().simple()
     );
     sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,principal_type,service_account_id,project_id,scopes,expires_at) VALUES($1,'workspace-fixture',$2,'synthetic-only','service_account',$3,$4,$5,now()+interval '1 day')")
-        .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&machine)).bind(account).bind(f.project).bind(vec!["api:read","api:write"]).execute(&f.pool).await.unwrap();
+        .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&machine)).bind(account).bind(f.project).bind(vec!["api:read","pull:create"]).execute(&f.pool).await.unwrap();
     assert_eq!(
         http(
             &app,
@@ -686,6 +686,46 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
             .0,
         StatusCode::FORBIDDEN
     );
+    let assigned_repo: Uuid = sqlx::query_scalar("SELECT repository_id FROM projects WHERE id=$1")
+        .bind(f.project)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    let foreign_repo = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name,visibility) VALUES($1,$2,'private')")
+        .bind(foreign_repo)
+        .bind(format!("source-{}", foreign_repo.simple()))
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    for repository in [assigned_repo, foreign_repo] {
+        sqlx::query(
+            "INSERT INTO pull_requests(id,repository_id,repository_name,number,title,source_branch,target_branch)
+             SELECT $1,id,storage_name,1,'Workspace candidate','feature','main'
+             FROM repository_catalog WHERE id=$2",
+        )
+        .bind(Uuid::new_v4())
+        .bind(repository)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    }
+    let pulls = format!("/api/v1/catalog/repositories/{assigned_repo}/pulls");
+    let (status, pull) = http(
+        &app,
+        "GET",
+        &format!("{pulls}/1"),
+        Some(&machine),
+        json!(null),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pull}");
+    assert_eq!(pull["repository_id"], assigned_repo.to_string());
+    let foreign_pull = format!("/api/v1/catalog/repositories/{foreign_repo}/pulls/1");
+    for denied in [pulls, foreign_pull] {
+        let (status, _) = http(&app, "GET", &denied, Some(&machine), json!(null)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
     assert_eq!(
         http(&app, "GET", &path, Some(&tokens[1]), json!(null))
             .await
