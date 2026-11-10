@@ -285,7 +285,16 @@ async fn execute(
                     .transpose().map_err(|_|ApiError::forbidden())?;
                 sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,sources,machine_assignment) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
                     .bind(work.id).bind(workspace.id).bind(work.actor_id).bind(work.owner_subject).bind(task_id).bind(task_ref).bind(&workspace.sources).bind(machine_assignment).execute(&mut *tx).await.map_err(ApiError::internal)?;
-                json!({"state":"succeeded","sessionId":work.id})
+                let mut result = json!({"state":"succeeded","sessionId":work.id});
+                if developer.is_some()
+                    && let Some(recipes) = workspace.profile.get("requiredDeveloperChecks")
+                {
+                    result["developerCheckPolicy"] = json!({
+                        "profile_hash": workspace.profile_hash,
+                        "recipes": recipes,
+                    });
+                }
+                result
             }
             WorkspaceAction::EndSession{session_id}|WorkspaceAction::RecoverSession{session_id} => {
                 if store::workspace_busy(&mut tx,workspace.id).await.map_err(super::error)? {return Err(ApiError::conflict("workspace_has_active_pipeline"));}

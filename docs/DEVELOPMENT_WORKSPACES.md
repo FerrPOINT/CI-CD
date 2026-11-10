@@ -121,6 +121,10 @@ UUID/project/namespace/state перечитываются через namespace t
 Отдельный SDLC execution или его credential для этого не требуются. Весь lookup
 ограничен тремя секундами и 10000 metadata entries; известный UUID читается прямо.
 
+Для машинной сессии профиль с `requiredDeveloperChecks` закрепляется в
+`result.developerCheckPolicy` исходной операции `begin_session`. Квитанция
+содержит хеш профиля и ключи рецептов для проверки результата Developer.
+
 Одна сессия получает право записи. Таймаут не освобождает её. Stop не завершает
 сессию и отклоняется при активной работе. Проверки, сборки, delivery, pending
 leases и неподтверждённое native completion удерживают свой instance.
