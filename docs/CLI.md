@@ -30,10 +30,12 @@ cargo +1.88.0 build --locked --release -p cicd-cli
 | `CICD_PROFILE` | - | Имя профиля из `~/.config/forge-cli/config.toml`; эквивалентно `--profile` |
 | `CICD_CONFIG` | `~/.config/forge-cli/config.toml` | Путь к TOML-конфигу профилей |
 
-Управляемый агент с отдельной учёткой PR получает токен через ссылку на секрет
-в конфигурации исполнения. Для `pr` заданный `CICD_PR_API_TOKEN` определяет
-учётку. Некорректное значение даёт ошибку до HTTP-запроса. Остальные команды
-используют свои обычные учётные данные. Права на PR проверяет Forge.
+Developer в управляемом workspace использует свой Central PAT
+(`CICD_API_TOKEN`) для создания PR и чтения PR задачи через `pr for-task`.
+Forge проверяет членство этой identity в проекте и связь PR с задачей.
+В конфигурации такого Developer поле `CICD_PR_API_TOKEN` оставляют пустым.
+Если отдельный токен задан для другого клиента, CLI использует его только
+для команд `pr`. Некорректное значение даёт ошибку до HTTP-запроса.
 
 Source candidate: `repository prepare-checkout`, `prepare-candidate` и
 `push-candidate [--readback]` исполняются до общего API-клиента. Подготовка

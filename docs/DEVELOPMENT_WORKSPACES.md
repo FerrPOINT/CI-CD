@@ -61,6 +61,10 @@ Forge source reader проверяет реальный instance/repository/name
 `cicd-cli member upsert --project ... --user ... --role developer` под owner
 credential. Сам вход с машинным PAT не выдаёт членства или иных прав.
 
+Тот же PAT используется для `cicd-cli pr create` и `cicd-cli pr for-task`.
+Forge проверяет членство Developer и привязку PR к задаче. Отдельный
+`CICD_PR_API_TOKEN` в конфигурации этой роли переопределил бы identity.
+
 Доступны чтение проекта, своя сессия, prepare и опубликованные Forge-проверки
 без runtime-доставки. Create/register, Start/Stop, Build, recovery, reconcile,
 произвольные pipelines и выпуск этим доступом не разрешаются. Опубликованные
