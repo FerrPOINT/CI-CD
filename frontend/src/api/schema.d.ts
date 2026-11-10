@@ -2845,6 +2845,8 @@ export interface components {
             git_ref: string;
             /** Format: uuid */
             pipeline_id?: string | null;
+            /** Format: uuid */
+            source_pipeline_id?: string | null;
             status?: string | null;
         };
         CreateEnvironment: {
@@ -3051,6 +3053,8 @@ export interface components {
             rollback_of_id?: string | null;
             runtime_phase?: string | null;
             runtime_receipt?: unknown;
+            /** Format: uuid */
+            source_pipeline_id?: string | null;
             status: string;
         };
         DeploymentApproval: {
@@ -3108,7 +3112,10 @@ export interface components {
             receiptArtifact: string;
             rollback?: null | components["schemas"]["RollbackRelease"];
             sourceCommit: string;
+            /** Format: uuid */
+            sourcePipelineId?: string | null;
             target: components["schemas"]["KubernetesTarget"];
+            workspaceBootstrap?: null | components["schemas"]["WorkspaceBootstrap"];
         };
         DeploymentReceipt: {
             /** Format: uuid */
@@ -3136,6 +3143,8 @@ export interface components {
             releaseRevision: number;
             schema: string;
             sourceCommit: string;
+            /** Format: uuid */
+            sourcePipelineId?: string | null;
         };
         /** @enum {string} */
         DesiredSpaceState: "active" | "archived";
@@ -3183,6 +3192,8 @@ export interface components {
             public_origin?: string | null;
             /** Format: uuid */
             repository_id: string;
+            /** Format: date-time */
+            retired_at?: string | null;
             runtime: string;
             sources: unknown;
             /** Format: uuid */
@@ -3315,6 +3326,7 @@ export interface components {
             /** Format: uuid */
             project_id: string;
             protected: boolean;
+            purpose: string;
             /** Format: int32 */
             required_approvals: number;
             status: string;
@@ -3383,6 +3395,10 @@ export interface components {
             /** Format: int32 */
             schema_version: number;
             scope_revision?: string | null;
+        };
+        ImageBinding: {
+            artifact: string;
+            job: string;
         };
         ImagePublishSpec: {
             build_args?: {
@@ -3488,6 +3504,9 @@ export interface components {
             };
             health_url: string;
             namespace: string;
+            publication_images?: {
+                [key: string]: components["schemas"]["ImageBinding"];
+            };
             release: string;
             schema: string;
             values?: string[];
@@ -4230,6 +4249,7 @@ export interface components {
             artifacts: string[];
             commands: string[];
             commitSha?: string | null;
+            /** @description Нормализованные переменные pipeline CICD_VAR_<KEY>, без служебных полей и секретов. */
             environment: {
                 [key: string]: string;
             };
@@ -4283,6 +4303,7 @@ export interface components {
         };
         RunnerHeartbeatRequest: {
             activeLeaseIds?: string[];
+            /** @description Возможности runner; pipelineVariables=true требуется для заданий с переменными. */
             capabilities?: unknown;
             capacity: components["schemas"]["RunnerCapacity"];
             draining?: boolean;
@@ -4372,6 +4393,7 @@ export interface components {
             waitSeconds?: number;
         };
         RunnerRegisterRequest: {
+            /** @description Возможности runner; pipelineVariables=true требуется для заданий с переменными. */
             capabilities?: unknown;
             name: string;
             /** Format: int32 */
@@ -4823,6 +4845,12 @@ export interface components {
             action: "stop";
         } | {
             /** @enum {string} */
+            action: "close";
+        } | {
+            /** @enum {string} */
+            action: "convert_to_stand";
+        } | {
+            /** @enum {string} */
             action: "begin_session";
             task: string;
         } | {
@@ -4840,10 +4868,21 @@ export interface components {
             action: "check";
             recipe: string;
             source_commit: string;
+            /** Format: uuid */
+            source_pipeline_id?: string | null;
         } | {
             /** @enum {string} */
             action: "build";
             source_commit: string;
+        };
+        WorkspaceBootstrap: {
+            /** Format: uuid */
+            namespaceUid: string;
+            release: string;
+            /** Format: uuid */
+            reservationId: string;
+            /** Format: int32 */
+            revision: number;
         };
         /** @enum {string} */
         WorkspaceOperationBlocker: "tracker_admission_unavailable" | "tracker_workspace_binding_unavailable" | "physical_workspace_observation_unavailable";

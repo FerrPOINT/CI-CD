@@ -70,6 +70,14 @@ pub enum Command {
         #[command(flatten)]
         mutation: Mutation,
     },
+    Close {
+        #[command(flatten)]
+        mutation: Mutation,
+    },
+    ConvertToStand {
+        #[command(flatten)]
+        mutation: Mutation,
+    },
     BeginSession {
         #[command(flatten)]
         mutation: Mutation,
@@ -107,6 +115,8 @@ pub enum Command {
         recipe: String,
         #[arg(long)]
         commit: String,
+        #[arg(long)]
+        source_pipeline: Option<Uuid>,
     },
     Build {
         #[command(flatten)]
@@ -200,6 +210,8 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
         Command::Observe { mutation } => mutate(api, mutation, json!({"action":"observe"})).await,
         Command::Start { mutation } => mutate(api, mutation, json!({"action":"start"})).await,
         Command::Stop { mutation } => mutate(api, mutation, json!({"action":"stop"})).await,
+        Command::Close { mutation } => mutate(api, mutation, json!({"action":"close"})).await,
+        Command::ConvertToStand { mutation } => mutate(api, mutation, json!({"action":"convert_to_stand"})).await,
         Command::BeginSession { mutation, task } => {
             mutate(api, mutation, json!({"action":"begin_session","task":task})).await
         }
@@ -223,11 +235,18 @@ pub async fn execute(api: &ApiClient, command: Command) -> Result<Value> {
             mutation,
             recipe,
             commit,
+            source_pipeline,
         } => {
             mutate(
                 api,
                 mutation,
-                json!({"action":"check","recipe":recipe,"source_commit":commit}),
+                {
+                    let mut command = json!({"action":"check","recipe":recipe,"source_commit":commit});
+                    if let Some(id) = source_pipeline {
+                        command["source_pipeline_id"] = json!(id);
+                    }
+                    command
+                },
             )
             .await
         }

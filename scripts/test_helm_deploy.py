@@ -65,6 +65,30 @@ class HelmCustody(unittest.TestCase):
                     deploy.apply(self.target,None,self.offer,root)
                 helm.assert_not_called()
 
+    def test_initial_workspace_release_requires_matching_creator_receipt(self):
+        self.target.grant["namespaceUid"] = "uid"
+        self.offer["workspaceBootstrap"] = {
+            "namespaceUid": "uid", "reservationId": "reservation", "revision": 1, "release": "app",
+        }
+        current = {"version": 1, "info": {"status": "deployed", "description": "forge-workspace:reservation"},
+                   "observedValues": {}}
+        with self.workspace() as root, patch.object(deploy, "release", return_value=current), \
+             patch.object(deploy.subprocess, "check_output", return_value="a"*40), \
+             patch.object(deploy, "portable", return_value=root), \
+             patch.object(deploy, "helm") as helm, patch.object(deploy, "validate_manifest"), \
+             patch.object(deploy, "effect_marker"), \
+             patch.object(deploy, "readback", return_value={"phase": "deployed"}):
+            helm.return_value.returncode = 0
+            self.assertEqual(deploy.apply(self.target, None, self.offer, root)["phase"], "deployed")
+            self.assertEqual(helm.call_count, 2)
+            helm.reset_mock()
+            for key, value in [("namespaceUid", "foreign"), ("revision", 2), ("reservationId", "other")]:
+                foreign = copy.deepcopy(self.offer)
+                foreign["workspaceBootstrap"][key] = value
+                with self.assertRaisesRegex(ValueError, "unowned Helm release"):
+                    deploy.apply(self.target, None, foreign, root)
+            helm.assert_not_called()
+
     def test_repository_paths_reject_escape_but_allow_nested_chart(self):
         with self.workspace() as root:
             (root/"deploy/chart").mkdir(parents=True)
@@ -97,6 +121,41 @@ class HelmCustody(unittest.TestCase):
             observed=deploy.readback(self.target,None,self.offer)
             self.assertEqual(observed,{"phase":"failed","releaseRevision":3})
             self.assertNotIn("receipt",observed)
+
+    def test_private_health_requires_a_release_owned_cluster_ip(self):
+        self.offer["target"]["health_url"] = "/health"
+        self.target.grant.update(environmentId=self.offer["environmentId"], cluster="pdlc")
+        self.target.health_service = None
+        with self.assertRaisesRegex(ValueError, "requires an operator health service"):
+            deploy.verify_offer(self.offer, self.target)
+
+        self.target.health_service = {"name": "app", "port": 80, "path": "/health"}
+        self.target.api = lambda _: {
+            "metadata": {"annotations": {
+                "meta.helm.sh/release-name": "app",
+                "meta.helm.sh/release-namespace": "app-dev",
+            }},
+            "spec": {"type": "ClusterIP", "ports": [{"port": 80}], "clusterIP": "10.43.0.8"},
+        }
+        deploy.verify_offer(self.offer, self.target)
+        with patch.object(deploy.urllib.request, "build_opener") as build_opener:
+            build_opener.return_value.open.return_value.__enter__.return_value.status = 200
+            self.assertEqual(deploy.application_http(self.target, self.offer), (200, "cluster-service-http"))
+            request = build_opener.return_value.open.call_args.args[0]
+            self.assertEqual(request.full_url, "http://10.43.0.8:80/health")
+            self.assertNotIn("Authorization", request.headers)
+
+    def test_receipt_identifies_the_original_publication_pipeline(self):
+        self.offer["sourcePipelineId"] = "publication"
+        self.target.grant.update(cluster="pdlc", namespaceUid="namespace-uid")
+        current = {"version": 3, "info": {"status": "deployed"},
+                   "observedValues": {"_forge": deploy.image_values(self.offer)["_forge"]}}
+        with patch.object(deploy, "release", return_value=current), \
+             patch.object(deploy, "observed_images"), \
+             patch.object(deploy, "application_http", return_value=(200, "cluster-service-http")):
+            receipt = deploy.readback(self.target, None, self.offer)["receipt"]
+        self.assertEqual(receipt["sourcePipelineId"], "publication")
+        self.assertEqual(receipt["pipelineId"], self.offer["pipelineId"])
 
 if __name__=="__main__":
     unittest.main()

@@ -217,6 +217,7 @@ export interface KubernetesTarget {
   values: string[]
   files?: Record<string, string>
   health_url: string
+  publication_images?: Record<string, { job: string; artifact: string }>
 }
 
 export interface Environment {
@@ -226,6 +227,7 @@ export interface Environment {
   name: string
   url: string | null
   status: EnvironmentStatus
+  purpose?: 'stand' | 'workspace_target'
   protected: boolean
   required_approvals: number
   created_at: string
@@ -238,6 +240,7 @@ export interface Deployment {
   id: string
   environment_id: string
   pipeline_id: string | null
+  source_pipeline_id?: string | null
   rollback_of_id: string | null
   runtime_phase?: 'prepared' | 'running' | 'held' | 'finished'
   runtime_receipt?: { phase: string; releaseRevision?: number; receipt?: { sourceCommit: string; images: Record<string, string>; healthTransport: string } }

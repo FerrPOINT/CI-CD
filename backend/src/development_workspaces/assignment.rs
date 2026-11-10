@@ -399,7 +399,8 @@ mod tests {
         }));
         assert!(developer_action(&WorkspaceAction::Check {
             recipe: "backend-unit".into(),
-            source_commit: "a".repeat(40)
+            source_commit: "a".repeat(40),
+            source_pipeline_id: None,
         }));
         for action in [
             WorkspaceAction::Register {},

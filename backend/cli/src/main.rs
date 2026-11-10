@@ -456,6 +456,8 @@ enum DeploymentCommand {
         #[arg(long)]
         pipeline: Option<String>,
         #[arg(long)]
+        source_pipeline: Option<String>,
+        #[arg(long)]
         status: Option<String>,
     },
     Approvals {
@@ -1392,11 +1394,13 @@ async fn deployment(api: &ApiClient, command: DeploymentCommand) -> anyhow::Resu
             environment,
             git_ref,
             pipeline,
+            source_pipeline,
             status,
         } => {
             let mut body = Map::new();
             body.insert("git_ref".into(), Value::String(git_ref));
             insert_optional(&mut body, "pipeline_id", pipeline);
+            insert_optional(&mut body, "source_pipeline_id", source_pipeline);
             insert_optional(&mut body, "status", status);
             api.json(
                 api.post(&format!("/environments/{environment}/deployments"))
