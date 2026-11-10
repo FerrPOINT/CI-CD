@@ -891,6 +891,16 @@ async fn main() -> std::process::ExitCode {
     }
     let output = cli.output;
     let timeout = Duration::from_secs(cli.timeout_seconds);
+    if let Some(token) = std::env::var_os("CICD_PR_API_TOKEN") {
+        match pr_token(&cli.command, token) {
+            Ok(Some(token)) => cli.token = Some(token),
+            Ok(None) => {}
+            Err(error) => {
+                support::report(&error, error_format, &[]);
+                return exit(exit_code::USAGE);
+            }
+        }
+    }
     let mut api = match ApiClient::new(cli.api_url, cli.token, timeout) {
         Ok(api) => api,
         Err(err) => {
@@ -922,6 +932,32 @@ async fn main() -> std::process::ExitCode {
         return exit(exit_code::NETWORK_OR_SERVER);
     }
     exit(exit_code::OK)
+}
+
+fn pr_token(command: &Command, token: std::ffi::OsString) -> anyhow::Result<Option<String>> {
+    if !matches!(command, Command::Work(commands::WorkCommand::Pr { .. })) {
+        return Ok(None);
+    }
+    let token = token.into_string().map_err(|_| anyhow::anyhow!("Invalid CICD_PR_API_TOKEN"))?;
+    anyhow::ensure!(
+        !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_graphic()),
+        "Invalid CICD_PR_API_TOKEN"
+    );
+    Ok(Some(token))
+}
+
+#[cfg(test)]
+#[test]
+fn configured_pr_token_is_required_only_for_pr_commands() {
+    let pr = Cli::parse_from(["cicd", "pr", "get", "--repo", "example", "--number", "1"]);
+    let other = Cli::parse_from(["cicd", "project", "list"]);
+    assert!(pr_token(&pr.command, "".into()).is_err());
+    assert!(pr_token(&other.command, "".into()).unwrap().is_none());
+    assert!(pr_token(&pr.command, "fixture\ntoken".into()).is_err());
+    assert_eq!(
+        pr_token(&pr.command, "fixture-token".into()).unwrap().as_deref(),
+        Some("fixture-token")
+    );
 }
 
 fn exit(code: u8) -> std::process::ExitCode {
