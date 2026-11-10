@@ -703,47 +703,6 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
             .0,
         StatusCode::FORBIDDEN
     );
-    let assigned_repo: Uuid = sqlx::query_scalar("SELECT repository_id FROM projects WHERE id=$1")
-        .bind(f.project)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    let foreign_repo = Uuid::new_v4();
-    sqlx::query("INSERT INTO repositories(id,name,visibility) VALUES($1,$2,'private')")
-        .bind(foreign_repo)
-        .bind(format!("source-{}", foreign_repo.simple()))
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    for repository in [assigned_repo, foreign_repo] {
-        let storage = cicd::repository_catalog::storage_by_id(&f.pool, repository)
-            .await
-            .unwrap();
-        pull_fixture::insert(
-            &f.pool,
-            &storage,
-            1,
-            "Workspace candidate",
-            ("feature", "main"),
-            "open",
-            "fixture",
-        )
-        .await;
-    }
-    let pulls = format!("/api/v1/catalog/repositories/{assigned_repo}/pulls");
-    let (status, pull) = http(
-        &app,
-        "GET",
-        &format!("{pulls}/1"),
-        Some(&machine),
-        json!(null),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{pull}");
-    assert_eq!(pull["repository_id"], assigned_repo.to_string());
-    let foreign_pull = format!("/api/v1/catalog/repositories/{foreign_repo}/pulls/1");
-    let (status, foreign) = http(&app, "GET", &foreign_pull, Some(&machine), json!(null)).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{foreign}");
     assert_eq!(
         http(&app, "GET", &path, Some(&tokens[1]), json!(null))
             .await
@@ -845,6 +804,49 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
             .0,
         StatusCode::OK
     );
+    // The PR fixture attaches a namespace to the repository. Keep the legacy
+    // workspace role assertions above independent of that projection.
+    let assigned_repo: Uuid = sqlx::query_scalar("SELECT repository_id FROM projects WHERE id=$1")
+        .bind(f.project)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    let foreign_repo = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name,visibility) VALUES($1,$2,'private')")
+        .bind(foreign_repo)
+        .bind(format!("source-{}", foreign_repo.simple()))
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    for repository in [assigned_repo, foreign_repo] {
+        let storage = cicd::repository_catalog::storage_by_id(&f.pool, repository)
+            .await
+            .unwrap();
+        pull_fixture::insert(
+            &f.pool,
+            &storage,
+            1,
+            "Workspace candidate",
+            ("feature", "main"),
+            "open",
+            "fixture",
+        )
+        .await;
+    }
+    let pulls = format!("/api/v1/catalog/repositories/{assigned_repo}/pulls");
+    let (status, pull) = http(
+        &app,
+        "GET",
+        &format!("{pulls}/1"),
+        Some(&machine),
+        json!(null),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pull}");
+    assert_eq!(pull["repository_id"], assigned_repo.to_string());
+    let foreign_pull = format!("/api/v1/catalog/repositories/{foreign_repo}/pulls/1");
+    let (status, foreign) = http(&app, "GET", &foreign_pull, Some(&machine), json!(null)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{foreign}");
     drop(app);
     drop(restarted);
     f.close().await;
