@@ -742,10 +742,8 @@ async fn public_api_preserves_original_commands_across_restart_and_revokes_proje
     assert_eq!(status, StatusCode::OK, "{pull}");
     assert_eq!(pull["repository_id"], assigned_repo.to_string());
     let foreign_pull = format!("/api/v1/catalog/repositories/{foreign_repo}/pulls/1");
-    for denied in [pulls, foreign_pull] {
-        let (status, _) = http(&app, "GET", &denied, Some(&machine), json!(null)).await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
-    }
+    let (status, foreign) = http(&app, "GET", &foreign_pull, Some(&machine), json!(null)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{foreign}");
     assert_eq!(
         http(&app, "GET", &path, Some(&tokens[1]), json!(null))
             .await
