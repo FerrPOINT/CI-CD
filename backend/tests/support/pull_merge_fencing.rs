@@ -195,10 +195,22 @@ impl Case {
     }
 
     async fn create(&self, source: &str, target: &str) -> i64 {
-        let (status, pr) = self.post(&format!("/api/v1/repos/{}/pulls", self.name),
-            json!({"repository_name":self.name,"title":"Fenced merge fixture", "source_branch":source,"target_branch":target})).await;
-        assert_eq!(status, StatusCode::OK, "{pr}");
-        pr["number"].as_i64().unwrap()
+        let number: i32 = sqlx::query_scalar("SELECT allocate_repository_pr_number($1)")
+            .bind(self.repository)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap();
+        crate::pull_fixture::insert(
+            &self.pool,
+            &self.name,
+            number,
+            "Fenced merge fixture",
+            (source, target),
+            "open",
+            "",
+        )
+        .await;
+        i64::from(number)
     }
 
     fn merge_path(&self, number: i64) -> String {
@@ -413,7 +425,7 @@ async fn pr_merge_uses_branch_heads_for_policy_and_preserves_data_despite_same_n
     );
     case.is_open(tag_only).await;
     let (invalid, _) = case.post(&format!("/api/v1/repos/{}/pulls", case.name),
-        json!({"repository_name":case.name,"title":"Self alias", "source_branch":"task","target_branch":"refs/heads/task"})).await;
+        json!({"primary_task":{"tracker_instance_id":Uuid::new_v4(),"task_id":Uuid::new_v4()},"repository_name":case.name,"title":"Self alias", "source_branch":"task","target_branch":"refs/heads/task"})).await;
     assert_eq!(invalid, StatusCode::BAD_REQUEST);
     let count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM pull_requests WHERE repository_id=$1")

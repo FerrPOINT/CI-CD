@@ -65,6 +65,19 @@ async fn released_lineages_preserve_populated_rows_and_checksums() {
         .await
         .unwrap();
     let native = cicd::migrations_from_path(&output).await.unwrap();
+    let reviewer_output = output.with_extension("reviewer-v1");
+    assert!(
+        std::process::Command::new("python3")
+            .arg(root.join("../scripts/migration_lineages.py"))
+            .arg("--backend")
+            .arg(root)
+            .args(["--lineage", "reviewer-v1", "--output"])
+            .arg(&reviewer_output)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let reviewer = cicd::migrations_from_path(&reviewer_output).await.unwrap();
     let url =
         std::env::var("CICD_TEST_DATABASE_URL").expect("explicit disposable PostgreSQL required");
     let options = PgConnectOptions::from_str(&url).unwrap();
@@ -78,7 +91,11 @@ async fn released_lineages_preserve_populated_rows_and_checksums() {
         .connect(&url)
         .await
         .unwrap();
-    for (catalog, wrong, historical) in [(&main, &native, 107), (&native, &main, 99)] {
+    for (catalog, wrong, historical) in [
+        (&main, &native, 107),
+        (&native, &main, 99),
+        (&reviewer, &main, 116),
+    ] {
         let name = format!("forge_test_lineage_{}", Uuid::new_v4().simple());
         sqlx::query(&format!("CREATE DATABASE {name}"))
             .execute(&admin)
@@ -137,4 +154,5 @@ async fn released_lineages_preserve_populated_rows_and_checksums() {
     }
     admin.close().await;
     std::fs::remove_dir_all(output).unwrap();
+    std::fs::remove_dir_all(reviewer_output).unwrap();
 }

@@ -25,7 +25,7 @@ import {
 } from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { usePullRequest, useRepositoryComparison } from "@/api/hooks";
+import { usePullRequest, usePullReviewContext, useRepositoryComparison } from "@/api/hooks";
 import { ApiError } from "@/api/client";
 
 import {
@@ -38,6 +38,7 @@ import type { PullRequest, PullRequestStatus } from "@/api/types";
 import { formatDate } from "@/shared/lib/format";
 import { QueryState } from "@/shared/ui/query-state";
 import { PullRequestActions } from "@/pages/pull-requests/actions";
+import { PullComments } from "./comments";
 
 function branchRef(branch: string): string {
   return branch.startsWith("refs/heads/") ? branch : `refs/heads/${branch}`;
@@ -77,6 +78,7 @@ export function PullRequestDetailPage() {
     refetch,
   } = usePullRequest(repo, pullRequestNumber);
 
+  const review = usePullReviewContext(pr?.repository_id, pullRequestNumber);
   const showDiff = searchParams.get("view") === "diff";
   const {
     data: comparison,
@@ -86,8 +88,8 @@ export function PullRequestDetailPage() {
     refetch: refetchDiff,
   } = useRepositoryComparison(
     repo,
-    showDiff && pr ? branchRef(pr.target_branch) : "",
-    showDiff && pr ? branchRef(pr.source_branch) : "",
+    showDiff && review.data ? review.data.base_sha : "",
+    showDiff && review.data ? review.data.head_sha : "",
   );
 
   if (!repo)
@@ -394,6 +396,7 @@ export function PullRequestDetailPage() {
           </section>
         </Card>
 
+        {pr.repository_id && <PullComments repositoryId={pr.repository_id} number={pr.number} repo={repo} />}
         <aside className="min-w-0" aria-labelledby="pull-actions-title">
           <SectionHeader
             headingId="pull-actions-title"

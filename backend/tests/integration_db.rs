@@ -10,6 +10,9 @@
 
 #![cfg(feature = "integration")]
 
+#[path = "support/pull_fixture.rs"]
+mod pull_fixture;
+
 use axum::{
     body::{Body, to_bytes},
     http::{HeaderMap, Request, StatusCode},
@@ -9000,20 +9003,16 @@ async fn pull_requests_are_paged_filtered_and_readable_by_number() {
         } else {
             format!("Change {number}")
         };
-        sqlx::query(
-            "INSERT INTO pull_requests \
-             (id, repository_name, number, title, source_branch, target_branch, status, created_by) \
-             VALUES ($1, $2, $3, $4, $5, 'main', $6, 'reviewer')",
+        pull_fixture::insert(
+            &pool,
+            &repository_name,
+            number,
+            &title,
+            (&format!("feature/{number}"), "main"),
+            status,
+            "reviewer",
         )
-        .bind(Uuid::new_v4())
-        .bind(&repository_name)
-        .bind(number)
-        .bind(title)
-        .bind(format!("feature/{number}"))
-        .bind(status)
-        .execute(&pool)
-        .await
-        .expect("insert pull request fixture");
+        .await;
     }
 
     let app = authenticated_app(pool).await;
@@ -9196,7 +9195,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let released = sqlx::migrate::Migrator::new(path.as_path()).await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=40).chain(90..=115).collect::<Vec<_>>()
+        (1..=40).chain(90..=116).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -9233,7 +9232,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=40).chain(90..=115).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=40).chain(90..=116).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);

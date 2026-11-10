@@ -1,4 +1,7 @@
 //! The real router, owner-reader HTTP client, migrated PG and native clone/push.
+#[path = "support/pull_fixture.rs"]
+mod pull_fixture;
+
 use axum::{
     Json, Router,
     extract::State,
@@ -1026,7 +1029,9 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
         .await
         .unwrap();
     let collection = format!("{origin}/api/v1/catalog/repositories/{}/pulls", repo.id);
-    let input = json!({"title":"Application clock fixture","source_branch":"source","target_branch":"fixture"});
+    let (primary_task, task_reader, _token_file) =
+        pull_fixture::task_reader(&pool, "fixture").await;
+    let input = json!({"primary_task":primary_task,"title":"Application clock fixture","source_branch":"source","target_branch":"fixture"});
     let response = http
         .post(&collection)
         .bearer_auth(token)
@@ -1037,6 +1042,7 @@ async fn current_owner_and_product_scopes_govern_real_git_and_direct_api() {
     assert_eq!(response.status(), StatusCode::OK);
     let review: serde_json::Value = response.json().await.unwrap();
     let action = format!("{collection}/{}/action", review["number"].as_i64().unwrap());
+    task_reader.abort();
     let hook = bare.join("hooks/reference-transaction");
     let original_hook = tokio::fs::read(&hook).await.ok();
     let hook_script = format!(

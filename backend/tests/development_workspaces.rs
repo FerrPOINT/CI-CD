@@ -361,7 +361,9 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
         let pipeline = Uuid::new_v4();
         let stage = Uuid::new_v4();
         let publication_pipeline = case.publication.map(|_| Uuid::new_v4());
-        let publication_stage = publication_pipeline.map(|_| Uuid::new_v4()).unwrap_or(stage);
+        let publication_stage = publication_pipeline
+            .map(|_| Uuid::new_v4())
+            .unwrap_or(stage);
         let producer = Uuid::new_v4();
         let producer_attempt = Uuid::new_v4();
         let job = Uuid::new_v4();
@@ -377,7 +379,11 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
         if let (Some(publication_id), Some((status, wrong_commit, wrong_project))) =
             (publication_pipeline, case.publication)
         {
-            let publication_commit = if wrong_commit { "b".repeat(40) } else { commit.clone() };
+            let publication_commit = if wrong_commit {
+                "b".repeat(40)
+            } else {
+                commit.clone()
+            };
             let mut publication_plan = plan.clone();
             publication_plan["resolved_commit_sha"] = json!(publication_commit);
             publication_plan["jobs"].as_array_mut().unwrap().pop();
@@ -507,11 +513,20 @@ async fn typed_delivery_uses_the_frozen_workspace_operation_owner() {
             .await
             .unwrap();
         assert_eq!(leases, i64::from(case.allowed), "{}", case.name);
-        if case.allowed && let Some(publication_id) = publication_pipeline {
-            let input: Value = sqlx::query_scalar("SELECT runtime_input FROM deployments WHERE pipeline_id=$1")
-                .bind(pipeline).fetch_one(&f.pool).await.unwrap();
+        if case.allowed
+            && let Some(publication_id) = publication_pipeline
+        {
+            let input: Value =
+                sqlx::query_scalar("SELECT runtime_input FROM deployments WHERE pipeline_id=$1")
+                    .bind(pipeline)
+                    .fetch_one(&f.pool)
+                    .await
+                    .unwrap();
             assert_eq!(input["sourcePipelineId"], json!(publication_id));
-            assert_eq!(input["images"]["image"]["imageRef"], json!(published.image_ref));
+            assert_eq!(
+                input["images"]["image"]["imageRef"],
+                json!(published.image_ref)
+            );
         }
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id=$1")
@@ -914,20 +929,38 @@ async fn workspace_retirement_preserves_the_target_and_original_operation() {
         let f = Fixture::new().await;
         let id = Uuid::new_v4();
         let version = f.version().await;
-        assert!(matches!(f.enqueue(id, f.actor, version, action.clone()).await,
-            Err(store::Error::Conflict("workspace_retirement_runtime_unconfirmed"))));
+        assert!(matches!(
+            f.enqueue(id, f.actor, version, action.clone()).await,
+            Err(store::Error::Conflict(
+                "workspace_retirement_runtime_unconfirmed"
+            ))
+        ));
         sqlx::query("UPDATE development_workspaces SET runtime=$2,desired_runtime=$2,observed_at=now() WHERE id=$1")
             .bind(f.workspace).bind(runtime).execute(&f.pool).await.unwrap();
-        let first = f.enqueue(id, f.actor, version, action.clone()).await.unwrap();
+        let first = f
+            .enqueue(id, f.actor, version, action.clone())
+            .await
+            .unwrap();
         let replay = f.enqueue(id, f.actor, version, action).await.unwrap();
         assert_eq!(first.state, "succeeded");
         assert_eq!(first.result, replay.result);
         assert_eq!(f.version().await, version + 1);
         let purpose: String = sqlx::query_scalar("SELECT purpose FROM environments WHERE id=$1")
-            .bind(f.environment).fetch_one(&f.pool).await.unwrap();
+            .bind(f.environment)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
         assert_eq!(purpose, expected_purpose);
-        assert!(matches!(f.enqueue(Uuid::new_v4(), f.actor, version + 1, WorkspaceAction::Start {}).await,
-            Err(store::Error::Conflict("workspace_retired"))));
+        assert!(matches!(
+            f.enqueue(
+                Uuid::new_v4(),
+                f.actor,
+                version + 1,
+                WorkspaceAction::Start {}
+            )
+            .await,
+            Err(store::Error::Conflict("workspace_retired"))
+        ));
         f.close().await;
     }
 }

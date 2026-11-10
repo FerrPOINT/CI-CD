@@ -108,9 +108,8 @@ pub async fn validate_catalog(pool: &PgPool, registry: Option<Uuid>) -> Result<(
     let rows = sqlx::query_scalar("SELECT b.command FROM forge_namespace_bindings b JOIN forge_workspace_projects w USING (registry_instance_id, namespace_id) WHERE ($1::uuid IS NULL OR w.registry_instance_id=$1)")
         .bind(registry).fetch_all(pool).await.map_err(ApiError::internal)?;
     for row in rows {
-        let command: pdlc_shared::resource_context::OwnerCommand =
-            serde_json::from_value(row)
-                .map_err(|_| ApiError::service_unavailable("invalid_namespace_projection"))?;
+        let command: pdlc_shared::resource_context::OwnerCommand = serde_json::from_value(row)
+            .map_err(|_| ApiError::service_unavailable("invalid_namespace_projection"))?;
         crate::namespace::validate_projection(&command)?;
     }
     Ok(())
@@ -394,7 +393,9 @@ async fn executions(
         )
     };
     let filter = " JOIN repository_catalog r ON r.id=p.repository_id JOIN git_groups g ON g.id=r.group_id JOIN forge_namespace_bindings b ON b.resource_id=g.id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE ($1::uuid IS NULL OR r.group_id=$1) AND ($2::uuid IS NULL OR r.id=$2) AND ($3::uuid IS NULL OR p.id=$3) AND ($4::text IS NULL OR x.status=$4) AND ($5::text IS NULL OR x.git_ref=$5) AND ($6::timestamptz IS NULL OR x.created_at >= $6) AND ($7::timestamptz IS NULL OR x.created_at <= $7)";
-    let filter = format!("{filter}{deployment_filter} AND ($10::uuid IS NULL OR w.registry_instance_id=$10)");
+    let filter = format!(
+        "{filter}{deployment_filter} AND ($10::uuid IS NULL OR w.registry_instance_id=$10)"
+    );
     let total: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {from}{filter}"))
         .bind(group)
         .bind(query.repository_id.or(repository))

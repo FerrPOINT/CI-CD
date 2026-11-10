@@ -290,6 +290,73 @@ pub enum RepositoryCommand {
 }
 #[derive(Subcommand)]
 pub enum PrCommand {
+    /// Read every PR linked to the task, across all authorized repositories and statuses.
+    ForTask {
+        #[arg(long)]
+        tracker_instance_id: uuid::Uuid,
+        #[arg(long)]
+        task_id: uuid::Uuid,
+    },
+    ReviewContext {
+        #[arg(long)]
+        repository_id: uuid::Uuid,
+        #[arg(long)]
+        number: u32,
+    },
+    Checks {
+        #[arg(long)]
+        repository_id: uuid::Uuid,
+        #[arg(long)]
+        number: u32,
+        #[arg(long)]
+        head_sha: String,
+        #[command(flatten)]
+        page: Page,
+    },
+    Comments {
+        #[arg(long)]
+        repository_id: uuid::Uuid,
+        #[arg(long)]
+        number: u32,
+        #[arg(long)]
+        operation_id: Option<uuid::Uuid>,
+        #[command(flatten)]
+        page: Page,
+    },
+    Comment {
+        #[arg(long)]
+        repository_id: uuid::Uuid,
+        #[arg(long)]
+        number: u32,
+        #[arg(long)]
+        from_file: String,
+    },
+    Patch {
+        #[arg(long)]
+        repository_id: uuid::Uuid,
+        #[arg(long)]
+        number: u32,
+        #[arg(long)]
+        base_sha: String,
+        #[arg(long)]
+        head_sha: String,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        output: std::path::PathBuf,
+    },
+    LinkTask {
+        #[arg(long)]
+        repository_id: uuid::Uuid,
+        #[arg(long)]
+        number: u32,
+        #[arg(long)]
+        tracker_instance_id: uuid::Uuid,
+        #[arg(long)]
+        task_id: uuid::Uuid,
+        #[arg(long)]
+        primary: bool,
+    },
     List {
         #[arg(long)]
         repo: String,
@@ -307,6 +374,10 @@ pub enum PrCommand {
     Create {
         #[arg(long)]
         repo: String,
+        #[arg(long)]
+        tracker_instance_id: uuid::Uuid,
+        #[arg(long)]
+        task_id: uuid::Uuid,
         #[arg(long)]
         title: String,
         #[arg(long)]
@@ -364,9 +435,52 @@ pub async fn execute(api: &ApiClient, command: WorkCommand) -> Result<Value> {
             RepositoryCommand::Compare {repo,from,to}=>api.json(api.get_segments(&["repos",&repo,"compare"],&[("from",Some(from)),("to",Some(to))])?).await,
         },
         WorkCommand::Pr {command}=>match command {
+            PrCommand::ForTask{tracker_instance_id,task_id}=>{
+                let mut all=Vec::new();let mut offset=0u64;
+                let mut seen=std::collections::BTreeSet::new();
+                loop {
+                    let page=api.json(api.get("/task-pulls").query(&json!({"tracker_instance_id":tracker_instance_id,"task_id":task_id,"offset":offset,"limit":100}))).await?;
+                    let items=page["items"].as_array().ok_or_else(||anyhow::anyhow!("Некорректная страница PR"))?;
+                    let total=page["total"].as_u64().ok_or_else(||anyhow::anyhow!("Нет размера каталога PR"))?;
+                    if items.is_empty(){
+                        if offset<total {bail!("Неполный каталог PR; повторите чтение");}
+                        break;
+                    }
+                    for item in items {
+                        let id=item["id"].as_str().ok_or_else(||anyhow::anyhow!("Нет ID PR"))?;
+                        if !seen.insert(id.to_owned()){bail!("Состав PR изменился при чтении; повторите чтение");}
+                    }
+                    offset+=items.len() as u64;all.extend(items.iter().cloned());
+                    if offset>=total{break;}
+                }
+                Ok(json!({"items":all}))
+            },
+            PrCommand::ReviewContext{repository_id,number}=>api.json(api.get(&format!("/catalog/repositories/{repository_id}/pulls/{number}/review-context"))).await,
+            PrCommand::Checks{repository_id,number,head_sha,page}=>{
+                let mut pairs=page.pairs();pairs.push(("head_sha",Some(head_sha)));
+                get(api,&format!("/catalog/repositories/{repository_id}/pulls/{number}/checks"),pairs).await
+            },
+            PrCommand::Comments{repository_id,number,operation_id,page}=>{
+                let mut pairs=page.pairs();pairs.push(("operation_id",operation_id.map(|id|id.to_string())));
+                get(api,&format!("/catalog/repositories/{repository_id}/pulls/{number}/comments"),pairs).await
+            },
+            PrCommand::Comment{repository_id,number,from_file}=>{
+                let body:Value=serde_json::from_str(&support::read_text(&from_file)?)?;
+                api.json(api.post(&format!("/catalog/repositories/{repository_id}/pulls/{number}/comments")).json(&body)).await
+            },
+            PrCommand::Patch{repository_id,number,base_sha,head_sha,path,output}=>{
+                let mut request=api.get(&format!("/catalog/repositories/{repository_id}/pulls/{number}/patch"))
+                    .query(&[("base_sha",base_sha),("head_sha",head_sha)]);
+                if let Some(path)=path {request=request.query(&[("path",path)]);}
+                let bytes=api.download(request).await?;
+                support::save_download(&output,&bytes,false)?;
+                Ok(json!({"output":output,"bytes":bytes.len()}))
+            },
+            PrCommand::LinkTask{repository_id,number,tracker_instance_id,task_id,primary}=>api.json(api.post(
+                &format!("/catalog/repositories/{repository_id}/pulls/{number}/tasks")).json(&json!({"tracker_instance_id":tracker_instance_id,"task_id":task_id,"primary":primary}))).await,
             PrCommand::List {repo,page,status}=>{let mut pairs=page.pairs();pairs.push(("status",status));get(api,&format!("/repos/{}/pulls/page",enc(&repo)),pairs).await},
             PrCommand::Get {repo,number}=>api.json(api.get(&format!("/repos/{}/pulls/{number}",enc(&repo)))).await,
-            PrCommand::Create {repo,title,source_branch,target_branch,description,from_file}=>api.json(api.post(&format!("/repos/{}/pulls",enc(&repo))).json(&json!({"repository_name":repo,"title":title,"source_branch":source_branch,"target_branch":target_branch,"description":support::text_input(description,from_file)?}))).await,
+            PrCommand::Create {repo,tracker_instance_id,task_id,title,source_branch,target_branch,description,from_file}=>api.json(api.post(&format!("/repos/{}/pulls",enc(&repo))).json(&json!({"repository_name":repo,"primary_task":{"tracker_instance_id":tracker_instance_id,"task_id":task_id},"title":title,"source_branch":source_branch,"target_branch":target_branch,"description":support::text_input(description,from_file)?}))).await,
             PrCommand::Merge {repo,number}=>action(api,&repo,number,"merge").await,
             PrCommand::Close {repo,number}=>action(api,&repo,number,"close").await,
             PrCommand::Reopen {repo,number}=>action(api,&repo,number,"reopen").await,

@@ -331,7 +331,14 @@ cicd-cli repository commits --repo service --branch main --limit 25 --offset 0
 cicd-cli repository compare --repo service --from main --to feature
 cicd-cli pr list --repo service --status open --search fix --limit 25 --offset 0
 cicd-cli pr get --repo service --number 1
-cicd-cli pr create --repo service --title "Изменение" --source-branch feature --target-branch main --from-file pr.md
+cicd-cli pr create --repo service --title "Изменение" --source-branch feature --target-branch main --from-file pr.md --tracker-instance-id <tracker-id> --task-id <task-id>
+cicd-cli pr for-task --tracker-instance-id <tracker-id> --task-id <task-id>
+cicd-cli pr review-context --repository-id <repository-id> --number 1
+cicd-cli pr patch --repository-id <repository-id> --number 1 --base-sha <base-sha> --head-sha <head-sha> --output review.patch
+cicd-cli pr checks --repository-id <repository-id> --number 1 --head-sha <head-sha> --limit 100 --offset 0
+cicd-cli pr comments --repository-id <repository-id> --number 1 --limit 100 --offset 0
+cicd-cli pr comment --repository-id <repository-id> --number 1 --from-file comment.json
+cicd-cli pr link-task --repository-id <repository-id> --number 1 --tracker-instance-id <tracker-id> --task-id <task-id> --primary
 cicd-cli pr close --repo service --number 1
 cicd-cli pr reopen --repo service --number 1
 cicd-cli pr merge --repo service --number 1

@@ -74,14 +74,17 @@ impl DeveloperAssignment {
         let assignment = &execution["assignment"];
         let source = &execution["source_binding"];
         let preparation = if execution["status"] == "InProgress"
-            || (access == AssignmentAccess::Closing
-                && execution["status"] == "Ready")
-            || (matches!(access, AssignmentAccess::Reading | AssignmentAccess::Closing)
-                && execution["status"] == "Completed")
+            || (access == AssignmentAccess::Closing && execution["status"] == "Ready")
+            || (matches!(
+                access,
+                AssignmentAccess::Reading | AssignmentAccess::Closing
+            ) && execution["status"] == "Completed")
         {
             None
-        } else if matches!(access, AssignmentAccess::Preparing | AssignmentAccess::Reading)
-            && execution["status"] == "Ready"
+        } else if matches!(
+            access,
+            AssignmentAccess::Preparing | AssignmentAccess::Reading
+        ) && execution["status"] == "Ready"
         {
             Some(WorkspacePreparation {
                 expires_at: execution["workspace_preparation_expires_at"]
@@ -257,9 +260,13 @@ mod tests {
             AssignmentAccess::Closing,
         ] {
             let result = DeveloperAssignment::read(
-                &completed, &namespace, tracker, project, task, actor, repository, workspace, access,
+                &completed, &namespace, tracker, project, task, actor, repository, workspace,
+                access,
             );
-            if matches!(access, AssignmentAccess::Reading | AssignmentAccess::Closing) {
+            if matches!(
+                access,
+                AssignmentAccess::Reading | AssignmentAccess::Closing
+            ) {
                 let (closing, deadline) = result.unwrap();
                 closing.require_same(&saved).unwrap();
                 assert!(deadline.is_none());

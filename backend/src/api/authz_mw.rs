@@ -210,15 +210,32 @@ pub(crate) async fn require_auth(
         if verified.subject_role.as_deref() == Some("service_account")
             && crate::development_workspaces::machine::handles(method.as_str(), req.uri().path())
         {
+            let (mut parts, body) = req.into_parts();
+            let path = parts.uri.path().to_owned();
+            let decoded_repository =
+                if crate::development_workspaces::machine::repository_path(&method, &path) {
+                    use axum::extract::FromRequestParts;
+                    let axum::extract::Path(mut params) = axum::extract::Path::<
+                        std::collections::HashMap<String, String>,
+                    >::from_request_parts(
+                        &mut parts, &()
+                    )
+                    .await
+                    .map_err(|_| ApiError::bad_request("invalid_repository_path"))?;
+                    params.remove("repo")
+                } else {
+                    None
+                };
             let identity = crate::development_workspaces::machine::authenticate(
                 pool,
                 verified,
                 method.as_str(),
-                req.uri().path(),
+                &path,
+                decoded_repository.as_deref(),
             )
             .await?;
-            let authority = req
-                .extensions()
+            let authority = parts
+                .extensions
                 .get::<pdlc_auth_core::http_authority::RequestAuthority>()
                 .ok_or_else(|| ApiError::service_unavailable("Request authority guard missing"))?;
             authority.restrict_to(
@@ -226,10 +243,11 @@ pub(crate) async fn require_auth(
                     .original_deadline()?
                     .ok_or_else(ApiError::forbidden)?,
             );
-            let mut req = req;
-            req.extensions_mut().insert(identity.claims.clone());
-            req.extensions_mut().insert(identity);
-            return Ok(next.run(req).await);
+            parts.extensions.insert(identity.claims.clone());
+            parts.extensions.insert(identity);
+            return Ok(next
+                .run(axum::extract::Request::from_parts(parts, body))
+                .await);
         }
         checked_central = Some(VerifiedRequestIdentity {
             claims: central_identity(pool, &verified).await?,
@@ -364,7 +382,9 @@ pub(crate) async fn require_auth(
     } else {
         project_scope_allows(&state, &claims, role, &method, &path, scope_ref).await?
     };
-    let narrow_pull_scope = parts.extensions.get::<axum::extract::MatchedPath>()
+    let narrow_pull_scope = parts
+        .extensions
+        .get::<axum::extract::MatchedPath>()
         .and_then(|route| pull_token_scope(&method, route.as_str()));
     let allowed = (api_token_scope_allows(&claims, &method)
         || narrow_pull_scope.is_some_and(|scope| bearer_token_has_scope(&claims, scope)))
@@ -442,6 +462,17 @@ fn native_repository_ref(method: &str, path: &str) -> Option<ProjectScopeRef> {
     let repository = Uuid::parse_str(parts.first()?).ok()?;
     let allowed = match (method, &parts[1..]) {
         ("GET", []) => true,
+        ("GET", ["pulls"]) => true,
+        ("GET", ["pulls", number]) => number.parse::<u32>().is_ok_and(|n| n > 0),
+        (
+            "GET",
+            [
+                "pulls",
+                number,
+                "comments" | "review-context" | "patch" | "tasks" | "checks",
+            ],
+        )
+        | ("POST", ["pulls", number, "comments"]) => number.parse::<u32>().is_ok_and(|n| n > 0),
         ("GET" | "PUT", ["sync"])
         | ("POST", ["sync", "check"])
         | ("GET" | "POST", ["sync", "runs"]) => true,
@@ -469,11 +500,31 @@ mod native_repository_tests {
             native_repository_ref("GET", &format!("{path}/sync")),
             Some(ProjectScopeRef::CatalogRepository(id))
         );
+        for suffix in [
+            "pulls",
+            "pulls/1",
+            "pulls/1/review-context",
+            "pulls/1/patch",
+            "pulls/1/comments",
+            "pulls/1/checks",
+            "pulls/1/tasks",
+        ] {
+            assert_eq!(
+                native_repository_ref("GET", &format!("{path}/{suffix}")),
+                Some(ProjectScopeRef::CatalogRepository(id))
+            );
+        }
+        assert_eq!(
+            native_repository_ref("POST", &format!("{path}/pulls/1/comments")),
+            Some(ProjectScopeRef::CatalogRepository(id))
+        );
         for (method, path) in [
             ("POST", path.clone()),
             ("PUT", path.clone()),
             ("DELETE", path.clone()),
-            ("GET", format!("{path}/pulls")),
+            ("POST", format!("{path}/pulls")),
+            ("POST", format!("{path}/pulls/1/merge")),
+            ("POST", format!("{path}/pulls/1/close")),
             ("GET", format!("{path}/group")),
             ("GET", "/api/v1/catalog/repositories".into()),
             ("GET", "/api/v1/catalog/repositories/not-a-uuid".into()),
@@ -516,7 +567,10 @@ async fn project_scope_allows(
             return Ok(method == "GET"
                 && matches!(
                     path,
-                    "/api/v1/projects" | "/api/v1/auth/principal" | "/api/v1/repository-syncs"
+                    "/api/v1/projects"
+                        | "/api/v1/auth/principal"
+                        | "/api/v1/repository-syncs"
+                        | "/api/v1/task-pulls"
                 ));
         }
         return Ok(true);

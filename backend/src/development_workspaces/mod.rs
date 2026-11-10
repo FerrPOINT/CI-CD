@@ -5,7 +5,7 @@ mod catalog;
 pub(crate) mod machine;
 pub(crate) mod machine_git;
 mod native;
-mod tracker;
+pub(crate) mod tracker;
 pub mod worker;
 use crate::api::{ApiError, AppState, authz_mw::VerifiedRequestIdentity};
 use crate::space_admission::RepositoryWrite;
@@ -473,7 +473,12 @@ pub(crate) async fn submit(
         return Err(ApiError::bad_request("invalid_workspace_operation"));
     }
     let workspace = store::workspace(pool(&state)?, id).await.map_err(error)?;
-    if matches!(input.command, WorkspaceAction::RecoverSession { .. } | WorkspaceAction::Close {} | WorkspaceAction::ConvertToStand {}) {
+    if matches!(
+        input.command,
+        WorkspaceAction::RecoverSession { .. }
+            | WorkspaceAction::Close {}
+            | WorkspaceAction::ConvertToStand {}
+    ) {
         if machine::principal(&identity) {
             return Err(ApiError::forbidden());
         }
@@ -685,7 +690,11 @@ fn action_availability(
     .map(|action| {
         let reason = if workspace.retired_at.is_some() {
             Some("Рабочее окружение закрыто")
-        } else if matches!(action, "recover_session" | "reconcile" | "close" | "convert_to_stand") && !maintainer {
+        } else if matches!(
+            action,
+            "recover_session" | "reconcile" | "close" | "convert_to_stand"
+        ) && !maintainer
+        {
             Some("Требуются права сопровождающего проекта")
         } else if !writable {
             Some("Доступно только чтение")
@@ -694,15 +703,29 @@ fn action_availability(
         } else if jobs
             && matches!(
                 action,
-                "start" | "stop" | "begin_session" | "end_session" | "recover_session" | "close" | "convert_to_stand"
+                "start"
+                    | "stop"
+                    | "begin_session"
+                    | "end_session"
+                    | "recover_session"
+                    | "close"
+                    | "convert_to_stand"
             )
         {
             Some("Проверка, сборка или доставка ещё удерживает окружение")
         } else if matches!(action, "stop" | "close" | "convert_to_stand") && session.is_some() {
             Some("Сначала закончите рабочую сессию")
-        } else if action == "close" && (workspace.runtime != "stopped" || workspace.desired_runtime != "stopped" || workspace.observed_at.is_none()) {
+        } else if action == "close"
+            && (workspace.runtime != "stopped"
+                || workspace.desired_runtime != "stopped"
+                || workspace.observed_at.is_none())
+        {
             Some("Сначала подтвердите остановку окружения")
-        } else if action == "convert_to_stand" && (workspace.runtime != "running" || workspace.desired_runtime != "running" || workspace.observed_at.is_none()) {
+        } else if action == "convert_to_stand"
+            && (workspace.runtime != "running"
+                || workspace.desired_runtime != "running"
+                || workspace.observed_at.is_none())
+        {
             Some("Сначала подтвердите работу окружения")
         } else if action == "begin_session" && session.is_some() {
             Some("В окружении уже есть рабочая сессия")

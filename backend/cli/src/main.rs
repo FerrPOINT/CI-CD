@@ -940,7 +940,9 @@ fn pr_token(command: &Command, token: std::ffi::OsString) -> anyhow::Result<Opti
     if !matches!(command, Command::Work(commands::WorkCommand::Pr { .. })) {
         return Ok(None);
     }
-    let token = token.into_string().map_err(|_| anyhow::anyhow!("Invalid CICD_PR_API_TOKEN"))?;
+    let token = token
+        .into_string()
+        .map_err(|_| anyhow::anyhow!("Invalid CICD_PR_API_TOKEN"))?;
     anyhow::ensure!(
         !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_graphic()),
         "Invalid CICD_PR_API_TOKEN"
@@ -957,7 +959,9 @@ fn configured_pr_token_is_required_only_for_pr_commands() {
     assert!(pr_token(&other.command, "".into()).unwrap().is_none());
     assert!(pr_token(&pr.command, "fixture\ntoken".into()).is_err());
     assert_eq!(
-        pr_token(&pr.command, "fixture-token".into()).unwrap().as_deref(),
+        pr_token(&pr.command, "fixture-token".into())
+            .unwrap()
+            .as_deref(),
         Some("fixture-token")
     );
 }

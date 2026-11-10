@@ -53,8 +53,13 @@ vi.mock("@/api/hooks", () => ({
   usePullRequest: mocks.detail,
   useRepositoryRefs: mocks.refs,
   useRepositoryComparison: mocks.comparison,
+  usePullReviewContext: () => ({ data: { base_sha: "a".repeat(40), head_sha: "b".repeat(40) } }),
   useCreatePullRequest: () => ({ mutate: mocks.create, isPending: false }),
   usePullRequestAction: () => ({ mutate: mocks.action, isPending: false }),
+}));
+vi.mock("@/api/client", async (original) => ({
+  ...await original<typeof import("@/api/client")>(),
+  api: vi.fn(async () => ({ task: { tracker_instance_id: "tracker-id", task_id: "task-id" } })),
 }));
 vi.mock("@/api/auth", () => ({
   currentSession: () => ({ username: "reviewer" }),
@@ -251,7 +256,7 @@ describe("pull request workflow", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("requires distinct, user-entered branches and closes the form only after create succeeds", () => {
+  it("requires distinct, user-entered branches and closes the form only after create succeeds", async () => {
     setup([]);
     fireEvent.click(screen.getByRole("button", { name: "pulls.create" }));
     const form = screen.getByRole("form", { name: "pulls.create" });
@@ -294,7 +299,9 @@ describe("pull request workflow", () => {
         target: { value: " feature/1 " },
       },
     );
+    fireEvent.change(screen.getByRole("textbox", { name: /Задача/ }), { target: { value: "PROJECT-123" } });
     fireEvent.submit(form);
+    await waitFor(() => expect(mocks.create).toHaveBeenCalled());
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({
         title: "Add cache",
@@ -507,8 +514,8 @@ describe("pull request workflow", () => {
     });
     expect(mocks.comparison).toHaveBeenCalledWith(
       "platform",
-      "refs/heads/main",
-      "refs/heads/feature/1",
+      "a".repeat(40),
+      "b".repeat(40),
     );
     expect(screen.getByText("source.txt")).toBeInTheDocument();
     expect(screen.getByLabelText("compare.patch")).toHaveTextContent(

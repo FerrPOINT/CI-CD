@@ -253,5 +253,17 @@
       "file": "0099_native_merge_ci_outbox.sql",
       "sha384": "e308ee1167dca2c3891a88a28b8e6a855e29d03c383234aa14cfdb71ea859248c4f9ffd60547c144043e670e9db82244"
     }
+  ],
+  "reviewerV1": [
+    {
+      "file": "0116_pull_task_and_comments.sql",
+      "canonicalFile": "0117_pull_task_and_comments.sql",
+      "sha384": "ba466b28c6fb6ec05ededcbd71022365fe048f944d781cc7abfaa10691ac0a3b6ea852152a327bd1ac2adf15f8c1c7eb"
+    },
+    {
+      "file": "0117_environment_purpose.sql",
+      "canonicalFile": "0116_environment_purpose.sql",
+      "sha384": "b285b0c43f29c631d8d36b518aa9c25915ecfa14706936dccf2e71a9477e5fa1314e3e0a7c0bcef5efe9c1662bd634c6"
+    }
   ]
 }

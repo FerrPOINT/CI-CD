@@ -874,20 +874,35 @@ async fn create_deployment(
     let git_ref = input.git_ref.trim();
     if let Some(source) = input.source_pipeline_id {
         if !typed_target || purpose != "stand" {
-            return Err(ApiError::bad_request("Published artifacts require a Kubernetes stand"));
+            return Err(ApiError::bad_request(
+                "Published artifacts require a Kubernetes stand",
+            ));
         }
-        if target.as_ref().and_then(|value| value["publication_images"].as_object()).is_none_or(|images| images.is_empty()) {
-            return Err(ApiError::conflict("Stand publication image bindings must be configured"));
+        if target
+            .as_ref()
+            .and_then(|value| value["publication_images"].as_object())
+            .is_none_or(|images| images.is_empty())
+        {
+            return Err(ApiError::conflict(
+                "Stand publication image bindings must be configured",
+            ));
         }
         let valid: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM pipelines p JOIN pipeline_plans pp ON pp.pipeline_id=p.id
              WHERE p.id=$1 AND p.project_id=$2 AND p.status='success'
              AND p.commit_sha=$3 AND pp.resolved_commit_sha=$3
              AND pp.config_source IN ('repository','development_workspace'))",
-        ).bind(source).bind(policy.project_id).bind(git_ref)
-            .fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+        )
+        .bind(source)
+        .bind(policy.project_id)
+        .bind(git_ref)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
         if !crate::domain::image_build::valid_commit(git_ref) || !valid {
-            return Err(ApiError::conflict("Completed publication pipeline for this project and exact commit required"));
+            return Err(ApiError::conflict(
+                "Completed publication pipeline for this project and exact commit required",
+            ));
         }
     }
     if typed_target
@@ -3122,9 +3137,7 @@ fn normalize_token_scopes(scopes: Vec<String>) -> Result<Vec<String>, ApiError> 
         if scope.is_empty() {
             continue;
         }
-        if !DEFAULT_TOKEN_SCOPES.contains(&scope)
-            && !matches!(scope, "pull:create")
-        {
+        if !DEFAULT_TOKEN_SCOPES.contains(&scope) && !matches!(scope, "pull:create") {
             return Err(ApiError::bad_request("unsupported token scope"));
         }
         if !normalized.iter().any(|existing| existing == scope) {
