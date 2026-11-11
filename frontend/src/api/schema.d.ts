@@ -3631,7 +3631,7 @@ export interface components {
         KubernetesTerminationProof: {
             clusterCaSha256: string;
             namespaceUid: string;
-            podUid: string;
+            podUid?: string | null;
             workspaceClaimUid: string;
         };
         LinkTaskRequest: {

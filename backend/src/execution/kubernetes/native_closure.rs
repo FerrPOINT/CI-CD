@@ -6,6 +6,8 @@ use std::os::unix::fs::MetadataExt;
 
 const PATH: &str = "/run/forge-native-closures/closures.json";
 const KIND: &str = "forge/native-execution-closures/v1";
+const UNADMITTED_PATH: &str = "/run/forge-native-closures/unadmitted.json";
+const UNADMITTED_KIND: &str = "forge/native-unadmitted-attempt/v1";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -32,21 +34,93 @@ struct Closure {
     native_closed: bool,
 }
 
-pub(super) fn observe(pod: &Value, uid: &str, config: &Config) -> anyhow::Result<Option<Terminal>> {
-    if std::env::var("CICD_KUBERNETES_NATIVE_CLOSURES")
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UnadmittedAttempt {
+    schema_version: u32,
+    kind: String,
+    installation_sha256: String,
+    cluster_ca_sha256: String,
+    namespace_uid: String,
+    workspace_claim_uid: String,
+    scope: Scope,
+    pod_name: String,
+    intent_sha256: String,
+    issued_epoch: i64,
+    observed_epoch: i64,
+    storage_history_sha256: String,
+}
+
+fn enabled() -> bool {
+    std::env::var("CICD_KUBERNETES_NATIVE_CLOSURES")
         .ok()
         .as_deref()
-        != Some("true")
-    {
+        == Some("true")
+}
+
+pub(super) fn observe_unadmitted(execution: &Execution) -> anyhow::Result<Option<Value>> {
+    if !enabled() || !Path::new(UNADMITTED_PATH).try_exists()? {
         return Ok(None);
     }
-    let bytes = read_operator_observation()?;
+    let proof: UnadmittedAttempt =
+        serde_json::from_slice(&read_operator_observation(UNADMITTED_PATH)?)?;
+    if proof.scope != execution.intent.scope {
+        return Ok(None);
+    }
+    let issued = execution.directory.join("issued.json");
+    guarded(&issued)?;
+    let issued_epoch: i64 = fs::metadata(issued)?
+        .modified()?
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs()
+        .try_into()?;
+    qualify_unadmitted(
+        &execution.intent,
+        &proof,
+        issued_epoch,
+        chrono::Utc::now().timestamp(),
+    )
+    .map(Some)
+}
+
+fn qualify_unadmitted(
+    intent: &Intent,
+    proof: &UnadmittedAttempt,
+    issued_epoch: i64,
+    now: i64,
+) -> anyhow::Result<Value> {
+    let config = &intent.config;
+    ensure!(
+        proof.schema_version == 1
+            && proof.kind == UNADMITTED_KIND
+            && proof.installation_sha256 == config.installation_sha256
+            && proof.cluster_ca_sha256 == config.cluster_ca_sha256
+            && proof.namespace_uid == config.namespace_uid
+            && proof.workspace_claim_uid == config.workspace_claim_uid
+            && proof.scope == intent.scope
+            && proof.pod_name == intent.pod_name
+            && proof.intent_sha256 == hash(&serde_json::to_vec(intent)?)
+            && proof.issued_epoch == issued_epoch
+            && issued_epoch > 0
+            && proof.observed_epoch > issued_epoch
+            && (now.saturating_sub(90)..=now).contains(&proof.observed_epoch)
+            && sha256(&proof.storage_history_sha256),
+        "non-admission observation is stale or differs from the original issued attempt"
+    );
+    Ok(json!({"kind":"operator-storage-history","sha256":proof.storage_history_sha256}))
+}
+
+pub(super) fn observe(pod: &Value, uid: &str, config: &Config) -> anyhow::Result<Option<Terminal>> {
+    if !enabled() {
+        return Ok(None);
+    }
+    let bytes = read_operator_observation(PATH)?;
     let proof: Observation = serde_json::from_slice(&bytes)?;
     qualify(pod, uid, config, &proof, chrono::Utc::now().timestamp()).map(Some)
 }
 
 #[cfg(unix)]
-fn read_operator_observation() -> anyhow::Result<Vec<u8>> {
+fn read_operator_observation(path: &str) -> anyhow::Result<Vec<u8>> {
     // A runner workspace or repository must never supply its own privileged proof.
     let mounts = fs::read_to_string("/proc/self/mountinfo")?;
     ensure!(
@@ -58,7 +132,7 @@ fn read_operator_observation() -> anyhow::Result<Vec<u8>> {
         }),
         "native closure observation requires its separate read-only operator mount"
     );
-    let metadata = fs::metadata(PATH)?;
+    let metadata = fs::metadata(path)?;
     ensure!(
         metadata.is_file()
             && metadata.uid() == 0
@@ -66,11 +140,11 @@ fn read_operator_observation() -> anyhow::Result<Vec<u8>> {
             && metadata.len() <= 65536,
         "native closure observation is not operator-owned"
     );
-    let bytes = fs::read(PATH)?;
+    let bytes = fs::read(path)?;
     Ok(bytes)
 }
 #[cfg(not(unix))]
-fn read_operator_observation() -> anyhow::Result<Vec<u8>> {
+fn read_operator_observation(_path: &str) -> anyhow::Result<Vec<u8>> {
     anyhow::bail!("native closure observation requires a Unix operator mount")
 }
 
@@ -233,6 +307,59 @@ mod tests {
             }
             assert!(qualify(&pod, "pod-uid", &config, &proof, 1001).is_err());
         }
+    }
+    #[test]
+    fn operator_history_must_bind_the_exact_issued_intent_and_fresh_observation() {
+        let (_, config, _) = fixture();
+        let scope = Scope {
+            job_id: Uuid::new_v4(),
+            attempt_id: Uuid::new_v4(),
+            lease_id: Uuid::new_v4(),
+            generation: 2,
+            source_commit: "a".repeat(40),
+        };
+        let intent = Intent {
+            config,
+            pod_name: scope.name(),
+            scope,
+            workspace: "attempt-fixture/workspace".into(),
+            image: "unused".into(),
+            action_sha256: "a".repeat(64),
+            environment_sha256: "b".repeat(64),
+        };
+        let proof = json!({
+            "schemaVersion":1,"kind":UNADMITTED_KIND,
+            "installationSha256":intent.config.installation_sha256,
+            "clusterCaSha256":intent.config.cluster_ca_sha256,
+            "namespaceUid":intent.config.namespace_uid,
+            "workspaceClaimUid":intent.config.workspace_claim_uid,
+            "scope":intent.scope,"podName":intent.pod_name,
+            "intentSha256":hash(&serde_json::to_vec(&intent).unwrap()),
+            "issuedEpoch":800,"observedEpoch":1000,
+            "storageHistorySha256":"c".repeat(64)
+        });
+        let valid: UnadmittedAttempt = serde_json::from_value(proof.clone()).unwrap();
+        assert_eq!(
+            qualify_unadmitted(&intent, &valid, 800, 1001).unwrap(),
+            json!({"kind":"operator-storage-history","sha256":"c".repeat(64)})
+        );
+        assert!(qualify_unadmitted(&intent, &valid, 801, 1001).is_err());
+        assert!(qualify_unadmitted(&intent, &valid, 800, 1091).is_err());
+        for (field, value) in [
+            ("podName", json!("another-pod")),
+            ("namespaceUid", json!("other-namespace")),
+            ("intentSha256", json!("e".repeat(64))),
+            ("storageHistorySha256", json!("incomplete")),
+        ] {
+            let mut foreign = proof.clone();
+            foreign[field] = value;
+            let foreign = serde_json::from_value(foreign).unwrap();
+            assert!(qualify_unadmitted(&intent, &foreign, 800, 1001).is_err());
+        }
+        let mut stale = proof;
+        stale["scope"]["generation"] = json!(1);
+        let stale = serde_json::from_value(stale).unwrap();
+        assert!(qualify_unadmitted(&intent, &stale, 800, 1001).is_err());
     }
     #[test]
     fn neighboring_started_running_or_successful_status_cannot_use_negative_proof() {

@@ -3035,7 +3035,7 @@ async fn execute_kubernetes(
                     outcome: "failed",
                     exit_code: None,
                     diagnostic: Some(truncate_diagnostic(&format!(
-                        "Kubernetes request not submitted: {error:#}"
+                        "Kubernetes Pod not admitted: {error:#}"
                     ))),
                 },
                 workspace,
@@ -3255,7 +3255,8 @@ async fn recover_kubernetes(
     if scope.lease_id != record.lease_id {
         bail!("retained lease identity mismatch")
     }
-    if execution.close_not_submitted().await? {
+    let no_pod = execution.close_not_submitted().await?;
+    if no_pod && !execution.not_admitted()? {
         if let Ok(receipt) = unsubmitted_owner_readback(client, base, credential, record).await {
             let directory = root.join(".kubernetes-control").join(format!(
                 "forge-{}-g{}",
@@ -3297,7 +3298,7 @@ async fn recover_kubernetes(
     };
     let workspace = cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
     workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
-    if execution.close_not_submitted().await? {
+    if no_pod {
         let outcome = match record.terminal_status.as_deref() {
             None | Some("failed") => "failed",
             Some("canceled") => "canceled",
@@ -3313,7 +3314,7 @@ async fn recover_kubernetes(
                     outcome,
                     exit_code: None,
                     diagnostic: Some(
-                        "Kubernetes request was never submitted; retained owner recovery".into(),
+                        "Kubernetes Pod did not start; retained owner recovery".into(),
                     ),
                 },
                 workspace,
