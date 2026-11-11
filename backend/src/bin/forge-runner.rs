@@ -450,15 +450,17 @@ async fn reconcile_workspaces(
             match known_unsubmitted {
                 Ok(false) => {} // The original issued/terminal path below is unchanged.
                 Ok(true) => {
-                    if recover_kubernetes(client, base, credential, root, &record, keep_workspace)
-                        .await
-                        .is_err()
+                    if let Err(error) =
+                        recover_kubernetes(client, base, credential, root, &record, keep_workspace)
+                            .await
                     {
+                        eprintln!("retained attempt {}: {error:#}", record.attempt_id);
                         unresolved += 1;
                     }
                     continue;
                 }
-                Err(_) => {
+                Err(error) => {
+                    eprintln!("retained attempt {}: {error:#}", record.attempt_id);
                     unresolved += 1;
                     continue;
                 }
@@ -470,7 +472,8 @@ async fn reconcile_workspaces(
                     .await
                 {
                     Ok(()) => continue,
-                    Err(_) => {
+                    Err(error) => {
+                        eprintln!("retained attempt {}: {error:#}", record.attempt_id);
                         unresolved += 1;
                         continue;
                     }
@@ -496,7 +499,8 @@ async fn reconcile_workspaces(
                     .await
                 {
                     Ok(()) => continue,
-                    Err(_) => {
+                    Err(error) => {
+                        eprintln!("retained attempt {}: {error:#}", record.attempt_id);
                         unresolved += 1;
                         continue;
                     }
@@ -1022,7 +1026,7 @@ async fn complete_executed_attempt(
     // Never repeat the POST: a lost reply may follow a committed completion.
     let completion = match completion {
         Ok(()) => Ok(()),
-        Err(_) => {
+        Err(completion_error) => {
             read_terminal_receipt(
                 client,
                 base,
@@ -1033,6 +1037,7 @@ async fn complete_executed_attempt(
                 outcome,
             )
             .await
+            .with_context(|| format!("original completion failed: {completion_error:#}"))
         }
     };
     if completion.is_ok() {
@@ -2361,6 +2366,42 @@ mod tests {
             "fencingToken": offer.fencing_token, "leaseStatus": "completed",
             "terminalStatus": "success", "completedAt": Utc::now(), "terminalAcknowledged": true
         })
+    }
+
+    #[tokio::test]
+    async fn rejected_completion_retains_the_server_reason_after_readback() {
+        let root = std::env::temp_dir().join(format!("forge-rejected-ack-{}", Uuid::new_v4()));
+        let offer = test_offer("exit 0", 5);
+        let executed = execute_attempt(&test_cli(root.clone()), &offer, None, &[])
+            .await
+            .unwrap();
+        let mut receipt = receipt_body(&offer);
+        receipt["terminalAcknowledged"] = json!(false);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().route(
+            "/{*path}",
+            axum::routing::post(|| async {
+                (axum::http::StatusCode::CONFLICT, "Original custody unavailable")
+            })
+            .get(move || async { axum::Json(receipt) }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let error = complete_executed_attempt(
+            &reqwest::Client::new(),
+            &base,
+            "fixture",
+            &offer,
+            executed,
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("409 Conflict: Original custody unavailable"));
+        assert!(ensure_no_unresolved_workspaces(&root).is_err());
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
