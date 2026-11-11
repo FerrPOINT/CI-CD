@@ -48,8 +48,10 @@ Source candidate `/api/v1/runner/leases/{lease_id}/complete` принимает 
 `terminationProof` {`clusterCaSha256`, `namespaceUid`, `workspaceClaimUid`, `podUid`}.
 Legacy omission не меняет поведение. Только failure/canceled completion после
 expiry может использовать исключение: original runner/token/attempt/current
-generation, matching terminal DB projection и actual exact-UID stopped readback
-из protected Kubernetes custody. Success, чужие/старые identities и новый lease
+generation и matching terminal DB projection. Forge сверяет остановленный Pod
+по точному UID. При пустом `podUid` Forge сверяет сохранённое доказательство
+отсутствия допуска исходной попытки и подтверждает отсутствие Pod. В этом случае
+exit code и квитанция установки не передаются. Success, чужие/старые identities и новый lease
 закрыты. Статусы/очередь не переоткрываются; duplicate termination ACK идемпотентен.
 [Полный контракт](KUBERNETES_RUNNER.md).
 

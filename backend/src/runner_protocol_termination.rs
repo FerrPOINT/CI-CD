@@ -1,6 +1,8 @@
 //! Additive failure-only ACK after lease expiry. No success or task/queue reactivation.
 use super::*;
-use crate::execution::kubernetes::{Execution, Scope, Terminal};
+#[cfg(all(test, feature = "integration"))]
+use crate::execution::kubernetes::Terminal;
+use crate::execution::kubernetes::{Execution, Scope};
 use std::path::Path;
 #[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -8,7 +10,7 @@ pub(crate) struct KubernetesTerminationProof {
     pub cluster_ca_sha256: String,
     pub namespace_uid: String,
     pub workspace_claim_uid: String,
-    pub pod_uid: String,
+    pub pod_uid: Option<String>,
 }
 
 pub(super) async fn complete(
@@ -45,19 +47,34 @@ pub(super) async fn complete(
     {
         return Err(ApiError::conflict("Termination proof identity mismatch"));
     }
-    let terminal = if row.1 {
-        execution
-            .terminal_record()
-            .map_err(|_| ApiError::conflict("Prior stop receipt unavailable"))?
-    } else {
-        execution
-            .reconcile()
+    if let Some(pod_uid) = &proof.pod_uid {
+        let terminal = if row.1 {
+            execution
+                .terminal_record()
+                .map_err(|_| ApiError::conflict("Prior stop receipt unavailable"))?
+        } else {
+            execution
+                .reconcile()
+                .await
+                .map_err(|_| ApiError::conflict("Actual Kubernetes termination unavailable"))?
+                .ok_or_else(|| ApiError::conflict("Kubernetes execution remains active"))?
+        };
+        if &terminal.pod_uid != pod_uid || Some(terminal.exit_code) != input.exit_code {
+            return Err(ApiError::conflict("Termination observation mismatch"));
+        }
+    } else if input.exit_code.is_some()
+        || input.deployment_observation.is_some()
+        || !execution
+            .not_admitted()
+            .map_err(|_| ApiError::conflict("Non-admission custody invalid"))?
+        || !execution
+            .close_not_submitted()
             .await
-            .map_err(|_| ApiError::conflict("Actual Kubernetes termination unavailable"))?
-            .ok_or_else(|| ApiError::conflict("Kubernetes execution remains active"))?
-    };
-    if terminal.pod_uid != proof.pod_uid || Some(terminal.exit_code) != input.exit_code {
-        return Err(ApiError::conflict("Termination observation mismatch"));
+            .map_err(|_| ApiError::conflict("Non-admission readback unavailable"))?
+    {
+        return Err(ApiError::conflict(
+            "Original non-admission evidence required",
+        ));
     }
     let terminal_status = terminal_status_for_outcome(&input.outcome)?;
     if !acknowledge_with_observation(
@@ -66,7 +83,6 @@ pub(super) async fn complete(
         lease,
         &hash,
         scope,
-        &terminal,
         terminal_status,
         input.deployment_observation.as_ref(),
     )
@@ -95,10 +111,7 @@ async fn acknowledge(
     _terminal: &Terminal,
     outcome: &str,
 ) -> Result<bool, ApiError> {
-    acknowledge_with_observation(
-        db, runner, lease, token_hash, scope, _terminal, outcome, None,
-    )
-    .await
+    acknowledge_with_observation(db, runner, lease, token_hash, scope, outcome, None).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -108,7 +121,6 @@ async fn acknowledge_with_observation(
     lease: Uuid,
     token_hash: &str,
     scope: &Scope,
-    _terminal: &Terminal,
     outcome: &str,
     observation: Option<&crate::domain::helm_deploy::DeploymentObservation>,
 ) -> Result<bool, ApiError> {

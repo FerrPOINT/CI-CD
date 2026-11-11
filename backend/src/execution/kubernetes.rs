@@ -302,13 +302,15 @@ impl Config {
     }
 }
 pub fn digest_image(image: &str) -> bool {
-    image.rsplit_once("@sha256:").is_some_and(|(name, d)| {
-        !name.is_empty()
-            && !name.contains([' ', '\\', '\n'])
-            && d.len() == 64
-            && d.bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    })
+    image
+        .rsplit_once("@sha256:")
+        .is_some_and(|(name, d)| !name.is_empty() && !name.contains([' ', '\\', '\n']) && sha256(d))
+}
+fn sha256(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 fn dns(v: &str) -> bool {
     !v.is_empty()
@@ -469,8 +471,9 @@ impl Execution {
         private_dir(&directory)?;
         let _submission = submission_lock(&directory)?;
         ensure!(
-            !directory.join("not-submitted.json").try_exists()?,
-            "execution was closed before submission"
+            !directory.join("not-submitted.json").try_exists()?
+                && !directory.join("not-admitted.json").try_exists()?,
+            "execution cannot be submitted again"
         );
         write_once(
             &directory.join("intent.json"),
@@ -682,7 +685,7 @@ impl Execution {
         let _submission = self.submission_lock()?;
         ensure!(
             !self.not_submitted()?,
-            "execution was closed before submission"
+            "execution cannot be submitted again"
         );
         self.identities().await?;
         let issued = self.directory.join("issued.json");
@@ -701,13 +704,33 @@ impl Execution {
                 json!(admission.operation_id);
             manifest["metadata"]["annotations"]["forge.pdlc.acm-ai.ru/intent"] =
                 json!(self.intent.action_sha256);
-            let _ = self
+            let response = self
                 .request(
                     Method::POST,
                     &format!("/api/v1/namespaces/{}/pods", self.config.namespace),
                     Some(&manifest),
                 )
                 .await;
+            // Record an explicit rejection of this exact request before falling
+            // back to Pod observation for ambiguous responses.
+            if let Ok((StatusCode::FORBIDDEN, bytes)) = response
+                && let Ok(status) = serde_json::from_slice::<Value>(&bytes)
+                && status["apiVersion"] == "v1"
+                && status["kind"] == "Status"
+                && status["status"] == "Failure"
+                && status["code"] == 403
+                && status["reason"] == "Forbidden"
+                && status["details"]["kind"] == "pods"
+                && status["details"]["name"] == self.intent.pod_name
+            {
+                write_once(
+                    &self.directory.join("not-admitted.json"),
+                    &serde_json::to_vec(&self.not_admitted_receipt(&json!({
+                        "kind":"kubernetes-forbidden","httpStatus":403
+                    })))?,
+                )?;
+                anyhow::bail!("Kubernetes CREATE rejected this Pod (403 Forbidden)");
+            }
         }
         let value = self
             .get(&self.path())
@@ -762,7 +785,47 @@ impl Execution {
         json!({"schemaVersion":1,"kind":"forge/kubernetes-not-submitted/v1",
             "scope":self.intent.scope,"intentSha256":hash(&serde_json::to_vec(&self.intent).expect("serializable intent"))})
     }
+    fn not_admitted_receipt(&self, evidence: &Value) -> Value {
+        let mut receipt = self.unsubmitted_receipt();
+        receipt["kind"] = json!("forge/kubernetes-not-admitted/v1");
+        receipt["evidence"] = evidence.clone();
+        receipt
+    }
+    fn not_admitted_record(&self) -> anyhow::Result<Option<Value>> {
+        let path = self.directory.join("not-admitted.json");
+        if !path.try_exists()? {
+            return Ok(None);
+        }
+        self.require_no_pod_record()?;
+        let receipt: Value = read(&path)?;
+        let evidence = &receipt["evidence"];
+        let valid = match evidence["kind"].as_str() {
+            Some("kubernetes-forbidden") => {
+                *evidence == json!({"kind":"kubernetes-forbidden","httpStatus":403})
+            }
+            Some("operator-storage-history") => {
+                evidence.as_object().is_some_and(|v| v.len() == 2)
+                    && evidence["sha256"].as_str().is_some_and(sha256)
+            }
+            _ => false,
+        };
+        ensure!(
+            valid
+                && read::<bool>(&self.directory.join("issued.json"))?
+                && retained_intent(&self.directory)? == self.intent
+                && !self.directory.join("not-submitted.json").try_exists()?
+                && receipt == self.not_admitted_receipt(evidence),
+            "non-admission custody changed"
+        );
+        Ok(Some(receipt))
+    }
+    pub fn not_admitted(&self) -> anyhow::Result<bool> {
+        Ok(self.not_admitted_record()?.is_some())
+    }
     pub fn not_submitted(&self) -> anyhow::Result<bool> {
+        if self.not_admitted()? {
+            return Ok(true);
+        }
         let path = self.directory.join("not-submitted.json");
         match fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -777,8 +840,16 @@ impl Execution {
         Ok(true)
     }
     fn require_unissued(&self) -> anyhow::Result<()> {
+        match fs::symlink_metadata(self.directory.join("issued.json")) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.require_no_pod_record()
+            }
+            Err(error) => Err(error.into()),
+            Ok(_) => anyhow::bail!("submission may already have occurred"),
+        }
+    }
+    fn require_no_pod_record(&self) -> anyhow::Result<()> {
         for name in [
-            "issued.json",
             "created.json",
             "terminal.json",
             "ack.json",
@@ -793,12 +864,37 @@ impl Execution {
         }
         Ok(())
     }
-    /// An absent Pod alone is never sufficient: the original writeahead request
-    /// must also be absent under the same lock used before CREATE.
+    /// Close only an unissued request or confirmed non-admission under the
+    /// original submission lock. Pod absence alone never closes an issued request.
     pub async fn close_not_submitted(&self) -> anyhow::Result<bool> {
         let _submission = self.submission_lock()?;
         if self.directory.join("issued.json").try_exists()? {
-            return Ok(false);
+            let new_evidence = if self.not_admitted()? {
+                None
+            } else if let Some(evidence) = native_closure::observe_unadmitted(self)? {
+                Some(evidence)
+            } else {
+                return Ok(false);
+            };
+            self.identities().await?;
+            ensure!(
+                self.get(&self.path()).await?.is_none(),
+                "non-admitted intent has an actual Pod"
+            );
+            if let Some(evidence) = new_evidence {
+                self.require_no_pod_record()?;
+                ensure!(
+                    read::<bool>(&self.directory.join("issued.json"))?
+                        && retained_intent(&self.directory)? == self.intent
+                        && !self.directory.join("not-submitted.json").try_exists()?,
+                    "non-admission intent changed"
+                );
+                write_once(
+                    &self.directory.join("not-admitted.json"),
+                    &serde_json::to_vec(&self.not_admitted_receipt(&evidence))?,
+                )?;
+            }
+            return Ok(true);
         }
         ensure!(
             retained_intent(&self.directory)? == self.intent,
@@ -916,15 +1012,20 @@ impl Execution {
     pub async fn acknowledge(&self) -> anyhow::Result<()> {
         if self.not_submitted()? {
             let _submission = self.submission_lock()?;
-            self.require_unissued()?;
+            let receipt = if let Some(receipt) = self.not_admitted_record()? {
+                receipt
+            } else {
+                self.require_unissued()?;
+                self.unsubmitted_receipt()
+            };
             self.identities().await?;
             ensure!(
                 self.get(&self.path()).await?.is_none(),
-                "not-submitted intent gained a Pod"
+                "non-executed intent gained a Pod"
             );
             write_once(
                 &self.directory.join("not-submitted-ack.json"),
-                &serde_json::to_vec(&self.unsubmitted_receipt())?,
+                &serde_json::to_vec(&receipt)?,
             )?;
             return self.complete_cleanup();
         }
@@ -1270,9 +1371,13 @@ impl Execution {
         Ok(self.config.job_service_account.clone())
     }
     pub fn termination_proof(&self) -> anyhow::Result<Value> {
-        let terminal = self.terminal_record()?;
+        let pod_uid = if self.not_admitted()? {
+            None
+        } else {
+            Some(self.terminal_record()?.pod_uid)
+        };
         Ok(
-            json!({"clusterCaSha256":self.config.cluster_ca_sha256,"namespaceUid":self.config.namespace_uid,"workspaceClaimUid":self.config.workspace_claim_uid,"podUid":terminal.pod_uid}),
+            json!({"clusterCaSha256":self.config.cluster_ca_sha256,"namespaceUid":self.config.namespace_uid,"workspaceClaimUid":self.config.workspace_claim_uid,"podUid":pod_uid}),
         )
     }
     pub async fn recovery_masks(&self, names: &[String]) -> anyhow::Result<Vec<String>> {
@@ -2064,6 +2169,7 @@ mod lifecycle_tests {
     struct Api {
         pod: Option<Value>,
         admission: Option<Value>,
+        create_response: Option<(u16, Value)>,
         creates: usize,
         deletes: usize,
         log_reads: usize,
@@ -2089,7 +2195,19 @@ mod lifecycle_tests {
             let (status,value)=if path.ends_with("/configmaps/guard-admission") {api.admission.clone().map(|value|(200,value)).unwrap_or((404,json!({})))}
             else if path.ends_with("/persistentvolumeclaims/workspaces"){(200,json!({"metadata":{"uid":c.workspace_claim_uid},"status":{"phase":"Bound"}}))}
             else if path==format!("/api/v1/namespaces/{}",c.namespace){(200,json!({"metadata":{"uid":c.namespace_uid}}))}
-            else if method==Method::POST && path.ends_with("/pods") {api.creates+=1;let mut pod:Value=serde_json::from_slice(&bytes).unwrap();pod["metadata"]["uid"]=json!(Uuid::new_v4().to_string());pod["metadata"]["resourceVersion"]=json!("1");pod["status"]=json!({"phase":"Running","containerStatuses":[{"name":"execution","restartCount":0,"state":{"running":{"startedAt":"2026-10-22T00:00:00Z"}}}]});api.pod=Some(pod.clone());(201,pod)}
+            else if method==Method::POST && path.ends_with("/pods") {
+                api.creates += 1;
+                if let Some(response) = api.create_response.take() {
+                    response
+                } else {
+                    let mut pod: Value = serde_json::from_slice(&bytes).unwrap();
+                    pod["metadata"]["uid"] = json!(Uuid::new_v4().to_string());
+                    pod["metadata"]["resourceVersion"] = json!("1");
+                    pod["status"] = json!({"phase":"Running","containerStatuses":[{"name":"execution","restartCount":0,"state":{"running":{"startedAt":"2026-10-22T00:00:00Z"}}}]});
+                    api.pod = Some(pod.clone());
+                    (201, pod)
+                }
+            }
             else if method==Method::DELETE {api.deletes+=1;if let Some(pod)=&mut api.pod{pod["metadata"]["deletionTimestamp"]=json!("2026-10-22T00:01:00Z");pod["status"]=json!({"phase":"Failed","containerStatuses":[{"name":"execution","restartCount":0,"state":{"terminated":{"exitCode":143,"finishedAt":"2026-10-22T00:01:00Z","reason":"Terminated"}}}]});(200,pod.clone())}else{(404,json!({}))}}
             else if method==Method::PATCH {
                 api.patches += 1;
@@ -2476,6 +2594,87 @@ mod lifecycle_tests {
         task.abort();
         fs::remove_dir_all(&execution.directory).unwrap();
     }
+    fn forbidden_create(pod_name: &str) -> Value {
+        json!({
+            "apiVersion":"v1",
+            "kind":"Status",
+            "status":"Failure",
+            "code":403,
+            "reason":"Forbidden",
+            "details":{"kind":"pods","name":pod_name},
+            "message":"raw admission message must not enter custody"
+        })
+    }
+
+    #[tokio::test]
+    async fn explicit_kubernetes_rejection_closes_original_attempt_without_a_pod() {
+        let (execution, state, task) = fixture().await;
+        state.lock().unwrap().create_response =
+            Some((403, forbidden_create(&execution.intent.pod_name)));
+        let error = execution
+            .start_with_admission(|| Ok(grant(&execution.config)))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Kubernetes CREATE rejected this Pod (403 Forbidden)"
+        );
+        assert!(execution.close_not_submitted().await.unwrap());
+        assert!(execution.not_admitted().unwrap());
+        assert!(
+            execution
+                .start_with_admission(|| panic!("rejected attempt cannot submit again"))
+                .await
+                .is_err()
+        );
+        assert_eq!(state.lock().unwrap().creates, 1);
+        let proof = execution.termination_proof().unwrap();
+        assert_eq!(proof["namespaceUid"], execution.config.namespace_uid);
+        assert!(proof["podUid"].is_null());
+
+        state.lock().unwrap().pod = Some(json!({"metadata":{"uid":"foreign"}}));
+        assert!(execution.close_not_submitted().await.is_err());
+        assert!(execution.acknowledge().await.is_err());
+        state.lock().unwrap().pod = None;
+
+        execution.acknowledge().await.unwrap();
+        execution.finish_workspace_cleanup().unwrap();
+        let receipt: Value = read(&execution.directory.join("not-submitted-ack.json")).unwrap();
+        assert_eq!(
+            receipt,
+            execution.not_admitted_receipt(&json!({
+                "kind":"kubernetes-forbidden","httpStatus":403
+            }))
+        );
+        assert!(receipt.get("message").is_none());
+        assert!(execution.directory.join("issued.json").exists());
+        assert!(!execution.directory.join("terminal.json").exists());
+        assert!(!execution.directory.join("created.json").exists());
+        task.abort();
+        fs::remove_dir_all(&execution.directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn ambiguous_or_foreign_create_response_retains_original_custody() {
+        for (status, body) in [(503, json!({})), (403, forbidden_create("another-pod"))] {
+            let (execution, state, task) = fixture().await;
+            state.lock().unwrap().create_response = Some((status, body));
+            assert!(
+                execution
+                    .start_with_admission(|| Ok(grant(&execution.config)))
+                    .await
+                    .is_err()
+            );
+            assert!(!execution.close_not_submitted().await.unwrap());
+            assert!(execution.termination_proof().is_err());
+            assert!(!execution.directory.join("not-admitted.json").exists());
+            assert!(execution.directory.join("issued.json").exists());
+            assert_eq!(state.lock().unwrap().creates, 1);
+            task.abort();
+            fs::remove_dir_all(&execution.directory).unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn issued_or_foreign_actual_pod_cannot_be_closed_as_not_submitted() {
         let (execution, state, task) = fixture().await;
