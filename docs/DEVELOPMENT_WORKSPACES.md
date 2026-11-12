@@ -62,6 +62,18 @@ Forge source reader проверяет реальный instance/repository/name
 `cicd-cli member upsert --project ... --user ... --role developer` под owner
 credential. Сам вход с машинным PAT не выдаёт членства или иных прав.
 
+В central mode этот membership API принимает только уже проверенную машинную
+identity: её локальная строка создаётся по действующему central PAT через
+`GET /auth/principal`, имеет `role=service_account` и неизменный `central_sub`.
+Human owner с текущими правами сопровождающего проекта выдаёт или отзывает
+доступ прежними `member upsert` / `member remove`; машина не выдаёт доступ себе.
+Новый grant отключённой машине запрещён, отзыв её прежнего членства разрешён.
+Запись membership и audit коммитятся вместе и ограничены исходной authority
+запроса. API по-прежнему не меняет central human grants: ими владеет Auth.
+Auth directory содержит только людей и не служит регистрацией machine principal;
+её ответ не содержит поля роли. Значения токенов owner и агента не передаются
+друг другу и не входят в payload membership.
+
 Тот же PAT используется для `cicd-cli pr create` и `cicd-cli pr for-task`.
 Forge проверяет членство Developer и привязку PR к задаче. Отдельный
 `CICD_PR_API_TOKEN` в конфигурации этой роли переопределил бы identity.

@@ -10,6 +10,8 @@ use std::sync::{Arc, RwLock};
 
 const TOKEN: &str = "sdlc_pat_workspace_developer_fixture";
 const SOURCE_READER: &str = "sdlc_pat_workspace_source_reader_fixture";
+const PROJECT_OWNER: &str = "sdlc_pat_workspace_project_owner_fixture";
+const OTHER_HUMAN: &str = "sdlc_pat_workspace_other_human_fixture";
 const CHILD: &str = "FORGE_WORKSPACE_DEVELOPER_TEST";
 const SELECTOR: &str =
     "developer::configured_developer_is_fenced_by_assignment_and_keeps_humans_separate";
@@ -22,6 +24,8 @@ struct Owner {
     context: serde_json::Value,
     subject: Uuid,
     source_reader: Uuid,
+    project_owner: Uuid,
+    other_human: Uuid,
     revoked: bool,
 }
 
@@ -114,6 +118,8 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
     let owner = Arc::new(RwLock::new(Owner {
         subject,
         source_reader,
+        project_owner: Uuid::new_v4(),
+        other_human: Uuid::new_v4(),
         revoked: false,
         context: json!({
         "schema_version":1,"namespace":namespace,"tracker_instance_id":workspace.tracker_instance_id,
@@ -127,12 +133,26 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
         .route("/oidc/jwks",get(||async{Json(json!({"keys":[]}))}))
         .route("/auth/tokens/introspect",get(|State(owner):State<Arc<RwLock<Owner>>>, headers:HeaderMap|async move {
             let owner=owner.read().unwrap().clone();
-            let reader=headers["authorization"]==format!("Bearer {SOURCE_READER}");
-            if !reader {assert_eq!(headers["authorization"],format!("Bearer {TOKEN}"));}
+            let (subject,role,email,reader)=match headers["authorization"].to_str().unwrap() {
+                value if value==format!("Bearer {SOURCE_READER}")=>(owner.source_reader,"service_account","reader@fixture.invalid",true),
+                value if value==format!("Bearer {TOKEN}")=>(owner.subject,"service_account","developer@fixture.invalid",false),
+                value if value==format!("Bearer {PROJECT_OWNER}")=>(owner.project_owner,"admin","owner@fixture.invalid",false),
+                value if value==format!("Bearer {OTHER_HUMAN}")=>(owner.other_human,"user","human@fixture.invalid",false),
+                _=>panic!("unexpected fixture bearer"),
+            };
             if owner.revoked {return (StatusCode::UNAUTHORIZED,Json(json!({})));}
-            (StatusCode::OK,Json(json!({"sub":if reader{owner.source_reader}else{owner.subject},"email":"developer@fixture.invalid",
-                "subject_role":"service_account","scopes":if reader{vec!["ci-cd:read"]}else{vec!["ci-cd:read","ci-cd:write"]},
+            (StatusCode::OK,Json(json!({"sub":subject,"email":email,
+                "subject_role":role,"scopes":if reader{vec!["ci-cd:read"]}else{vec!["ci-cd:read","ci-cd:write"]},
                 "observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(300)})))
+        }))
+        .route("/auth/directory",get(|State(owner):State<Arc<RwLock<Owner>>>,headers:HeaderMap|async move {
+            assert_eq!(headers["authorization"],format!("Bearer {PROJECT_OWNER}"));
+            let owner=owner.read().unwrap();
+            // Auth's real directory contract contains humans only, with no role field.
+            Json(json!([
+                {"status":"active","id":owner.project_owner,"email":"owner@fixture.invalid","username":"owner","display_name":"Owner"},
+                {"status":"active","id":owner.other_human,"email":"human@fixture.invalid","username":"human","display_name":"Human"}
+            ]))
         }))
         .route("/api/v1/namespace-tasks/{id}",get(|State(owner):State<Arc<RwLock<Owner>>>, headers:HeaderMap, axum::extract::Path(id):axum::extract::Path<Uuid>, uri:axum::http::Uri|async move {
             assert_eq!(headers["authorization"],"Bearer workspace-reader-fixture");
@@ -276,14 +296,44 @@ async fn child(data: serde_json::Value) {
             .await
             .unwrap();
     assert_eq!(principal["sub"], actor.to_string());
-    sqlx::query(
-        "INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'developer')",
-    )
-    .bind(project)
-    .bind(actor)
-    .execute(&pool)
-    .await
-    .unwrap();
+    let memberships = format!("/api/v1/projects/{project}/memberships");
+    let grant = json!({"user_id":actor,"role":"developer"});
+    assert_eq!(http(&app,"POST",&memberships,Some(TOKEN),grant.clone()).await.0,StatusCode::FORBIDDEN);
+    let (status, users) = http(&app,"GET","/api/v1/users",Some(PROJECT_OWNER),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{users}");
+    assert!(users.as_array().unwrap().iter().all(|user|user["id"]!=actor.to_string()));
+    let (status, human) = http(&app,"GET","/api/v1/auth/principal",Some(OTHER_HUMAN),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{human}");
+    assert_eq!(http(&app,"POST",&memberships,Some(PROJECT_OWNER),json!({"user_id":human["sub"],"role":"developer"})).await.0,StatusCode::FORBIDDEN);
+    assert_eq!(http(&app,"DELETE",&format!("{memberships}/{}",human["sub"].as_str().unwrap()),Some(PROJECT_OWNER),json!(null)).await.0,StatusCode::FORBIDDEN);
+    sqlx::query("UPDATE users SET enabled=false WHERE id=$1")
+        .bind(actor).execute(&pool).await.unwrap();
+    assert_eq!(http(&app,"POST",&memberships,Some(PROJECT_OWNER),grant.clone()).await.0,StatusCode::FORBIDDEN);
+    sqlx::query("UPDATE users SET enabled=true WHERE id=$1")
+        .bind(actor).execute(&pool).await.unwrap();
+    // Membership and its audit must either both commit or both roll back.
+    sqlx::raw_sql("CREATE FUNCTION reject_membership_fixture_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='project_membership.upserted' THEN RAISE EXCEPTION 'fixture audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_membership_fixture_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_membership_fixture_audit();")
+        .execute(&pool).await.unwrap();
+    assert_eq!(http(&app,"POST",&memberships,Some(PROJECT_OWNER),grant.clone()).await.0,StatusCode::INTERNAL_SERVER_ERROR);
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM project_memberships WHERE project_id=$1 AND user_id=$2")
+        .bind(project).bind(actor).fetch_one(&pool).await.unwrap();
+    assert_eq!(count,0);
+    sqlx::raw_sql("DROP TRIGGER reject_membership_fixture_audit ON audit_log; DROP FUNCTION reject_membership_fixture_audit();")
+        .execute(&pool).await.unwrap();
+    let (status, membership) = http(&app,"POST",&memberships,Some(PROJECT_OWNER),grant).await;
+    assert_eq!(status,StatusCode::OK,"{membership}");
+    assert_eq!(membership["user_id"],actor.to_string());
+    let (status, members) = http(&app,"GET",&memberships,Some(PROJECT_OWNER),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{members}");
+    assert!(members.as_array().unwrap().iter().any(|member| member["user_id"]==actor.to_string() && member["role"]=="developer"));
+    let (status, owner) = http(&app,"GET","/api/v1/auth/principal",Some(PROJECT_OWNER),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{owner}");
+    let audit_actor: String = sqlx::query_scalar("SELECT actor FROM audit_log WHERE resource_id=$1 AND action='project_membership.upserted'")
+        .bind(project).fetch_one(&pool).await.unwrap();
+    assert_eq!(audit_actor,format!("{}:{actor}:developer",owner["sub"].as_str().unwrap()));
+    let machine_role: String = sqlx::query_scalar("SELECT role FROM users WHERE id=$1")
+        .bind(actor).fetch_one(&pool).await.unwrap();
+    assert_eq!(machine_role,"service_account");
     let (status, card) = http(&app, "GET", &path, Some(TOKEN), json!(null)).await;
     assert_eq!(status, StatusCode::OK, "{card}");
     let mut observation = reqwest::Url::parse(&format!(
@@ -615,12 +665,9 @@ async fn child(data: serde_json::Value) {
         .unwrap(),
         1
     );
-    sqlx::query("DELETE FROM project_memberships WHERE project_id=$1 AND user_id=$2")
-        .bind(project)
-        .bind(actor)
-        .execute(&pool)
-        .await
-        .unwrap();
+    assert_eq!(http(&app,"DELETE",&format!("{memberships}/{actor}"),Some(TOKEN),json!(null)).await.0,StatusCode::FORBIDDEN);
+    let (status, removed) = http(&app,"DELETE",&format!("{memberships}/{actor}"),Some(PROJECT_OWNER),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{removed}");
     assert_eq!(
         http(&app, "GET", &path, Some(TOKEN), json!(null)).await.0,
         StatusCode::FORBIDDEN

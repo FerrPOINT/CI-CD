@@ -4,7 +4,7 @@ use super::dto::{CreateProject, Project, ProjectMembership, ProjectMembershipInp
 use super::pipelines_routes::valid_project_role;
 use super::{ApiError, ApiResult, AppState, PageParams, list_projects_for_claims, pool};
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use cicd_domain::repository_url::validate_repository_url;
 use serde::{Deserialize, Deserializer};
 use sqlx::PgPool;
@@ -96,11 +96,9 @@ pub(crate) async fn list_project_memberships(
 pub(crate) async fn upsert_project_membership(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
+    identity: Option<Extension<super::authz_mw::VerifiedRequestIdentity>>,
     Json(input): Json<ProjectMembershipInput>,
 ) -> ApiResult<ProjectMembership> {
-    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
-        return Err(ApiError::forbidden());
-    }
     let role = input.role.trim();
     if !valid_project_role(role) {
         return Err(ApiError::bad_request(
@@ -110,16 +108,39 @@ pub(crate) async fn upsert_project_membership(
     let db = pool(&state)?;
     ensure_project_exists(db, project_id).await?;
     ensure_user_exists(db, input.user_id).await?;
-    let membership = upsert_project_membership_record(db, project_id, input.user_id, role).await?;
-    crate::platform::audit_user(
-        db,
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    let owner = central_machine_membership_owner(
+        &mut tx,
+        identity.as_ref().map(|v| &v.0),
+        input.user_id,
+        true,
+    )
+    .await?;
+    let membership =
+        upsert_project_membership_record(&mut *tx, project_id, input.user_id, role).await?;
+    let audit_actor = match owner {
+        Some((actor, _)) => format!("{actor}:{}:{}", membership.user_id, membership.role),
+        None => format!("{}:{}", membership.user_id, membership.role),
+    };
+    let identity_refs: Vec<_> = owner
+        .map(|v| v.0)
+        .into_iter()
+        .chain([membership.user_id])
+        .map(|id| serde_json::json!({"kind":"local_user_id","alias":id}))
+        .collect();
+    crate::platform::audit_with_refs(
+        &mut *tx,
         "project_membership.upserted",
         "project",
         project_id,
-        Some(&format!("{}:{}", membership.user_id, membership.role)),
-        membership.user_id,
+        Some(&audit_actor),
+        Some(serde_json::json!(identity_refs)),
     )
     .await?;
+    if let Some((_, clock)) = owner {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
     Ok(Json(membership))
 }
 
@@ -127,18 +148,24 @@ pub(crate) async fn upsert_project_membership(
 pub(crate) async fn delete_project_membership(
     State(state): State<Arc<AppState>>,
     Path((project_id, user_id)): Path<(Uuid, Uuid)>,
+    identity: Option<Extension<super::authz_mw::VerifiedRequestIdentity>>,
 ) -> ApiResult<serde_json::Value> {
-    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
-        return Err(ApiError::forbidden());
-    }
     let db = pool(&state)?;
     ensure_project_exists(db, project_id).await?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    let owner = central_machine_membership_owner(
+        &mut tx,
+        identity.as_ref().map(|v| &v.0),
+        user_id,
+        false,
+    )
+    .await?;
     let Some(role) = sqlx::query_scalar::<_, String>(
         "SELECT role FROM project_memberships WHERE project_id = $1 AND user_id = $2",
     )
     .bind(project_id)
     .bind(user_id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(ApiError::internal)?
     else {
@@ -149,7 +176,7 @@ pub(crate) async fn delete_project_membership(
             "SELECT count(*) FROM project_memberships WHERE project_id = $1 AND role = 'maintainer'",
         )
         .bind(project_id)
-        .fetch_one(db)
+        .fetch_one(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
         if maintainer_count <= 1 {
@@ -161,21 +188,82 @@ pub(crate) async fn delete_project_membership(
     sqlx::query("DELETE FROM project_memberships WHERE project_id = $1 AND user_id = $2")
         .bind(project_id)
         .bind(user_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
-    crate::platform::audit_user(
-        db,
+    let audit_actor = match owner {
+        Some((actor, _)) => format!("{actor}:{user_id}"),
+        None => user_id.to_string(),
+    };
+    let identity_refs: Vec<_> = owner
+        .map(|v| v.0)
+        .into_iter()
+        .chain([user_id])
+        .map(|id| serde_json::json!({"kind":"local_user_id","alias":id}))
+        .collect();
+    crate::platform::audit_with_refs(
+        &mut *tx,
         "project_membership.deleted",
         "project",
         project_id,
-        Some(&user_id.to_string()),
-        user_id,
+        Some(&audit_actor),
+        Some(serde_json::json!(identity_refs)),
     )
     .await?;
+    if let Some((_, clock)) = owner {
+        clock.bind_commit_clock(&mut tx).await?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
     Ok(Json(
         serde_json::json!({"deleted": user_id, "project_id": project_id}),
     ))
+}
+
+/// Human project authority may enroll an already authenticated central machine.
+/// Central human grants remain owned by Auth, not this local membership API.
+async fn central_machine_membership_owner(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    identity: Option<&super::authz_mw::VerifiedRequestIdentity>,
+    target: Uuid,
+    grant: bool,
+) -> Result<Option<(Uuid, crate::git_host::GitDeadline)>, ApiError> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_none() {
+        return Ok(None);
+    }
+    let identity = identity.ok_or_else(ApiError::forbidden)?;
+    let central = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
+    if identity.product_personal.is_some()
+        || identity.claims.service_account_name.is_some()
+        || identity.claims.role == "service_account"
+        || central.subject_role.as_deref() == Some("service_account")
+        || identity.claims.sub == target
+    {
+        return Err(ApiError::forbidden());
+    }
+    identity.require_scope("ci-cd:write")?;
+    let (kind, enabled, subject): (String, bool, Option<String>) =
+        sqlx::query_as("SELECT role,enabled,central_sub FROM users WHERE id=$1 FOR SHARE")
+            .bind(target)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(|| ApiError::not_found_named("user"))?;
+    let subject = subject.as_deref().and_then(|value| {
+        Uuid::parse_str(value)
+            .ok()
+            .filter(|id| !id.is_nil() && id.to_string() == value)
+    });
+    if kind != "service_account"
+        || (grant && !enabled)
+        || subject.is_none()
+        || subject.is_some_and(|id| id.to_string() == central.context.user_id)
+    {
+        return Err(ApiError::forbidden());
+    }
+    let clock = crate::git_host::GitDeadline::native(
+        identity.original_deadline()?.ok_or_else(ApiError::forbidden)?,
+    )?;
+    Ok(Some((identity.claims.sub, clock)))
 }
 
 async fn ensure_project_exists(db: &PgPool, project_id: Uuid) -> Result<(), ApiError> {
@@ -204,12 +292,15 @@ async fn ensure_user_exists(db: &PgPool, user_id: Uuid) -> Result<(), ApiError> 
     }
 }
 
-async fn upsert_project_membership_record(
-    db: &PgPool,
+async fn upsert_project_membership_record<'e, E>(
+    db: E,
     project_id: Uuid,
     user_id: Uuid,
     role: &str,
-) -> Result<ProjectMembership, ApiError> {
+) -> Result<ProjectMembership, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     sqlx::query_as::<_, ProjectMembership>(
         "WITH upsert AS ( \
              INSERT INTO project_memberships (project_id, user_id, role) \

@@ -13,6 +13,10 @@ expiry и собственные runner leases сохраняют прежние
 read/session/prepare/check adapter; регистрация, recovery, lifecycle и выпуск
 им не разрешаются. Карточка сессии аддитивно возвращает optional
 `machine_assignment` без credentials. [Назначение, Git и границы роли](DEVELOPMENT_WORKSPACES.md#developer-configured-cli-v1).
+Существующие POST/DELETE `/projects/{project_id}/memberships` в central mode
+разрешают human owner с текущими правами проекта выдавать и отзывать членство
+ранее проверенной central machine identity. Human grants остаются в Auth;
+self-enrollment машиной запрещён. Membership и audit коммитятся атомарно.
 Ответ карточки содержит вычисляемый `busy: boolean`: сессия, операция либо
 незавершённая проверка/сборка/delivery удерживают окружение. Новое поле не
 добавляет сохранённого состояния; разрешения действий возвращаются отдельно.

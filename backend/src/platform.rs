@@ -2835,14 +2835,17 @@ pub(crate) async fn audit_principal(
     .await
 }
 
-async fn audit_with_refs(
-    db: &PgPool,
+pub(crate) async fn audit_with_refs<'e, E>(
+    db: E,
     action: &str,
     resource_type: &str,
     resource_id: Uuid,
     actor: Option<&str>,
     refs: Option<serde_json::Value>,
-) -> Result<(), ApiError> {
+) -> Result<(), ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     sqlx::query(
         "INSERT INTO audit_log (action, resource_type, resource_id, actor,identity_refs) VALUES ($1, $2, $3, $4,$5)",
     )
