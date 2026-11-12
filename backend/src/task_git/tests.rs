@@ -88,7 +88,7 @@ pub(super) fn fixture() -> (GitContext, Value, AuthContext, SdlcWorkspaceConfig)
             "owner_subject":"fixture-owner","cycle":0,"waiting_reason":null,"routing":routing},
         "assignment":assignment,"lease":{"lease_id":context.intent.tracker_lease_id,"version":2,
             "holder_subject":"fixture-scheduler","claimed_at":now,"heartbeat_at":now,
-            "expires_at":now+chrono::Duration::seconds(30)},
+            "expires_at":null},
         "binding":{"run_id":context.run_id,"chat_id":context.chat_id,"machine_subject":context.machine_subject}}});
     let readback = json!({"state":"bound","binding":context.source,"current":current});
     let subject = Uuid::new_v4();
@@ -116,7 +116,16 @@ pub(super) fn fixture() -> (GitContext, Value, AuthContext, SdlcWorkspaceConfig)
 fn confirmed_source_current_developer_and_exact_child_are_required() {
     let (c, r, auth, config) = fixture();
     c.validate().unwrap();
-    assert_eq!(c.current(&r).unwrap(), std::time::Duration::from_secs(30));
+    c.current(&r).unwrap();
+    assert!(identity(&auth, &config, &c).is_ok());
+}
+
+#[test]
+fn historical_assignment_deadline_does_not_expire_current_ownership() {
+    let (c, mut r, auth, config) = fixture();
+    r["current"]["receipt"]["lease"]["expires_at"] =
+        json!(Utc::now() - chrono::Duration::seconds(1));
+    c.current(&r).unwrap();
     assert!(identity(&auth, &config, &c).is_ok());
 }
 
@@ -180,7 +189,10 @@ fn context_cannot_change_source_ref_cas_fence_run_or_role_under_same_child() {
 
 #[test]
 fn absent_held_stale_foreign_or_uncertain_tracker_readback_denies() {
-    let (c, r, _, _) = fixture();
+    let (c, mut r, _, _) = fixture();
+    r["current"]["receipt"]["lease"]["expires_at"] =
+        json!(Utc::now() - chrono::Duration::seconds(1));
+    c.current(&r).unwrap();
     for (path, value) in [
         ("/state", json!("blocked")),
         ("/binding", Value::Null),
@@ -190,11 +202,13 @@ fn absent_held_stale_foreign_or_uncertain_tracker_readback_denies() {
             json!("awaiting_owner"),
         ),
         ("/current/receipt/task/stage", json!("Draft")),
+        ("/current/receipt/task/owner_subject", json!("foreign-owner")),
+        ("/current/receipt/assignment/agent_id", json!(Uuid::new_v4())),
         ("/current/receipt/assignment/fencing_token", json!(4)),
         ("/current/receipt/lease/version", json!(1)),
         (
-            "/current/receipt/lease/expires_at",
-            json!(Utc::now() - chrono::Duration::seconds(1)),
+            "/current/receipt/lease/holder_subject",
+            json!("foreign-scheduler"),
         ),
         ("/current/receipt/binding/run_id", json!(Uuid::new_v4())),
         ("/current/receipt/binding/machine_subject", json!("other")),
