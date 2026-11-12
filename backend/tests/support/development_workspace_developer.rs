@@ -480,7 +480,10 @@ async fn child(data: serde_json::Value) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{pull}");
-    assert_eq!(pull["primary_tracker_instance_id"], data["tracker_instance_id"]);
+    assert_eq!(
+        pull["primary_tracker_instance_id"],
+        data["tracker_instance_id"]
+    );
     assert_eq!(pull["primary_task_id"], task.to_string());
     assert_eq!(pull["repository_id"], data["repository_id"]);
     let (status, readback) = http(

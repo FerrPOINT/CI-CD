@@ -343,7 +343,7 @@ fn validate_developer_checks(
     let invalid = || ApiError::conflict("workspace_required_developer_checks_invalid");
     let required = profile["requiredDeveloperChecks"]
         .as_array()
-        .filter(|keys| !keys.is_empty() && keys.len() <= 32)
+        .filter(|keys| !keys.is_empty())
         .ok_or_else(invalid)?;
     let checks = profile["checks"].as_array().ok_or_else(invalid)?;
     if published["profileHash"] != profile_hash {
@@ -454,17 +454,46 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn all_published_checks_can_be_required() {
+        let mut checks = Vec::new();
+        let mut recipes = serde_json::Map::new();
+        for index in 0..64 {
+            let key = format!("check-{index}");
+            let commands = json!([format!("check {index}")]);
+            checks.push(
+                json!({"key":key,"executor":"forge","requiresRuntime":false,"commands":commands}),
+            );
+            recipes.insert(
+                key,
+                json!({"version":1,"jobs":{"test":{
+                    "image":format!("tools@sha256:{}", "a".repeat(64)),"commands":commands
+                }}}),
+            );
+        }
+        let profile =
+            json!({"requiredDeveloperChecks":recipes.keys().collect::<Vec<_>>(),"checks":checks});
+        let published = json!({"profileHash":"profile","recipes":recipes});
+        assert!(validate_developer_checks(&profile, "profile", &published).is_ok());
+    }
+
+    #[test]
     fn developer_policy_requires_distinct_published_executable_checks() {
         let mut profile = json!({"requiredDeveloperChecks":["unit"],"checks":[
             {"key":"unit","executor":"forge","requiresRuntime":false,"commands":["check unit"]},
             {"key":"build","executor":"forge-build"}
         ]});
-        let job = json!({"image":format!("tools@sha256:{}", "a".repeat(64)),"commands":["check unit"]});
+        let job =
+            json!({"image":format!("tools@sha256:{}", "a".repeat(64)),"commands":["check unit"]});
         let mut published = json!({"profileHash":"profile","recipes":{
             "unit":{"version":1,"jobs":{"unit":job}}
         }});
         assert!(validate_developer_checks(&profile, "profile", &published).is_ok());
-        for keys in [json!([]), json!(["unit", "unit"]), json!(["build"]), json!(["missing"])] {
+        for keys in [
+            json!([]),
+            json!(["unit", "unit"]),
+            json!(["build"]),
+            json!(["missing"]),
+        ] {
             profile["requiredDeveloperChecks"] = keys;
             assert!(validate_developer_checks(&profile, "profile", &published).is_err());
         }
