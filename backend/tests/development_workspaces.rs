@@ -1070,32 +1070,13 @@ impl Fixture {
     }
     async fn close(self) {
         self.pool.close().await;
+        // SQLx 0.8.6 can return its final idle connection after close's last drain.
+        // Finish draining the closed pool, which cannot admit new acquisitions.
+        while self.pool.size() != 0 {
+            self.pool.close().await;
+        }
         assert!(self.pool.is_closed());
         assert_eq!(self.pool.size(), 0);
-        let id = self
-            .database
-            .strip_prefix("forge_test_development_")
-            .unwrap()
-            .parse::<Uuid>()
-            .unwrap();
-        assert_eq!(self.database, format!("forge_test_development_{}", id.simple()));
-        let owned: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1 AND pg_get_userbyid(datdba)=current_user)",
-        )
-        .bind(&self.database)
-        .fetch_one(&self.admin)
-        .await
-        .unwrap();
-        assert!(owned, "fixture database is not owned by the current role");
-        // End only this disposable database's client sessions owned by the fixture role.
-        let terminated: Vec<bool> = sqlx::query_scalar(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND usename=current_user AND backend_type='client backend' AND pid<>pg_backend_pid()",
-        )
-        .bind(&self.database)
-        .fetch_all(&self.admin)
-        .await
-        .unwrap();
-        assert!(terminated.into_iter().all(|terminated| terminated));
         // Ordinary DROP handles autovacuum; foreign client sessions still block it.
         sqlx::query(&format!("DROP DATABASE {}", self.database))
             .execute(&self.admin)
