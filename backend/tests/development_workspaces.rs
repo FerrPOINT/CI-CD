@@ -986,6 +986,8 @@ impl Fixture {
             .unwrap();
         let pool = PgPoolOptions::new()
             .max_connections(5)
+            // Supervisor cancellation must not drop a connection during checkout ping.
+            .test_before_acquire(false)
             .connect_with(options.database(&database))
             .await
             .unwrap();
