@@ -160,12 +160,46 @@ async fn sync_authenticates_project_tokens_without_opening_catalog_access() {
         request(&router, "PUT", &path, &tokens[0].1, save).await,
         StatusCode::OK
     );
+    let metadata = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/catalog/repositories/{repository}"))
+                .header("authorization", format!("Bearer {}", tokens[0].1))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(metadata.status(), StatusCode::OK);
+    assert_eq!(response_json(metadata).await["id"], repository.to_string());
+    assert_eq!(
+        request(
+            &router,
+            "PUT",
+            &format!("/api/v1/catalog/repositories/{repository}/group"),
+            &tokens[0].1,
+            serde_json::Value::Null
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &router,
+            "GET",
+            "/api/v1/catalog/repositories",
+            &tokens[0].1,
+            serde_json::Value::Null
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(
         request(
             &router,
             "GET",
             &format!("/api/v1/catalog/repositories/{repository}"),
-            &tokens[0].1,
+            &tokens[2].1,
             serde_json::Value::Null
         )
         .await,

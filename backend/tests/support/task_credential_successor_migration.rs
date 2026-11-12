@@ -245,6 +245,15 @@ async fn populated_0094_to_0095_preserves_original_custody_business_and_migratio
     let result =
         tokio::spawn(async move {
             let full = cicd::migrations().await.unwrap();
+            let current_version = full
+                .iter()
+                .map(|migration| migration.version)
+                .max()
+                .unwrap();
+            let after_0095 = full
+                .iter()
+                .filter(|migration| migration.version > 95)
+                .count();
             let prior = migration_catalog_subset(&full, 94);
             let successor = migration_catalog_subset(&full, 95);
             assert_eq!(
@@ -384,10 +393,45 @@ async fn populated_0094_to_0095_preserves_original_custody_business_and_migratio
                 .cloned()
                 .collect();
             assert_eq!(json!(retained), upgraded, "all 0095 ledger fields retained");
-            assert_eq!(current.as_array().unwrap().last().unwrap()["version"], 104);
+            assert_eq!(
+                current.as_array().unwrap().last().unwrap()["version"],
+                current_version
+            );
             assert_eq!(
                 current.as_array().unwrap().len(),
-                upgraded.as_array().unwrap().len() + 9
+                upgraded.as_array().unwrap().len() + after_0095
+            );
+            let current_business: Value = sqlx::query_scalar(BUSINESS)
+                .fetch_one(&checked)
+                .await
+                .unwrap();
+            let mut retained_business = current_business.clone();
+            // 0109 adds an identity column; all pre-existing fields remain exact.
+            let delivery_orders: Vec<_> = retained_business["pipelines"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .map(|pipeline| {
+                    pipeline
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("delivery_order")
+                        .unwrap()
+                        .as_i64()
+                        .unwrap()
+                })
+                .collect();
+            assert!(delivery_orders.iter().all(|value| *value > 0));
+            assert_eq!(
+                delivery_orders
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+                delivery_orders.len()
+            );
+            assert_eq!(
+                retained_business, before,
+                "all pre-0109 business fields retained"
             );
             for _ in 0..2 {
                 full.run(&checked).await.unwrap();
@@ -397,7 +441,7 @@ async fn populated_0094_to_0095_preserves_original_custody_business_and_migratio
                         .fetch_one(&checked)
                         .await
                         .unwrap(),
-                    before
+                    current_business
                 );
                 assert_eq!(
                     sqlx::query_scalar::<_, Value>(GUARDS)

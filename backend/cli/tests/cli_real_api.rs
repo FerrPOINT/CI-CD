@@ -12,6 +12,9 @@ use serde_json::json;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use uuid::Uuid;
 
+#[path = "../../tests/support/pull_fixture.rs"]
+mod pull_fixture;
+
 struct ApiServer {
     base_url: String,
     handle: tokio::task::JoinHandle<()>,
@@ -350,6 +353,8 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
             "feature",
         ],
     );
+    let (primary_task, task_reader, _task_token) =
+        pull_fixture::task_reader(&pool, &project_name).await;
     let pr = cli_json_with_token(
         &server.base_url,
         &fixture_access,
@@ -358,6 +363,10 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
             "create",
             "--repo",
             &project_name,
+            "--tracker-instance-id",
+            primary_task["tracker_instance_id"].as_str().unwrap(),
+            "--task-id",
+            primary_task["task_id"].as_str().unwrap(),
             "--title",
             "CLI change",
             "--source-branch",
@@ -368,6 +377,11 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
             "fixture",
         ],
     );
+    assert_eq!(
+        pr["primary_tracker_instance_id"],
+        primary_task["tracker_instance_id"]
+    );
+    assert_eq!(pr["primary_task_id"], primary_task["task_id"]);
     let number = pr["number"].as_u64().unwrap().to_string();
     cli_json_with_token(
         &server.base_url,
@@ -746,16 +760,32 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
         denial["error"]["message"],
         "delivery_configuration_history_protected"
     );
+    let managed: bool = sqlx::query_scalar(
+        "SELECT group_id IS NOT NULL FROM repository_catalog WHERE storage_name=$1",
+    )
+    .bind(&project_name)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(managed, "Task-bound PR fixture must retain its namespace");
     let refused = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
         .env("CICD_API_URL", &server.base_url)
         .env("CICD_API_TOKEN", &fixture_access)
-        .args(["repository", "delete", "--name", &project_name])
+        .args([
+            "--error-format",
+            "json",
+            "repository",
+            "delete",
+            "--name",
+            &project_name,
+        ])
         .output()
         .unwrap();
     assert!(!refused.status.success());
-    let denial = String::from_utf8_lossy(&refused.stderr);
-    assert!(denial.contains("409") && denial.contains("repository_history_must_be_preserved"));
-    assert!(!denial.contains(&fixture_access));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!stderr.contains(&fixture_access));
+    eprintln!("repository delete denial: {stderr}");
+    let denial: serde_json::Value = serde_json::from_slice(&refused.stderr).unwrap();
     let retained_pr = cli_json_with_token(
         &server.base_url,
         &fixture_access,
@@ -778,6 +808,15 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
             .join(format!("{project_name}.git"))
             .is_dir()
     );
+    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(denial["error"]["status"], 409);
+    assert_eq!(denial["error"]["code"], "conflict");
+    assert_eq!(
+        denial["error"]["message"],
+        "managed_repository_requires_namespace_lifecycle"
+    );
+    task_reader.abort();
+    let _ = task_reader.await;
     server.shutdown().await;
     database.cleanup().await;
 }

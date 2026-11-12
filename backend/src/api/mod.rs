@@ -200,6 +200,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::platform::list_environments, crate::platform::create_environment,
         crate::platform::update_environment, crate::platform::delete_environment,
         crate::platform::list_deployments, crate::platform::create_deployment,
+        crate::platform::get_deployment, crate::platform::get_deployment_request, crate::platform::cancel_deployment,
         crate::platform::list_deployment_approvals,
         crate::platform::record_deployment_approval,
         crate::platform::rollback_deployment,

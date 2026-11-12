@@ -120,7 +120,7 @@ pub(crate) async fn admit(
     let verified = identity.central.ok_or_else(ApiError::forbidden)?;
     let issuer = verified.issuer.clone();
     let proof = machine::confirm_identity(
-        pool,
+        &mut *pool.acquire().await.map_err(ApiError::internal)?,
         &workspace,
         identity.claims.sub,
         verified,
@@ -219,7 +219,7 @@ async fn check_callback(
         return Err(ApiError::forbidden());
     }
     let proof = machine::confirm_identity(
-        pool,
+        &mut *pool.acquire().await.map_err(ApiError::internal)?,
         &workspace,
         ticket.actor,
         verified,

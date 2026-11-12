@@ -8,7 +8,9 @@ import json
 from pathlib import Path
 
 
-def project(backend: Path) -> dict[str, bytes]:
+def project(backend: Path, *, input_format: str = "checkout") -> dict[str, bytes]:
+    if input_format not in {"checkout", "git-blob"}:
+        raise ValueError("unsupported migration input format")
     canonical = backend / "migrations"
     history = backend / "migration-lineages"
     manifest = json.loads((history / "manifest.json").read_text(encoding="utf-8"))
@@ -22,7 +24,15 @@ def project(backend: Path) -> dict[str, bytes]:
                 raise ValueError("invalid historical migration path")
             payload = (directory / name).read_bytes()
             if hashlib.sha384(payload).hexdigest() != entry["sha384"]:
-                raise ValueError(f"released migration checksum changed: {name}")
+                # Git text normalization can store LF while the released
+                # checkout history is CRLF. Reconstruct only that declared
+                # representation, and still require its exact released hash.
+                if input_format == "git-blob" and b"\r" not in payload:
+                    restored = payload.replace(b"\n", b"\r\n")
+                    if hashlib.sha384(restored).hexdigest() == entry["sha384"]:
+                        payload = restored
+                if hashlib.sha384(payload).hexdigest() != entry["sha384"]:
+                    raise ValueError(f"released migration checksum changed: {name}")
             version = int(name.split("_", 1)[0])
             if lineage == "main" and version >= 96:
                 name = f"{version + 4:04d}_" + name.split("_", 1)[1]
@@ -52,17 +62,26 @@ def project(backend: Path) -> dict[str, bytes]:
     return result
 
 
-def reviewer_v1(backend: Path) -> dict[str, bytes]:
+def reviewer_v1(backend: Path, *, input_format: str = "checkout") -> dict[str, bytes]:
     """Retain the installed Reviewer 0116; shared forward history starts at 0118."""
-    project(backend)  # Verify the released histories and canonical inventory first.
+    projected = project(backend, input_format=input_format)
     result = {p.name: p.read_bytes() for p in (backend / "migrations").glob("*.sql")}
     manifest = json.loads((backend / "migration-lineages/manifest.json").read_text(encoding="utf-8"))
+    for entry in manifest["main"]:
+        name = entry["file"]
+        version = int(name.split("_", 1)[0])
+        projected_name = f"{version + 4:04d}_" + name.split("_", 1)[1] if version >= 96 else name
+        result[name] = projected[projected_name]
     retained = {}
     for entry in manifest["reviewerV1"]:
         source, target = entry["canonicalFile"], entry["file"]
         if any(Path(name).name != name or not name.endswith(".sql") for name in (source, target)):
             raise ValueError("invalid Reviewer migration path")
         payload = result.pop(source)
+        if input_format == "git-blob" and b"\r" not in payload:
+            restored = payload.replace(b"\n", b"\r\n")
+            if hashlib.sha384(restored).hexdigest() == entry["sha384"]:
+                payload = restored
         if hashlib.sha384(payload).hexdigest() != entry["sha384"]:
             raise ValueError(f"released Reviewer migration checksum changed: {target}")
         retained[target] = payload
@@ -77,9 +96,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", type=Path, default=Path(__file__).resolve().parents[1] / "backend")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--input-format", choices=("checkout", "git-blob"), default="checkout")
     parser.add_argument("--lineage", choices=("kubernetes-v1", "reviewer-v1"), default="kubernetes-v1")
     args = parser.parse_args()
-    projected = reviewer_v1(args.backend) if args.lineage == "reviewer-v1" else project(args.backend)
+    publisher = reviewer_v1 if args.lineage == "reviewer-v1" else project
+    projected = publisher(args.backend, input_format=args.input_format)
     args.output.mkdir(parents=True, exist_ok=True)
     existing = {path.name for path in args.output.iterdir()}
     if existing - projected.keys():
