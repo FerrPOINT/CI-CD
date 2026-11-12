@@ -462,7 +462,8 @@ async fn reconcile_workspaces(
             continue;
         }
         if kubernetes_mode() {
-            match recover_kubernetes(client, base, credential, root, &record, keep_workspace).await {
+            match recover_kubernetes(client, base, credential, root, &record, keep_workspace).await
+            {
                 Ok(()) => continue,
                 Err(error) => eprintln!("retained attempt {}: {error:#}", record.attempt_id),
             }
@@ -962,19 +963,17 @@ async fn complete_executed_attempt(
     // Never repeat the POST: a lost reply may follow a committed completion.
     let completion = match completion {
         Ok(()) => Ok(()),
-        Err(completion_error) => {
-            read_terminal_receipt(
-                client,
-                base,
-                credential,
-                offer.lease_id,
-                offer.attempt.id,
-                offer.fencing_token,
-                outcome,
-            )
-            .await
-            .with_context(|| format!("original completion failed: {completion_error:#}"))
-        }
+        Err(completion_error) => read_terminal_receipt(
+            client,
+            base,
+            credential,
+            offer.lease_id,
+            offer.attempt.id,
+            offer.fencing_token,
+            outcome,
+        )
+        .await
+        .with_context(|| format!("original completion failed: {completion_error:#}")),
     };
     if completion.is_ok() {
         if recovery_record {
