@@ -3,7 +3,7 @@
 
 Checks: markdown link/anchor integrity, canonical naming (ADR-0009),
 status taxonomy, orphan docs, current-state cross-check, readiness migration
-examples, frontend CI contract, screenshot manifest/route coverage, plans status
+examples, frontend package contract, screenshot manifest/route coverage, plans status
 notes, and router/OpenAPI path drift.
 
 Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --readiness-examples --frontend-contracts --screenshots --manifest --plans --openapi-routes --api-doc-routes]
@@ -75,20 +75,6 @@ FRONTEND_SCRIPT_TOOL_DEPS = {
     "openapi:check": ("openapi-typescript",),
     "openapi:compat": ("yaml",),
     "openapi:generate": ("openapi-typescript",),
-}
-PNPM_BUILTINS = {
-    "add",
-    "audit",
-    "cache-dependency-path",
-    "config",
-    "dlx",
-    "env",
-    "exec",
-    "install",
-    "remove",
-    "setup",
-    "store",
-    "update",
 }
 FORBIDDEN_STALE_STATUS = [
     (r"В MVP задачи переводятся вручную через API, CLI или Dashboard", "current execution uses embedded runner; manual transitions are historical/manual-job only"),
@@ -435,21 +421,6 @@ def join_major_versions(packages: dict[str, str], names: tuple[str, ...]) -> str
     return " / ".join(major for major in majors if major is not None)
 
 
-def check_frontend_ci_scripts(scripts: dict) -> None:
-    workflow = ROOT / ".github/workflows/ci.yml"
-    if not workflow.exists():
-        fail(".github/workflows/ci.yml missing")
-        return
-    commands = set()
-    for match in re.finditer(r"\bpnpm\s+([A-Za-z0-9:_-]+)\b", read_text(workflow)):
-        command = match.group(1)
-        if command not in PNPM_BUILTINS:
-            commands.add(command)
-    for command in sorted(commands):
-        if command not in scripts:
-            fail(f"CI references missing frontend package script: pnpm {command}")
-
-
 def check_frontend_script_contract(scripts: dict, packages: dict[str, str]) -> None:
     for name in sorted(FRONTEND_REQUIRED_SCRIPTS):
         if name not in scripts:
@@ -515,7 +486,6 @@ def check_frontend_contracts() -> None:
         return
     scripts = package_section(data, "scripts")
     packages = frontend_dependency_versions(data)
-    check_frontend_ci_scripts(scripts)
     check_frontend_script_contract(scripts, packages)
     check_frontend_stack_doc(packages)
 

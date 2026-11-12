@@ -193,7 +193,7 @@ flowchart TD
 - CORS пермиссивен только когда `CICD_CORS_ALLOWED_ORIGINS` пуст для изолированной разработки. TLS profile выводит явный origin и включает secure cookies; in-process rate limiting не заменяет reverse-proxy или distributed limiting.
 - Embedded runner записывает владение job-ами в `job_leases`, инжектит только объявленные secrets, собирает объявленные artifact-файлы и реконсиалит истёкшие leases. Внешний runner protocol MVP: register/heartbeat/bounded long-poll с in-process + PostgreSQL `LISTEN/NOTIFY` wakeup/ack/renew/`secrets:resolve`/artifact upload/logs/complete с bearer runner credentials и lease tokens; `forge-runner` работает отдельным shell-runner процессом, держит active-lease heartbeat во время команд, пишет stdout/stderr в attempt-owned logs, резолвит secrets и загружает артефакты. Maintenance loop реькеит unacknowledged offers после `ackDeadline`, фейлит dispatch-eligible queued jobs после queue timeout при отсутствии совместимого execution path и переводит stale online runners в offline. Richer log chunks, Kubernetes isolation и продвинутый runner pool/protected-tag policy — target work.
 - Pipeline trigger хранит immutable `pipeline_plans` snapshots для current `legacy-linear` и v1 `jobs.needs` DAG plans; policy diagnostics/job-level dispatch — target hardening.
-- CI прогоняет docs-гейт, backend fmt/clippy/unit/integration на реальном PostgreSQL и OpenAPI drift; frontend — unit-тесты и build. Dependency audits, secret scan, SBOM drift, Trivy и browser E2E выполняются локально как отдельные проверки по необходимости.
+- GitHub Actions workflows удалены. Docs/hygiene, backend fmt/clippy/unit/integration на disposable PostgreSQL, OpenAPI drift, frontend unit/lint/build, dependency audits, secret scan, SBOM drift, Trivy и browser E2E запускаются локально по затронутому scope; результаты фиксируются для точного кандидата.
 - Локальные artifacts получают SHA-256 metadata и дефолтную 30-дневную expiry через `CICD_ARTIFACT_RETENTION_DAYS`; expired/purged artifacts не скачиваются, retention worker чистит локальные файлы. Object storage, legal hold и tenant/object isolation — target hardening.
 - Protected environments создают pending deployment records, хранят append-only approval decisions и запускают linked deployment pipeline только после `required_approvals`; rollback создаёт отдельную `rollback_of_id` запись.
 - Schedules, outgoing webhooks и `in_app`/`sse` notifications работают как MVP local delivery.
@@ -310,19 +310,14 @@ GET task links использует repository read admission, POST — write pe
 сохранённое намерение и readback без повторной публикации. Это source candidate.
 CI/sync/machine и полный serving cohort остаются gates.
 
-## Ручные долгие проверки
+## Локальные проверки
 
-Долгие opt-in PostgreSQL/integration и браузерные E2E запускаются только через
-явный `workflow_dispatch` существующего CI. В Actions выберите CI, ветку и
-«Run workflow»; сохранены прежние адресные inputs, если они предусмотрены.
-Обычные PR/push не запускают эти шаги. Быстрые unit, format, typecheck, lint
-и build-проверки сохраняют прежние условия. Команды, assertions, зависимости
-и timeouts долгих сценариев не меняются.
+GitHub Actions automation удалена: PR и push не запускают workflows.
+Штатные команды quality/security/API/data проверок сохранены; выбранный набор
+и его evidence выполняет и фиксирует владелец задачи. Команды приведены в
+[руководстве разработки](docs/DEVELOPMENT_GUIDE.md#ci-гейты).
 
-Долгий набор также можно запускать вручную штатными командами проекта. Успешный
-автоматический CI подтверждает быстрый набор; он не подтверждает пропущенную
-integration/live/E2E приёмку. Перед относящейся к данным или безопасности
-поставкой необходимый адресный manual gate остаётся обязательным.
-
-Полный workspace-набор тоже ручной: автоматический backend выполняет короткие
-SDK/domain unit tests; прежний полный набор сохранён с manual predicate.
+Полные workspace, PostgreSQL/integration и браузерные E2E запускаются вручную
+по соответствующему поручению. Быстрые unit, format, typecheck и lint не заменяют
+необходимую integration/live/E2E приёмку. Forge/Jenkins automation этим
+изменением не включается; приложение, runtime и test contracts не меняются.

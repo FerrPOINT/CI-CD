@@ -1,7 +1,7 @@
 # Third-party components and SBOM policy
 
 > **Статус:** инвентарь current dependencies + Target approved policy генерации SBOM. Полный состав транзитивных компонентов берётся из lock-файлов, а не из этой сводки.
-> Основание: [ADR-0009](adr/0009-canonical-registry.md), [DEPENDABOT](../.github/dependabot.yml), [RISK_REGISTER](RISK_REGISTER.md).
+> Основание: [ADR-0009](adr/0009-canonical-registry.md), [RISK_REGISTER](RISK_REGISTER.md).
 
 Этот документ описывает только сторонние компоненты и их лицензии. First-party код, документация, конфигурация и изменения FerrPOINT закрыты лицензией [FerrPOINT Proprietary Source-Available Evaluation License v1.0](../LICENSE).
 
@@ -41,15 +41,15 @@
 
 ## 3. Обновление и vulnerability management
 
-1. Dependabot проверяет Cargo и npm weekly (`.github/dependabot.yml`).
+1. Cargo и npm обновляются вручную в полном workspace с sibling Base checkout и соответствующими проверками; GHA-only Dependabot configuration удалена вместе с workflows.
 2. Security advisory в crypto/auth/parser/HTTP/SQL компоненте: triage в течение 24 часов, patch или documented mitigation до следующего релиза.
 3. Deprecated/unmaintained direct dependency в runtime path считается security-relevant debt: фиксируется в [RISK_REGISTER](RISK_REGISTER.md), получает replacement candidates в [TECH_CHOICES](TECH_CHOICES.md) и не используется для новых capabilities.
 4. SemVer-major обновление требует: compatibility review, changelog, тесты и, если меняется внешний контракт, API/ADR/RTM.
 5. Lock-файлы коммитятся вместе с manifest; ручное редактирование lockfile запрещено.
-6. Local release gate: OpenAPI backward compatibility diff, SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py`, `scripts/generate_sbom.py --check` и Trivy image scan через `scripts/scan_container_images.sh`; GitHub Actions runs only the docs, backend and frontend checks declared in the current workflow.
+6. Local release gate: OpenAPI backward compatibility diff, SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py`, `scripts/generate_sbom.py --check` и Trivy image scan через `scripts/scan_container_images.sh`. GitHub Actions workflows удалены; результаты локальных checks собирает владелец задачи.
 7. `RUSTSEC-2023-0071` разрешён только как Cargo.lock false-positive: `sqlx-mysql`/`rsa` присутствуют в lockfile/SBOM как optional SQLx packages, но не должны появляться в активном `cargo tree` build graph.
 8. `RUSTSEC-2026-0183`/`RUSTSEC-2026-0184` по `git2 0.20.4` являются allowed warnings до совместимого исправления; `git2 0.21.0` не проходит Rust 1.88 compile gate.
-9. Перед релизом target: dependency update report, `cargo-deny`/license/source policy, broader immutable action/image digest policy, expanded container severity/exception policy, deeper history/container secret scan и разбор accepted findings.
+9. Перед релизом target: dependency update report, `cargo-deny`/license/source policy, broader immutable image digest policy, expanded container severity/exception policy, deeper history/container secret scan и разбор accepted findings.
 
 ## 4. SBOM policy
 
@@ -62,7 +62,7 @@
 | Шаг | Инструмент / evidence | Статус |
 |---|---|---|
 | Lite inventory | `scripts/generate_sbom.py` + `docs/assets/sbom.json` | Current verified |
-| Drift gate | `scripts/generate_sbom.py --check` в `.github/workflows/ci.yml` | Current verified |
+| Drift gate | `scripts/generate_sbom.py --check` локально | Current verified |
 | Rust SBOM | `cargo-cyclonedx` по Cargo.lock | Target approved |
 | Frontend SBOM | CycloneDX npm/pnpm generator по pnpm-lock.yaml | Target approved |
 | Merge | один root BOM с services (backend/frontend) и infrastructure inventory | Target approved |

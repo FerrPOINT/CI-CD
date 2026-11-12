@@ -16,7 +16,7 @@
 
 Используется `sqlx-cli` версии, совпадающей с workspace major/minor (`0.8.x`), через контейнер `rust:1.88-bookworm`; host installation не требуется. `cicd-migrate` использует runtime `sqlx::migrate::Migrator` и PostgreSQL advisory lock `forge_migration_lock`, timeout 60 seconds.
 
-`cicd-migrate` и migrations уже находятся в workspace. Just targets для полного isolated migration lifecycle остаются target; current CI запускает real-DB suite через GitHub Actions PostgreSQL service.
+`cicd-migrate` и migrations уже находятся в workspace. Just targets для полного isolated migration lifecycle остаются target; real-DB suite запускается локально на disposable PostgreSQL.
 
 ## 2. Database roles и URLs
 
@@ -25,7 +25,7 @@
 - Test database name starts `forge_test_`; harness refuses any URL without this prefix.
 - `CICD_TEST_DATABASE_URL` is mandatory for integration tests. It must use `forge_owner` only for migration setup; test runtime uses a second `forge_runtime` URL.
 
-`backend/docker-compose.test.yml` uses `postgres:17-alpine`, no host port, tmpfs/ephemeral volume, healthcheck `pg_isready`, test roles from `backend/tests/sql/init-roles.sql`. It is a committed local fixture. Current GitHub Actions instead uses a PostgreSQL service and runs `cargo test --features integration --test integration_db -- --test-threads=1`; compose lifecycle with unconditional `down -v` is still a target CI hardening step.
+`backend/docker-compose.test.yml` uses `postgres:17-alpine`, no host port, tmpfs/ephemeral volume, healthcheck `pg_isready`, test roles from `backend/tests/sql/init-roles.sql`. It is the committed local fixture for `cargo test --features integration --test integration_db -- --test-threads=1`; its owner must arrange scoped cleanup after the run.
 
 ## 3. Legacy adoption and first migrations
 
@@ -74,13 +74,13 @@ Pinned frontend package `openapi-typescript` generates `schema.d.ts`; handwritte
 
 Every operation needs: `operationId`, tags, DTO schemas, success/error refs, security classification and at least one request/response example. `/git/*` and `/api/v1/internal/*` are included with `x-forge-internal: true`; UI generator ignores them, contract CI does not.
 
-## 5. CI jobs (required names)
+## 5. Локальные gates и целевое расширение
 
 | Job | Sequence |
 |---|---|
-| current `backend` | PostgreSQL service → fmt → clippy → unit/workspace tests → real PostgreSQL tests → OpenAPI drift gate |
-| current `frontend` | frozen install → generate TS from OpenAPI → clean diff → OpenAPI compatibility diff → Vitest → build |
-| current `docs` | `python3 scripts/verify_docs.py --all` |
+| local `backend` | Disposable PostgreSQL → fmt → clippy → unit/workspace tests → real PostgreSQL tests → OpenAPI drift gate |
+| local `frontend` | frozen install → generate TS from OpenAPI → clean diff → OpenAPI compatibility diff → Vitest → build |
+| local `docs` | `python3 scripts/verify_docs.py --all` |
 | target `migration-test` | isolated test DB up → `cicd-migrate up` → `cicd-migrate verify` → owner/runtime matrix → test DB down |
 | target `openapi-contract` | current drift/codegen/backward compatibility checks + validate/examples |
 
