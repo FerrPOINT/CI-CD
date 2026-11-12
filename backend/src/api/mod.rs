@@ -99,6 +99,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::workspace_projects::all_pipelines,
         crate::workspace_projects::all_summary,
         crate::repository_catalog::all,
+        crate::space_admission::human_window,
         crate::delivery_configs::readback,
         crate::workspace_projects::list,
         crate::workspace_projects::get,
@@ -229,6 +230,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::api::pipelines_routes::get_test_report, crate::api::pipelines_routes::upload_test_report,
     ),
     components(schemas(
+        crate::space_admission::HumanAdmissionWindowV1,
         pdlc_shared::space_lifecycle::SpaceOwnerCommandV2,
         pdlc_shared::space_lifecycle::SpaceOwnerReadbackV2,
         crate::registered_source::VerifiedSource,

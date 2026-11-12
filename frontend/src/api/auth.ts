@@ -50,3 +50,9 @@ export function acceptSso(
 export async function logout(): Promise<void> {
   clearSession()
 }
+
+/** Retire pending requests without changing credentials or central session. */
+export function rotateSessionAccess(): Session | null {
+  session = session ? { ...session } : null
+  return session
+}

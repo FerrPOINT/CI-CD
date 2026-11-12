@@ -480,6 +480,7 @@ pub(super) async fn verify(
                     );
                     let now = chrono::Utc::now().timestamp();
                     Json(SpaceAdmission {
+                        inheritance: None,
                         schema_version: 1,
                         identity: request.identity.clone(),
                         identity_active: true,

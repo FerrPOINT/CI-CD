@@ -88,6 +88,10 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
             .execute(&pool)
             .await
             .unwrap();
+        if matches!(role,"admin"|"maintainer") {
+            sqlx::query("INSERT INTO forge_confirmed_user_roles(user_id,role,provenance) VALUES($1,$2,'Explicit native role fixture') ON CONFLICT(user_id) DO UPDATE SET role=EXCLUDED.role")
+                .bind(local).bind(role).execute(&pool).await.unwrap();
+        }
         let claims = link_central_user(&pool, &actor).await.unwrap();
         assert_eq!(
             claims.sub, local,
@@ -126,6 +130,16 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
     .unwrap();
     assert_eq!(unchanged.sub, local);
     row_lock.rollback().await.unwrap();
+    // Unknown historical SSO privilege is retained as data, not current authority.
+    sqlx::query("DELETE FROM forge_confirmed_user_roles WHERE user_id=$1").bind(local).execute(&pool).await.unwrap();
+    assert_eq!(link_central_user(&pool,&actor).await.unwrap().role,"viewer");
+    let stored:String=sqlx::query_scalar("SELECT role FROM users WHERE id=$1").bind(local).fetch_one(&pool).await.unwrap();
+    assert_eq!(stored,"admin","do not rewrite unknown assignments to repair authority");
+    sqlx::query("INSERT INTO forge_confirmed_user_roles(user_id,role,provenance) VALUES($1,'admin','Explicit preserved assignment')").bind(local).execute(&pool).await.unwrap();
+    assert_eq!(link_central_user(&pool,&actor).await.unwrap().role,"admin");
+    sqlx::query("UPDATE users SET role='viewer' WHERE id=$1").bind(local).execute(&pool).await.unwrap();
+    let markers:i64=sqlx::query_scalar("SELECT count(*) FROM forge_confirmed_user_roles WHERE user_id=$1").bind(local).fetch_one(&pool).await.unwrap();
+    assert_eq!(markers,0,"role changes retire old confirmation");
     // Even central platform-admin metadata does not replace the local product role.
     profile.write().unwrap().role = "admin".into();
     sqlx::query("UPDATE users SET role='viewer' WHERE id=$1")

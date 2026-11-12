@@ -49,12 +49,23 @@ export function onTerminalAuthError(handler: TerminalAuthHandler): void {
   terminalAuthHandler = handler
 }
 
+function requireAuthority(owner: ReturnType<typeof currentSession>): void {
+  if (currentSession() !== owner) throw new ApiError({
+    kind: 'cancelled', status: 403, code: 'auth_context_changed',
+    message: 'Контекст доступа изменился; данные нужно получить заново',
+  })
+}
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const owner = currentSession()
   const response = await authenticatedFetch(path, init)
   if (!response.ok) {
-    throw await apiErrorFromResponse(response)
+    const error = await apiErrorFromResponse(response)
+    requireAuthority(owner)
+    throw error
   }
-  return response.json() as Promise<T>
+  const value = await response.json() as T
+  requireAuthority(owner)
+  return value
 }
 
 export type DownloadedArtifact = {
@@ -64,14 +75,19 @@ export type DownloadedArtifact = {
 
 /** Download a protected artifact through the same central Bearer policy as JSON API calls. */
 export async function downloadArtifact(artifactId: string): Promise<DownloadedArtifact> {
+  const owner = currentSession()
   const response = await authenticatedFetch(`/artifacts/${encodeURIComponent(artifactId)}/download`, {
     headers: { Accept: 'application/octet-stream' },
   })
   if (!response.ok) {
-    throw await apiErrorFromResponse(response)
+    const error = await apiErrorFromResponse(response)
+    requireAuthority(owner)
+    throw error
   }
+  const blob = await response.blob()
+  requireAuthority(owner)
   return {
-    blob: await response.blob(),
+    blob,
     filename: filenameFromDisposition(response.headers.get('Content-Disposition')) ?? 'artifact',
   }
 }
@@ -86,7 +102,9 @@ export function saveDownloadedArtifact(artifact: DownloadedArtifact): void {
 }
 
 export async function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
-  const response = await request(path, init)
+  const owner = currentSession()
+  const response = await request(path, init, owner)
+  requireAuthority(owner)
   if (response.status === 401) {
     const product = getPlatformProduct()
     if (product) product.recheckAuthorization()
@@ -95,16 +113,15 @@ export async function authenticatedFetch(path: string, init?: RequestInit): Prom
   return response
 }
 
-async function request(path: string, init?: RequestInit): Promise<Response> {
+async function request(path: string, init: RequestInit | undefined, owner: ReturnType<typeof currentSession>): Promise<Response> {
   try {
-    return await fetch(`${BASE}${path}`, withAuth(init))
+    return await fetch(`${BASE}${path}`, withAuth(init, owner))
   } catch (error) {
     throw apiErrorFromFetch(error)
   }
 }
 
-function withAuth(init?: RequestInit): RequestInit {
-  const session = currentSession()
+function withAuth(init: RequestInit | undefined, session: ReturnType<typeof currentSession>): RequestInit {
   const headers = new Headers(init?.headers)
   if (!headers.has('Accept')) headers.set('Accept', 'application/json')
   if (init?.body !== undefined && !headers.has('Content-Type')) {

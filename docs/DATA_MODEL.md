@@ -1270,3 +1270,18 @@ generation и execution_attempts; миграции/checksums не перепис
 embedded CI marker теперь ставится после того же реального owner journal ACK,
 что и в task pipeline. Failed/expired legacy execution без принятого completion
 остаётся незавершённой для drain и входит в миграционное расследование.
+
+## Confirmed privileges for linked central identities
+
+Migration0099 adds forge_confirmed_user_roles without backfilling unknown
+assignments. users.role and existing identities remain unchanged. For a linked
+central identity, an existing admin/maintainer role is effective only with a
+matching explicit provenance record or a current confirmed central administrator.
+Unconfirmed shadow privileges yield viewer authority; SSO does not rewrite the
+stored assignment. Lower native roles remain unchanged and a central admin does
+not replace a stored viewer/developer role.
+
+Changing users.role or central_sub retires its confirmation, so an old grant
+cannot silently return after reassignment. Standalone native role semantics are
+unchanged. Release migration may record only assignments whose origin is verified;
+unknown history is not a reason to copy administrative privileges.

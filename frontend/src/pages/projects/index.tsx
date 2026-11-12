@@ -12,7 +12,7 @@ import {
 import { withNamespaceLocation } from "@pdlc/ui/lib";
 import { api } from "@/api/client";
 import type { components } from "@/api/schema";
-import { workspacePath } from "@/api/workspaces";
+import { workspacePath, isUnarchivedWorkspace } from "@/api/workspaces";
 import { WorkspaceLinks } from "@/widgets/workspace-links";
 export function ProjectsPage() {
   const { t } = useTranslation();
@@ -20,6 +20,7 @@ export function ProjectsPage() {
   const [offset, setOffset] = useState(0);
   const catalog = useQuery({
     queryKey: ["workspace-projects", search, offset],
+    select: (page: components["schemas"]["WorkspacePage"]) => ({ ...page, items: page.items.filter(isUnarchivedWorkspace) }),
     queryFn: ({ signal }) =>
       api<components["schemas"]["WorkspacePage"]>(
         `/workspace-projects?limit=50&offset=${offset}&search=${encodeURIComponent(search)}`,
@@ -102,7 +103,7 @@ export function ProjectsPage() {
               существующий через Admin.
             </p>
           )}
-          <p className="text-sm text-text-muted">Всего: {catalog.data.total}</p>
+          <p className="text-sm text-text-muted">Показано: {catalog.data.items.length}</p>
         </>
       )}
       <div className="flex gap-2">
