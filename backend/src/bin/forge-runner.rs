@@ -2318,7 +2318,10 @@ mod tests {
         let app = axum::Router::new().route(
             "/{*path}",
             axum::routing::post(|| async {
-                (axum::http::StatusCode::CONFLICT, "Original custody unavailable")
+                (
+                    axum::http::StatusCode::CONFLICT,
+                    "Original custody unavailable",
+                )
             })
             .get(move || async { axum::Json(receipt) }),
         );
