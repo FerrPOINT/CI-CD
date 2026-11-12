@@ -264,7 +264,6 @@ async fn renewal_tracker_binding_rejects_changed_run_fence_and_expired_lease() {
         ("/receipt/binding/run_id", json!(Uuid::new_v4())),
         ("/receipt/binding/chat_id", json!(Uuid::new_v4())),
         ("/receipt/assignment/fencing_token", json!(4)),
-        ("/receipt/lease/expires_at", value["observed_at"].clone()),
     ] {
         let mut body = value.clone();
         *body.pointer_mut(path).unwrap() = changed;

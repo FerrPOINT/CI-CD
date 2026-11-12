@@ -428,8 +428,8 @@ impl PreparedDeployment {
         drop(connection);
         ensure!(
             digest(&serde_json::to_vec(&plan)?) == self.compose.plan_sha256
-                && std::time::Instant::now() < until,
-            "deployment source/lease changed"
+                && until.is_none_or(|until| std::time::Instant::now() < until),
+            "deployment source/admission changed"
         );
         let observed = std::time::Instant::now();
         let seconds:f64=sqlx::query_scalar("SELECT EXTRACT(EPOCH FROM lease_expires_at-clock_timestamp())::double precision FROM job_leases WHERE id=$1 AND attempt_id=$2 AND job_id=$3 AND generation=$4 AND lease_status='active' AND cancel_requested_at IS NULL")
@@ -442,7 +442,7 @@ impl PreparedDeployment {
         let embedded = observed
             .checked_add(Duration::try_from_secs_f64(seconds)?)
             .context("invalid original lease deadline")?;
-        Ok(until.min(embedded))
+        Ok(until.map_or(embedded, |until| until.min(embedded)))
     }
 
     pub(crate) async fn record_started(

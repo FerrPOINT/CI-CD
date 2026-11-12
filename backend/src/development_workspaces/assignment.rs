@@ -21,7 +21,6 @@ pub(super) struct DeveloperAssignment {
 }
 
 pub(super) struct WorkspacePreparation {
-    pub expires_at: i64,
     commit: String,
 }
 
@@ -86,13 +85,10 @@ impl DeveloperAssignment {
             AssignmentAccess::Preparing | AssignmentAccess::Reading
         ) && execution["status"] == "Ready"
         {
+            if execution["workspace_preparation_authorized"] != true {
+                return Err(denied());
+            }
             Some(WorkspacePreparation {
-                expires_at: execution["workspace_preparation_expires_at"]
-                    .as_str()
-                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-                    .map(|time| time.timestamp())
-                    .filter(|deadline| *deadline > chrono::Utc::now().timestamp())
-                    .ok_or_else(denied)?,
                 commit: execution["workspace_preparation_commit"]
                     .as_str()
                     .filter(|sha| commit_sha(sha))
@@ -312,11 +308,16 @@ mod tests {
             json!(chrono::Utc::now() + chrono::Duration::seconds(30));
         reserved["execution"]["workspace_preparation_commit"] = json!("a".repeat(40));
         assert!(read(&reserved).is_err());
+        assert!(read_preparation(&reserved).is_err(), "an old expiry is not authorization");
+        reserved["execution"]["workspace_preparation_authorized"] = json!(true);
+        reserved["execution"]["workspace_preparation_expires_at"] = Value::Null;
         let (preparing, deadline) = read_preparation(&reserved).unwrap();
         preparing.require_same(&saved).unwrap();
         assert!(deadline.is_some());
         reserved["execution"]["workspace_preparation_expires_at"] =
             json!(chrono::Utc::now() - chrono::Duration::seconds(1));
+        assert!(read_preparation(&reserved).is_ok(), "historical expiry is not an ownership deadline");
+        reserved["execution"]["workspace_preparation_authorized"] = json!(false);
         assert!(read_preparation(&reserved).is_err());
         for (pointer, value) in [
             ("/schema_version", json!(2)),

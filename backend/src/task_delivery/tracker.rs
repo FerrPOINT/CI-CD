@@ -5,31 +5,32 @@ use crate::{
     domain::{sdlc_workspace::WorkspaceOperationReceipt, task_delivery::TaskDeliveryFence},
 };
 use anyhow::ensure;
-use chrono::DateTime;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy)]
 pub(super) struct Permit {
-    until: Instant,
+    until: Option<Instant>,
 }
 
 impl Permit {
     #[cfg(test)]
     pub(super) fn test_until(until: Instant) -> Self {
-        Self { until }
+        Self {
+            until: Some(until),
+        }
     }
 
     pub(super) fn bounded(self, until: Instant) -> Self {
         Self {
-            until: self.until.min(until),
+            until: Some(self.until.map_or(until, |current| current.min(until))),
         }
     }
 
     pub(super) fn check(&self) -> anyhow::Result<()> {
         ensure!(
-            Instant::now() < self.until,
-            "Tracker execution lease expired before effect"
+            self.until.is_none_or(|until| Instant::now() < until),
+            "Current owner admission expired before effect"
         );
         Ok(())
     }
@@ -55,7 +56,7 @@ fn validate(
     original: &WorkspaceOperationReceipt,
     fence: &TaskDeliveryFence,
     reconciliation: bool,
-) -> anyhow::Result<Duration> {
+) -> anyhow::Result<()> {
     let b = &original.request.binding;
     let task = &value["receipt"]["task"];
     let assignment = &value["receipt"]["assignment"];
@@ -145,24 +146,7 @@ fn validate(
                 .is_some_and(|id| !id.is_nil())),
         "current holder, run or lease version differs"
     );
-    let time = |v: &Value| -> anyhow::Result<_> {
-        Ok(DateTime::parse_from_rfc3339(
-            v.as_str()
-                .ok_or_else(|| anyhow::anyhow!("timestamp absent"))?,
-        )?)
-    };
-    let observed = time(&value["observed_at"])?;
-    let expires = time(&lease["expires_at"])?;
-    let heartbeat = time(&lease["heartbeat_at"])?;
-    let claimed = time(&lease["claimed_at"])?;
-    ensure!(
-        claimed <= heartbeat
-            && heartbeat <= observed
-            && observed < expires
-            && (expires - heartbeat).num_milliseconds() <= 30_000,
-        "expired or inconsistent execution lease"
-    );
-    Ok((expires - observed).to_std()?)
+    Ok(())
 }
 
 fn validate_source(
@@ -347,10 +331,9 @@ pub(super) async fn read_bound(
     {
         return Err(ApiError::conflict("Accepted Developer result changed"));
     }
-    let started = Instant::now();
     let value = get(&client, url, token).await?;
-    let remaining = validate(&value, policy, original, fence, reconciliation).map_err(|_| {
-        ApiError::conflict("Текущий DevOps assignment или lease Tracker не совпадает")
+    validate(&value, policy, original, fence, reconciliation).map_err(|_| {
+        ApiError::conflict("Текущее назначение DevOps Tracker не совпадает")
     })?;
     validate_source(
         &accepted,
@@ -361,19 +344,19 @@ pub(super) async fn read_bound(
     .map_err(|_| {
         ApiError::conflict("Принятый Developer commit не совпадает с исходниками pipeline")
     })?;
-    // Include all transport/readback time; never renew an old receipt using completion time.
+    // Tracker ownership is current state; only independent owner/credential proofs expire.
     let permit = Permit {
         until: crate::task_owner::intersect(
             value["receipt"]["task"]["owner_subject"]
                 .as_str()
                 .ok_or_else(ApiError::forbidden)?,
-            started + remaining,
+            None,
         )
         .await?,
     };
     permit
         .check()
-        .map_err(|_| ApiError::conflict("Lease Tracker истёк во время readback"))?;
+        .map_err(|_| ApiError::conflict("Допуск владельца истёк во время readback"))?;
     Ok(permit)
 }
 
@@ -492,14 +475,14 @@ mod tests {
     }
 
     #[test]
-    fn current_devops_uses_tracker_lease_not_old_build_lease() {
-        let (value, policy, original, fence) = fixture();
+    fn current_devops_uses_persistent_ownership_not_old_build_lease() {
+        let (mut value, policy, original, fence) = fixture();
         assert_ne!(original.request.lease_id, fence.lease_id);
         assert_ne!(original.request.binding.assignment_id, fence.assignment_id);
-        assert_eq!(
-            validate(&value, &policy, &original, &fence, false).unwrap(),
-            Duration::from_secs(30)
-        );
+        for expires in [Value::Null, json!("2020-01-01T00:00:00Z")] {
+            value["receipt"]["lease"]["expires_at"] = expires;
+            validate(&value, &policy, &original, &fence, false).unwrap();
+        }
     }
 
     #[test]
@@ -516,7 +499,6 @@ mod tests {
             ("/receipt/assignment/assignment_id", json!(Uuid::new_v4())),
             ("/receipt/lease/holder_subject", json!("foreign")),
             ("/receipt/lease/version", json!(2)),
-            ("/receipt/lease/expires_at", value["observed_at"].clone()),
             ("/receipt/binding/run_id", json!(Uuid::nil())),
             ("/receipt/task/routing/requirement_revision", json!(2)),
         ] {
@@ -552,14 +534,14 @@ mod tests {
         assert!(validate(&value, &policy, &original, &fence, false).is_err());
         assert!(
             Permit {
-                until: Instant::now()
+                until: Some(Instant::now())
             }
             .check()
             .is_err()
         );
         assert!(
             Permit {
-                until: Instant::now() - Duration::from_secs(1)
+                until: Some(Instant::now() - Duration::from_secs(1))
             }
             .check()
             .is_err()
@@ -715,12 +697,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn readback_transport_time_cannot_extend_a_short_execution_lease() {
+    async fn persistent_current_readback_does_not_add_a_task_clock() {
         use axum::{Json, Router, routing::get};
         let (mut value, policy, original, fence) = fixture();
         let now = Utc::now();
         value["observed_at"] = json!(now);
-        value["receipt"]["lease"]["expires_at"] = json!(now + chrono::Duration::milliseconds(20));
+        value["receipt"]["lease"]["expires_at"] = Value::Null;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let accepted = accepted(&original, &fence);
@@ -739,7 +721,7 @@ mod tests {
         assert!(
             read(&state(url), &policy, &original, &fence, false)
                 .await
-                .is_err()
+                .is_ok()
         );
         server.abort();
     }

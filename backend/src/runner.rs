@@ -1126,9 +1126,9 @@ async fn finish_image_build_success(
     job: Uuid,
     lease: &EmbeddedJobLease,
     exit_code: Option<i32>,
-    until: std::time::Instant,
+    until: Option<std::time::Instant>,
 ) -> Result<bool, ApiError> {
-    if std::time::Instant::now() >= until {
+    if until.is_some_and(|until| std::time::Instant::now() >= until) {
         return Ok(false);
     }
     #[cfg(test)]
@@ -1214,7 +1214,7 @@ async fn finish_image_build_success(
         || job_changed != 1
         || queue != 1
         || !deadline_live
-        || std::time::Instant::now() >= until
+        || until.is_some_and(|until| std::time::Instant::now() >= until)
     {
         tx.rollback()
             .await
@@ -1551,7 +1551,7 @@ async fn run_job_inner(
             return Ok(ExecutionOutcome::Held);
         }
         Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Legacy) => None,
-        Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Permit(until)) => Some(until),
+        Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Permit(until)) => until,
     };
     if let Some(clock) = owner_clock {
         clock.require()?;
@@ -1856,11 +1856,15 @@ async fn run_job_inner(
             Err(_) => return Ok(ExecutionOutcome::Held),
         };
         let guard = running.lock().await;
-        if !image_build_attempt_active(&pool, &lease).await? || std::time::Instant::now() >= until {
+        if !image_build_attempt_active(&pool, &lease).await?
+            || until.is_some_and(|until| std::time::Instant::now() >= until)
+        {
             return Ok(ExecutionOutcome::Held);
         }
         publication_guard = Some(guard);
-        publication_until = Some(until);
+        if let Some(until) = until {
+            publication_until = Some(publication_until.map_or(until, |previous| previous.min(until)));
+        }
     }
     let artifact_root = if let Some(build) = &completed_build {
         build.artifact_root.as_path()
@@ -1913,8 +1917,8 @@ async fn run_job_inner(
     if image_build.is_some() && !image_build_attempt_active(&pool, &lease).await? {
         return Ok(ExecutionOutcome::Held);
     }
-    if let Some(until) = publication_until {
-        if !finish_image_build_success(&pool, job_id, &lease, exit_code, until).await? {
+    if publication_guard.is_some() {
+        if !finish_image_build_success(&pool, job_id, &lease, exit_code, publication_until).await? {
             return Ok(ExecutionOutcome::Held);
         }
         drop(publication_guard);

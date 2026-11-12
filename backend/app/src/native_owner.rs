@@ -10,13 +10,13 @@ pub enum NativeOwnerError {
     Unavailable,
 }
 /// The caller first validates the exact task/assignment/binding/lease readback.
-/// This gate intersects its fixed lifetime with current human applications.
+/// This gate intersects any real credential lifetime with current human applications.
 pub async fn admit(
     client: &ApplicationAccessClient,
     subject: Uuid,
-    native_until: Instant,
+    native_until: Option<Instant>,
 ) -> Result<Instant, NativeOwnerError> {
-    if subject.is_nil() || Instant::now() >= native_until {
+    if subject.is_nil() || native_until.is_some_and(|until| Instant::now() >= until) {
         return Err(NativeOwnerError::Forbidden);
     }
     let mut decisions = client
@@ -34,7 +34,9 @@ pub async fn admit(
     {
         return Err(NativeOwnerError::Forbidden);
     }
-    let until = native_until.min(owner.monotonic_deadline());
+    let until = native_until.map_or(owner.monotonic_deadline(), |until| {
+        until.min(owner.monotonic_deadline())
+    });
     if Instant::now() >= until {
         return Err(NativeOwnerError::Forbidden);
     }
@@ -126,7 +128,7 @@ mod tests {
             owner: Uuid,
             until: Instant,
         ) -> Result<Instant, NativeOwnerError> {
-            super::admit(client, owner, until).await
+            super::admit(client, owner, Some(until)).await
         }
         let native = Instant::now() + Duration::from_secs(2);
         assert_eq!(
@@ -134,6 +136,9 @@ mod tests {
             native,
             "owner read cannot renew the native lease"
         );
+        let current_owner = super::admit(&client, owner, None).await.unwrap();
+        assert!(current_owner > Instant::now());
+        assert!(current_owner <= Instant::now() + Duration::from_secs(30));
         for removed in ["ci-cd", "task-tracker", "fleet-control"] {
             state.write().unwrap().apps = vec!["ci-cd", "task-tracker", "fleet-control"]
                 .into_iter()

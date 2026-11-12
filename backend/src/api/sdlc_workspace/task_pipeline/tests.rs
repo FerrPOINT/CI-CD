@@ -9,7 +9,7 @@ async fn delegated_child_expiring_during_tracker_await_has_zero_effects() {
     let result = bound_child_authority(child_until, async {
         tracker_entered.store(true, Ordering::SeqCst);
         tokio::time::sleep_until(tokio::time::Instant::from_std(child_until)).await;
-        Ok(Instant::now() + Duration::from_secs(30))
+        Ok(Some(Instant::now() + Duration::from_secs(30)))
     })
     .await;
     if result.is_ok() {
@@ -21,21 +21,22 @@ async fn delegated_child_expiring_during_tracker_await_has_zero_effects() {
 }
 
 #[tokio::test]
-async fn delegated_authority_deadline_is_minimum_of_child_and_tracker() {
+async fn delegated_authority_deadline_is_minimum_of_child_and_owner() {
     let soon = Instant::now() + Duration::from_secs(1);
     let later = soon + Duration::from_secs(29);
     assert_eq!(
-        bound_child_authority(soon, async { Ok(later) })
+        bound_child_authority(soon, async { Ok(Some(later)) })
             .await
             .unwrap(),
         soon
     );
     assert_eq!(
-        bound_child_authority(later, async { Ok(soon) })
+        bound_child_authority(later, async { Ok(Some(soon)) })
             .await
             .unwrap(),
         soon
     );
+    assert_eq!(bound_child_authority(soon, async { Ok(None) }).await.unwrap(), soon);
 }
 
 #[tokio::test]
@@ -89,7 +90,6 @@ async fn delegated_tracker_readback_requires_exact_native_tuple_and_current_assi
         ("/receipt/assignment/fencing_token", json!(4)),
         ("/receipt/assignment/assignment_id", json!(Uuid::new_v4())),
         ("/receipt/task/status", json!("Ready")),
-        ("/receipt/lease/expires_at", value["observed_at"].clone()),
     ] {
         let mut changed = value.clone();
         *changed.pointer_mut(path).unwrap() = replacement;
@@ -166,7 +166,11 @@ fn six_actual_roles_and_developer_rework_use_current_assignment() {
         (WorkspaceRole::Devops, "Deployment"),
     ] {
         let (intent, value) = fixture(role, stage);
-        assert_eq!(current(&value, &intent).unwrap(), Duration::from_secs(30));
+        for expires in [Value::Null, json!("2020-01-01T00:00:00Z")] {
+            let mut value = value.clone();
+            value["receipt"]["lease"]["expires_at"] = expires;
+            current(&value, &intent).unwrap();
+        }
     }
 }
 
@@ -225,7 +229,7 @@ fn heartbeat_advancement_does_not_change_original_identity() {
 }
 
 #[test]
-fn held_foreign_expired_and_tampered_context_cannot_prepare() {
+fn held_foreign_and_tampered_context_cannot_prepare() {
     let (intent, value) = fixture(WorkspaceRole::Developer, "Development");
     for (path, replacement) in [
         ("/runtime_state", json!("unknown")),
@@ -241,7 +245,6 @@ fn held_foreign_expired_and_tampered_context_cannot_prepare() {
         ("/receipt/assignment/attempt", json!(2)),
         ("/receipt/task/routing/project_id", json!(Uuid::new_v4())),
         ("/receipt/task/routing/snapshot_id", json!(Uuid::new_v4())),
-        ("/receipt/lease/expires_at", value["observed_at"].clone()),
         ("/receipt/binding/run_id", json!(Uuid::nil())),
         ("/receipt/binding/machine_subject", json!("fleet-scheduler")),
     ] {
@@ -279,10 +282,10 @@ fn malformed_bounds_and_unknown_role_fail_without_fallback() {
 }
 
 #[tokio::test]
-async fn tracker_transport_is_readonly_bounded_and_spent_time_is_not_renewed() {
+async fn tracker_transport_is_readonly_bounded_and_has_no_task_expiry() {
     use axum::{Router, routing::get};
     let (intent, mut value) = fixture(WorkspaceRole::Developer, "Development");
-    value["receipt"]["lease"]["expires_at"] = json!(Utc::now() + chrono::Duration::milliseconds(5));
+    value["receipt"]["lease"]["expires_at"] = Value::Null;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = SdlcWorkspaceConfig {
         tracker_read_url: Some(format!("http://{}", listener.local_addr().unwrap())),
@@ -302,6 +305,6 @@ async fn tracker_transport_is_readonly_bounded_and_spent_time_is_not_renewed() {
         }),
     );
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    assert!(tracker(&config, &intent).await.is_err());
+    assert!(tracker(&config, &intent).await.unwrap().is_none());
     server.abort();
 }

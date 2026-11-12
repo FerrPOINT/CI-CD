@@ -268,18 +268,19 @@ async fn run_inner(
             lease.attempt_id,
         )
         .await?;
-    let until = if submitted {
-        Some(
-            crate::api::sdlc_workspace::task_pipeline::verify_submitted_attempt(
-                pool,
-                job.pipeline_id,
-                lease.attempt_id,
-                &config.sdlc_workspace,
-                &config.secrets,
-            )
-            .await
-            .unwrap_or_else(|_| std::time::Instant::now()),
+    let (task_owned, until) = if submitted {
+        match crate::api::sdlc_workspace::task_pipeline::verify_submitted_attempt(
+            pool,
+            job.pipeline_id,
+            lease.attempt_id,
+            &config.sdlc_workspace,
+            &config.secrets,
         )
+        .await
+        {
+            Ok(until) => (true, until),
+            Err(_) => return Ok(ExecutionOutcome::Held),
+        }
     } else {
         match crate::api::sdlc_workspace::task_pipeline::before_spawn(
             pool,
@@ -293,8 +294,8 @@ async fn run_inner(
             crate::api::sdlc_workspace::task_pipeline::Spawn::Held => {
                 return Ok(ExecutionOutcome::Held);
             }
-            crate::api::sdlc_workspace::task_pipeline::Spawn::Legacy => None,
-            crate::api::sdlc_workspace::task_pipeline::Spawn::Permit(until) => Some(until),
+            crate::api::sdlc_workspace::task_pipeline::Spawn::Legacy => (false, None),
+            crate::api::sdlc_workspace::task_pipeline::Spawn::Permit(until) => (true, until),
         }
     };
     let mut guard = running.lock().await;
@@ -485,7 +486,7 @@ async fn run_inner(
     } else if status == "success" {
         status = "failed";
     }
-    if status == "success" && until.is_some() {
+    if status == "success" && task_owned {
         let until = crate::api::sdlc_workspace::task_pipeline::verify_submitted_attempt(
             pool,
             job.pipeline_id,

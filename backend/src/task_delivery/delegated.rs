@@ -281,7 +281,8 @@ impl Session {
             &record,
             &state.config.secrets,
         )
-        .await?;
+        .await?
+        .ok_or_else(ApiError::forbidden)?;
         crate::repository_catalog::require_project_writable_on(conn, record.project_id).await?;
         if let Some(a) = &binding.artifact {
             let source = ledger::candidate_pipeline(conn, &self.original)

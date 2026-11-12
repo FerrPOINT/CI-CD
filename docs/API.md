@@ -1,5 +1,11 @@
 # API v1 Specification — Forge CI/CD
 
+Tracker consumer использует текущее техническое владение независимо от
+исторического `lease.expires_at`; current wire возвращает null. Подготовка
+configured Developer в Ready требует `execution.workspace_preparation_authorized=true`
+и точного commit из registered source. Forge URL/DTO не меняются; Auth/child
+expiry и собственные runner leases сохраняют прежние проверки.
+
 Отдельное семейство `/development-workspaces`: реестр, сессии, именованные
 проверки и original-key async lifecycle. [Контракт и recovery](DEVELOPMENT_WORKSPACES.md).
 Существующие project/task workspace routes и identifiers сохраняются.

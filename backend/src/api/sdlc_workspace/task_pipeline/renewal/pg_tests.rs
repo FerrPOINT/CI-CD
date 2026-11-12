@@ -392,7 +392,7 @@ async fn run_child() {
     )
     .await
     .unwrap();
-    assert!(Instant::now() < until);
+    assert!(until.is_some_and(|until| Instant::now() < until));
     let current = custody::current(&mut tx, &record).await.unwrap();
     assert_eq!(current.fingerprint, ack["fingerprint"].as_str().unwrap());
     tx.commit().await.unwrap();

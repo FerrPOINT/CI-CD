@@ -125,7 +125,7 @@ impl Case {
     }
 
     async fn finish(&self, pool: &PgPool, until: Instant) -> bool {
-        finish_image_build_success(pool, self.job, &self.lease, Some(0), until)
+        finish_image_build_success(pool, self.job, &self.lease, Some(0), Some(until))
             .await
             .unwrap()
     }
@@ -138,7 +138,7 @@ impl Case {
             generation: self.lease.generation,
         };
         tokio::spawn(async move {
-            finish_image_build_success(&worker, job, &lease, Some(0), until)
+            finish_image_build_success(&worker, job, &lease, Some(0), Some(until))
                 .await
                 .unwrap()
         })
@@ -201,6 +201,9 @@ async fn image_build_terminal_pg_atomic_success_expiry_cancel_and_reconcile() {
             saved,
             "ACK replay is immutable"
         );
+        let persistent = Case::new(&pool, project).await;
+        assert!(finish_image_build_success(&pool, persistent.job, &persistent.lease, Some(0), None)
+            .await.unwrap(), "current task ownership needs no artificial deadline");
 
         // Force the finisher to wait at lease UPDATE, then expire that exact row.
         // The actual reconciler competes with its resumed UPDATE, not a mock writer.
@@ -240,6 +243,8 @@ async fn image_build_terminal_pg_atomic_success_expiry_cancel_and_reconcile() {
             .bind(expired.lease.id).execute(&pool).await.unwrap();
         let before = expired.snapshot(&pool).await;
         assert!(!expired.finish(&pool, live()).await);
+        assert!(!finish_image_build_success(&pool, expired.job, &expired.lease, Some(0), None)
+            .await.unwrap(), "persistent Tracker ownership cannot revive an expired CI lease");
         assert_eq!(expired.snapshot(&pool).await, before);
 
         let cancelled = Case::new(&pool, project).await;
@@ -260,7 +265,7 @@ async fn image_build_terminal_pg_atomic_success_expiry_cancel_and_reconcile() {
             generation: 2,
         };
         assert!(
-            !finish_image_build_success(&pool, stale.job, &wrong, Some(0), live())
+            !finish_image_build_success(&pool, stale.job, &wrong, Some(0), Some(live()))
                 .await
                 .unwrap()
         );

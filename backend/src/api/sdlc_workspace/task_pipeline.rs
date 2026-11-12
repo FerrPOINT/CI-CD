@@ -44,7 +44,7 @@ fn canonical(value: Value) -> Value {
     }
 }
 
-pub(crate) fn current(value: &Value, intent: &TaskWorkspaceIntent) -> anyhow::Result<Duration> {
+pub(crate) fn current(value: &Value, intent: &TaskWorkspaceIntent) -> anyhow::Result<()> {
     use anyhow::ensure;
     intent.validate().map_err(anyhow::Error::msg)?;
     let b = &intent.binding;
@@ -139,28 +139,13 @@ pub(crate) fn current(value: &Value, intent: &TaskWorkspaceIntent) -> anyhow::Re
                 .is_some_and(|id| !id.is_nil())),
         "lease or native binding changed"
     );
-    let time = |v: &Value| -> anyhow::Result<_> {
-        Ok(chrono::DateTime::parse_from_rfc3339(
-            v.as_str().ok_or_else(|| anyhow::anyhow!("clock absent"))?,
-        )?)
-    };
-    let observed = time(&value["observed_at"])?;
-    let expires = time(&lease["expires_at"])?;
-    let heartbeat = time(&lease["heartbeat_at"])?;
-    ensure!(
-        time(&lease["claimed_at"])? <= heartbeat
-            && heartbeat <= observed
-            && observed < expires
-            && (expires - heartbeat).num_milliseconds() <= 30_000,
-        "lease expired"
-    );
-    Ok((expires - observed).to_std()?)
+    Ok(())
 }
 
 async fn tracker(
     config: &SdlcWorkspaceConfig,
     intent: &TaskWorkspaceIntent,
-) -> Result<Instant, ApiError> {
+) -> Result<Option<Instant>, ApiError> {
     tracker_bound(config, intent, None).await
 }
 
@@ -168,21 +153,20 @@ async fn tracker_bound(
     config: &SdlcWorkspaceConfig,
     intent: &TaskWorkspaceIntent,
     context: Option<&TaskCredentialContext>,
-) -> Result<Instant, ApiError> {
-    let (start, value) =
+) -> Result<Option<Instant>, ApiError> {
+    let (_, value) =
         crate::task_delivery::tracker::read_lifecycle(config, intent.binding.task_id).await?;
     if context.is_some_and(|context| !context.native_matches(&value)) {
         return Err(ApiError::conflict("Original native task run changed"));
     }
-    let until = start
-        + current(&value, intent).map_err(|_| {
-            ApiError::conflict("Текущий Tracker task assignment или lease не совпадает")
-        })?;
+    current(&value, intent).map_err(|_| {
+        ApiError::conflict("Текущее назначение Tracker не совпадает")
+    })?;
     crate::task_owner::intersect(
         value["receipt"]["task"]["owner_subject"]
             .as_str()
             .ok_or_else(ApiError::forbidden)?,
-        until,
+        None,
     )
     .await
 }
@@ -192,7 +176,7 @@ pub(crate) async fn authorize_saved(
     config: &SdlcWorkspaceConfig,
     record: &ledger::TaskPipelineJournal,
     secrets: &SecretsConfig,
-) -> Result<Instant, ApiError> {
+) -> Result<Option<Instant>, ApiError> {
     if record.delegated_credential.is_some() {
         if record.service_account_id.is_some() || record.api_token_id.is_some() {
             return Err(ApiError::forbidden());
@@ -227,7 +211,7 @@ async fn authorize_child(
     project: Uuid,
     intent: &TaskWorkspaceIntent,
     stored: &StoredCredential,
-) -> Result<Instant, ApiError> {
+) -> Result<Option<Instant>, ApiError> {
     let child_until = stored.verify(config, secrets, project, intent).await?;
     if !ledger::task_project_matches(conn, project, intent)
         .await
@@ -242,16 +226,17 @@ async fn authorize_child(
         tracker_bound(config, intent, Some(&stored.context)),
     )
     .await
+    .map(Some)
 }
 
 async fn bound_child_authority<F>(child_until: Instant, tracker: F) -> Result<Instant, ApiError>
 where
-    F: std::future::Future<Output = Result<Instant, ApiError>>,
+    F: std::future::Future<Output = Result<Option<Instant>, ApiError>>,
 {
     if Instant::now() >= child_until {
         return Err(ApiError::forbidden());
     }
-    let until = child_until.min(tracker.await?);
+    let until = tracker.await?.map_or(child_until, |owner_until| child_until.min(owner_until));
     if Instant::now() >= until {
         return Err(ApiError::forbidden());
     }
@@ -358,7 +343,7 @@ pub(crate) async fn verify_submission(
     conn: &mut sqlx::PgConnection,
     project: Uuid,
     submission: &Submission,
-) -> Result<Instant, ApiError> {
+) -> Result<Option<Instant>, ApiError> {
     if let Some(stored) = &submission.delegated {
         if submission.token.is_some() || stored.subject != submission.subject {
             return Err(ApiError::forbidden());
@@ -399,7 +384,7 @@ pub(crate) async fn already_submitted(
 
 pub(crate) enum Spawn {
     Legacy,
-    Permit(Instant),
+    Permit(Option<Instant>),
     Held,
 }
 
@@ -466,12 +451,12 @@ pub(crate) async fn before_delegated_effect(
     }
     let until = authorize_saved(&mut tx, &config.sdlc_workspace, &record, &config.secrets).await?;
     tx.commit().await.map_err(ApiError::internal)?;
-    if Instant::now() >= until {
+    if until.is_some_and(|until| Instant::now() >= until) {
         return Err(ApiError::conflict(
             "Task authority expired before publication",
         ));
     }
-    Ok(Some(crate::git_host::GitDeadline::native(until)?))
+    until.map(crate::git_host::GitDeadline::native).transpose()
 }
 
 /// Verify an already submitted task attempt without claiming or replaying it.
@@ -481,7 +466,7 @@ pub(crate) async fn verify_submitted_attempt(
     attempt: Uuid,
     config: &SdlcWorkspaceConfig,
     secrets: &SecretsConfig,
-) -> Result<Instant, ApiError> {
+) -> Result<Option<Instant>, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let record = ledger::find_task_pipeline(&mut tx, pipeline, false)
         .await
@@ -566,7 +551,7 @@ pub(crate) async fn prepare(
         source_commit: request.source_commit.clone(),
     };
     let result = if fresh {
-        preparation::prepare_with_deadline(root, &source, &request, Some(until)).await
+        preparation::prepare_with_deadline(root, &source, &request, until).await
     } else {
         preparation::readback(root, &source, &request).await
     };
@@ -614,7 +599,7 @@ pub(crate) async fn prepare(
             .map_err(ApiError::internal)?;
         }
     }
-    if Instant::now() >= until {
+    if until.is_some_and(|until| Instant::now() >= until) {
         return Err(ApiError::conflict("Lease истёк до receipt"));
     }
     sqlx::query("UPDATE job_leases SET acknowledged_at=COALESCE(acknowledged_at,clock_timestamp()) WHERE id=$1 AND runner_id IS NULL")

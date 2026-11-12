@@ -138,7 +138,7 @@ impl GitContext {
         Ok(format!("{GRANT_PREFIX}{}", digest(self)?))
     }
 
-    fn current(&self, value: &Value) -> Result<std::time::Duration, ApiError> {
+    fn current(&self, value: &Value) -> Result<(), ApiError> {
         let source: SourceBinding =
             serde_json::from_value(value["binding"].clone()).map_err(|_| ApiError::forbidden())?;
         if value["state"] != "bound" || source != self.source {
@@ -153,7 +153,7 @@ impl GitContext {
             return Err(ApiError::forbidden());
         }
         crate::api::sdlc_workspace::task_pipeline::current(current, &self.intent)
-            .map_err(|_| ApiError::conflict("Текущий Developer assignment/lease изменился"))
+            .map_err(|_| ApiError::conflict("Текущее назначение Developer изменилось"))
     }
 }
 
@@ -258,9 +258,10 @@ async fn verify(
         .await?
         .ok_or_else(ApiError::forbidden)?;
     identity(&ctx, &state.config.sdlc_workspace, context)?;
-    let clock = verify_context(state, context)
-        .await?
-        .intersect(crate::git_host::GitDeadline::native(child_until)?);
+    let mut clock = crate::git_host::GitDeadline::native(child_until)?;
+    if let Some(owner_clock) = verify_context(state, context).await? {
+        clock = clock.intersect(owner_clock);
+    }
     clock.require()?;
     Ok(clock)
 }
@@ -287,14 +288,16 @@ pub async fn prepare_delegation(
     }
     let clock = verify_context(state, context).await?;
     let request = delegation_request(context, key, ttl)?;
-    clock.require()?;
+    if let Some(clock) = clock {
+        clock.require()?;
+    }
     Ok(request)
 }
 
 async fn verify_context(
     state: &AppState,
     context: &GitContext,
-) -> Result<crate::git_host::GitDeadline, ApiError> {
+) -> Result<Option<crate::git_host::GitDeadline>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let mut conn = pool.acquire().await.map_err(ApiError::internal)?;
     if !cicd_infra::sdlc_workspace::task_project_matches(
@@ -335,12 +338,13 @@ async fn verify_context(
     }
     drop(conn);
     crate::repository_catalog::require_storage_writable(pool, &storage).await?;
-    let (start, value) = crate::task_delivery::tracker::read_source_binding(
+    let (_, value) = crate::task_delivery::tracker::read_source_binding(
         &state.config.sdlc_workspace,
         context.source.task_id,
     )
     .await?;
-    let mut clock = crate::git_host::GitDeadline::native(start + context.current(&value)?)?;
+    context.current(&value)?;
+    let mut clock = None;
     if crate::central_auth::application_policy_required()? {
         // The registered Tracker readback above, not the caller header, proves
         // this exact task owner. A child grant is still independently required.
@@ -355,7 +359,7 @@ async fn verify_context(
         {
             return Err(ApiError::forbidden());
         }
-        clock = clock.intersect(crate::git_host::GitDeadline::owner(&owner));
+        clock = Some(crate::git_host::GitDeadline::owner(&owner));
         if crate::space_admission::active(pool).await? {
             let space = pdlc_shared::space_access::SpaceRef {
                 registry_instance_id: context.source.namespace.registry_instance_id,
@@ -394,10 +398,12 @@ async fn verify_context(
             {
                 return Err(ApiError::forbidden());
             }
-            clock = clock.intersect(crate::git_host::GitDeadline::admission(&proof));
+            clock = clock.map(|clock| clock.intersect(crate::git_host::GitDeadline::admission(&proof)));
         }
     }
-    clock.require()?;
+    if let Some(clock) = clock {
+        clock.require()?;
+    }
     Ok(clock)
 }
 

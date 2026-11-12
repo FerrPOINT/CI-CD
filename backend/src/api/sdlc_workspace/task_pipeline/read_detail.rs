@@ -77,7 +77,7 @@ pub(crate) async fn read(
     let detail = crate::api::pipeline_detail_on(&mut tx, pipeline).await?;
     bound_detail(&detail, &record)?;
     tx.commit().await.map_err(ApiError::internal)?;
-    if Instant::now() >= until {
+    if until.is_some_and(|until| Instant::now() >= until) {
         return Err(ApiError::forbidden());
     }
     Ok(Json(detail))

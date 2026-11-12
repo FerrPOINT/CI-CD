@@ -1,13 +1,16 @@
-//! Current human admission intersects, but cannot issue, a confirmed native task lease.
+//! Current human admission cannot issue or extend a Tracker task assignment.
 use crate::api::ApiError;
 use std::time::Instant;
 use uuid::Uuid;
 
 /// Call only after the registered Tracker response has passed the exact task,
 /// assignment, binding and lease validation at the owning protocol boundary.
-/// This function returns freshness, not a native credential or human role.
-pub(crate) async fn intersect(subject: &str, native_until: Instant) -> Result<Instant, ApiError> {
-    if Instant::now() >= native_until {
+/// An optional bound belongs to a real credential, never to technical task ownership.
+pub(crate) async fn intersect(
+    subject: &str,
+    native_until: Option<Instant>,
+) -> Result<Option<Instant>, ApiError> {
+    if native_until.is_some_and(|until| Instant::now() >= until) {
         return Err(ApiError::forbidden());
     }
     if !crate::central_auth::BRIDGE
@@ -27,6 +30,7 @@ pub(crate) async fn intersect(subject: &str, native_until: Instant) -> Result<In
         native_until,
     )
     .await
+    .map(Some)
     .map_err(|error| match error {
         cicd_app::native_owner::NativeOwnerError::Forbidden => ApiError::forbidden(),
         cicd_app::native_owner::NativeOwnerError::Unavailable => {

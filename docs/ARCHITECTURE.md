@@ -1,5 +1,13 @@
 # Архитектура Forge CI/CD
 
+Технический configured-cli-v1 assignment Tracker — текущее владение, а не TTL.
+Forge сверяет task/role/assignment/execution/run/fence перед эффектом; nullable
+`lease.expires_at` и прежние timestamps не определяют допуск. Для подготовки
+Developer в Ready требуется явный `workspace_preparation_authorized=true`
+из registered namespace source. Реальные сроки Auth/child/Space proofs и
+собственные CI `job_leases` сохраняются; искусственный долгий deadline не выдаётся.
+Это source-контракт; совместная установка и живая приёмка учитываются отдельно.
+
 Установленные native Kubernetes execution/image publication/Helm delivery включаются в main вместе с его актуальными admission и human-owner проверками. Развилка SQLx histories и транзакционная граница merge/CI: [ADR-0042](adr/0042-native-main-migration-lineages.md). Общий binary не означает автоматическую установку или принятие workspace API.
 
 Допуск синхронизаций, effective Space lifecycle, восстановление credentials и

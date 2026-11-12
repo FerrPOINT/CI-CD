@@ -24,9 +24,11 @@ predecessor является только данными, никогда auth cr
 Replacement обязан иметь того же subject и ровно прежние три scopes, включая
 canonical context grant. Existing issuer introspection с постоянным
 `include_lifetime=true` проверяет identity и clocks в одном ответе. Отсутствие
-clocks закрывает эффект. Permit ограничен minimum issuer и прежнего Tracker
-deadline; Tracker30s не меняется. Проверяются existing assignment/fence/lease,
-routing, native tuple и project/repository mapping.
+clocks закрывает эффект. Permit ограничен issuer и текущим Auth owner proof.
+Текущее техническое назначение Tracker не истекает по времени: поле
+`lease.expires_at` nullable, прежние timestamps остаются историей. Проверяются
+existing assignment/fence/ownership, routing, native tuple и project/repository
+mapping. Собственные `job_leases` Forge сохраняют expiry и renewal.
 
 ## Custody и unknown ACK
 

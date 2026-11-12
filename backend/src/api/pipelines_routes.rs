@@ -387,8 +387,8 @@ async fn create_pipeline_bound(
                     &mut tx, project_id, task,
                 )
                 .await?;
-                if std::time::Instant::now() >= until {
-                    return Err(ApiError::conflict("Tracker lease expired during replay"));
+                if until.is_some_and(|until| std::time::Instant::now() >= until) {
+                    return Err(ApiError::conflict("Current admission expired during replay"));
                 }
             }
             crate::pipeline_authority::replay(&mut tx, pipeline_id, human_origin).await?;
@@ -435,10 +435,8 @@ async fn create_pipeline_bound(
         if conflict {
             return Err(ApiError::conflict("Task operation key уже занят"));
         }
-        Some(
-            super::sdlc_workspace::task_pipeline::verify_submission(&mut tx, project_id, task)
-                .await?,
-        )
+        super::sdlc_workspace::task_pipeline::verify_submission(&mut tx, project_id, task)
+            .await?
     } else {
         None
     };
@@ -547,7 +545,7 @@ async fn create_pipeline_bound(
         .map_err(ApiError::internal)?;
     }
     if task_until.is_some_and(|until| std::time::Instant::now() >= until) {
-        return Err(ApiError::conflict("Tracker lease истёк до enqueue commit"));
+        return Err(ApiError::conflict("Допуск истёк до enqueue commit"));
     }
     tx.commit().await.map_err(ApiError::internal)?;
     crate::dispatch_signal::notify_runner_work_available();

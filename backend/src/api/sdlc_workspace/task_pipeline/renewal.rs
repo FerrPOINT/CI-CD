@@ -166,7 +166,7 @@ async fn live_context(
     state: &AppState,
     record: &ledger::TaskPipelineJournal,
     stored: &StoredCredential,
-) -> Result<Instant, ApiError> {
+) -> Result<Option<Instant>, ApiError> {
     if !ledger::task_project_matches(conn, record.project_id, &record.intent)
         .await
         .map_err(ApiError::internal)?
@@ -220,7 +220,7 @@ pub(crate) async fn renew(
         }
         let until = live_context(&mut tx, &state, &record, &original).await?;
         owner(&state, &headers).await?;
-        if Instant::now() >= until {
+        if until.is_some_and(|until| Instant::now() >= until) {
             return Err(ApiError::forbidden());
         }
         tx.commit().await.map_err(ApiError::internal)?;
@@ -243,7 +243,8 @@ pub(crate) async fn renew(
             "Original credential cannot be reinstalled",
         ));
     }
-    let until = child_until.min(live_context(&mut tx, &state, &record, &replacement).await?);
+    let until = live_context(&mut tx, &state, &record, &replacement).await?
+        .map_or(child_until, |owner_until| child_until.min(owner_until));
     // Fresh root authentication after all lock/network waits. The expired predecessor
     // is data only, never the credential authenticating this handoff.
     if owner(&state, &headers).await? != subject || Instant::now() >= until {
@@ -287,7 +288,7 @@ pub(crate) async fn readback(
         .await?
         .ok_or_else(ApiError::not_found)?;
     let until = live_context(&mut tx, &state, &record, &original).await?;
-    if owner(&state, &headers).await? != subject || Instant::now() >= until {
+    if owner(&state, &headers).await? != subject || until.is_some_and(|until| Instant::now() >= until) {
         return Err(ApiError::forbidden());
     }
     tx.commit().await.map_err(ApiError::internal)?;

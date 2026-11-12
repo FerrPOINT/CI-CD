@@ -537,10 +537,6 @@ pub(super) async fn confirm_identity(
         tracker::read_assignment(&namespace, workspace, saved.task_id, subject, access).await?;
     assignment.require_same(saved)?;
     let clock = GitDeadline::identity(&verified);
-    let clock = match &preparation {
-        Some(preparation) => clock.cap_until(preparation.expires_at),
-        None => clock,
-    };
     clock.require()?;
     Ok(Confirmed {
         assignment,
