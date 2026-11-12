@@ -1069,7 +1069,8 @@ impl Fixture {
     }
     async fn close(self) {
         self.pool.close().await;
-        sqlx::query(&format!("DROP DATABASE {} WITH (FORCE)", self.database))
+        // Ordinary DROP handles autovacuum without backend-signaling grants.
+        sqlx::query(&format!("DROP DATABASE {}", self.database))
             .execute(&self.admin)
             .await
             .unwrap();
