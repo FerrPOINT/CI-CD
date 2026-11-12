@@ -223,9 +223,29 @@ pub(super) async fn exercise_publication(app:&Router,pool:&PgPool,workspace:Uuid
         json!({"name":"native-neighbor","project_id":current.project_id,"scopes":["api:read","api:write"]})).await;
     assert_eq!(status,StatusCode::CREATED);
     let native_token=native["token"].as_str().unwrap();
-    for token in [None,Some(SOURCE_READER),Some(OTHER_HUMAN),Some(native_token)] {
-        let (status,body)=http(app,"POST",&path,token,request(command.clone())).await;
-        assert!(matches!(status,StatusCode::FORBIDDEN|StatusCode::UNAUTHORIZED),"{status}: {body}");
+    let session=store::session(pool,workspace).await.unwrap().unwrap();
+    let pipelines=sqlx::query_scalar::<_,i64>("SELECT count(*) FROM pipelines WHERE project_id=$1")
+        .bind(current.project_id).fetch_one(pool).await.unwrap();
+    for (name,token,expected) in [("anonymous",None,StatusCode::UNAUTHORIZED),
+        ("readonly machine",Some(SOURCE_READER),StatusCode::FORBIDDEN),
+        ("neighbor human",Some(OTHER_HUMAN),StatusCode::CONFLICT),
+        ("native SAT",Some(native_token),StatusCode::FORBIDDEN)] {
+        let attempted=request(command.clone());
+        let attempted_id=attempted["operation_id"].as_str().unwrap().parse::<Uuid>().unwrap();
+        let (status,body)=http(app,"POST",&path,token,attempted).await;
+        assert_eq!(status,expected,"{name}: {body}");
+        if name=="neighbor human" {
+            // A legitimate human writer retains its normal route, but cannot
+            // borrow the current machine's session or create its publication.
+            assert_eq!(body["error"]["message"],"workspace_session_owned_by_another_actor");
+        }
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM development_workspace_operations WHERE id=$1")
+            .bind(attempted_id).fetch_one(pool).await.unwrap(),0,"{name} created an operation");
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM pipelines WHERE project_id=$1")
+            .bind(current.project_id).fetch_one(pool).await.unwrap(),pipelines,"{name} created a pipeline");
+        let held=store::session(pool,workspace).await.unwrap().unwrap();
+        assert_eq!((held.id,held.actor_id,held.owner_subject),(session.id,session.actor_id,session.owner_subject));
+        assert_eq!(held.machine_assignment,session.machine_assignment);
     }
     let mut foreign=command.clone(); foreign["recipe"]=json!("foreign-publish");
     assert_eq!(http(app,"POST",&path,Some(TOKEN),request(foreign)).await.0,StatusCode::FORBIDDEN);
