@@ -22,6 +22,17 @@ const REGISTRY: &str = "00000000-0000-0000-0000-000000000010";
 const POSITIVE: &str = "task_delivery::namespace_evidence_pg_tests::namespace_devops_evidence_pg_registered_reader_retained_candidate_and_empty_target";
 const NEGATIVE: &str = "task_delivery::namespace_evidence_pg_tests::namespace_devops_evidence_pg_foreign_project_and_assignment_mismatch_are_read_only";
 
+const SELECTED: &str = "task_delivery::namespace_evidence_pg_tests::namespace_devops_evidence_pg_explicit_owner_selection_matches_verified_artifact";
+const MISSING: &str = "task_delivery::namespace_evidence_pg_tests::namespace_devops_evidence_pg_missing_selected_artifact_is_not_an_empty_target";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scenario {
+    Default,
+    Negative,
+    Selected,
+    Missing,
+}
+
 struct Temp(PathBuf);
 impl Drop for Temp {
     fn drop(&mut self) {
@@ -136,7 +147,8 @@ async fn get(app: &Router, uri: &str, token: Option<&str>) -> (StatusCode, Value
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
-async fn exercise(pool: sqlx::PgPool, negative: bool) {
+async fn exercise(pool: sqlx::PgPool, scenario: Scenario) {
+    let negative = scenario == Scenario::Negative;
     let root = std::env::temp_dir().join(format!("forge-namespace-pg-{}", Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
     let root = Temp(root.canonicalize().unwrap());
@@ -176,6 +188,7 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
         )
         .unwrap()
     );
+    let sealed_child = credential["encrypted_child"].as_str().unwrap().to_owned();
     let mut stored = StoredCredential::from_value(&credential).unwrap();
     assert_ne!(stored.subject.to_string(), READER);
     stored.context.intent.source_commit = commit.clone();
@@ -307,6 +320,18 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
     sqlx::query("INSERT INTO environments(id,project_id,name,protected,required_approvals) VALUES($1,$2,'fixture',false,0)")
         .bind(environment).bind(query.project_id).execute(&pool).await.unwrap();
     let policy = DeliveryPolicy {
+        task_delivery_selection: matches!(scenario, Scenario::Selected | Scenario::Missing).then(
+            || probes::OwnerSelectionPolicy {
+                action: probes::OwnerSelectionAction::Deploy,
+                job_name: "prepare".into(),
+                artifact_name: if scenario == Scenario::Missing {
+                    "missing-private-artifact"
+                } else {
+                    "product.txt"
+                }
+                .into(),
+            },
+        ),
         origin: "http://127.0.0.1:1".into(),
         health_path: "/health".into(),
         health_body_sha256: "1".repeat(64),
@@ -366,6 +391,18 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
                 .contains("original operation binding or hash mismatch")
         );
     }
+    if scenario == Scenario::Missing {
+        let (status, body) = get(&app, &uri, Some("sdlc_pat_reader")).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            body.to_string()
+                .contains("devops_owner_selection_unavailable")
+        );
+        assert!(!body.to_string().contains("missing-private-artifact"));
+        assert_eq!(rows(&pool).await, before_rows);
+        assert_eq!(inventory(&root.0), before_files);
+        return;
+    }
     for _ in 0..2 {
         let (status, body) = get(&app, &uri, Some("sdlc_pat_reader")).await;
         assert_eq!(status, StatusCode::OK);
@@ -390,6 +427,21 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
         assert_eq!(body["target"]["policySha256"], policy.sha256().unwrap());
         assert_eq!(body["target"]["current"], json!({"state":"absent"}));
         assert_eq!(body["target"]["confirmed"], json!({"state":"absent"}));
+        if scenario == Scenario::Selected {
+            let selected = &body["target"]["selection"];
+            assert_eq!(selected["schema"], "forge/owner-delivery-selection/v1");
+            assert_eq!(selected["action"], "deploy");
+            assert_eq!(
+                selected["sourcePipelineId"],
+                body["candidate"]["pipelineId"]
+            );
+            assert_eq!(selected["configSha256"], body["candidate"]["configSha256"]);
+            assert_eq!(selected["planSha256"], body["candidate"]["planSha256"]);
+            assert_eq!(selected["artifact"], body["candidate"]["artifacts"][0]);
+        } else {
+            // One observed artifact is not an implicit owner selection.
+            assert!(body["target"].get("selection").is_none());
+        }
         assert_eq!(body["dispatchAllowed"], false);
         for name in [
             "dispatchAllowed",
@@ -402,7 +454,8 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
         for private in [
             "encrypted_child",
             "sdlc_pat_",
-            "fixture-private-ciphertext",
+            "historical-private-child-must-not-be-opened",
+            sealed_child.as_str(),
             root.0.to_str().unwrap(),
         ] {
             assert!(
@@ -422,7 +475,7 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
     );
 }
 
-async fn child(negative: bool) {
+async fn child(scenario: Scenario) {
     let options = PgConnectOptions::from_str(
         &std::env::var("CICD_TEST_DATABASE_URL").expect("explicit disposable PG required"),
     )
@@ -463,7 +516,7 @@ async fn child(negative: bool) {
             .run(&case_pool)
             .await
             .unwrap();
-        exercise(case_pool, negative).await;
+        exercise(case_pool, scenario).await;
     })
     .await;
     pool.close().await;
@@ -480,9 +533,9 @@ async fn child(negative: bool) {
     }
 }
 
-async fn isolated(selector: &str, negative: bool) {
+async fn isolated(selector: &str, scenario: Scenario) {
     if std::env::var(CHILD).as_deref() == Ok(selector) {
-        child(negative).await;
+        child(scenario).await;
         return;
     }
     // Same controlled Auth introspection peer/child-process isolation as the reader middleware fixture.
@@ -533,11 +586,23 @@ async fn isolated(selector: &str, negative: bool) {
 #[tokio::test]
 #[ignore = "requires disposable CICD_TEST_DATABASE_URL; actual reader HTTP/PG, no runner effects"]
 async fn namespace_devops_evidence_pg_registered_reader_retained_candidate_and_empty_target() {
-    isolated(POSITIVE, false).await;
+    isolated(POSITIVE, Scenario::Default).await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable CICD_TEST_DATABASE_URL; actual reader HTTP/PG, no runner effects"]
 async fn namespace_devops_evidence_pg_foreign_project_and_assignment_mismatch_are_read_only() {
-    isolated(NEGATIVE, true).await;
+    isolated(NEGATIVE, Scenario::Negative).await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CICD_TEST_DATABASE_URL; actual owner selection HTTP/PG"]
+async fn namespace_devops_evidence_pg_explicit_owner_selection_matches_verified_artifact() {
+    isolated(SELECTED, Scenario::Selected).await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CICD_TEST_DATABASE_URL; actual owner selection HTTP/PG"]
+async fn namespace_devops_evidence_pg_missing_selected_artifact_is_not_an_empty_target() {
+    isolated(MISSING, Scenario::Missing).await;
 }

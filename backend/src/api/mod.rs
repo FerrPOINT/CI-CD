@@ -232,6 +232,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::registered_devops_evidence::DevopsEvidence,
         crate::task_delivery::owner_evidence::TargetEvidence,
         crate::task_delivery::owner_evidence::ManifestEvidence,
+        crate::task_delivery::owner_selection::OwnerDeliverySelection,
         cicd_domain::repository_sync::Provider,cicd_domain::repository_sync::Direction,
         cicd_domain::repository_sync::Settings,cicd_domain::repository_sync::SaveConnection,
         cicd_domain::repository_sync::CheckConnection,cicd_domain::repository_sync::CheckResult,

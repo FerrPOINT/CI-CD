@@ -16,6 +16,23 @@ pub struct DeliveryPolicy {
     pub acceptance_body_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_execution: Option<TaskExecutionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_delivery_selection: Option<OwnerSelectionPolicy>,
+}
+
+/// Only privileged owner configuration may select an artifact; inventory order is not authority.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerSelectionPolicy {
+    pub action: OwnerSelectionAction,
+    pub job_name: String,
+    pub artifact_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerSelectionAction {
+    Deploy,
 }
 
 /// Explicit owner-published target binding. Never supplied by the calling agent.
@@ -44,6 +61,21 @@ impl DeliveryPolicy {
                     && task.holder_subject.len() <= 256,
                 "explicit nonproduction task target binding required"
             );
+        }
+        if let Some(selection) = &self.task_delivery_selection {
+            ensure!(
+                self.task_execution.is_some(),
+                "selection requires an explicit task target"
+            );
+            for name in [&selection.job_name, &selection.artifact_name] {
+                ensure!(
+                    !name.is_empty()
+                        && name.trim() == name
+                        && name.len() <= 256
+                        && !name.chars().any(char::is_control),
+                    "bounded exact owner selection required"
+                );
+            }
         }
         let url = reqwest::Url::parse(&self.origin)?;
         ensure!(

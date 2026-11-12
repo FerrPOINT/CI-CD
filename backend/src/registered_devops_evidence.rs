@@ -262,6 +262,7 @@ pub async fn readback(
         query.project_id,
         repository,
         &candidate.operation_receipt.request.binding,
+        &candidate,
     )
     .await?;
     tx.commit().await.map_err(|_| unavailable())?;

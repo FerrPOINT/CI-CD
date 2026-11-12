@@ -13,6 +13,8 @@ pub struct TargetEvidence {
     pub task_execution: probes::TaskExecutionPolicy,
     pub current: ManifestEvidence,
     pub confirmed: ManifestEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<super::owner_selection::OwnerDeliverySelection>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq, utoipa::ToSchema)]
@@ -185,6 +187,7 @@ pub(crate) async fn observe(
     project: Uuid,
     repository: Uuid,
     binding: &WorkspaceTaskBinding,
+    candidate: &crate::domain::sdlc_workspace::CandidateEvidenceReadback,
 ) -> Result<TargetEvidence, ApiError> {
     let (kind, policy_sha256, task_execution) =
         delegated::policy(state, project).map_err(|_| unavailable())?;
@@ -192,17 +195,25 @@ pub(crate) async fn observe(
         return Err(ApiError::conflict("devops_target_binding_mismatch"));
     }
     task_environment(connection, project, &task_execution).await?;
-    let (current, confirmed) = match kind {
+    let (current, confirmed, selection_policy) = match kind {
         delegated::TargetKind::Static => {
             let target = configured_target(state, project, false).map_err(|_| unavailable())?;
             if target.policy_sha256 != policy_sha256 {
                 return Err(unavailable());
             }
-            static_snapshot(&target).map_err(|_| unavailable())?
+            let (current, confirmed) = static_snapshot(&target).map_err(|_| unavailable())?;
+            (
+                current,
+                confirmed,
+                target.policy.task_delivery_selection.clone(),
+            )
         }
         delegated::TargetKind::Oci => oci::owner_evidence::snapshot(state, project, &policy_sha256)
             .map_err(|_| unavailable())?,
     };
+    let selection =
+        super::owner_selection::observe_on(connection, selection_policy.as_ref(), candidate)
+            .await?;
     Ok(TargetEvidence {
         observed_at: chrono::Utc::now(),
         target_kind: kind,
@@ -210,6 +221,7 @@ pub(crate) async fn observe(
         task_execution,
         current,
         confirmed,
+        selection,
     })
 }
 

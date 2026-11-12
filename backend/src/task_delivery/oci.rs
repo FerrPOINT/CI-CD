@@ -1748,6 +1748,7 @@ mod tests {
                 data_sha256: sha(b"data"),
                 transport_image: None,
                 checks: DeliveryPolicy {
+                    task_delivery_selection: None,
                     origin: "http://127.0.0.1:8000".into(),
                     health_path: "/health".into(),
                     health_body_sha256: sha(b"ok\n"),

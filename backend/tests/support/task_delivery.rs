@@ -93,6 +93,7 @@ impl ActualDelivery {
         std::fs::write(
             &policy_file,
             serde_json::to_vec(&cicd::task_delivery::DeliveryPolicy {
+                task_delivery_selection: None,
                 origin,
                 health_path: "/health".into(),
                 health_body_sha256: hash(b"ok\n"),

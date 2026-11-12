@@ -162,6 +162,7 @@ fn read_lock_does_not_write_and_excludes_inflight_publication() {
         &enrolled,
         Uuid::new_v4(),
         DeliveryPolicy {
+            task_delivery_selection: None,
             origin: "http://127.0.0.1:3456".into(),
             health_path: "/health".into(),
             health_body_sha256: "a".repeat(64),

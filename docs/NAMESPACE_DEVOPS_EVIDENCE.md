@@ -97,3 +97,33 @@ positive SQL integration claim. Image, installation, live R and Fleet publicatio
 реальных PostgreSQL/HTTP cases; [новый протокол](evidence/NAMESPACE_DEVOPS_OWNER_20261019.md#последующая-квалификация-merge-кандидата)
 заменяет PG-selected0 для source-проверки. Live installation/consumer gates
 остаются отдельными.
+
+## Привилегированный Выбор Артефакта
+
+Необязательное `taskDeliverySelection` в существующей owner policy задаёт
+`action: deploy`, точные `jobName` и `artifactName`. Поле разрешено только вместе
+с существующим nonproduction `taskExecution`. Выбор не принимается из query,
+CLI агента, исходного репозитория или порядка inventory.
+
+```json
+{"taskDeliverySelection":{"action":"deploy","jobName":"package","artifactName":"dist/site.zip"}}
+```
+
+Registered-R readback разрешает selector только среди уже проверенных текущих
+artifact IDs исходного Developer pipeline. Требуется ровно одно совпадение;
+отсутствие, неоднозначность, посторонний или пустой артефакт дают фиксированный
+503. Указатели target и файлы при этом не меняются. Старые retained artifacts
+других attempts/pipelines не участвуют в выборе.
+
+`target.selection`, если настроен и подтверждён, содержит закрытый контракт
+`forge/owner-delivery-selection/v1`: `action`, `sourcePipelineId`, `configSha256`,
+`planSha256` и исходный `artifact` из candidate readback. Частные имена selector,
+policy paths, credentials и probe origins не экспортируются. Это наблюдение
+owner, а не dispatch/Tracker acceptance или продление credential.
+
+Без настройки поле отсутствует, даже если inventory содержит один файл.
+Сериализация прежней policy и её SHA остаются прежними; заполненный selector
+входит в полный typed policy SHA. Reader не создаёт target и не переписывает
+owner marker. Включение требует совместимого Forge и явно подготовленной owner
+policy/enrollment; откат на старый binary после включения selector не заявляется.
+Новая установка, изменение policy рабочего target и публикация здесь не выполняются.

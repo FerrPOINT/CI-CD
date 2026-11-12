@@ -7,7 +7,11 @@ pub(in crate::task_delivery) fn snapshot(
     state: &AppState,
     project: Uuid,
     policy_sha256: &str,
-) -> anyhow::Result<(ManifestEvidence, ManifestEvidence)> {
+) -> anyhow::Result<(
+    ManifestEvidence,
+    ManifestEvidence,
+    Option<crate::task_delivery::probes::OwnerSelectionPolicy>,
+)> {
     let owner = task_owner(state, project)?;
     ensure!(owner.policy_hash == policy_sha256, "owner policy changed");
     let _lock = ReadLock::acquire(&owner.root)?;
@@ -34,7 +38,7 @@ pub(in crate::task_delivery) fn snapshot(
             .unwrap_or(&observed.receipt);
         known.push((latest.manifest_sha256.clone(), latest.status));
     }
-    pointers(&owner.root, &known, &["manifests"], |hash| {
+    let (current, confirmed) = pointers(&owner.root, &known, &["manifests"], |hash| {
         let manifest = owner.manifest(hash)?;
         let task = owner
             .policy
@@ -64,5 +68,10 @@ pub(in crate::task_delivery) fn snapshot(
             "OCI manifest original request hash mismatch"
         );
         Ok(())
-    })
+    })?;
+    Ok((
+        current,
+        confirmed,
+        owner.policy.checks.task_delivery_selection.clone(),
+    ))
 }
