@@ -220,7 +220,7 @@ async fn child(data: serde_json::Value) {
         .await
         .unwrap();
     let catalog = tempfile::tempdir().unwrap();
-    checks::publish(&pool, catalog.path(), workspace).await;
+    checks::publish(&pool, catalog.path(), workspace, true).await;
     let mut config = cicd::config::RuntimeConfig::from_env_source(|_| None, false)
         .unwrap()
         .with_auth_secret(Some("workspace-developer-fixture-only".into()));
@@ -378,6 +378,28 @@ async fn child(data: serde_json::Value) {
             StatusCode::FORBIDDEN
         );
     }
+    checks::publish(&pool, catalog.path(), workspace, false).await;
+    let unsupported = Uuid::new_v4();
+    let (status, denied) = http(
+        &app, "POST", &format!("{path}/operations"), Some(TOKEN),
+        json!({"operation_id":unsupported,"expected_version":1,"command":{"action":"begin_session","task":task.to_string()}}),
+    ).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{denied}");
+    assert!(
+        denied
+            .to_string()
+            .contains("workspace_required_developer_checks_missing"),
+        "{denied}"
+    );
+    assert!(store::session(&pool, workspace).await.unwrap().is_none());
+    let recorded: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM development_workspace_operations WHERE id=$1")
+            .bind(unsupported)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded, 0);
+    checks::publish(&pool, catalog.path(), workspace, true).await;
     let begin = Uuid::new_v4();
     assert_eq!(http(&app,"POST",&format!("/api/v1/development-workspaces/{}/operations",id("other_workspace")),Some(TOKEN),json!({"operation_id":Uuid::new_v4(),"expected_version":1,"command":{"action":"begin_session","task":task.to_string()}})).await.0,StatusCode::FORBIDDEN);
     let request = json!({"operation_id":begin,"expected_version":1,"command":{"action":"begin_session","task":task.to_string()}});
@@ -392,6 +414,18 @@ async fn child(data: serde_json::Value) {
     assert_eq!(status, StatusCode::OK, "{result}");
     assert!(!result.to_string().contains(TOKEN));
     assert!(!result.to_string().contains("sealed"));
+    checks::publish(&pool, catalog.path(), workspace, false).await;
+    let (status, replay) = http(
+        &app,
+        "POST",
+        &format!("{path}/operations"),
+        Some(TOKEN),
+        request.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay, result);
+    checks::publish(&pool, catalog.path(), workspace, true).await;
     let plan: serde_json::Value = sqlx::query_scalar(
         "SELECT execution_plan FROM development_workspace_operations WHERE id=$1",
     )
