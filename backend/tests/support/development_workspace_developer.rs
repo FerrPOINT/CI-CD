@@ -9,6 +9,7 @@ use axum::{
 use std::sync::{Arc, RwLock};
 
 const TOKEN: &str = "sdlc_pat_workspace_developer_fixture";
+const DEVOPS_TOKEN: &str = "sdlc_pat_workspace_devops_fixture";
 const SOURCE_READER: &str = "sdlc_pat_workspace_source_reader_fixture";
 const PROJECT_OWNER: &str = "sdlc_pat_workspace_project_owner_fixture";
 const OTHER_HUMAN: &str = "sdlc_pat_workspace_other_human_fixture";
@@ -23,6 +24,7 @@ mod checks;
 struct Owner {
     context: serde_json::Value,
     subject: Uuid,
+    devops_subject: Uuid,
     source_reader: Uuid,
     project_owner: Uuid,
     other_human: Uuid,
@@ -117,6 +119,7 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
         "owner_subject":Uuid::new_v4(),"created_at":chrono::Utc::now()});
     let owner = Arc::new(RwLock::new(Owner {
         subject,
+        devops_subject:Uuid::new_v4(),
         source_reader,
         project_owner: Uuid::new_v4(),
         other_human: Uuid::new_v4(),
@@ -136,6 +139,7 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
             let (subject,role,email,reader)=match headers["authorization"].to_str().unwrap() {
                 value if value==format!("Bearer {SOURCE_READER}")=>(owner.source_reader,"service_account","reader@fixture.invalid",true),
                 value if value==format!("Bearer {TOKEN}")=>(owner.subject,"service_account","developer@fixture.invalid",false),
+                value if value==format!("Bearer {DEVOPS_TOKEN}")=>(owner.devops_subject,"service_account","devops@fixture.invalid",false),
                 value if value==format!("Bearer {PROJECT_OWNER}")=>(owner.project_owner,"admin","owner@fixture.invalid",false),
                 value if value==format!("Bearer {OTHER_HUMAN}")=>(owner.other_human,"user","human@fixture.invalid",false),
                 _=>panic!("unexpected fixture bearer"),
@@ -170,6 +174,15 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
             match mode.as_str() {
                 "stale"=>owner.context["execution"]["assignment"]["version"]=json!(2),
                 "restore"=>owner.context["execution"]["assignment"]["version"]=json!(1),
+                "deployment_ready"=>{
+                    owner.context["execution"]["stage"]=json!("Deployment");
+                    owner.context["execution"]["status"]=json!("Ready");
+                    let subject=owner.devops_subject;
+                    owner.context["execution"]["assignment"]["machine_subject"]=json!(subject);
+                    owner.context["execution"]["assignment"]["assignment_id"]=json!(Uuid::new_v4());
+                    owner.context["execution"]["assignment"]["execution_id"]=json!(Uuid::new_v4());
+                },
+                "deployment_running"=>owner.context["execution"]["status"]=json!("InProgress"),
                 "revoked"=>owner.revoked=true,
                 _=>panic!("unknown fixture mode"),
             }
@@ -665,6 +678,7 @@ async fn child(data: serde_json::Value) {
         .unwrap(),
         1
     );
+    checks::exercise_devops(&app,&pool,workspace,&data,catalog.path(),begin).await;
     assert_eq!(http(&app,"DELETE",&format!("{memberships}/{actor}"),Some(TOKEN),json!(null)).await.0,StatusCode::FORBIDDEN);
     let (status, removed) = http(&app,"DELETE",&format!("{memberships}/{actor}"),Some(PROJECT_OWNER),json!(null)).await;
     assert_eq!(status,StatusCode::OK,"{removed}");

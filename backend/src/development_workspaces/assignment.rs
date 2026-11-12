@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct DeveloperAssignment {
+pub(super) struct WorkspaceAssignment {
     pub task_id: Uuid,
     pub assignment_id: Uuid,
     pub execution_id: Uuid,
@@ -55,7 +55,7 @@ impl WorkspacePreparation {
     }
 }
 
-impl DeveloperAssignment {
+impl WorkspaceAssignment {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn read(
         context: &Value,
@@ -73,6 +73,7 @@ impl DeveloperAssignment {
         let assignment = &execution["assignment"];
         let source = &execution["source_binding"];
         let preparation = if execution["status"] == "InProgress"
+            || (access == AssignmentAccess::Preparing && execution["stage"] == "Deployment" && execution["status"] == "Ready")
             || (access == AssignmentAccess::Closing && execution["status"] == "Ready")
             || (matches!(
                 access,
@@ -85,7 +86,8 @@ impl DeveloperAssignment {
             AssignmentAccess::Preparing | AssignmentAccess::Reading
         ) && execution["status"] == "Ready"
         {
-            if execution["workspace_preparation_authorized"] != true {
+            if !matches!(execution["stage"].as_str(), Some("Development" | "Rework"))
+                || execution["workspace_preparation_authorized"] != true {
                 return Err(denied());
             }
             Some(WorkspacePreparation {
@@ -107,7 +109,7 @@ impl DeveloperAssignment {
             || context["state"] != "active"
             || execution["interaction_protocol"] != "configured-cli-v1"
             || execution["root_task_id"] != task.to_string()
-            || !matches!(execution["stage"].as_str(), Some("Development" | "Rework"))
+            || !matches!(execution["stage"].as_str(), Some("Development" | "Rework" | "Deployment"))
             || assignment["machine_subject"] != subject.to_string()
             || subject.is_nil()
             || task.is_nil()
@@ -160,6 +162,29 @@ impl DeveloperAssignment {
         ))
     }
 
+    pub(super) fn is_developer(&self) -> bool {
+        matches!(self.stage.as_str(), "Development" | "Rework")
+    }
+
+    pub(super) fn require_action(&self, action: &WorkspaceAction, profile: &Value) -> Result<(), ApiError> {
+        let allowed = match action {
+            WorkspaceAction::Check { recipe, source_pipeline_id, .. } => profile["checks"]
+                .as_array().is_some_and(|checks| checks.iter().any(|check| {
+                    check["key"] == *recipe && if self.is_developer() {
+                        source_pipeline_id.is_none() && check["executor"] == "forge"
+                            && check["requiresRuntime"] == false
+                    } else {
+                        self.stage == "Deployment" && source_pipeline_id.is_some_and(|id| !id.is_nil())
+                            && check["executor"] == "forge-delivery"
+                    }
+                })),
+            WorkspaceAction::BeginSession { .. } | WorkspaceAction::EndSession { .. } => self.is_developer() || self.stage == "Deployment",
+            WorkspaceAction::Prepare { .. } => self.is_developer(),
+            _ => false,
+        };
+        if allowed { Ok(()) } else { Err(ApiError::forbidden()) }
+    }
+
     pub(super) fn require_same(&self, saved: &Self) -> Result<(), ApiError> {
         if self == saved {
             Ok(())
@@ -176,7 +201,7 @@ fn commit_sha(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-pub(super) fn developer_action(action: &WorkspaceAction) -> bool {
+pub(super) fn machine_action(action: &WorkspaceAction) -> bool {
     matches!(
         action,
         WorkspaceAction::BeginSession { .. }
@@ -232,7 +257,7 @@ mod tests {
             &namespace, tracker, project, task, actor, repository, workspace,
         );
         let read = |v: &Value| {
-            DeveloperAssignment::read(
+            WorkspaceAssignment::read(
                 v,
                 &namespace,
                 tracker,
@@ -255,7 +280,7 @@ mod tests {
             AssignmentAccess::Reading,
             AssignmentAccess::Closing,
         ] {
-            let result = DeveloperAssignment::read(
+            let result = WorkspaceAssignment::read(
                 &completed, &namespace, tracker, project, task, actor, repository, workspace,
                 access,
             );
@@ -277,7 +302,7 @@ mod tests {
         let mut reserved = initial.clone();
         reserved["execution"]["status"] = json!("Ready");
         let read_preparation = |v: &Value| {
-            DeveloperAssignment::read(
+            WorkspaceAssignment::read(
                 v,
                 &namespace,
                 tracker,
@@ -290,7 +315,7 @@ mod tests {
             )
         };
         assert!(read_preparation(&reserved).is_err());
-        let (closing, deadline) = DeveloperAssignment::read(
+        let (closing, deadline) = WorkspaceAssignment::read(
             &reserved,
             &namespace,
             tracker,
@@ -331,7 +356,7 @@ mod tests {
             ("/execution/root_task_id", json!(Uuid::new_v4())),
             ("/execution/interaction_protocol", json!("legacy")),
             ("/execution/status", json!("Completed")),
-            ("/execution/stage", json!("Deployment")),
+            ("/execution/stage", json!("Testing")),
             (
                 "/execution/assignment/machine_subject",
                 json!(Uuid::new_v4()),
@@ -398,14 +423,56 @@ mod tests {
     }
 
     #[test]
-    fn developer_is_not_a_workspace_operator_or_release_role() {
-        assert!(developer_action(&WorkspaceAction::BeginSession {
+    fn deployment_assignment_uses_its_own_session_and_only_published_delivery_checks() {
+        let namespace = NamespaceRef { registry_instance_id:Uuid::new_v4(), namespace_id:Uuid::new_v4() };
+        let (tracker, project, task, actor, repository, workspace) =
+            (Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4());
+        let mut value = context(&namespace,tracker,project,task,actor,repository,workspace);
+        let developer = WorkspaceAssignment::read(&value,&namespace,tracker,project,task,actor,repository,workspace,AssignmentAccess::Active).unwrap().0;
+        value["execution"]["stage"] = json!("Deployment");
+        let read = |value: &Value, access| WorkspaceAssignment::read(value,&namespace,tracker,project,task,actor,repository,workspace,access);
+        let deployment = read(&value,AssignmentAccess::Active).unwrap().0;
+        assert!(!deployment.is_developer());
+        assert!(deployment.require_same(&developer).is_err());
+        let profile = json!({"checks":[{"key":"unit","executor":"forge","requiresRuntime":false},
+            {"key":"release","executor":"forge-delivery","requiresRuntime":true}]});
+        let release = WorkspaceAction::Check {recipe:"release".into(),source_commit:"a".repeat(40),source_pipeline_id:Some(Uuid::new_v4())};
+        assert!(deployment.require_action(&release,&profile).is_ok());
+        assert!(developer.require_action(&release,&profile).is_err());
+        for (recipe, source_pipeline_id) in [("release",None),("release",Some(Uuid::nil())),("unit",None),("unit",Some(Uuid::new_v4())),("unknown",Some(Uuid::new_v4()))] {
+            assert!(deployment.require_action(&WorkspaceAction::Check {recipe:recipe.into(),source_commit:"a".repeat(40),source_pipeline_id},&profile).is_err());
+        }
+        assert!(deployment.require_action(&WorkspaceAction::BeginSession{task:task.to_string()},&profile).is_ok());
+        assert!(deployment.require_action(&WorkspaceAction::Start{},&profile).is_err());
+        for (pointer, replacement) in [("/execution/assignment/machine_subject",json!(Uuid::new_v4())),
+            ("/execution/source_binding/development_workspace_id",json!(Uuid::new_v4())),
+            ("/execution/source_binding/repository_id",json!(Uuid::new_v4()))] {
+            let mut foreign=value.clone(); *foreign.pointer_mut(pointer).unwrap()=replacement;
+            assert!(read(&foreign,AssignmentAccess::Active).is_err());
+        }
+        value["execution"]["status"]=json!("Completed");
+        assert!(read(&value,AssignmentAccess::Active).is_err());
+        assert!(read(&value,AssignmentAccess::Reading).is_ok());
+        value["execution"]["status"]=json!("Ready");
+        assert!(read(&value,AssignmentAccess::Preparing).unwrap().1.is_none(), "DevOps BeginSession has no Developer preparation grant");
+        value["execution"]["workspace_preparation_authorized"]=json!(true);
+        value["execution"]["workspace_preparation_commit"]=json!("a".repeat(40));
+        assert!(read(&value,AssignmentAccess::Preparing).is_ok());
+        assert!(read(&value,AssignmentAccess::Active).is_err());
+        let prepare=WorkspaceAction::Prepare { sources:vec![], local:cicd_domain::development_workspace::LocalPreparation {
+            machine_id:Uuid::new_v4(),profile_hash:"a".repeat(64),repositories:vec![],tools:vec![] } };
+        assert!(deployment.require_action(&prepare,&profile).is_err());
+    }
+
+    #[test]
+    fn machine_actions_do_not_include_workspace_operator_actions() {
+        assert!(machine_action(&WorkspaceAction::BeginSession {
             task: "R1-7".into()
         }));
-        assert!(developer_action(&WorkspaceAction::EndSession {
+        assert!(machine_action(&WorkspaceAction::EndSession {
             session_id: Uuid::new_v4()
         }));
-        assert!(developer_action(&WorkspaceAction::Check {
+        assert!(machine_action(&WorkspaceAction::Check {
             recipe: "backend-unit".into(),
             source_commit: "a".repeat(40),
             source_pipeline_id: None,
@@ -423,7 +490,7 @@ mod tests {
                 source_commit: "a".repeat(40),
             },
         ] {
-            assert!(!developer_action(&action));
+            assert!(!machine_action(&action));
         }
     }
 }

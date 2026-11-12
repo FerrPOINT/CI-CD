@@ -6,6 +6,16 @@ configured Developer в Ready требует `execution.workspace_preparation_au
 и точного commit из registered source. Forge URL/DTO не меняются; Auth/child
 expiry и собственные runner leases сохраняют прежние проверки.
 
+Configured DevOps использует существующий registered-workspace Check:
+`command:{action:"check",recipe,source_commit,source_pipeline_id}`. Своя machine
+session допускается в Ready/Deployment; delivery effect — только InProgress с
+текущей immutable assignment authority. GET точной machine delivery operation добавляет в
+`result` typed `deploymentObservation` с вложенной `receipt`; envelope request,
+workspace/pipeline IDs и исторические GET сохраняются. Неизвестная deployment
+receipt возвращается как `result.state:"unknown"` с
+`reason:"workspace_deployment_receipt_unconfirmed"` и
+`requiresReconciliation:true`. [Поля и границы](DEVELOPMENT_WORKSPACES.md).
+
 Отдельное семейство `/development-workspaces`: реестр, сессии, именованные
 проверки и original-key async lifecycle. [Контракт и recovery](DEVELOPMENT_WORKSPACES.md).
 Существующие project/task workspace routes и identifiers сохраняются.

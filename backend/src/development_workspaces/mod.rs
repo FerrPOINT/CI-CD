@@ -140,7 +140,7 @@ async fn enqueue(
     owner: Uuid,
     version: i64,
     action: &WorkspaceAction,
-    developer_authority: Option<Value>,
+    machine_authority: Option<Value>,
 ) -> Result<Operation, ApiError> {
     let request = serde_json::to_value(action)
         .map_err(|_| ApiError::bad_request("invalid_workspace_command"))?;
@@ -154,13 +154,8 @@ async fn enqueue(
         return Ok(original);
     }
     let mut plan = catalog::operation_plan(state, workspace, action)?;
-    if developer_authority.is_some()
-        && let Some(jobs) = plan["pipeline"]["jobs"].as_object()
-        && jobs
-            .values()
-            .any(|job| job.get("image_publish").is_some() || job.get("helm_deploy").is_some())
-    {
-        return Err(ApiError::forbidden());
+    if machine_authority.is_some() {
+        machine::require_pipeline(action, &plan)?;
     }
     if !plan.as_object().is_some_and(|value| value.is_empty()) {
         let environment =
@@ -172,7 +167,8 @@ async fn enqueue(
         plan["environment"] = environment;
         plan["environmentHash"] = serde_json::json!(workspace.environment_hash);
     }
-    if let Some(authority) = developer_authority {
+    if let Some(authority) = machine_authority {
+        // Keep the stored protocol key so original operation replay remains readable.
         plan["developerAuthority"] = authority;
     }
     store::enqueue(tx, workspace.id, id, actor, owner, version, action, &plan)
@@ -490,13 +486,13 @@ pub(crate) async fn submit(
         )
         .await?;
     }
-    let developer = machine::principal(&identity);
-    let origin = if developer {
+    let machine_principal = machine::principal(&identity);
+    let origin = if machine_principal {
         None
     } else {
         crate::pipeline_authority::require_creation(false)?
     };
-    let owner = if developer {
+    let owner = if machine_principal {
         identity
             .central
             .as_ref()
@@ -510,7 +506,7 @@ pub(crate) async fn submit(
             .map(|origin| origin.subject())
             .unwrap_or(identity.claims.sub)
     };
-    let developer_authority = if developer {
+    let machine_authority = if machine_principal {
         let request = serde_json::to_value(&input.command)
             .map_err(|_| ApiError::bad_request("invalid_workspace_command"))?;
         let hash = store::request_hash(
@@ -550,7 +546,7 @@ pub(crate) async fn submit(
     if let Some(permit) = &permit {
         permit.lock(&mut tx).await?;
     }
-    if developer {
+    if machine_principal {
         crate::git_host::GitDeadline::identity(
             identity.central.as_ref().ok_or_else(ApiError::forbidden)?,
         )
@@ -569,7 +565,7 @@ pub(crate) async fn submit(
         owner,
         input.expected_version,
         &input.command,
-        developer_authority,
+        machine_authority,
     )
     .await?;
     if let Some(permit) = &permit {

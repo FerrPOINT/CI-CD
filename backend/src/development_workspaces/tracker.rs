@@ -100,7 +100,7 @@ pub(super) async fn read_assignment(
     access: super::assignment::AssignmentAccess,
 ) -> Result<
     (
-        super::assignment::DeveloperAssignment,
+        super::assignment::WorkspaceAssignment,
         Option<super::assignment::WorkspacePreparation>,
     ),
     ApiError,
@@ -125,7 +125,7 @@ pub(super) async fn read_assignment(
     if context["execution"]["source_binding"]["forge_instance_id"] != forge.to_string() {
         return Err(ApiError::forbidden());
     }
-    super::assignment::DeveloperAssignment::read(
+    super::assignment::WorkspaceAssignment::read(
         &context,
         namespace,
         workspace.tracker_instance_id,

@@ -1,6 +1,6 @@
 //! Ordinary Git transport for the assigned workspace, using permanent identity.
 use super::{
-    assignment::{AssignmentAccess, DeveloperAssignment},
+    assignment::{AssignmentAccess, WorkspaceAssignment},
     machine,
 };
 use crate::{
@@ -25,7 +25,7 @@ struct Ticket {
     actor: Uuid,
     subject: Uuid,
     issuer: String,
-    assignment: DeveloperAssignment,
+    assignment: WorkspaceAssignment,
     token: String,
     until: i64,
 }
@@ -114,9 +114,10 @@ pub(crate) async fn admit(
         .map_err(super::error)?
         .filter(|s| s.actor_id == identity.claims.sub && s.owner_subject == subject)
         .ok_or_else(ApiError::forbidden)?;
-    let assignment: DeveloperAssignment =
+    let assignment: WorkspaceAssignment =
         serde_json::from_value(session.machine_assignment.ok_or_else(ApiError::forbidden)?)
             .map_err(|_| ApiError::forbidden())?;
+    if !assignment.is_developer() { return Err(ApiError::forbidden()); }
     let verified = identity.central.ok_or_else(ApiError::forbidden)?;
     let issuer = verified.issuer.clone();
     let proof = machine::confirm_identity(
@@ -208,9 +209,10 @@ async fn check_callback(
         .map_err(super::error)?
         .filter(|s| s.actor_id == ticket.actor && s.owner_subject == ticket.subject)
         .ok_or_else(ApiError::forbidden)?;
-    let current: DeveloperAssignment =
+    let current: WorkspaceAssignment =
         serde_json::from_value(session.machine_assignment.ok_or_else(ApiError::forbidden)?)
             .map_err(|_| ApiError::forbidden())?;
+    if !current.is_developer() { return Err(ApiError::forbidden()); }
     ticket.assignment.require_same(&current)?;
     let verified = crate::central_auth::try_verified_central(&ticket.token)
         .await?

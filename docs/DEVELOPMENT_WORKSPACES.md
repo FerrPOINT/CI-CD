@@ -189,8 +189,43 @@ Typed jobs `image_publish` и `helm_deploy` исполняют закреплё�
 завершённой сборки через `dev-workspace check --source-pipeline UUID` (поле
 `source_pipeline_id` команды `check`). Forge использует опубликованный рецепт
 `forge-delivery` с одной Helm job и оставляет в плане только доставку.
-Другие рецепты и машинные сессии этот параметр не принимают. Квитанция содержит
-`sourcePipelineId`.
+Другие рецепты этот параметр не принимают. Настоящий publication pipeline
+должен успешно завершиться для того же проекта и commit; Forge проверяет его
+immutable plan/config hashes, typed publication job и исходный image descriptor.
+Квитанция содержит `sourcePipelineId`.
+
+Configured DevOps использует собственный Central PAT и собственную writer session
+того же зарегистрированного workspace из sealed Tracker source binding. Штатный
+`begin-session` разрешён для текущего Deployment assignment в Ready до dispatch,
+без Developer preparation commit. Сам delivery Check требует InProgress,
+опубликованный executor `forge-delivery`, явный `--source-pipeline` и точный HEAD
+назначенного candidate ref. Prepare, Build, Git transport и lifecycle-команды
+DevOps не выдаются. Developer сохраняет только `forge`, non-runtime checks без
+source pipeline. Текущий machine subject, assignment/execution/version, source,
+namespace, repository и project сверяются при записи authority и перед каждым
+новым runner effect. Существующие human pipeline/session правила сохраняются.
+
+Exact-key `dev-workspace operation --workspace UUID --operation-id UUID` сохраняет
+оригинальные request, pipeline ID и результат. Для machine-authority delivery Check результат
+добавляет `deploymentObservation` формата
+`forge/kubernetes-deployment-observation/v1`: phase, deploymentId, pipelineId,
+attemptId, leaseId, generation, sourceCommit, namespaceUid, releaseRevision и
+вложенную receipt `forge/kubernetes-deployment/v1`. Receipt дополнительно связывает
+sourcePipelineId, cluster/namespace/release, immutable images и health readback.
+Forge читает только deployment исходной operation/pipeline и проверяет observation
+тем же typed validator относительно сохранённого execution offer. Списки
+последних deployments и агентский отчёт не выбирают квитанцию. Успех требует
+успешного pipeline и phase `deployed`; отсутствующая или несовместимая observation
+даёт `unknown`, `workspace_deployment_receipt_unconfirmed` и
+`requiresReconciliation:true`, без пустого успеха. Human операции сохраняют прежние
+result/state semantics; новое обязательное readback условие к ним не применяется.
+
+GET оригинальных operations/pipelines остаётся read-only по project membership
+и собственному PAT читателя: старое назначение и session не присваиваются DevOps.
+Связь accepted Tester → Developer result/artifacts проверяет Fleet. Сам Forge
+подтверждает publication/deployment execution, а не смысловое принятие отчётов.
+Нужен настоящий опубликованный application target и delivery recipe; source-only
+workspace не является доставленным приложением.
 
 Временное окружение связывается с целью `workspace_target`. Start и Stop
 управляют процессами, сохраняя checkout и данные. Сопровождающий может закрыть

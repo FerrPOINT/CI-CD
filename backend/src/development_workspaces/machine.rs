@@ -1,6 +1,6 @@
 //! Native agent access through project membership and assignment-scoped workspace operations.
 use super::{
-    assignment::{AssignmentAccess, DeveloperAssignment, developer_action},
+    assignment::{AssignmentAccess, WorkspaceAssignment, machine_action},
     tracker,
 };
 use crate::{
@@ -353,25 +353,18 @@ pub(crate) async fn lock_repository(
     Ok(clock)
 }
 
-fn allowed_check(workspace: &Workspace, action: &WorkspaceAction) -> bool {
-    if let WorkspaceAction::Check {
-        recipe,
-        source_pipeline_id,
-        ..
-    } = action
-    {
-        return source_pipeline_id.is_none()
-            && workspace.profile["checks"]
-                .as_array()
-                .is_some_and(|checks| {
-                    checks.iter().any(|c| {
-                        c["key"] == *recipe
-                            && c["executor"] == "forge"
-                            && c["requiresRuntime"] == false
-                    })
-                });
-    }
-    true
+/// The machine's selected recipe may publish no arbitrary jobs. Only the
+/// DevOps Check admitted by its saved assignment may run one deploy-only job.
+pub(super) fn require_pipeline(action: &WorkspaceAction, plan: &Value) -> Result<(), ApiError> {
+    let Some(jobs) = plan["pipeline"]["jobs"].as_object() else { return Ok(()); };
+    let typed = jobs.values().any(|job| job.get("image_publish").is_some() || job.get("helm_deploy").is_some());
+    if !typed { return Ok(()); }
+    if let WorkspaceAction::Check { source_pipeline_id: Some(source), .. } = action
+        && !source.is_nil() && jobs.len() == 1
+        && jobs.values().all(|job| job.get("image_publish").is_none()
+            && job["helm_deploy"]["source_pipeline_id"] == source.to_string())
+    { return Ok(()); }
+    Err(ApiError::forbidden())
 }
 
 // No Debug: the ciphertext and decrypted bearer must never enter API DTOs/logs.
@@ -383,7 +376,7 @@ struct Credential {
     actor: Uuid,
     subject: Uuid,
     issuer: String,
-    assignment: DeveloperAssignment,
+    assignment: WorkspaceAssignment,
     token: String,
 }
 
@@ -394,7 +387,7 @@ pub(super) async fn seal(
     identity: &VerifiedRequestIdentity,
     action: &WorkspaceAction,
 ) -> Result<Value, ApiError> {
-    if !principal(identity) || !developer_action(action) || !allowed_check(workspace, action) {
+    if !principal(identity) || !machine_action(action) {
         return Err(ApiError::forbidden());
     }
     let verified = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
@@ -427,13 +420,14 @@ pub(super) async fn seal(
         AssignmentAccess::for_action(action),
     )
     .await?;
+    assignment.require_action(action, &workspace.profile)?;
     if let Some(preparation) = preparation {
         preparation.require_source(action)?;
     }
     if !matches!(action, WorkspaceAction::BeginSession { .. }) {
         let saved:Option<Value>=sqlx::query_scalar("SELECT machine_assignment FROM development_workspace_sessions WHERE workspace_id=$1 AND ended_at IS NULL AND actor_id=$2 AND owner_subject=$3")
             .bind(workspace.id).bind(identity.claims.sub).bind(subject).fetch_optional(pool).await.map_err(ApiError::internal)?.flatten();
-        let saved: DeveloperAssignment =
+        let saved: WorkspaceAssignment =
             serde_json::from_value(saved.ok_or_else(ApiError::forbidden)?)
                 .map_err(|_| ApiError::forbidden())?;
         assignment.require_same(&saved)?;
@@ -457,7 +451,7 @@ pub(super) async fn seal(
 }
 
 pub(super) struct Confirmed {
-    pub assignment: DeveloperAssignment,
+    pub assignment: WorkspaceAssignment,
     pub clock: GitDeadline,
     preparation: Option<super::assignment::WorkspacePreparation>,
 }
@@ -473,7 +467,7 @@ pub(super) async fn verify(
     saved: &Value,
     secrets: &crate::config::SecretsConfig,
 ) -> Result<Confirmed, ApiError> {
-    if !developer_action(action) || !allowed_check(workspace, action) {
+    if !machine_action(action) {
         return Err(ApiError::forbidden());
     }
     let encrypted = saved["sealed"]
@@ -490,6 +484,7 @@ pub(super) async fn verify(
     {
         return Err(ApiError::forbidden());
     }
+    credential.assignment.require_action(action, &workspace.profile)?;
     let verified = crate::central_auth::try_verified_central(&credential.token)
         .await?
         .ok_or_else(ApiError::forbidden)?;
@@ -517,7 +512,7 @@ pub(super) async fn confirm_identity(
     workspace: &Workspace,
     actor: Uuid,
     verified: VerifiedCentralToken,
-    saved: &DeveloperAssignment,
+    saved: &WorkspaceAssignment,
     write: bool,
     access: AssignmentAccess,
 ) -> Result<Confirmed, ApiError> {
@@ -580,6 +575,22 @@ pub(crate) async fn pipeline_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn machine_pipeline_rejects_publication_and_only_admits_frozen_deploy_only_check() {
+        let source=Uuid::new_v4();
+        let check=WorkspaceAction::Check{recipe:"release".into(),source_commit:"a".repeat(40),source_pipeline_id:Some(source)};
+        let plan=json!({"pipeline":{"jobs":{"release":{"helm_deploy":{"source_pipeline_id":source}}}}});
+        assert!(require_pipeline(&check,&plan).is_ok());
+        let developer=WorkspaceAction::Check{recipe:"release".into(),source_commit:"a".repeat(40),source_pipeline_id:None};
+        assert!(require_pipeline(&developer,&plan).is_err());
+        for jobs in [json!({"publish":{"image_publish":{}}}),
+            json!({"release":{"helm_deploy":{"source_pipeline_id":Uuid::new_v4()}}}),
+            json!({"release":{"helm_deploy":{"source_pipeline_id":source}},"commands":{"commands":["false"]}})] {
+            assert!(require_pipeline(&check,&json!({"pipeline":{"jobs":jobs}})).is_err());
+        }
+        assert!(require_pipeline(&developer,&json!({"pipeline":{"jobs":{"unit":{"commands":["test"]}}}})).is_ok());
+    }
+
     #[test]
     fn pr_routes_allow_review_reads_and_metadata_writes_without_execution_actions() {
         let repository = Uuid::new_v4();

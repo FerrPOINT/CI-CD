@@ -64,6 +64,82 @@ async fn http(
 }
 
 #[tokio::test]
+async fn delivery_operation_retains_exact_typed_observation_and_never_borrows_neighbor_pipeline() {
+    use sha2::{Digest, Sha256};
+    let f = Fixture::new().await;
+    let catalog=tempfile::tempdir().unwrap();
+    let mut config=cicd::config::RuntimeConfig::from_env_source(|_|None,false).unwrap();
+    config.development_workspaces.catalog_root=Some(catalog.path().into());
+    let app=cicd::api::app_with_git_and_config(Some(f.pool.clone()),config.git.to_git_config(),None,config.clone()).unwrap();
+    let worker=tokio::spawn(cicd::development_workspaces::worker::supervisor(f.pool.clone(),config));
+    let commit="a".repeat(40);
+    let publication=Uuid::new_v4();
+    for (machine,neighbor) in [(false,true),(true,false),(true,true)] {
+        let (operation,pipeline,stage,job,attempt,deployment,lease,namespace)=
+            (Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4());
+        let recipe=json!({"version":1,"jobs":{"deploy":{"helm_deploy":{"environment_id":f.environment,
+            "source_pipeline_id":publication,"images":{"image":{"job":"publish","artifact":"out/image.json"}},"receipt_artifact":"out/release.json"}}}});
+        let raw=serde_json::to_string(&recipe).unwrap();
+        let hash=|bytes:&[u8]|format!("{:x}",Sha256::digest(bytes));
+        let plan=json!({"format":"v1-dag","version":1,"config_source":"development_workspace","resolved_commit_sha":commit,"jobs":[{"key":"deploy","command":"forge:helm-deploy","image":"forge:runner-helm-deploy","commands":[],"required_secrets":[],"allow_failure":false,"artifact_paths":["out/release.json"],"needs":[],"helm_deploy":recipe["jobs"]["deploy"]["helm_deploy"]}]});
+        sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status,variables) VALUES($1,$2,$3,$3,'success',$4)")
+            .bind(pipeline).bind(f.project).bind(&commit).bind(json!({"development_workspace_id":f.workspace,"development_workspace_operation_id":operation})).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO pipeline_plans(pipeline_id,config_source,parser_version,git_ref,resolved_commit_sha,config_sha256,plan_sha256,raw_config,plan) VALUES($1,'development_workspace','v1',$2,$2,$3,$4,$5,$6)")
+            .bind(pipeline).bind(&commit).bind(hash(raw.as_bytes())).bind(hash(&serde_json::to_vec(&plan).unwrap())).bind(raw).bind(plan).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'deploy',0,'success')").bind(stage).bind(pipeline).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,position,status) VALUES($1,$2,'deploy','forge:runner-helm-deploy','forge:helm-deploy',0,'success')").bind(job).bind(stage).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,'success','initial')").bind(attempt).bind(job).execute(&f.pool).await.unwrap();
+        let image=format!("registry.example.test/product@sha256:{}","b".repeat(64));
+        let receipt=json!({"schema":"forge/kubernetes-deployment/v1","deploymentId":deployment,"pipelineId":pipeline,
+            "sourcePipelineId":publication,"attemptId":attempt,"leaseId":lease,"generation":1,"sourceCommit":commit,
+            "cluster":"fixture","namespace":"product","namespaceUid":namespace,"release":"product","releaseRevision":2,
+            "images":{"image":image},"healthStatus":200,"healthTransport":"public-https"});
+        let observed=json!({"schema":"forge/kubernetes-deployment-observation/v1","phase":"deployed","deploymentId":deployment,
+            "pipelineId":pipeline,"attemptId":attempt,"leaseId":lease,"generation":1,"sourceCommit":commit,
+            "namespaceUid":namespace,"releaseRevision":2,"receipt":receipt});
+        let offer=json!({"environmentId":f.environment,"deploymentId":deployment,"pipelineId":pipeline,"sourcePipelineId":publication,
+            "jobId":job,"attemptId":attempt,"leaseId":lease,"generation":1,"sourceCommit":commit,"pipelineOrder":1,
+            "target":{"schema":"forge/kubernetes-environment/v1","cluster":"fixture","namespace":"product","release":"product","chart":"chart","health_url":"https://product.example.test/health"},
+            "images":{"image":{"schema":"forge/published-image/v1","sourceCommit":commit,"imageRef":image,"descriptorSha256":"c".repeat(64)}},"receiptArtifact":"out/release.json"});
+        if !neighbor {
+            sqlx::query("INSERT INTO deployments(id,environment_id,pipeline_id,git_ref,status,execution_attempt_id,runtime_phase,runtime_input,runtime_receipt) VALUES($1,$2,$3,$4,'success',$5,'finished',$6,$7)")
+                .bind(deployment).bind(f.environment).bind(pipeline).bind(&commit).bind(attempt).bind(offer).bind(&observed).execute(&f.pool).await.unwrap();
+        }
+        let version=store::workspace(&f.pool,f.workspace).await.unwrap().version;
+        let request=json!({"action":"check","recipe":"release","source_commit":commit,"source_pipeline_id":publication});
+        // Projection reads retained execution evidence, never decrypts a historical
+        // bearer or authorizes an effect. Real machine admission is exercised by
+        // the separate Central PAT fixture below.
+        let mut execution_plan=json!({"pipeline":recipe});
+        if machine { execution_plan["developerAuthority"]=json!({"sealed":"fixture-readback-only"}); }
+        sqlx::query("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,state,execution_plan,pipeline_id,started_at) VALUES($1,$2,$3,$3,$4,$5,$6,'running',$7,$8,now())")
+            .bind(operation).bind(f.workspace).bind(f.actor).bind(hash(operation.as_bytes())).bind(&request).bind(version).bind(execution_plan).bind(pipeline).execute(&f.pool).await.unwrap();
+        let result=tokio::time::timeout(std::time::Duration::from_secs(10),async {
+            loop { let result=store::operation(&f.pool,f.workspace,operation).await.unwrap();
+                if result.state!="running" {break result;}
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            }
+        }).await.unwrap();
+        let path=format!("/api/v1/development-workspaces/{}/operations/{operation}",f.workspace);
+        let (status,public)=http(&app,"GET",&path,None,json!(null)).await;
+        assert_eq!(status,StatusCode::OK,"{public}");
+        assert_eq!(public["request"],request);
+        if machine && neighbor {
+            assert_eq!(result.state,"unknown");
+            assert_eq!(public["result"]["requiresReconciliation"],true);
+            assert!(public["result"]["deploymentObservation"].is_null());
+        } else {
+            assert_eq!(result.state,"succeeded","{:?}",result.result);
+            if machine { assert_eq!(public["result"]["deploymentObservation"],observed); }
+            else { assert!(public["result"]["deploymentObservation"].is_null()); }
+            assert_eq!(http(&app,"GET",&path,None,json!(null)).await.1,public);
+        }
+    }
+    worker.abort(); let _=worker.await;
+    f.close().await;
+}
+
+#[tokio::test]
 async fn typed_publication_claims_frozen_workspace_and_repository_plans_only() {
     use sha2::{Digest, Sha256};
     let f = Fixture::new().await;

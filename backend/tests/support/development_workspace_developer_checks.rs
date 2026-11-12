@@ -6,7 +6,8 @@ pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
     let workspace = store::workspace(pool, id).await.unwrap();
     let profile = json!({"apiVersion":"pdlc.dev/workspace/v1", "repositories":[{"key":"source"}],
         "tools":[], "preparationChecks":["unit"], "requiredDeveloperChecks":["unit"],
-        "checks":[{"key":"unit","executor":"forge","requiresRuntime":false,"commands":["test -f README.md"]}]});
+        "checks":[{"key":"unit","executor":"forge","requiresRuntime":false,"commands":["test -f README.md"]},
+            {"key":"release","executor":"forge-delivery","requiresRuntime":false}]});
     let profile_hash = store::request_hash(&profile).unwrap();
     let environment: Value = sqlx::query_scalar("SELECT jsonb_build_object('adapter','compose','environmentId',id,'projectId',project_id,'url',url) FROM environments WHERE id=$1")
         .bind(workspace.environment_id).fetch_one(pool).await.unwrap();
@@ -27,10 +28,12 @@ pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
     )
     .unwrap();
     let pipeline = json!({"version":1,"jobs":{"unit":{"image":format!("fixture/tools@sha256:{}","a".repeat(64)),"commands":["test -f README.md"]}}});
+    let delivery=json!({"version":1,"jobs":{"deploy":{"helm_deploy":{"environment_id":workspace.environment_id,
+        "images":{"image":{"job":"publish","artifact":"out/image.json"}},"receipt_artifact":"out/release.json"}}}});
     std::fs::write(
         directory.join("recipes.json"),
         serde_json::to_vec(
-            &json!({"profileHash":profile_hash,"recipes":{"prepare":pipeline,"unit":pipeline}}),
+            &json!({"profileHash":profile_hash,"recipes":{"prepare":pipeline,"unit":pipeline,"release":delivery}}),
         )
         .unwrap(),
     )
@@ -190,4 +193,97 @@ pub(super) async fn exercise(app: &Router, pool: &PgPool, workspace: Uuid, data:
         store::workspace(pool, workspace).await.unwrap().preparation,
         "prepared"
     );
+}
+
+// Current Central PAT and public HTTP coverage. This proves admission, original
+// read access and assignment revocation before a runner effect, not Helm execution.
+pub(super) async fn exercise_devops(app:&Router,pool:&PgPool,workspace:Uuid,data:&Value,catalog:&std::path::Path,developer_operation:Uuid) {
+    let endpoint=format!("{}/fixture",data["origin"].as_str().unwrap());
+    let client=reqwest::Client::new();
+    let current=store::workspace(pool,workspace).await.unwrap();
+    let target=json!({"schema":"forge/kubernetes-environment/v1","cluster":"fixture","namespace":"product","release":"product","chart":"chart","health_url":"https://product.example.test/health"});
+    sqlx::query("UPDATE environments SET kubernetes_target=$2 WHERE id=$1").bind(current.environment_id).bind(&target).execute(pool).await.unwrap();
+    let environment_hash=store::request_hash(&target).unwrap();
+    sqlx::query("UPDATE development_workspaces SET environment_hash=$2,runtime='running',desired_runtime='running' WHERE id=$1").bind(workspace).bind(&environment_hash).execute(pool).await.unwrap();
+    let public_path=catalog.join("targets").join(current.catalog_target_id.to_string()).join("public.json");
+    let mut public:Value=serde_json::from_slice(&std::fs::read(&public_path).unwrap()).unwrap();
+    public["environment_hash"]=json!(environment_hash);
+    std::fs::write(public_path,serde_json::to_vec(&public).unwrap()).unwrap();
+    sqlx::query("UPDATE development_workspaces SET catalog_hash=$2 WHERE id=$1").bind(workspace).bind(store::request_hash(&public).unwrap()).execute(pool).await.unwrap();
+    let (status,principal)=http(app,"GET","/api/v1/auth/principal",Some(DEVOPS_TOKEN),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{principal}");
+    let developer_actor:Uuid=sqlx::query_scalar("SELECT id FROM users WHERE central_sub=$1").bind(data["subject"].as_str().unwrap()).fetch_one(pool).await.unwrap();
+    assert_ne!(principal["sub"],developer_actor.to_string());
+    assert_eq!(http(app,"POST",&format!("/api/v1/projects/{}/memberships",current.project_id),Some(PROJECT_OWNER),json!({"user_id":principal["sub"],"role":"developer"})).await.0,StatusCode::OK);
+    let path=format!("/api/v1/development-workspaces/{workspace}/operations");
+    // A different machine reads original Developer history using its own PAT.
+    assert_eq!(http(app,"GET",&format!("{path}/{developer_operation}"),Some(DEVOPS_TOKEN),json!(null)).await.0,StatusCode::OK);
+    client.post(&endpoint).json("deployment_ready").send().await.unwrap().error_for_status().unwrap();
+    let begin=Uuid::new_v4();
+    let version=store::workspace(pool,workspace).await.unwrap().version;
+    let request=json!({"operation_id":begin,"expected_version":version,"command":{"action":"begin_session","task":data["task"]}});
+    assert_eq!(http(app,"POST",&path,Some(TOKEN),request.clone()).await.0,StatusCode::FORBIDDEN);
+    let (status,response)=http(app,"POST",&path,Some(DEVOPS_TOKEN),request).await;
+    assert_eq!(status,StatusCode::OK,"{response}");
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,begin).await.unwrap();
+        if row.state=="succeeded" { assert!(row.result.unwrap()["developerCheckPolicy"].is_null()); break; }
+        assert_ne!(row.state,"failed","{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    let session=store::session(pool,workspace).await.unwrap().unwrap();
+    assert_eq!(session.machine_assignment.unwrap()["stage"],"Deployment");
+    let version=store::workspace(pool,workspace).await.unwrap().version;
+    let commit=current.sources[0]["commit"].as_str().unwrap();
+    let publication=Uuid::new_v4();
+    let release=json!({"action":"check","recipe":"release","source_commit":commit,"source_pipeline_id":publication});
+    assert_eq!(http(app,"POST",&path,Some(DEVOPS_TOKEN),json!({"operation_id":Uuid::new_v4(),"expected_version":version,"command":release})).await.0,StatusCode::FORBIDDEN);
+    client.post(&endpoint).json("deployment_running").send().await.unwrap().error_for_status().unwrap();
+    for command in [json!({"action":"check","recipe":"unit","source_commit":commit}),
+        json!({"action":"check","recipe":"release","source_commit":commit}),
+        json!({"action":"prepare","sources":[],"local":{"machine_id":Uuid::new_v4(),"profile_hash":current.profile_hash,"repositories":[],"tools":[]}})] {
+        assert_eq!(http(app,"POST",&path,Some(DEVOPS_TOKEN),json!({"operation_id":Uuid::new_v4(),"expected_version":version,"command":command})).await.0,StatusCode::FORBIDDEN);
+    }
+    // A prepared historical source is insufficient once the candidate moved.
+    let base=data["base_commit"].as_str().unwrap();
+    assert_ne!(base,commit);
+    let mut stale_sources=current.sources.clone(); stale_sources[0]["commit"]=json!(base);
+    sqlx::query("UPDATE development_workspaces SET sources=$2 WHERE id=$1").bind(workspace).bind(stale_sources).execute(pool).await.unwrap();
+    let stale=Uuid::new_v4();
+    let mut stale_check=release.clone(); stale_check["source_commit"]=json!(base);
+    assert_eq!(http(app,"POST",&path,Some(DEVOPS_TOKEN),json!({"operation_id":stale,"expected_version":version,"command":stale_check})).await.0,StatusCode::OK);
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,stale).await.unwrap();
+        if row.state=="failed" {
+            assert!(row.pipeline_id.is_none());
+            assert_eq!(row.result.unwrap()["reason"],"workspace_candidate_commit_changed");
+            break;
+        }
+        assert_ne!(row.state,"unknown","{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    sqlx::query("UPDATE development_workspaces SET sources=$2 WHERE id=$1").bind(workspace).bind(&current.sources).execute(pool).await.unwrap();
+    let version=store::workspace(pool,workspace).await.unwrap().version;
+    let operation=Uuid::new_v4();
+    let (status,response)=http(app,"POST",&path,Some(DEVOPS_TOKEN),json!({"operation_id":operation,"expected_version":version,"command":release})).await;
+    assert_eq!(status,StatusCode::OK,"{response}");
+    let pipeline=tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,operation).await.unwrap();
+        assert!(!matches!(row.state.as_str(),"failed"|"unknown"),"{:?}",row.result);
+        if let Some(pipeline)=row.pipeline_id { break pipeline; }
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    let (status,proof)=http(app,"GET",&format!("/api/v1/pipelines/{pipeline}"),Some(DEVOPS_TOKEN),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{proof}");
+    assert_eq!(proof["plan"]["plan"]["jobs"][0]["helm_deploy"]["source_pipeline_id"],publication.to_string());
+    client.post(&endpoint).json("stale").send().await.unwrap().error_for_status().unwrap();
+    let capabilities=json!({"executorKinds":["kubernetes"],"jobKinds":["helm-deploy-v1"],"helmTargets":[current.environment_id],"pipelineVariables":true});
+    let (status,registered)=http(app,"POST","/api/v1/runner/register",None,json!({"protocolVersion":1,"registrationToken":"workspace-runner-fixture","name":"devops-fence","capabilities":capabilities})).await;
+    assert_eq!(status,StatusCode::CREATED,"{registered}");
+    let token=registered["credential"].as_str().unwrap();
+    assert_eq!(http(app,"POST","/api/v1/runner/heartbeat",Some(token),json!({"protocolVersion":1,"status":"online","capacity":{"totalSlots":1,"busySlots":0},"capabilities":capabilities,"activeLeaseIds":[]})).await.0,StatusCode::NO_CONTENT);
+    let (status,blocked)=http(app,"POST","/api/v1/runner/work:poll",Some(token),json!({"protocolVersion":1,"capacity":{"freeSlots":1},"waitSeconds":0})).await;
+    assert_eq!(status,StatusCode::FORBIDDEN,"{blocked}");
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id JOIN jobs j ON j.id=a.job_id JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1").bind(pipeline).fetch_one(pool).await.unwrap(),0);
+    assert_eq!(http(app,"GET",&format!("{path}/{operation}"),Some(DEVOPS_TOKEN),json!(null)).await.0,StatusCode::OK);
 }

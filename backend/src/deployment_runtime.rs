@@ -64,12 +64,20 @@ pub(crate) async fn prepare(
                  JOIN stages stage ON stage.id=j.stage_id AND stage.pipeline_id=o.pipeline_id
                  LEFT JOIN execution_attempt_human_owners retry ON retry.attempt_id=a.id
                  JOIN users u ON u.id=o.actor_id
-                 WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND s.machine_assignment IS NULL AND o.pipeline_id=$2
-                    AND o.state IN ('running','failed') AND u.enabled AND u.role<>'service_account'
+                 WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND o.pipeline_id=$2
+                    AND o.state IN ('running','failed') AND u.enabled
                     AND o.request->>'source_commit'=$4
-                    AND ((a.attempt_no=1 AND o.state='running')
-                        OR (a.attempt_no>1 AND retry.owner_subject=s.owner_subject)))",
-            ).bind(workspace).bind(pipeline_id).bind(attempt_id).bind(commit).fetch_one(&mut **tx).await.map_err(ApiError::internal)?,
+                    AND ((s.machine_assignment IS NULL AND u.role<>'service_account'
+                        AND ((a.attempt_no=1 AND o.state='running')
+                            OR (a.attempt_no>1 AND retry.owner_subject=s.owner_subject)))
+                     OR (u.role='service_account' AND u.central_sub=s.owner_subject::text
+                        AND s.machine_assignment->>'stage'='Deployment'
+                        AND s.machine_assignment->>'machine_subject'=s.owner_subject::text
+                        AND o.execution_plan ? 'developerAuthority'
+                        AND o.request->>'action'='check'
+                        AND o.request->>'source_pipeline_id'=$5
+                        AND a.attempt_no=1 AND o.state='running')))",
+            ).bind(workspace).bind(pipeline_id).bind(attempt_id).bind(commit).bind(spec.source_pipeline_id.map(|id| id.to_string())).fetch_one(&mut **tx).await.map_err(ApiError::internal)?,
             Some("repository") => sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM development_workspace_sessions s JOIN pipeline_human_owners p
                  ON p.owner_subject=s.owner_subject WHERE s.workspace_id=$1 AND s.ended_at IS NULL AND p.pipeline_id=$2)",
@@ -281,19 +289,7 @@ pub(crate) async fn prepare(
                     "Completed publication pipeline for this project and commit required",
                 )
             })?;
-            let encoded = serde_json::to_vec(&source_plan)
-                .map_err(|_| ApiError::conflict("Invalid publication execution plan"))?;
-            if source_plan["format"] != "v1-dag"
-                || source_plan["version"] != 1
-                || source_plan["resolved_commit_sha"] != commit
-                || source_plan["config_source"] != config_source
-                || format!("{:x}", Sha256::digest(encoded)) != plan_hash
-                || format!("{:x}", Sha256::digest(raw_config.as_bytes())) != config_hash
-            {
-                return Err(ApiError::conflict(
-                    "Publication pipeline differs from its immutable execution plan",
-                ));
-            }
+            require_immutable_plan(&source_plan,&plan_hash,&config_hash,&raw_config,&config_source,commit)?;
             Some(source_plan)
         } else {
             None
@@ -540,4 +536,75 @@ pub(crate) async fn finish(
         }
     }
     Ok(())
+}
+
+fn require_immutable_plan(plan:&Value, plan_hash:&str, config_hash:&str, raw_config:&str, config_source:&str, commit:&str) -> Result<(),ApiError> {
+    let encoded=serde_json::to_vec(plan).map_err(|_|ApiError::conflict("Invalid publication execution plan"))?;
+    if plan["format"]!="v1-dag" || plan["version"]!=1 || plan["resolved_commit_sha"]!=commit
+        || plan["config_source"]!=config_source || format!("{:x}",Sha256::digest(encoded))!=plan_hash
+        || format!("{:x}",Sha256::digest(raw_config.as_bytes()))!=config_hash {
+        return Err(ApiError::conflict("Publication pipeline differs from its immutable execution plan"));
+    }
+    Ok(())
+}
+
+/// Read only the deployment retained by this exact workspace operation and
+/// immutable pipeline. The original runner's typed offer/observation validator
+/// remains the single receipt validator; neither environment lists nor reports
+/// supplied by an agent can select a receipt.
+pub(crate) async fn workspace_observation(
+    tx: &mut Transaction<'_, Postgres>,
+    operation: Uuid,
+    workspace: Uuid,
+    pipeline: Uuid,
+    commit: &str,
+    source_pipeline: Uuid,
+    recipe: &Value,
+) -> Result<Value, ApiError> {
+    let unavailable = || ApiError::conflict("workspace_deployment_receipt_unconfirmed");
+    let jobs = recipe["jobs"].as_object().filter(|jobs| jobs.len() == 1).ok_or_else(unavailable)?;
+    let (key, job) = jobs.iter().next().ok_or_else(unavailable)?;
+    let spec: HelmDeploySpec = serde_json::from_value(job["helm_deploy"].clone()).map_err(|_| unavailable())?;
+    spec.validate().map_err(|_| unavailable())?;
+    if spec.source_pipeline_id != Some(source_pipeline) { return Err(unavailable()); }
+    let raw = serde_json::to_string(recipe).map_err(|_| unavailable())?;
+    let hash = format!("{:x}", Sha256::digest(raw.as_bytes()));
+    let rows: Vec<(Uuid, Uuid, Uuid, Uuid, Value, Value, Value, String)> = sqlx::query_as(
+        "SELECT d.id,d.environment_id,a.id,j.id,d.runtime_input,d.runtime_receipt,pp.plan,pp.plan_sha256
+         FROM development_workspace_operations o
+         JOIN development_workspaces w ON w.id=o.workspace_id
+         JOIN pipelines p ON p.id=o.pipeline_id AND p.project_id=w.project_id
+         JOIN pipeline_plans pp ON pp.pipeline_id=p.id
+         JOIN stages s ON s.pipeline_id=p.id JOIN jobs j ON j.stage_id=s.id
+         JOIN execution_attempts a ON a.job_id=j.id
+         JOIN deployments d ON d.pipeline_id=p.id AND d.execution_attempt_id=a.id AND d.environment_id=w.environment_id
+         WHERE o.id=$1 AND o.workspace_id=$2 AND o.pipeline_id=$3
+         AND p.commit_sha=$4 AND pp.resolved_commit_sha=$4
+         AND pp.config_source='development_workspace' AND pp.raw_config=$5 AND pp.config_sha256=$6
+         AND p.variables->>'development_workspace_operation_id'=o.id::text
+         AND p.variables->>'development_workspace_id'=w.id::text
+         AND j.name=$7 AND j.command='forge:helm-deploy' AND a.status=j.status
+         AND a.attempt_no=(SELECT max(current.attempt_no) FROM execution_attempts current WHERE current.job_id=j.id)
+         AND d.runtime_phase='finished' AND d.runtime_input IS NOT NULL AND d.runtime_receipt IS NOT NULL"
+    ).bind(operation).bind(workspace).bind(pipeline).bind(commit).bind(&raw).bind(&hash).bind(key)
+        .fetch_all(&mut **tx).await.map_err(ApiError::internal)?;
+    if rows.len() != 1 { return Err(unavailable()); }
+    let (id, environment, attempt, job_id, input, observed, plan, plan_hash) = &rows[0];
+    require_immutable_plan(plan,plan_hash,&hash,&raw,"development_workspace",commit).map_err(|_|unavailable())?;
+    let selected=plan["jobs"].as_array().and_then(|jobs| {
+        let mut matches=jobs.iter().filter(|entry|entry["key"]==*key);
+        let selected=matches.next()?;
+        if matches.next().is_some() {None}else{Some(selected)}
+    }).ok_or_else(unavailable)?;
+    if selected["helm_deploy"]!=job["helm_deploy"] { return Err(unavailable()); }
+    let offer: DeploymentOffer = serde_json::from_value(input.clone()).map_err(|_| unavailable())?;
+    let observation: crate::domain::helm_deploy::DeploymentObservation =
+        serde_json::from_value(observed.clone()).map_err(|_| unavailable())?;
+    offer.validate().map_err(|_| unavailable())?;
+    if offer.deployment_id != *id || offer.environment_id != *environment || offer.environment_id != spec.environment_id
+        || offer.pipeline_id != pipeline || offer.source_pipeline_id != Some(source_pipeline)
+        || offer.source_commit != commit || offer.attempt_id != *attempt || offer.job_id != *job_id
+        || offer.receipt_artifact != spec.receipt_artifact || !observation.validates(&offer)
+    { return Err(unavailable()); }
+    serde_json::to_value(observation).map_err(|_| unavailable())
 }

@@ -165,7 +165,7 @@ async fn execute(
             .await
             .map_err(ApiError::internal)?;
     let (enabled, local_role, central) = user.ok_or_else(ApiError::forbidden)?;
-    let developer = if local_role == "service_account" && !work.reconcile_only {
+    let machine = if local_role == "service_account" && !work.reconcile_only {
         Some(
             super::machine::verify(
                 pool,
@@ -182,10 +182,10 @@ async fn execute(
     } else {
         None
     };
-    if !enabled || (local_role == "service_account" && developer.is_none()) {
+    if !enabled || (local_role == "service_account" && machine.is_none()) {
         return Err(ApiError::forbidden());
     }
-    let owner = if developer.is_none() && crate::central_auth::application_policy_required()? {
+    let owner = if machine.is_none() && crate::central_auth::application_policy_required()? {
         if central.as_deref() != Some(subject.to_string().as_str()) {
             return Err(ApiError::forbidden());
         }
@@ -235,7 +235,7 @@ async fn execute(
     {
         return Err(ApiError::forbidden());
     }
-    let permit = if developer.is_some() {
+    let permit = if machine.is_some() {
         None
     } else {
         crate::space_admission::saved_repository(pool, &storage, actor, owner.as_ref(), minimum)
@@ -245,7 +245,7 @@ async fn execute(
         let mut tx=crate::repository_catalog::catalog_write_lease(state,workspace.repository_id).await?;
         if let Some(permit)=&permit {permit.lock(&mut tx).await?;}
         if let Some(origin)=origin {origin.bind(&mut tx).await?;}
-        if let Some(proof)=&developer {proof.clock.bind_commit_clock(&mut tx).await?;}
+        if let Some(proof)=&machine {proof.clock.bind_commit_clock(&mut tx).await?;}
         sqlx::query("SELECT id FROM development_workspaces WHERE id=$1 FOR UPDATE").bind(workspace.id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
         if work.reconcile_only && matches!(action,WorkspaceAction::Prepare{..}|WorkspaceAction::Check{..}|WorkspaceAction::Build{..}) {
             let key=format!("pipeline-trigger:{}:development-workspace:{}",workspace.project_id,work.id);
@@ -281,12 +281,12 @@ async fn execute(
                     .bind(workspace.tracker_instance_id).bind(workspace.tracker_project_id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
                 let namespace=pdlc_shared::resource_context::NamespaceRef{registry_instance_id,namespace_id};
                 let (task_id,task_ref)=super::tracker::read_task(&namespace,workspace.tracker_instance_id,workspace.tracker_project_id,task).await?;
-                let machine_assignment=developer.as_ref().map(|proof|serde_json::to_value(&proof.assignment))
+                let machine_assignment=machine.as_ref().map(|proof|serde_json::to_value(&proof.assignment))
                     .transpose().map_err(|_|ApiError::forbidden())?;
                 sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref,sources,machine_assignment) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
                     .bind(work.id).bind(workspace.id).bind(work.actor_id).bind(work.owner_subject).bind(task_id).bind(task_ref).bind(&workspace.sources).bind(machine_assignment).execute(&mut *tx).await.map_err(ApiError::internal)?;
                 let mut result = json!({"state":"succeeded","sessionId":work.id});
-                if developer.is_some()
+                if machine.as_ref().is_some_and(|proof| proof.assignment.is_developer())
                     && let Some(recipes) = workspace.profile.get("requiredDeveloperChecks")
                 {
                     result["developerCheckPolicy"] = json!({
@@ -321,7 +321,7 @@ async fn execute(
                 for source in sources {
                     let repository:String=sqlx::query_scalar("SELECT storage_name FROM repository_catalog WHERE id=$1").bind(source.repository_id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
                     if !crate::api::authz_mw::repository_scope_allows(pool,&repository,actor,global,Role::Developer,None).await? {return Err(ApiError::forbidden());}
-                    confirm_commit(state,&repository,&source.commit).await?;
+                    confirm_commit(state,&repository,&source.commit,None).await?;
                 }
                 sqlx::query("UPDATE development_workspaces SET sources=$2,local_preparation=$3,preparation='unprepared' WHERE id=$1")
                     .bind(workspace.id).bind(serde_json::to_value(sources).unwrap()).bind(serde_json::to_value(local).unwrap()).execute(&mut *tx).await.map_err(ApiError::internal)?;
@@ -333,6 +333,10 @@ async fn execute(
             }
             WorkspaceAction::Check{source_commit,..}|WorkspaceAction::Build{source_commit} => {
                 if workspace.preparation!="prepared" || !workspace.sources.as_array().is_some_and(|sources|sources.iter().any(|source|source["repository_id"]==workspace.repository_id.to_string() && source["commit"]==*source_commit)) {return Err(ApiError::conflict("workspace_selected_source_not_prepared"));}
+                if let Some(proof) = machine.as_ref().filter(|proof| !proof.assignment.is_developer()) {
+                    let candidate = proof.assignment.source["candidate_ref"].as_str().ok_or_else(ApiError::forbidden)?;
+                    confirm_commit(state,&storage,source_commit,Some(candidate)).await?;
+                }
                 tx.commit().await.map_err(ApiError::internal)?;
                 return launch_pipeline(state,work,&workspace,source_commit).await;
             }
@@ -349,7 +353,7 @@ async fn execute(
     }).await
 }
 
-async fn confirm_commit(state: &AppState, storage: &str, commit: &str) -> Result<(), ApiError> {
+async fn confirm_commit(state: &AppState, storage: &str, commit: &str, candidate: Option<&str>) -> Result<(), ApiError> {
     let name = crate::git_host::validate_repo_name(storage)
         .map_err(|_| ApiError::conflict("workspace_repository_identity_invalid"))?;
     let mut command = tokio::process::Command::new("git");
@@ -362,7 +366,7 @@ async fn confirm_commit(state: &AppState, storage: &str, commit: &str) -> Result
             "rev-parse",
             "--verify",
             "--end-of-options",
-            &format!("{commit}^{{commit}}"),
+            &format!("{}^{{commit}}", candidate.unwrap_or(commit)),
         ])
         .kill_on_drop(true);
     let output = tokio::time::timeout(Duration::from_secs(5), command.output())
@@ -370,7 +374,7 @@ async fn confirm_commit(state: &AppState, storage: &str, commit: &str) -> Result
         .map_err(|_| ApiError::service_unavailable("workspace_source_observation_timeout"))?
         .map_err(|_| ApiError::conflict("workspace_source_unavailable"))?;
     if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != commit {
-        return Err(ApiError::conflict("workspace_source_commit_missing"));
+        return Err(ApiError::conflict(if candidate.is_some() {"workspace_candidate_commit_changed"} else {"workspace_source_commit_missing"}));
     }
     Ok(())
 }
@@ -435,6 +439,9 @@ async fn poll_pipeline(pool: &PgPool, work: &Work) -> Result<(), ApiError> {
         .fetch_one(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
+    let status: String = sqlx::query_scalar("SELECT status FROM pipelines WHERE id=$1 FOR SHARE")
+        .bind(pipeline).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+    if !matches!(status.as_str(), "success" | "failed" | "canceled") { return Ok(()); }
     if store::workspace_busy(&mut tx, work.workspace_id)
         .await
         .map_err(super::error)?
@@ -453,7 +460,24 @@ async fn poll_pipeline(pool: &PgPool, work: &Work) -> Result<(), ApiError> {
             .await
             .map_err(ApiError::internal)?;
     }
-    finish_tx(&mut tx,work,&json!({"state":if status=="success" {"succeeded"}else{"failed"},"pipelineId":pipeline,"pipelineStatus":status})).await?;
+    let mut result = json!({"state":if status=="success" {"succeeded"}else{"failed"},"pipelineId":pipeline,"pipelineStatus":status});
+    if work.execution_plan.get("developerAuthority").is_some()
+        && let WorkspaceAction::Check { source_commit, source_pipeline_id: Some(source), .. } =
+            serde_json::from_value(work.request.clone()).map_err(|_| ApiError::conflict("workspace_saved_command_invalid"))?
+    {
+        match crate::deployment_runtime::workspace_observation(&mut tx, work.id, work.workspace_id,
+            pipeline, &source_commit, source, &work.execution_plan["pipeline"]).await {
+            Ok(observation) if status != "success" || observation["phase"] == "deployed" => {
+                result["deploymentObservation"] = observation;
+            }
+            _ => {
+                result["state"] = json!("unknown");
+                result["reason"] = json!("workspace_deployment_receipt_unconfirmed");
+                result["requiresReconciliation"] = json!(true);
+            }
+        }
+    }
+    finish_tx(&mut tx,work,&result).await?;
     tx.commit().await.map_err(ApiError::internal)?;
     Ok(())
 }
