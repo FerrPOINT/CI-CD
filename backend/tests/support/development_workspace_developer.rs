@@ -163,7 +163,8 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
     reader.write_all(b"workspace-reader-fixture").unwrap();
     let data = json!({"database":f.database,"workspace":f.workspace,"other_workspace":f.other_workspace,"project":f.project,"subject":subject,"task":task,"origin":origin,
         "git_root":git_root,"checkout":checkout,"repository":public_name,
-        "registry":registry,"namespace":namespace["namespace_id"],"repository_id":workspace.repository_id,"base_commit":base});
+        "registry":registry,"namespace":namespace["namespace_id"],"repository_id":workspace.repository_id,
+        "tracker_instance_id":workspace.tracker_instance_id,"base_commit":base});
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(90),
         tokio::process::Command::new(std::env::current_exe().unwrap())
@@ -219,7 +220,7 @@ async fn child(data: serde_json::Value) {
         .await
         .unwrap();
     let catalog = tempfile::tempdir().unwrap();
-    checks::publish(&pool, catalog.path(), workspace).await;
+    checks::publish(&pool, catalog.path(), workspace, true).await;
     let mut config = cicd::config::RuntimeConfig::from_env_source(|_| None, false)
         .unwrap()
         .with_auth_secret(Some("workspace-developer-fixture-only".into()));
@@ -377,6 +378,28 @@ async fn child(data: serde_json::Value) {
             StatusCode::FORBIDDEN
         );
     }
+    checks::publish(&pool, catalog.path(), workspace, false).await;
+    let unsupported = Uuid::new_v4();
+    let (status, denied) = http(
+        &app, "POST", &format!("{path}/operations"), Some(TOKEN),
+        json!({"operation_id":unsupported,"expected_version":1,"command":{"action":"begin_session","task":task.to_string()}}),
+    ).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{denied}");
+    assert!(
+        denied
+            .to_string()
+            .contains("workspace_required_developer_checks_missing"),
+        "{denied}"
+    );
+    assert!(store::session(&pool, workspace).await.unwrap().is_none());
+    let recorded: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM development_workspace_operations WHERE id=$1")
+            .bind(unsupported)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded, 0);
+    checks::publish(&pool, catalog.path(), workspace, true).await;
     let begin = Uuid::new_v4();
     assert_eq!(http(&app,"POST",&format!("/api/v1/development-workspaces/{}/operations",id("other_workspace")),Some(TOKEN),json!({"operation_id":Uuid::new_v4(),"expected_version":1,"command":{"action":"begin_session","task":task.to_string()}})).await.0,StatusCode::FORBIDDEN);
     let request = json!({"operation_id":begin,"expected_version":1,"command":{"action":"begin_session","task":task.to_string()}});
@@ -391,6 +414,18 @@ async fn child(data: serde_json::Value) {
     assert_eq!(status, StatusCode::OK, "{result}");
     assert!(!result.to_string().contains(TOKEN));
     assert!(!result.to_string().contains("sealed"));
+    checks::publish(&pool, catalog.path(), workspace, false).await;
+    let (status, replay) = http(
+        &app,
+        "POST",
+        &format!("{path}/operations"),
+        Some(TOKEN),
+        request.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay, result);
+    checks::publish(&pool, catalog.path(), workspace, true).await;
     let plan: serde_json::Value = sqlx::query_scalar(
         "SELECT execution_plan FROM development_workspace_operations WHERE id=$1",
     )
@@ -422,6 +457,12 @@ async fn child(data: serde_json::Value) {
     };
     let accepted = wait(begin).await;
     assert_eq!(accepted.state, "succeeded", "{:?}", accepted.result);
+    let check_policy = accepted.result.as_ref().unwrap()["developerCheckPolicy"].clone();
+    assert_eq!(
+        check_policy,
+        json!({"profile_hash":store::workspace(&pool, workspace).await.unwrap().profile_hash,
+               "recipes":["unit"]})
+    );
     let session = store::session(&pool, workspace).await.unwrap().unwrap();
     assert_eq!(session.id, begin);
     assert_eq!(session.owner_subject, subject);
@@ -462,6 +503,33 @@ async fn child(data: serde_json::Value) {
     )
     .await;
     assert!(!denied.status.success(), "foreign branch was accepted");
+    let pulls = format!("/api/v1/catalog/repositories/{}/pulls", id("repository_id"));
+    let (status, pull) = http(
+        &app,
+        "POST",
+        &pulls,
+        Some(TOKEN),
+        json!({"title":"Developer fixture","source_branch":candidate,"target_branch":"main",
+               "primary_task":{"tracker_instance_id":id("tracker_instance_id"),"task_id":task}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pull}");
+    assert_eq!(
+        pull["primary_tracker_instance_id"],
+        data["tracker_instance_id"]
+    );
+    assert_eq!(pull["primary_task_id"], task.to_string());
+    assert_eq!(pull["repository_id"], data["repository_id"]);
+    let (status, readback) = http(
+        &app,
+        "GET",
+        &format!("{pulls}/{}", pull["number"]),
+        Some(TOKEN),
+        json!(null),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{readback}");
+    assert_eq!(readback, pull);
     let pipelines: i64 = sqlx::query_scalar("SELECT count(*) FROM pipelines WHERE project_id=$1")
         .bind(project)
         .fetch_one(&pool)
@@ -522,6 +590,7 @@ async fn child(data: serde_json::Value) {
     .await;
     assert_eq!(status, StatusCode::OK, "{replay}");
     assert_eq!(replay["id"], begin.to_string());
+    assert_eq!(replay["result"]["developerCheckPolicy"], check_policy);
     let mut conflict = request;
     conflict["command"]["task"] = json!(Uuid::new_v4());
     assert_eq!(

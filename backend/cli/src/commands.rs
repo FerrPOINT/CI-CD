@@ -413,7 +413,7 @@ async fn get(api: &ApiClient, path: &str, pairs: Vec<(&str, Option<String>)>) ->
 }
 async fn action(api: &ApiClient, repo: &str, number: u32, action: &str) -> Result<Value> {
     api.json(
-        api.post(&format!("/repos/{}/pulls/{number}/action", enc(repo)))
+        api.post_segments(&["repos", repo, "pulls", &number.to_string(), "action"])?
             .json(&json!({"action":action})),
     )
     .await
@@ -478,9 +478,37 @@ pub async fn execute(api: &ApiClient, command: WorkCommand) -> Result<Value> {
             },
             PrCommand::LinkTask{repository_id,number,tracker_instance_id,task_id,primary}=>api.json(api.post(
                 &format!("/catalog/repositories/{repository_id}/pulls/{number}/tasks")).json(&json!({"tracker_instance_id":tracker_instance_id,"task_id":task_id,"primary":primary}))).await,
-            PrCommand::List {repo,page,status}=>{let mut pairs=page.pairs();pairs.push(("status",status));get(api,&format!("/repos/{}/pulls/page",enc(&repo)),pairs).await},
-            PrCommand::Get {repo,number}=>api.json(api.get(&format!("/repos/{}/pulls/{number}",enc(&repo)))).await,
-            PrCommand::Create {repo,tracker_instance_id,task_id,title,source_branch,target_branch,description,from_file}=>api.json(api.post(&format!("/repos/{}/pulls",enc(&repo))).json(&json!({"repository_name":repo,"primary_task":{"tracker_instance_id":tracker_instance_id,"task_id":task_id},"title":title,"source_branch":source_branch,"target_branch":target_branch,"description":support::text_input(description,from_file)?}))).await,
+            PrCommand::List { repo, page, status } => {
+                let mut pairs = page.pairs();
+                pairs.push(("status", status));
+                api.json(api.get_segments(&["repos", &repo, "pulls", "page"], &pairs)?)
+                    .await
+            }
+            PrCommand::Get { repo, number } => {
+                api.json(api.get_segments(&["repos", &repo, "pulls", &number.to_string()], &[])?)
+                    .await
+            }
+            PrCommand::Create {
+                repo,
+                tracker_instance_id,
+                task_id,
+                title,
+                source_branch,
+                target_branch,
+                description,
+                from_file,
+            } => {
+                let request = api.post_segments(&["repos", &repo, "pulls"])?;
+                api.json(request.json(&json!({
+                    "repository_name": repo,
+                    "primary_task": { "tracker_instance_id": tracker_instance_id, "task_id": task_id },
+                    "title": title,
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "description": support::text_input(description, from_file)?,
+                })))
+                .await
+            }
             PrCommand::Merge {repo,number}=>action(api,&repo,number,"merge").await,
             PrCommand::Close {repo,number}=>action(api,&repo,number,"close").await,
             PrCommand::Reopen {repo,number}=>action(api,&repo,number,"reopen").await,

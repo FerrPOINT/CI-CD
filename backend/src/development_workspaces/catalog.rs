@@ -86,6 +86,10 @@ pub(crate) fn target(state: &AppState, id: Uuid) -> Result<TargetChoice, ApiErro
             "workspace_profile_identity_mismatch",
         ));
     }
+    if choice.profile.get("requiredDeveloperChecks").is_some() {
+        let recipes = read_json(root, &target_path(root, id, "recipes.json"))?;
+        validate_developer_checks(&choice.profile, &choice.profile_hash, &recipes)?;
+    }
     let keys: std::collections::BTreeSet<_> = choice.profile["repositories"]
         .as_array()
         .ok_or_else(|| ApiError::conflict("workspace_profile_repositories_missing"))?
@@ -331,6 +335,45 @@ pub(crate) fn operation_plan(
     Ok(plan)
 }
 
+fn validate_developer_checks(
+    profile: &Value,
+    profile_hash: &str,
+    published: &Value,
+) -> Result<(), ApiError> {
+    let invalid = || ApiError::conflict("workspace_required_developer_checks_invalid");
+    let required = profile["requiredDeveloperChecks"]
+        .as_array()
+        .filter(|keys| !keys.is_empty())
+        .ok_or_else(invalid)?;
+    let checks = profile["checks"].as_array().ok_or_else(invalid)?;
+    if published["profileHash"] != profile_hash {
+        return Err(invalid());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for key in required {
+        let key = key
+            .as_str()
+            .filter(|key| !key.is_empty() && *key != "prepare")
+            .filter(|key| seen.insert(*key))
+            .ok_or_else(invalid)?;
+        let mut definitions = checks.iter().filter(|check| check["key"] == key);
+        let check = definitions.next().ok_or_else(invalid)?;
+        if definitions.next().is_some()
+            || check["executor"] != "forge"
+            || check["requiresRuntime"] != false
+            || check["commands"].as_array().is_none_or(Vec::is_empty)
+        {
+            return Err(invalid());
+        }
+        let pipeline = &published["recipes"][key];
+        if pipeline["version"] != 1 {
+            return Err(invalid());
+        }
+        validate_recipe(profile, key, pipeline)?;
+    }
+    Ok(())
+}
+
 /// A published test must execute the commands declared by the versioned
 /// profile. Preparation executes every declared readiness check exactly once.
 fn validate_recipe(profile: &Value, recipe: &str, pipeline: &Value) -> Result<(), ApiError> {
@@ -407,8 +450,62 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::validate_recipe;
+    use super::{validate_developer_checks, validate_recipe};
     use serde_json::json;
+
+    #[test]
+    fn all_published_checks_can_be_required() {
+        let mut checks = Vec::new();
+        let mut recipes = serde_json::Map::new();
+        for index in 0..64 {
+            let key = format!("check-{index}");
+            let commands = json!([format!("check {index}")]);
+            checks.push(
+                json!({"key":key,"executor":"forge","requiresRuntime":false,"commands":commands}),
+            );
+            recipes.insert(
+                key,
+                json!({"version":1,"jobs":{"test":{
+                    "image":format!("tools@sha256:{}", "a".repeat(64)),"commands":commands
+                }}}),
+            );
+        }
+        let profile =
+            json!({"requiredDeveloperChecks":recipes.keys().collect::<Vec<_>>(),"checks":checks});
+        let published = json!({"profileHash":"profile","recipes":recipes});
+        assert!(validate_developer_checks(&profile, "profile", &published).is_ok());
+    }
+
+    #[test]
+    fn developer_policy_requires_distinct_published_executable_checks() {
+        let mut profile = json!({"requiredDeveloperChecks":["unit"],"checks":[
+            {"key":"unit","executor":"forge","requiresRuntime":false,"commands":["check unit"]},
+            {"key":"build","executor":"forge-build"}
+        ]});
+        let job =
+            json!({"image":format!("tools@sha256:{}", "a".repeat(64)),"commands":["check unit"]});
+        let mut published = json!({"profileHash":"profile","recipes":{
+            "unit":{"version":1,"jobs":{"unit":job}}
+        }});
+        assert!(validate_developer_checks(&profile, "profile", &published).is_ok());
+        for keys in [
+            json!([]),
+            json!(["unit", "unit"]),
+            json!(["build"]),
+            json!(["missing"]),
+        ] {
+            profile["requiredDeveloperChecks"] = keys;
+            assert!(validate_developer_checks(&profile, "profile", &published).is_err());
+        }
+        profile["requiredDeveloperChecks"] = json!(["unit"]);
+        assert!(validate_developer_checks(&profile, "other", &published).is_err());
+        let duplicate = profile["checks"][0].clone();
+        profile["checks"].as_array_mut().unwrap().push(duplicate);
+        assert!(validate_developer_checks(&profile, "profile", &published).is_err());
+        profile["checks"].as_array_mut().unwrap().pop();
+        published["recipes"]["unit"] = serde_json::Value::Null;
+        assert!(validate_developer_checks(&profile, "profile", &published).is_err());
+    }
 
     #[test]
     fn published_checks_bind_profile_commands_and_immutable_tools() {

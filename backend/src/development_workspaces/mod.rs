@@ -153,6 +153,14 @@ async fn enqueue(
     {
         return Ok(original);
     }
+    if developer_authority.is_some()
+        && matches!(action, WorkspaceAction::BeginSession { .. })
+        && workspace.profile.get("requiredDeveloperChecks").is_none()
+    {
+        return Err(ApiError::conflict(
+            "workspace_required_developer_checks_missing",
+        ));
+    }
     let mut plan = catalog::operation_plan(state, workspace, action)?;
     if developer_authority.is_some()
         && let Some(jobs) = plan["pipeline"]["jobs"].as_object()
