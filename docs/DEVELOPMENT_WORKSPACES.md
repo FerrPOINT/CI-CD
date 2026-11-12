@@ -258,6 +258,14 @@ Opt-in settings: `CICD_DEVELOPMENT_WORKSPACE_CATALOG_ROOT`,
 и приложение проекта не могут менять каталог. Creator имеет отдельные права;
 обычный lifecycle использует namespace-scoped RBAC без create/cluster-admin.
 
+Явный профиль `services: []` не объявляет приложение или Helm release. При
+регистрации такого source-only workspace Forge сохраняет проверки target UUID
+и замороженного runtime hash; Base сверяет реальный namespace UID и пустой
+inventory. Application environment namespace/release в этом случае не нужны.
+Для профиля с app services прежние environment fences сохраняются. Пустой
+runtime остаётся stopped; session/prepare и runtime-independent checks не
+запускают приложение.
+
 Register наблюдает существующие ресурсы, не переустанавливает их. Перед первым
 изменением существующих данных нужны свежий backup и проверенный restore.
 Create использует независимые namespace/address/storage/credentials и пустые

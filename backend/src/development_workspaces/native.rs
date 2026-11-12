@@ -17,6 +17,26 @@ fn unavailable() -> ApiError {
     ApiError::service_unavailable("workspace_native_custody_unconfirmed")
 }
 
+fn require_registered_target(
+    profile: &Value,
+    target: Uuid,
+    runtime: &Value,
+    plan: &Value,
+) -> Result<(), ApiError> {
+    let source_only = profile["services"].as_array().is_some_and(Vec::is_empty);
+    if runtime["id"] != target.to_string()
+        || plan["runtimeHash"]
+            != cicd_infra::development_workspace::request_hash(runtime).map_err(super::error)?
+        || (!source_only
+            && runtime["adapter"] == "kubernetes"
+            && (runtime["namespace"] != plan["environment"]["namespace"]
+                || runtime["inventory"]["release"] != plan["environment"]["release"]))
+    {
+        return Err(ApiError::conflict("workspace_registered_target_drift"));
+    }
+    Ok(())
+}
+
 pub(super) fn journal(state: &AppState, operation: Uuid) -> Result<PathBuf, ApiError> {
     Ok(catalog::root(state)?
         .join("operations")
@@ -147,16 +167,7 @@ pub(super) async fn operate(
         path
     } else {
         let runtime = catalog::read_json(root, &target)?;
-        if runtime["id"] != workspace.target_id.to_string()
-            || plan["runtimeHash"]
-                != cicd_infra::development_workspace::request_hash(&runtime)
-                    .map_err(super::error)?
-            || (runtime["adapter"] == "kubernetes"
-                && (runtime["namespace"] != plan["environment"]["namespace"]
-                    || runtime["inventory"]["release"] != plan["environment"]["release"]))
-        {
-            return Err(ApiError::conflict("workspace_registered_target_drift"));
-        }
+        require_registered_target(&workspace.profile, workspace.target_id, &runtime, plan)?;
         target.clone()
     };
     let configured = if creation {
@@ -224,4 +235,54 @@ pub(super) async fn operate(
         return Ok(json!({"state":"unknown","reason":"operator_response_unconfirmed"}));
     }
     Ok(json!({"state":"unknown","reason":"original_operator_result_missing"}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn binding() -> (Uuid, Value, Value) {
+        let target = Uuid::new_v4();
+        let runtime = json!({"id":target,"adapter":"kubernetes","namespace":"agent-storage",
+            "namespaceUid":Uuid::new_v4(),"services":[],"storage":[],"secrets":[]});
+        let plan = json!({"runtimeHash":cicd_infra::development_workspace::request_hash(&runtime).unwrap(),
+            "environment":{"adapter":"compose","environmentId":Uuid::new_v4()}});
+        (target, runtime, plan)
+    }
+
+    #[test]
+    fn source_only_registration_does_not_require_an_application_environment() {
+        let (target, runtime, plan) = binding();
+        require_registered_target(&json!({"services":[]}), target, &runtime, &plan).unwrap();
+    }
+
+    #[test]
+    fn application_services_keep_namespace_and_release_fences() {
+        let (target, mut runtime, mut plan) = binding();
+        let profile = json!({"services":[{"key":"app","dependsOn":[]}]});
+        assert!(require_registered_target(&profile, target, &runtime, &plan).is_err());
+        runtime["inventory"] = json!({"release":"application"});
+        plan["runtimeHash"] = json!(cicd_infra::development_workspace::request_hash(&runtime).unwrap());
+        plan["environment"] = json!({"namespace":"agent-storage","release":"application"});
+        require_registered_target(&profile, target, &runtime, &plan).unwrap();
+        for field in ["namespace", "release"] {
+            let mut changed = plan.clone();
+            changed["environment"][field] = json!("foreign");
+            assert!(require_registered_target(&profile, target, &runtime, &changed).is_err());
+            assert!(require_registered_target(&json!({}), target, &runtime, &changed).is_err());
+        }
+    }
+
+    #[test]
+    fn source_only_registration_keeps_target_and_frozen_inventory_identity() {
+        let (target, runtime, plan) = binding();
+        let profile = json!({"services":[]});
+        assert!(require_registered_target(&profile, Uuid::new_v4(), &runtime, &plan).is_err());
+        let mut changed = runtime.clone();
+        changed["namespaceUid"] = json!(Uuid::new_v4());
+        assert!(require_registered_target(&profile, target, &changed, &plan).is_err());
+        let mut changed = plan;
+        changed["runtimeHash"] = Value::Null;
+        assert!(require_registered_target(&profile, target, &runtime, &changed).is_err());
+    }
 }
