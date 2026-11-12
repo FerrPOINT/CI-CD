@@ -172,6 +172,7 @@ async fn delivery_operation_retains_exact_typed_observation_and_never_borrows_ne
         }
     }
     worker.abort(); let _=worker.await;
+    drop(app);
     f.close().await;
 }
 
