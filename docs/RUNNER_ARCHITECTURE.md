@@ -1040,7 +1040,7 @@ Kubernetes, при наличии test cluster:
 - Реализовать Kubernetes executor за общим `ExecutionBackend` port.
 - Ввести protected runner pools/tags, network/security policies и resource quotas.
 - Добавить metrics, alerts, runbook, backup/restore и chaos tests.
-- Запустить shadow/non-blocking Forge pipeline параллельно GitHub Actions.
+- Запустить shadow/non-blocking Forge pipeline с независимой локальной проверкой результатов.
 - Сравнить результаты, duration, retry и failure behavior.
 - Сделать Forge required check только после acceptance criteria и operational sign-off.
 
