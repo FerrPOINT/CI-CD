@@ -420,114 +420,55 @@ async fn reconcile_workspaces(
             }
             ensure_success(ownership).await?;
         }
-        if kubernetes_mode() {
-            let known_unsubmitted = async {
-                let workspace =
-                    cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
-                workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
-                if cicd::execution::kubernetes::close_unprepared(
-                    &cicd::execution::kubernetes::Config::from_env()?,
-                    root,
-                    record.attempt_id,
-                    record.lease_id,
-                    record.generation,
-                    workspace.checkout(),
-                )
-                .await?
-                .is_some()
-                {
-                    return Ok::<bool, anyhow::Error>(true);
-                }
+        // Completion removes the lease token. A retained checkout still has to
+        // reconcile on startup using the fresh server acknowledgement.
+        if let Some(outcome) = record.terminal_status.as_deref()
+            && read_terminal_receipt(
+                client,
+                base,
+                credential,
+                record.lease_id,
+                record.attempt_id,
+                record.generation,
+                outcome,
+            )
+            .await
+            .is_ok()
+        {
+            let workspace =
+                cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
+            workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
+            if kubernetes_mode() {
                 cicd::execution::kubernetes::Execution::reopen(
                     root,
                     record.attempt_id,
                     record.generation,
                 )?
-                .close_not_submitted()
-                .await
+                .acknowledge()
+                .await?;
             }
-            .await;
-            match known_unsubmitted {
-                Ok(false) => {} // The original issued/terminal path below is unchanged.
-                Ok(true) => {
-                    if recover_kubernetes(client, base, credential, root, &record, keep_workspace)
-                        .await
-                        .is_err()
-                    {
-                        unresolved += 1;
-                    }
-                    continue;
-                }
-                Err(_) => {
-                    unresolved += 1;
-                    continue;
-                }
+            workspace.acknowledge_completion(outcome)?;
+            if !keep_workspace {
+                workspace.cleanup_after_ack().await?;
             }
-        }
-        let Some(outcome) = record.terminal_status.as_deref() else {
             if kubernetes_mode() {
-                match recover_kubernetes(client, base, credential, root, &record, keep_workspace)
-                    .await
-                {
-                    Ok(()) => continue,
-                    Err(_) => {
-                        unresolved += 1;
-                        continue;
-                    }
-                }
+                cicd::execution::kubernetes::Execution::reopen(
+                    root,
+                    record.attempt_id,
+                    record.generation,
+                )?
+                .finish_workspace_cleanup()?;
             }
-            unresolved += 1;
-            continue;
-        };
-        if read_terminal_receipt(
-            client,
-            base,
-            credential,
-            record.lease_id,
-            record.attempt_id,
-            record.generation,
-            outcome,
-        )
-        .await
-        .is_err()
-        {
-            if kubernetes_mode() {
-                match recover_kubernetes(client, base, credential, root, &record, keep_workspace)
-                    .await
-                {
-                    Ok(()) => continue,
-                    Err(_) => {
-                        unresolved += 1;
-                        continue;
-                    }
-                }
-            }
-            unresolved += 1;
             continue;
         }
-        let workspace = cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
-        workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
         if kubernetes_mode() {
-            cicd::execution::kubernetes::Execution::reopen(
-                root,
-                record.attempt_id,
-                record.generation,
-            )?
-            .acknowledge()
-            .await?;
+            match recover_kubernetes(client, base, credential, root, &record, keep_workspace).await
+            {
+                Ok(()) => continue,
+                Err(error) => eprintln!("retained attempt {}: {error:#}", record.attempt_id),
+            }
         }
-        workspace.acknowledge_completion(outcome)?;
-        if !keep_workspace {
-            workspace.cleanup_after_ack().await?;
-        }
-        if kubernetes_mode() {
-            cicd::execution::kubernetes::Execution::reopen(
-                root,
-                record.attempt_id,
-                record.generation,
-            )?
-            .finish_workspace_cleanup()?;
-        }
+        unresolved += 1;
     }
     if unresolved > 0 {
         bail!("{unresolved} workspaces remain unresolved; no commands were re-executed");
@@ -1022,18 +963,17 @@ async fn complete_executed_attempt(
     // Never repeat the POST: a lost reply may follow a committed completion.
     let completion = match completion {
         Ok(()) => Ok(()),
-        Err(_) => {
-            read_terminal_receipt(
-                client,
-                base,
-                credential,
-                offer.lease_id,
-                offer.attempt.id,
-                offer.fencing_token,
-                outcome,
-            )
-            .await
-        }
+        Err(completion_error) => read_terminal_receipt(
+            client,
+            base,
+            credential,
+            offer.lease_id,
+            offer.attempt.id,
+            offer.fencing_token,
+            outcome,
+        )
+        .await
+        .with_context(|| format!("original completion failed: {completion_error:#}")),
     };
     if completion.is_ok() {
         if recovery_record {
@@ -2364,6 +2304,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejected_completion_retains_the_server_reason_after_readback() {
+        let root = std::env::temp_dir().join(format!("forge-rejected-ack-{}", Uuid::new_v4()));
+        let offer = test_offer("exit 0", 5);
+        let executed = execute_attempt(&test_cli(root.clone()), &offer, None, &[])
+            .await
+            .unwrap();
+        let mut receipt = receipt_body(&offer);
+        receipt["terminalAcknowledged"] = json!(false);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().route(
+            "/{*path}",
+            axum::routing::post(|| async {
+                (
+                    axum::http::StatusCode::CONFLICT,
+                    "Original custody unavailable",
+                )
+            })
+            .get(move || async { axum::Json(receipt) }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let error = complete_executed_attempt(
+            &reqwest::Client::new(),
+            &base,
+            "fixture",
+            &offer,
+            executed,
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("409 Conflict: Original custody unavailable"));
+        assert!(ensure_no_unresolved_workspaces(&root).is_err());
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn unknown_completion_uses_readback_without_resending_post() {
         use std::sync::{
             Arc,
@@ -3035,7 +3014,7 @@ async fn execute_kubernetes(
                     outcome: "failed",
                     exit_code: None,
                     diagnostic: Some(truncate_diagnostic(&format!(
-                        "Kubernetes request not submitted: {error:#}"
+                        "Kubernetes Pod not admitted: {error:#}"
                     ))),
                 },
                 workspace,
@@ -3255,7 +3234,8 @@ async fn recover_kubernetes(
     if scope.lease_id != record.lease_id {
         bail!("retained lease identity mismatch")
     }
-    if execution.close_not_submitted().await? {
+    let no_pod = execution.close_not_submitted().await?;
+    if no_pod && !execution.not_admitted()? {
         if let Ok(receipt) = unsubmitted_owner_readback(client, base, credential, record).await {
             let directory = root.join(".kubernetes-control").join(format!(
                 "forge-{}-g{}",
@@ -3297,7 +3277,7 @@ async fn recover_kubernetes(
     };
     let workspace = cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
     workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
-    if execution.close_not_submitted().await? {
+    if no_pod {
         let outcome = match record.terminal_status.as_deref() {
             None | Some("failed") => "failed",
             Some("canceled") => "canceled",
@@ -3313,7 +3293,7 @@ async fn recover_kubernetes(
                     outcome,
                     exit_code: None,
                     diagnostic: Some(
-                        "Kubernetes request was never submitted; retained owner recovery".into(),
+                        "Kubernetes Pod did not start; retained owner recovery".into(),
                     ),
                 },
                 workspace,
