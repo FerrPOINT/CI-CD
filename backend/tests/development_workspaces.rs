@@ -171,6 +171,8 @@ async fn delivery_operation_retains_exact_typed_observation_and_never_borrows_ne
             assert_eq!(http(&app,"GET",&path,Some(READER),json!(null)).await.1,public);
         }
     }
+    // Drain in-flight database work before cancelling the supervisor.
+    f.pool.close().await;
     worker.abort(); let _=worker.await;
     drop(app);
     f.close().await;
@@ -986,8 +988,6 @@ impl Fixture {
             .unwrap();
         let pool = PgPoolOptions::new()
             .max_connections(5)
-            // Supervisor cancellation must not drop a connection during checkout ping.
-            .test_before_acquire(false)
             .connect_with(options.database(&database))
             .await
             .unwrap();
