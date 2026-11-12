@@ -66,9 +66,44 @@ async fn http(
 #[tokio::test]
 async fn delivery_operation_retains_exact_typed_observation_and_never_borrows_neighbor_pipeline() {
     use sha2::{Digest, Sha256};
+    const CHILD: &str = "FORGE_WORKSPACE_OBSERVATION_READER_TEST";
+    const READER: &str = "sdlc_pat_workspace_observation_reader_fixture";
+    // Like the configured Developer fixture, isolate the process-global Central
+    // bridge and authenticate the real HTTP GET; no anonymous/local-auth bypass.
+    let subject = if let Ok(subject) = std::env::var(CHILD) {
+        subject.parse::<Uuid>().unwrap()
+    } else {
+        let subject=Uuid::new_v4();
+        let auth=axum::Router::new()
+            .route("/oidc/jwks",axum::routing::get(||async {axum::Json(json!({"keys":[]}))}))
+            .route("/auth/tokens/introspect",axum::routing::get(move |headers:axum::http::HeaderMap|async move {
+                assert_eq!(headers["authorization"],format!("Bearer {READER}"));
+                axum::Json(json!({"sub":subject,"email":"observation-reader@fixture.invalid",
+                    "subject_role":"user","scopes":["ci-cd:read"],
+                    "observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(300)}))
+            }));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let uri=format!("http://{}/oidc/jwks",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move {axum::serve(listener,auth).await.unwrap()});
+        let output=tokio::time::timeout(std::time::Duration::from_secs(60),
+            tokio::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact","delivery_operation_retains_exact_typed_observation_and_never_borrows_neighbor_pipeline","--nocapture"])
+                .env(CHILD,subject.to_string()).env("CICD_AUTH__CENTRAL_JWKS_URI",uri)
+                .env("CICD_AUTH__CENTRAL_ISSUER","http://observation-reader.example.invalid")
+                .env("NO_PROXY","127.0.0.1,localhost").env("no_proxy","127.0.0.1,localhost")
+                .kill_on_drop(true).output()).await;
+        server.abort();let _=server.await;
+        let output=output.expect("isolated observation HTTP reader timed out").unwrap();
+        assert!(output.status.success(),"{}\n{}",String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
+        return;
+    };
     let f = Fixture::new().await;
+    sqlx::query("UPDATE users SET central_sub=$2 WHERE id=$1").bind(f.actor).bind(subject.to_string()).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'viewer')")
+        .bind(f.project).bind(f.actor).execute(&f.pool).await.unwrap();
     let catalog=tempfile::tempdir().unwrap();
-    let mut config=cicd::config::RuntimeConfig::from_env_source(|_|None,false).unwrap();
+    let mut config=cicd::config::RuntimeConfig::from_env_source(|_|None,false).unwrap()
+        .with_auth_secret(Some("workspace-observation-fixture-only".into()));
     config.development_workspaces.catalog_root=Some(catalog.path().into());
     let app=cicd::api::app_with_git_and_config(Some(f.pool.clone()),config.git.to_git_config(),None,config.clone()).unwrap();
     let worker=tokio::spawn(cicd::development_workspaces::worker::supervisor(f.pool.clone(),config));
@@ -121,7 +156,8 @@ async fn delivery_operation_retains_exact_typed_observation_and_never_borrows_ne
             }
         }).await.unwrap();
         let path=format!("/api/v1/development-workspaces/{}/operations/{operation}",f.workspace);
-        let (status,public)=http(&app,"GET",&path,None,json!(null)).await;
+        assert_eq!(http(&app,"GET",&path,None,json!(null)).await.0,StatusCode::UNAUTHORIZED);
+        let (status,public)=http(&app,"GET",&path,Some(READER),json!(null)).await;
         assert_eq!(status,StatusCode::OK,"{public}");
         assert_eq!(public["request"],request);
         if machine && neighbor {
@@ -132,7 +168,7 @@ async fn delivery_operation_retains_exact_typed_observation_and_never_borrows_ne
             assert_eq!(result.state,"succeeded","{:?}",result.result);
             if machine { assert_eq!(public["result"]["deploymentObservation"],observed); }
             else { assert!(public["result"]["deploymentObservation"].is_null()); }
-            assert_eq!(http(&app,"GET",&path,None,json!(null)).await.1,public);
+            assert_eq!(http(&app,"GET",&path,Some(READER),json!(null)).await.1,public);
         }
     }
     worker.abort(); let _=worker.await;
