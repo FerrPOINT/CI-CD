@@ -24,8 +24,29 @@ Use forge-runner --inspect-workspaces --work-dir /workspaces, then
 --reconcile-workspaces with the original controller configuration and runner
 credential in its environment. An active lease is not an expired cleanup grant.
 Do not run a second polling owner, remove journals, invent terminal records or
-resubmit START. The issued-request path continues to require the existing exact
-Pod/terminal/ACK/cleanup evidence; Pod absence alone never authorizes it.
+resubmit START.
+
+When Kubernetes returns a Forbidden Status for the exact Pod CREATE, Forge
+records the request as issued and stores a separate `not-admitted.json`
+receipt. The receipt binds the 403 result to the original scope and intent.
+Forge checks namespace, PVC and Pod absence before reporting failure. It
+retains the original receipt through cleanup without a Pod UID or an exit code.
+
+For an older issued request whose reply was lost, the installation owner may
+project `unadmitted.json` into the existing read-only native closure mount
+of the recovery runner. The `forge/native-unadmitted-attempt/v1` observation
+binds the original scope, Pod name, intent SHA-256, issued timestamp and the
+installation, CA, namespace and PVC identities. It carries the observation
+timestamp and SHA-256 of the storage history evidence. The owner must verify
+complete, overlapping history covering the request and an absent target key.
+Keep the source observations with the operation receipt. Only the original
+request may seal this evidence under its submission lock. A stale observation
+or a changed intent leaves it held.
+
+After lease expiry, the server checks the retained non-admission receipt and
+actual Pod absence before acknowledging the original failed or canceled lease.
+If neither an explicit rejection nor qualified owner evidence is available,
+the issued request requires exact Pod, termination and acknowledgment evidence.
 
 Focused tests cover expired admission before issue, absent preparation intent,
 foreign Pod, issued request, submission lock, receipt identity and false server

@@ -9521,14 +9521,15 @@ components:
       - clusterCaSha256
       - namespaceUid
       - workspaceClaimUid
-      - podUid
       properties:
         clusterCaSha256:
           type: string
         namespaceUid:
           type: string
         podUid:
-          type: string
+          type:
+          - string
+          - 'null'
         workspaceClaimUid:
           type: string
       additionalProperties: false
