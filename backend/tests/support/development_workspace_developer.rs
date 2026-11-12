@@ -240,6 +240,14 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    let marker = "FORGE_DEVELOPER_PUBLICATION_CHECK=verified";
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .any(|line| line == marker),
+        "isolated Developer case did not confirm publication coverage"
+    );
+    eprintln!("{marker}");
 }
 
 async fn child(data: serde_json::Value) {
