@@ -24,4 +24,3 @@
 /docker-compose.yml            @FerrPOINT
 /backend/Dockerfile            @FerrPOINT
 /frontend/Dockerfile           @FerrPOINT
-/.github/workflows/            @FerrPOINT

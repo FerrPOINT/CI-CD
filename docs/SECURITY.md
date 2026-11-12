@@ -218,15 +218,15 @@ let cors = CorsLayer::new()
 
 ## 11. Dependency Security
 
-- Current: Dependabot weekly проверяет Cargo, npm и GitHub Actions по `.github/dependabot.yml`.
-- Current: `.github/workflows/ci.yml` выполняет docs checks, Rust fmt/clippy/tests с real PostgreSQL integration и OpenAPI drift, а также frontend `openapi:check`, test/lint/build. Secret scan, dependency audit, SBOM drift, image scan, release build и backward compatibility остаются локальными release checks; JavaScript actions и pnpm version описываются только в фактическом workflow.
+- Current: Cargo/npm обновляются вручную с полным workspace; GHA-only Dependabot configuration удалена вместе с workflows.
+- Current: GitHub Actions workflows удалены. Docs/hygiene, Rust fmt/clippy/tests, real PostgreSQL integration, OpenAPI drift, frontend `openapi:check`, test/lint/build, secret scan, dependency audit, SBOM drift, image scan, release build и backward compatibility сохраняются как локальные checks по scope. Их исполнение и evidence подтверждаются для точного кандидата отдельно.
 - Current: YAML compatibility path использует dependency alias `serde_yaml = { package = "yaml_serde" }`; resolved graph больше не содержит deprecated crate `serde_yaml` или `unsafe-libyaml`.
 - Current: `RUSTSEC-2023-0071` игнорируется только после guard-команд `cargo tree -i sqlx-mysql --edges features --target all` и `cargo tree -i rsa --target all`; это компенсирует Cargo.lock false-positive от optional SQLx MySQL path, который не активен в Postgres-only build.
 - Current: `cargo audit` может печатать allowed warnings `RUSTSEC-2026-0183`/`RUSTSEC-2026-0184` по `git2 0.20.4`; `git2 0.21.0` проверен и не компилируется на закреплённом Rust 1.88, поэтому remediation — совместимый upstream patch либо отдельный MSRV/toolchain bump.
 - Current: container image scan выполняется helper-скриптом `scripts/scan_container_images.sh` по уже собранным backend/frontend images, использует pinned Trivy CLI image digest и блокирует critical fixable vulnerabilities.
 - Target: добавить `cargo-deny` с license/source/ban policy, broader image severity/exception policy, SBOM release artifact, deeper history/container secret scanning и documented exceptions/remediation.
 - Target: убрать `RUSTSEC-2023-0071` ignore после SQLx upgrade/замены macro path либо при любом намеренном включении MySQL/RSA.
-- Target: pin GitHub Actions/container images до immutable digests там, где это нужно release policy.
+- Target: pin container images до immutable digests там, где это нужно release policy.
 
 ## 12. Container Security
 

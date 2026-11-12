@@ -694,7 +694,7 @@ PASS допускается только при выполненном oracle. B
 
 Контейнерные запуски только через Base ComposeHelper v2 в собственном временном Compose-проекте, с проверкой свободного места, owner/purpose и finally cleanup. Прямые standalone контейнеры, остановка runtime и удаление чужих volumes не являются частью проверки. API/worker тестируют собственные временные Git roots и БД. Установка кандидата в принятый runtime в эти команды не входит.
 
-Для normal PG использовать job environment из [CI workflow](../../.github/workflows/ci.yml): отдельный `CICD_TEST_DATABASE_URL`, стабильные фиктивные `CICD_NAMESPACE__INSTANCE_ID`, `CICD_NAMESPACE__REGISTRY_INSTANCE_ID` и `CICD_NAMESPACE__PUBLIC_GIT_ORIGIN=https://forge-qa.invalid`. Origin нужен namespace-bound hosted readback даже без сетевого обращения к нему. CLI integration использует отдельную disposable БД, как в CI; не переключать её для остальных suites.
+Для normal PG использовать явное локальное fixture environment: отдельный `CICD_TEST_DATABASE_URL`, стабильные фиктивные `CICD_NAMESPACE__INSTANCE_ID`, `CICD_NAMESPACE__REGISTRY_INSTANCE_ID` и `CICD_NAMESPACE__PUBLIC_GIT_ORIGIN=https://forge-qa.invalid`. Origin нужен namespace-bound hosted readback даже без сетевого обращения к нему. CLI integration использует отдельную disposable БД, отдельно от остальных suites; не переключать её для остальных suites.
 
 Backend из `backend`:
 

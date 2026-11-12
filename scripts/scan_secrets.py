@@ -2,8 +2,8 @@
 """Fail when repository text appears to contain committed secrets.
 
 This is a first-party baseline scanner for CI. It intentionally avoids
-network calls and marketplace actions, so every push can run the same checks
-locally and in GitHub Actions. It is not a DLP system; deeper entropy,
+network calls and marketplace actions, so local and project-owned checks
+can use the same scanner. It is not a DLP system; deeper entropy,
 history, and container-layer scanners remain release hardening.
 """
 from __future__ import annotations

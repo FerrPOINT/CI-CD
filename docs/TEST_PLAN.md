@@ -24,7 +24,7 @@
 | Frontend unit | Компоненты, pure helpers, typed API transport, route smoke всех Dashboard-страниц, i18n contract и доступность UI в Vitest/Testing Library | `cd frontend && pnpm test` | **Current verified** |
 | Dependency/SBOM security | Rust/Node advisories, dependency graph, committed-secret baseline и drift committed SBOM | Локально: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py`, `scripts/generate_sbom.py --check` | **Current verified local gate** |
 | Compose smoke | Собранные образы, startup сервисов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | Локально: `docker compose config -q`, `docker compose up --build -d`, API/frontend smoke и `docker compose down -v --remove-orphans` | **Current verified local gate** |
-| Real-DB integration | PostgreSQL constraints, migrations/readiness, CRUD, persisted effects, immutable pipeline plan snapshots, auth/PAT и current API boundaries | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db -- --test-threads=1`; local fixture `backend/docker-compose.test.yml` | **Current verified** |
+| Real-DB integration | PostgreSQL constraints, migrations/readiness, CRUD, persisted effects, immutable pipeline plan snapshots, auth/PAT и current API boundaries | Локальная disposable PostgreSQL fixture `backend/docker-compose.test.yml` и `cargo test --features integration --test integration_db -- --test-threads=1` | **Current verified** |
 | Playwright E2E | Критические пользовательские journeys, all-route desktop accessibility и seeded performance smoke на собранном frontend и real API/PostgreSQL stack | Локально: Docker Compose + `pnpm seed:evidence` + `pnpm e2e`; traces/screenshots/video сохраняются на failure | **Current verified local gate** |
 | Accessibility | Keyboard journey, accessible names/roles, focus и серьёзные axe-нарушения | Локально: `frontend/e2e/accessibility.spec.ts`; mobile drawer Escape/focus в `critical-flows.spec.ts` | **Current verified local gate; target расширение** |
 | Performance | Synthetic budgets для seeded API reads и Dashboard route ready-time; target Lighthouse/load/30-day SLO evidence | Локально: `frontend/e2e/performance.spec.ts` в `pnpm e2e` | **Current verified local gate; target расширение** |
@@ -59,10 +59,10 @@
 
 | Окружение / fixture | Правило использования | Статус |
 |---|---|---|
-| Local unit/contract | Rust 1.88 и Node 22/pnpm 11 согласно `.github/workflows/ci.yml`; тест не использует production URL, токен или DB. | **Current verified** |
+| Local unit/contract | Rust 1.88 и Node/pnpm согласно `AGENTS.md` и `frontend/package.json`; тест не использует production URL, токен или DB. | **Current verified** |
 | Main Compose smoke | Disposable local Compose stack; проверяются health и состояние сервисов, затем stack останавливается. Реальные shared data и secrets запрещены. | **Current verified** |
 | Test Compose PostgreSQL | `backend/docker-compose.test.yml`: `postgres:17-alpine`, `forge_test_cicd`, tmpfs, без host port, healthcheck. Owner fixture -- `forge_owner`; `backend/tests/sql/init-roles.sql` создаёт runtime fixture `forge_runtime`. | **Current verified fixture** |
-| Real-DB harness | Current CI применяет migrations к disposable PostgreSQL service под `forge_owner`. Полная owner/runtime role matrix, prior-schema upgrade и parallel isolated DB/schema остаются target. | **Current verified; target расширение** |
+| Real-DB harness | Локальный integration harness применяет migrations к disposable PostgreSQL под `forge_owner`. Полная owner/runtime role matrix, prior-schema upgrade и parallel isolated DB/schema остаются target. | **Current verified; target расширение** |
 | Evidence seed | `frontend/scripts/seed-evidence.mjs` создаёт детерминированные demo repositories, projects, pipelines, runners, secrets metadata, environments и deployments для disposable local evidence stack. В trusted-network профиле он также создаёт local users/tokens; в Central Auth профиле используются `E2E_CENTRAL_AUTH=true`, `E2E_ACCESS_TOKEN` и отдельный `E2E_GIT_TOKEN`. | **Current verified** |
 | Screenshot evidence | `frontend/scripts/shoot-evidence.mjs` снимает predefined маршруты на `1920x1080` и три semantic-layout кадра на `375x812`. Для Central Auth используются `E2E_LOGIN_EMAIL`/`E2E_LOGIN_PASSWORD`; `EVIDENCE_README_ONLY=true` ограничивает пересъёмку README-набором. Это visual evidence, а не замена E2E assertions. | **Current verified** |
 | E2E Compose evidence | Локальный E2E gate использует disposable Compose stack с synthetic `CICD_SECRETS_KEY`, seeded repositories/projects/pipelines/artifacts и Playwright Chromium assertions. | **Current verified local gate** |
@@ -128,17 +128,23 @@ Coverage измеряет поведение и риск, а не только l
 
 ## 8. CI-гейты
 
-### Current verified
+### Локальные проверки
 
-`.github/workflows/ci.yml` запускается на `push` и `pull_request` в `main`, имеет concurrency per ref и bounded `timeout-minutes` на jobs `docs`, `backend` и `frontend`.
+GitHub Actions workflows удалены. Автоматический запуск checks на GitHub не
+настроен; запуск и evidence выбранных проверок принадлежат владельцу задачи.
+Локальные quality, security, OpenAPI и data gates сохраняются.
 
-| Job | Обязательная проверка |
+| Область | Проверки по затронутому scope |
 |---|---|
-| `backend` | Rust + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate. |
-| `frontend` | Node/pnpm: `pnpm install --no-frozen-lockfile`, `pnpm openapi:check`, `pnpm test -- --run`, `pnpm lint`, `pnpm build`. |
-| `docs` | Python 3.12: Python syntax checks для docs/backup scripts, backup helper self-test/dry-run, shell wrapper syntax и `python3 scripts/verify_docs.py --all`. |
+| Backend | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`; real PostgreSQL integration выполняется отдельно и последовательно через `cargo test --features integration --test integration_db -- --test-threads=1`. |
+| Frontend | Frozen install, `pnpm openapi:check`, `pnpm openapi:compat`, `pnpm test`, `pnpm lint`, `pnpm build`. |
+| Docs / hygiene | `python3 scripts/verify_docs.py --all`, `python3 -m unittest scripts.tests.test_ci_contract_checks scripts.tests.test_verify_docs scripts.tests.test_repository_hygiene`, `python3 scripts/check_repository_hygiene.py --ref HEAD`. |
+| Security / delivery | Существующие dependency audit, secret scan, SBOM drift, image scan, CLI, Compose и browser checks запускаются локально по scope. Backup/restore-проверки требуют собственного поручения и окружения. |
 
-Current CI не запускает CLI real-API smoke, release build, OpenAPI backward compatibility, RU/EN i18n contract, Compose smoke, Playwright/axe/performance, dependency/security scans, isolated owner/runtime migration matrix, prior-schema upgrade, Lighthouse, OpenAPI examples validation, `cargo-deny`, history/container secret scan или coverage ratchet. Локальный extended gate выполняет реализованные проверки по scope; full auth/RBAC E2E, full keyboard-only/theme a11y, full locale E2E, load/30-day SLO evidence, Lighthouse budgets и coverage evidence остаются target.
+Доступность команд не означает, что они выполнены для текущего кандидата.
+Приёмка требует отдельных актуальных результатов, включая необходимые API,
+данные и runtime. Включение Forge/Jenkins automation и branch protection этим
+изменением не заявляется.
 
 ### Target approved
 
@@ -154,7 +160,7 @@ Current CI не запускает CLI real-API smoke, release build, OpenAPI ba
 | `security` | Current dependency audit/secret/SBOM drift gate и critical container image scan плюс target `cargo-deny`, broader image policy и deeper history/container secret scan по согласованной severity policy; confirmed secret или blocking vulnerability блокирует gate. |
 | `traceability` | `docs/TRACEABILITY.md` complete for changed requirements; REQ-ID links resolve to test/evidence and no changed normative behavior lacks mapping. |
 
-CI сохраняет artifacts для failed и required target runs: JUnit/coverage, Compose logs, migration evidence, OpenAPI compatibility report, Playwright report/trace/screenshots/video и Lighthouse reports. Успешная сборка без этих обязательных доказательств не является приёмкой target capability.
+Владелец проверки сохраняет artifacts для failed и required target runs: JUnit/coverage, Compose logs, migration evidence, OpenAPI compatibility report, Playwright report/trace/screenshots/video и Lighthouse reports. Успешная сборка без этих обязательных доказательств не является приёмкой target capability.
 
 ## 9. Связанные источники
 

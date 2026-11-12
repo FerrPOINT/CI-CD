@@ -91,7 +91,7 @@ gitignored каталог; `SDLC_HEADER_EVIDENCE_DIR` переопределяе
 
 ### Требования
 
-Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88, Node.js 22.20.0 и pnpm 10.28.1. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
+Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88, Node.js 22.20.0 и pnpm 10.28.1. Версии runtime и образов зафиксированы в `docker-compose.yml`, `backend/Dockerfile` и `frontend/package.json`.
 
 Перед первым запуском создайте только локальный файл конфигурации:
 
@@ -298,7 +298,7 @@ docker run --rm -it \
   bash -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm test && pnpm build'
 ```
 
-Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; CI устанавливает его только с `--frozen-lockfile`. Current GitHub Actions frontend job запускает generated-client drift gate, `pnpm lint`, `pnpm test` и `pnpm build`.
+Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; локальная установка использует `--frozen-lockfile`. Frontend gate включает generated-client drift, `pnpm lint`, `pnpm test` и `pnpm build`.
 
 Для браузерной проверки нужен поднятый disposable Compose stack и synthetic `CICD_SECRETS_KEY` для seeded secrets:
 
@@ -336,18 +336,23 @@ python3 scripts/verify_docs.py --all
 
 ## CI-гейты
 
-### Current verified
+### Локальные проверки
 
-`.github/workflows/ci.yml` запускается на `push` и `pull_request` в `main`, отменяет устаревшие in-progress runs для того же ref через concurrency и ограничивает jobs `docs`, `backend` и `frontend` через `timeout-minutes`.
+GitHub Actions workflows удалены. Автоматический запуск checks на GitHub не
+настроен; запуск и evidence выбранных проверок принадлежат владельцу задачи.
+Локальные quality, security, OpenAPI и data gates сохраняются.
 
-| Job | Фактические проверки |
+| Область | Проверки по затронутому scope |
 |---|---|
-| `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate |
-| `frontend` | `pnpm install --no-frozen-lockfile`, `pnpm openapi:check`, `pnpm test -- --run`, `pnpm lint`, `pnpm build` |
-| Local extended gate | Release build, CLI real-API smoke, Compose health smoke, Playwright/axe/performance, audits, secret scan, SBOM and image scan run locally when their scope is touched. |
-| `docs` | `python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py`, backup helper self-test/dry-run, shell wrapper syntax, `python3 scripts/verify_docs.py --all` |
+| Backend | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`; real PostgreSQL integration выполняется отдельно и последовательно через `cargo test --features integration --test integration_db -- --test-threads=1`. |
+| Frontend | Frozen install, `pnpm openapi:check`, `pnpm openapi:compat`, `pnpm test`, `pnpm lint`, `pnpm build`. |
+| Docs / hygiene | `python3 scripts/verify_docs.py --all`, `python3 -m unittest scripts.tests.test_ci_contract_checks scripts.tests.test_verify_docs scripts.tests.test_repository_hygiene`, `python3 scripts/check_repository_hygiene.py --ref HEAD`. |
+| Security / delivery | Существующие dependency audit, secret scan, SBOM drift, image scan, CLI, Compose и browser checks запускаются локально по scope. Backup/restore-проверки требуют собственного поручения и окружения. |
 
-В current workflow нет release build, CLI real-API smoke с auth/RBAC/PAT, OpenAPI backward compatibility diff, RU/EN i18n contract, Compose smoke, Playwright/axe/performance, dependency/security scans, а также isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI examples validation, Lighthouse, `cargo-deny`, history/container secret scans или coverage ratchet. Эти расширенные проверки выполняются локально по затронутому scope; часть из них остаётся target, когда требует ещё не поставленного контракта. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
+Доступность команд не означает, что они выполнены для текущего кандидата.
+Приёмка требует отдельных актуальных результатов, включая необходимые API,
+данные и runtime. Включение Forge/Jenkins automation и branch protection этим
+изменением не заявляется.
 
 ### Target approved
 
@@ -405,7 +410,7 @@ git diff --exit-code
 - [ARCHITECTURE](ARCHITECTURE.md) и [CURRENT STATE](CURRENT_STATE.md) -- runtime boundaries и verified capability inventory.
 - `docs/TEST_PLAN.md` ([TEST PLAN](TEST_PLAN.md)) -- нормативный план тестирования: уровни, окружения, entry/exit criteria, SEV1--SEV4, coverage-политика, traceability и CI-гейты.
 - [ENV](ENV.md), `docker-compose.yml`, `.env.example` и `justfile` -- local configuration and executable commands.
-- [TESTING](DEVELOPMENT_GUIDE.md) и [CI/CD](DEVELOPMENT_GUIDE.md) -- historical/detail references; current CI source is `.github/workflows/ci.yml`.
+- [TESTING](DEVELOPMENT_GUIDE.md) и [CI/CD](DEVELOPMENT_GUIDE.md) -- historical/detail references; актуальные команды приведены в разделе «CI-гейты» выше.
 - [DOCUMENTATION GOVERNANCE](DOCUMENTATION_GOVERNANCE.md) -- authority matrix, status taxonomy and documentation checks.
 
 ### Слой кеширования серверной сборки
