@@ -83,8 +83,14 @@ Forge проверяет членство Developer и привязку PR к з
 
 Доступны чтение проекта, своя сессия, prepare и опубликованные Forge-проверки
 без runtime-доставки. Create/register, Start/Stop, Build, recovery, reconcile,
-произвольные pipelines и выпуск этим доступом не разрешаются. Опубликованные
-рецепты агента не содержат `image_publish` / `helm_deploy`. Результаты jobs,
+произвольные pipelines и runtime deployment этим доступом не разрешаются.
+Для публикации образа владелец может явно объявить Check с `kind: build`,
+`executor: forge-build`, `requiresRuntime: false`, без `commands`. Его опубликованный
+рецепт содержит ровно одну job только с `image_publish`; существующий typed spec
+проверяет context, Dockerfile, registry repository и distinct artifact paths.
+Произвольные shell jobs, зависимости, mixed recipes и `helm_deploy` запрещены.
+Обычные `requiredDeveloperChecks` остаются проверками `forge`; publication Check
+может дополнять их. Результаты jobs,
 логи и artifacts читаются только от его собственных workspace-операций.
 
 Сессия хранит неизменное назначение и source binding. Новая команда и worker
@@ -201,7 +207,11 @@ Configured DevOps использует собственный Central PAT и с�
 опубликованный executor `forge-delivery`, явный `--source-pipeline` и точный HEAD
 назначенного candidate ref. Prepare, Build, Git transport и lifecycle-команды
 DevOps не выдаются. Developer сохраняет только `forge`, non-runtime checks без
-source pipeline. Текущий machine subject, assignment/execution/version, source,
+source pipeline. Его дополнительный publication Check использует только явно
+опубликованный `forge-build` и не получает Helm target rights. Перед созданием
+pipeline Forge сверяет SHA с текущим candidate HEAD; последующие claim/effects
+сохраняют этот immutable SHA и повторно проверяют тот же PAT, assignment и
+publication-only shape сохранённого execution plan. Текущий machine subject, assignment/execution/version, source,
 namespace, repository и project сверяются при записи authority и перед каждым
 новым runner effect. Существующие human pipeline/session правила сохраняются.
 

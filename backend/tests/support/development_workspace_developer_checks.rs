@@ -7,7 +7,8 @@ pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
     let profile = json!({"apiVersion":"pdlc.dev/workspace/v1", "repositories":[{"key":"source"}],
         "tools":[], "preparationChecks":["unit"], "requiredDeveloperChecks":["unit"],
         "checks":[{"key":"unit","executor":"forge","requiresRuntime":false,"commands":["test -f README.md"]},
-            {"key":"release","executor":"forge-delivery","requiresRuntime":false}]});
+            {"key":"release","executor":"forge-delivery","requiresRuntime":false},
+            {"key":"publish","kind":"build","executor":"forge-build","requiresRuntime":false}]});
     let profile_hash = store::request_hash(&profile).unwrap();
     let environment: Value = sqlx::query_scalar("SELECT jsonb_build_object('adapter','compose','environmentId',id,'projectId',project_id,'url',url) FROM environments WHERE id=$1")
         .bind(workspace.environment_id).fetch_one(pool).await.unwrap();
@@ -30,10 +31,13 @@ pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
     let pipeline = json!({"version":1,"jobs":{"unit":{"image":format!("fixture/tools@sha256:{}","a".repeat(64)),"commands":["test -f README.md"]}}});
     let delivery=json!({"version":1,"jobs":{"deploy":{"helm_deploy":{"environment_id":workspace.environment_id,
         "images":{"image":{"job":"publish","artifact":"out/image.json"}},"receipt_artifact":"out/release.json"}}}});
+    let publication = json!({"version":1,"jobs":{"publish":{"image_publish":{
+        "context":".","dockerfile":"Dockerfile","repository":"registry.example.test/team/application",
+        "descriptor_artifact":"out/build.json","published_artifact":"out/image.json"}}}});
     std::fs::write(
         directory.join("recipes.json"),
         serde_json::to_vec(
-            &json!({"profileHash":profile_hash,"recipes":{"prepare":pipeline,"unit":pipeline,"release":delivery}}),
+            &json!({"profileHash":profile_hash,"recipes":{"prepare":pipeline,"unit":pipeline,"release":delivery,"publish":publication}}),
         )
         .unwrap(),
     )
@@ -193,6 +197,125 @@ pub(super) async fn exercise(app: &Router, pool: &PgPool, workspace: Uuid, data:
         store::workspace(pool, workspace).await.unwrap().preparation,
         "prepared"
     );
+}
+
+// This protocol fixture creates/claims a real typed publication pipeline, then
+// reports a deliberate failed runner outcome. It never invents a built image.
+pub(super) async fn exercise_publication(app:&Router,pool:&PgPool,workspace:Uuid,data:&Value,catalog:&std::path::Path) {
+    let current=store::workspace(pool,workspace).await.unwrap();
+    let commit=git(std::path::Path::new(data["checkout"].as_str().unwrap()),None,&["rev-parse","HEAD"]).await;
+    let path=format!("/api/v1/development-workspaces/{workspace}/operations");
+    let command=json!({"action":"check","recipe":"publish","source_commit":commit});
+    let version=store::workspace(pool,workspace).await.unwrap().version;
+    let request=|command:Value|json!({"operation_id":Uuid::new_v4(),"expected_version":version,"command":command});
+    let control_url=format!("{}/fixture",data["origin"].as_str().unwrap());
+    let client=reqwest::Client::new();
+    for mode in ["stale","foreign_repository"] {
+        client.post(&control_url).json(mode).send().await.unwrap().error_for_status().unwrap();
+        assert_eq!(http(app,"POST",&path,Some(TOKEN),request(command.clone())).await.0,StatusCode::FORBIDDEN);
+        client.post(&control_url).json(if mode=="stale"{"restore"}else{"restore_repository"})
+            .send().await.unwrap().error_for_status().unwrap();
+    }
+    let (status,account)=http(app,"POST","/api/v1/admin/service-accounts",Some(PROJECT_OWNER),
+        json!({"name":format!("publication-neighbor-{}",Uuid::new_v4().simple())})).await;
+    assert_eq!(status,StatusCode::CREATED,"{account}");
+    let (status,native)=http(app,"POST",&format!("/api/v1/admin/service-accounts/{}/tokens",account["id"].as_str().unwrap()),Some(PROJECT_OWNER),
+        json!({"name":"native-neighbor","project_id":current.project_id,"scopes":["api:read","api:write"]})).await;
+    assert_eq!(status,StatusCode::CREATED);
+    let native_token=native["token"].as_str().unwrap();
+    for token in [None,Some(SOURCE_READER),Some(OTHER_HUMAN),Some(native_token)] {
+        let (status,body)=http(app,"POST",&path,token,request(command.clone())).await;
+        assert!(matches!(status,StatusCode::FORBIDDEN|StatusCode::UNAUTHORIZED),"{status}: {body}");
+    }
+    let mut foreign=command.clone(); foreign["recipe"]=json!("foreign-publish");
+    assert_eq!(http(app,"POST",&path,Some(TOKEN),request(foreign)).await.0,StatusCode::FORBIDDEN);
+    let recipes_path=catalog.join("targets").join(current.catalog_target_id.to_string()).join("recipes.json");
+    let original=std::fs::read(&recipes_path).unwrap();
+    let recipes:Value=serde_json::from_slice(&original).unwrap();
+    let publication=recipes["recipes"]["publish"].clone();
+    for jobs in [
+        json!({"publish":publication["jobs"]["publish"],"shell":{"commands":["false"]}}),
+        json!({"deploy":{"helm_deploy":{"environment_id":current.environment_id}}}),
+        json!({"publish":{"image_publish":publication["jobs"]["publish"]["image_publish"],"commands":["false"]}}),
+    ] {
+        let mut changed=recipes.clone(); changed["recipes"]["publish"]["jobs"]=jobs;
+        std::fs::write(&recipes_path,serde_json::to_vec(&changed).unwrap()).unwrap();
+        let (status,body)=http(app,"POST",&path,Some(TOKEN),request(command.clone())).await;
+        assert_eq!(status,StatusCode::CONFLICT,"{body}");
+    }
+    std::fs::write(&recipes_path,original).unwrap();
+    // An old prepared commit is not the current candidate publication source.
+    let base=data["base_commit"].as_str().unwrap();
+    assert_ne!(base,commit);
+    let mut stale_sources=current.sources.clone(); stale_sources[0]["commit"]=json!(base);
+    sqlx::query("UPDATE development_workspaces SET sources=$2 WHERE id=$1").bind(workspace).bind(stale_sources).execute(pool).await.unwrap();
+    let stale=Uuid::new_v4();
+    let mut stale_command=command.clone(); stale_command["source_commit"]=json!(base);
+    assert_eq!(http(app,"POST",&path,Some(TOKEN),json!({"operation_id":stale,"expected_version":version,"command":stale_command})).await.0,StatusCode::OK);
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,stale).await.unwrap();
+        if row.state=="failed" {
+            assert!(row.pipeline_id.is_none());
+            assert_eq!(row.result.unwrap()["reason"],"workspace_candidate_commit_changed"); break;
+        }
+        assert_ne!(row.state,"unknown","{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    sqlx::query("UPDATE development_workspaces SET sources=$2 WHERE id=$1").bind(workspace).bind(&current.sources).execute(pool).await.unwrap();
+    let version=store::workspace(pool,workspace).await.unwrap().version;
+    let operation=Uuid::new_v4();
+    let body=json!({"operation_id":operation,"expected_version":version,"command":command});
+    let (status,accepted)=http(app,"POST",&path,Some(TOKEN),body.clone()).await;
+    assert_eq!(status,StatusCode::OK,"{accepted}");
+    assert!(!accepted.to_string().contains("sealed"));
+    let pipeline=tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,operation).await.unwrap();
+        assert!(!matches!(row.state.as_str(),"failed"|"unknown"),"{:?}",row.result);
+        if let Some(pipeline)=row.pipeline_id {break pipeline;}
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    let (status,detail)=http(app,"GET",&format!("/api/v1/pipelines/{pipeline}"),Some(TOKEN),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{detail}");
+    assert_eq!(detail["pipeline"]["project_id"],current.project_id.to_string());
+    assert_eq!(detail["plan"]["resolved_commit_sha"],commit);
+    assert_eq!(detail["plan"]["config_source"],"development_workspace");
+    assert_eq!(detail["plan"]["plan"]["jobs"][0]["image_publish"],publication["jobs"]["publish"]["image_publish"]);
+    assert_eq!(detail["plan"]["plan"]["jobs"].as_array().unwrap().len(),1);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM pipeline_human_owners WHERE pipeline_id=$1").bind(pipeline).fetch_one(pool).await.unwrap(),0);
+    let capabilities=json!({"executorKinds":["kubernetes"],"jobKinds":["image-publish-v1"],"pipelineVariables":true});
+    let (status,registered)=http(app,"POST","/api/v1/runner/register",None,json!({"protocolVersion":1,"registrationToken":"workspace-runner-fixture","name":"publication-check","capabilities":capabilities})).await;
+    assert_eq!(status,StatusCode::CREATED,"{registered}");
+    let runner=registered["credential"].as_str().unwrap();
+    assert_eq!(http(app,"POST","/api/v1/runner/heartbeat",Some(runner),json!({"protocolVersion":1,"status":"online","capacity":{"totalSlots":1,"busySlots":0},"capabilities":capabilities,"activeLeaseIds":[]})).await.0,StatusCode::NO_CONTENT);
+    let poll=json!({"protocolVersion":1,"capacity":{"freeSlots":1},"waitSeconds":0});
+    client.post(&control_url).json("stale").send().await.unwrap().error_for_status().unwrap();
+    assert_eq!(http(app,"POST","/api/v1/runner/work:poll",Some(runner),poll.clone()).await.0,StatusCode::FORBIDDEN);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id JOIN jobs j ON j.id=a.job_id JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1").bind(pipeline).fetch_one(pool).await.unwrap(),0);
+    client.post(&control_url).json("restore").send().await.unwrap().error_for_status().unwrap();
+    let (status,offer)=http(app,"POST","/api/v1/runner/work:poll",Some(runner),poll).await;
+    assert_eq!(status,StatusCode::OK,"{offer}");
+    assert_eq!(offer["attempt"]["pipelineId"],pipeline.to_string());
+    assert_eq!(offer["attempt"]["commitSha"],commit);
+    assert_eq!(offer["attempt"]["imagePublish"],publication["jobs"]["publish"]["image_publish"]);
+    assert!(!offer.to_string().contains(TOKEN));
+    let lease=offer["leaseId"].as_str().unwrap();
+    let control=json!({"protocolVersion":1,"leaseToken":offer["leaseToken"],"fencingToken":offer["fencingToken"]});
+    assert_eq!(http(app,"POST",&format!("/api/v1/runner/leases/{lease}/ack"),Some(runner),control.clone()).await.0,StatusCode::OK);
+    client.post(&control_url).json("stale").send().await.unwrap().error_for_status().unwrap();
+    assert_eq!(http(app,"POST",&format!("/api/v1/runner/leases/{lease}/renew"),Some(runner),control.clone()).await.0,StatusCode::FORBIDDEN);
+    client.post(&control_url).json("restore").send().await.unwrap().error_for_status().unwrap();
+    assert_eq!(http(app,"POST",&format!("/api/v1/runner/leases/{lease}/renew"),Some(runner),control.clone()).await.0,StatusCode::OK);
+    let (status,result)=http(app,"POST",&format!("/api/v1/runner/leases/{lease}/complete"),Some(runner),json!({"protocolVersion":1,"leaseToken":offer["leaseToken"],"fencingToken":offer["fencingToken"],"attemptId":offer["attempt"]["id"],"outcome":"failed","exitCode":1,"finishedAt":chrono::Utc::now()})).await;
+    assert_eq!(status,StatusCode::OK,"{result}");
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,operation).await.unwrap();
+        if row.state=="failed" {assert_eq!(row.result.unwrap()["pipelineStatus"],"failed");break;}
+        assert_ne!(row.state,"unknown","{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    assert_eq!(http(app,"POST",&path,Some(TOKEN),body).await.1["id"],operation.to_string());
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM pipelines WHERE variables->>'development_workspace_operation_id'=$1").bind(operation.to_string()).fetch_one(pool).await.unwrap(),1);
+    eprintln!("FORGE_DEVELOPER_PUBLICATION_CHECK=verified");
 }
 
 // Current Central PAT and public HTTP coverage. This proves admission, original

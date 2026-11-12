@@ -174,7 +174,7 @@ async fn execute(
                 actor,
                 subject,
                 &action,
-                &work.execution_plan["developerAuthority"],
+                &work.execution_plan,
                 &state.config.secrets,
             )
             .await?,
@@ -333,7 +333,10 @@ async fn execute(
             }
             WorkspaceAction::Check{source_commit,..}|WorkspaceAction::Build{source_commit} => {
                 if workspace.preparation!="prepared" || !workspace.sources.as_array().is_some_and(|sources|sources.iter().any(|source|source["repository_id"]==workspace.repository_id.to_string() && source["commit"]==*source_commit)) {return Err(ApiError::conflict("workspace_selected_source_not_prepared"));}
-                if let Some(proof) = machine.as_ref().filter(|proof| !proof.assignment.is_developer()) {
+                let publication = workspace.profile["checks"].as_array().is_some_and(|checks|
+                    checks.iter().any(|check| check["key"] == work.request["recipe"]
+                        && check["executor"] == "forge-build"));
+                if let Some(proof) = machine.as_ref().filter(|proof| !proof.assignment.is_developer() || publication) {
                     let candidate = proof.assignment.source["candidate_ref"].as_str().ok_or_else(ApiError::forbidden)?;
                     confirm_commit(state,&storage,source_commit,Some(candidate)).await?;
                 }
@@ -409,7 +412,7 @@ async fn launch_pipeline(
             work.actor_id,
             work.owner_subject,
             &action,
-            &work.execution_plan["developerAuthority"],
+            &work.execution_plan,
             &state.config.secrets,
         )
         .await?;

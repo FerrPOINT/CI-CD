@@ -353,9 +353,14 @@ pub(crate) async fn lock_repository(
     Ok(clock)
 }
 
-/// The machine's selected recipe may publish no arbitrary jobs. Only the
-/// DevOps Check admitted by its saved assignment may run one deploy-only job.
-pub(super) fn require_pipeline(action: &WorkspaceAction, plan: &Value) -> Result<(), ApiError> {
+/// Current machines use only their explicitly published Check executor.
+pub(super) fn require_pipeline(action: &WorkspaceAction, plan: &Value, profile: &Value) -> Result<(), ApiError> {
+    if let WorkspaceAction::Check { recipe, source_pipeline_id: None, .. } = action
+        && let Some(check) = profile["checks"].as_array().and_then(|checks|
+            checks.iter().find(|check| check["key"] == *recipe && check["executor"] == "forge-build"))
+    {
+        return super::catalog::validate_publication_recipe(check, &plan["pipeline"]);
+    }
     let Some(jobs) = plan["pipeline"]["jobs"].as_object() else { return Ok(()); };
     let typed = jobs.values().any(|job| job.get("image_publish").is_some() || job.get("helm_deploy").is_some());
     if !typed { return Ok(()); }
@@ -464,13 +469,14 @@ pub(super) async fn verify(
     actor: Uuid,
     subject: Uuid,
     action: &WorkspaceAction,
-    saved: &Value,
+    plan: &Value,
     secrets: &crate::config::SecretsConfig,
 ) -> Result<Confirmed, ApiError> {
     if !machine_action(action) {
         return Err(ApiError::forbidden());
     }
-    let encrypted = saved["sealed"]
+    require_pipeline(action, plan, &workspace.profile)?;
+    let encrypted = plan["developerAuthority"]["sealed"]
         .as_str()
         .filter(|s| s.len() < 65536)
         .ok_or_else(ApiError::forbidden)?;
@@ -565,7 +571,7 @@ pub(crate) async fn pipeline_clock(
         actor,
         subject,
         &action,
-        &plan["developerAuthority"],
+        &plan,
         &secrets,
     )
     .await?;
@@ -580,15 +586,32 @@ mod tests {
         let source=Uuid::new_v4();
         let check=WorkspaceAction::Check{recipe:"release".into(),source_commit:"a".repeat(40),source_pipeline_id:Some(source)};
         let plan=json!({"pipeline":{"jobs":{"release":{"helm_deploy":{"source_pipeline_id":source}}}}});
-        assert!(require_pipeline(&check,&plan).is_ok());
+        assert!(require_pipeline(&check,&plan,&json!({})).is_ok());
         let developer=WorkspaceAction::Check{recipe:"release".into(),source_commit:"a".repeat(40),source_pipeline_id:None};
-        assert!(require_pipeline(&developer,&plan).is_err());
+        assert!(require_pipeline(&developer,&plan,&json!({})).is_err());
         for jobs in [json!({"publish":{"image_publish":{}}}),
             json!({"release":{"helm_deploy":{"source_pipeline_id":Uuid::new_v4()}}}),
             json!({"release":{"helm_deploy":{"source_pipeline_id":source}},"commands":{"commands":["false"]}})] {
-            assert!(require_pipeline(&check,&json!({"pipeline":{"jobs":jobs}})).is_err());
+            assert!(require_pipeline(&check,&json!({"pipeline":{"jobs":jobs}}),&json!({})).is_err());
         }
-        assert!(require_pipeline(&developer,&json!({"pipeline":{"jobs":{"unit":{"commands":["test"]}}}})).is_ok());
+        assert!(require_pipeline(&developer,&json!({"pipeline":{"jobs":{"unit":{"commands":["test"]}}}}),&json!({})).is_ok());
+    }
+
+    #[test]
+    fn developer_publication_requires_the_selected_explicit_profile_and_frozen_shape() {
+        let action = WorkspaceAction::Check {recipe:"publish".into(),source_commit:"a".repeat(40),source_pipeline_id:None};
+        let profile = json!({"checks":[{"key":"publish","kind":"build","executor":"forge-build","requiresRuntime":false}]});
+        let plan = json!({"pipeline":{"version":1,"jobs":{"publish":{"image_publish":{
+            "context":".","dockerfile":"Dockerfile","repository":"registry.example.test/team/application",
+            "descriptor_artifact":"out/build.json","published_artifact":"out/image.json"}}}}});
+        assert!(require_pipeline(&action,&plan,&profile).is_ok());
+        assert!(require_pipeline(&action,&plan,&json!({})).is_err());
+        let mut ordinary = profile.clone(); ordinary["checks"][0]["executor"] = json!("forge");
+        assert!(require_pipeline(&action,&plan,&ordinary).is_err());
+        let mut shell = plan.clone(); shell["pipeline"]["jobs"]["publish"] = json!({"commands":["false"]});
+        assert!(require_pipeline(&action,&shell,&profile).is_err());
+        let mut mixed = plan.clone(); mixed["pipeline"]["jobs"]["deploy"] = json!({"helm_deploy":{}});
+        assert!(require_pipeline(&action,&mixed,&profile).is_err());
     }
 
     #[test]

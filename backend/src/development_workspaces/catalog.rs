@@ -374,6 +374,23 @@ fn validate_developer_checks(
     Ok(())
 }
 
+/// The existing forge-build profile executor grants one publication, never shell or deployment.
+pub(super) fn validate_publication_recipe(check: &Value, pipeline: &Value) -> Result<(), ApiError> {
+    let invalid = || ApiError::conflict("workspace_publication_recipe_invalid");
+    if check["executor"] != "forge-build" || check["kind"] != "build"
+        || check["requiresRuntime"] != false || check.get("commands").is_some()
+        || pipeline["version"] != 1
+        || pipeline.as_object().is_none_or(|value| value.len() != 2)
+    { return Err(invalid()); }
+    let jobs = pipeline["jobs"].as_object().filter(|jobs| jobs.len() == 1).ok_or_else(invalid)?;
+    let job = jobs.values().next().and_then(Value::as_object)
+        .filter(|job| job.len() == 1).ok_or_else(invalid)?;
+    let spec: cicd_domain::image_publish::ImagePublishSpec = serde_json::from_value(
+        job.get("image_publish").cloned().ok_or_else(invalid)?,
+    ).map_err(|_| invalid())?;
+    spec.validate().map_err(|_| invalid())
+}
+
 /// A published test must execute the commands declared by the versioned
 /// profile. Preparation executes every declared readiness check exactly once.
 fn validate_recipe(profile: &Value, recipe: &str, pipeline: &Value) -> Result<(), ApiError> {
@@ -399,6 +416,9 @@ fn validate_recipe(profile: &Value, recipe: &str, pipeline: &Value) -> Result<()
             .iter()
             .find(|check| check["key"] == recipe)
             .ok_or_else(invalid)?;
+        if check["executor"] == "forge-build" {
+            return validate_publication_recipe(check, pipeline);
+        }
         if check["executor"] != "forge" {
             return Ok(());
         }
@@ -488,6 +508,34 @@ mod tests {
         pipeline["jobs"]["unit"]["commands"] = json!(["python check.py unit"]);
         pipeline["jobs"]["unit"]["image"] = json!("tools:latest");
         assert!(validate_recipe(&profile, "unit", &pipeline).is_err());
+    }
+
+    #[test]
+    fn publication_check_is_one_typed_build_without_commands_or_deployment() {
+        let check = json!({"key":"publish","kind":"build","executor":"forge-build","requiresRuntime":false});
+        let profile = json!({"checks":[check]});
+        let spec = json!({"context":"backend","dockerfile":"Dockerfile","repository":"registry.example.test/team/application",
+            "descriptor_artifact":"out/build.json","published_artifact":"out/image.json"});
+        let pipeline = json!({"version":1,"jobs":{"publish":{"image_publish":spec}}});
+        assert!(validate_recipe(&profile,"publish",&pipeline).is_ok());
+        for job in [json!({"image_publish":spec,"commands":["false"]}),
+            json!({"helm_deploy":{}}), json!({"image_publish":spec,"needs":[]}),
+            json!({"image_publish":{}})] {
+            assert!(validate_recipe(&profile,"publish",&json!({"version":1,"jobs":{"publish":job}})).is_err());
+        }
+        for (path,value) in [("/jobs/publish/image_publish/context",json!("../foreign")),
+            ("/jobs/publish/image_publish/repository",json!("registry.example.test/team/application:latest")),
+            ("/jobs/publish/image_publish/published_artifact",json!("out/build.json"))] {
+            let mut changed = pipeline.clone(); *changed.pointer_mut(path).unwrap() = value;
+            assert!(validate_recipe(&profile,"publish",&changed).is_err());
+        }
+        let mut mixed = pipeline.clone(); mixed["jobs"]["shell"] = json!({"commands":["false"]});
+        assert!(validate_recipe(&profile,"publish",&mixed).is_err());
+        for (field,value) in [("kind",json!("delivery")),("requiresRuntime",json!(true)),("commands",json!(["false"]))] {
+            let mut changed = profile.clone(); changed["checks"][0][field] = value;
+            assert!(validate_recipe(&changed,"publish",&pipeline).is_err());
+        }
+        assert!(validate_recipe(&profile,"foreign",&pipeline).is_err());
     }
 
     #[test]

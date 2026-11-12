@@ -155,7 +155,7 @@ async fn enqueue(
     }
     let mut plan = catalog::operation_plan(state, workspace, action)?;
     if machine_authority.is_some() {
-        machine::require_pipeline(action, &plan)?;
+        machine::require_pipeline(action, &plan, &workspace.profile)?;
     }
     if !plan.as_object().is_some_and(|value| value.is_empty()) {
         let environment =

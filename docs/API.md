@@ -20,8 +20,11 @@ receipt возвращается как `result.state:"unknown"` с
 проверки и original-key async lifecycle. [Контракт и recovery](DEVELOPMENT_WORKSPACES.md).
 Существующие project/task workspace routes и identifiers сохраняются.
 Постоянная configured-cli-v1 machine identity Developer получает только scoped
-read/session/prepare/check adapter; регистрация, recovery, lifecycle и выпуск
-им не разрешаются. Карточка сессии аддитивно возвращает optional
+read/session/prepare/check adapter; регистрация, recovery, lifecycle и runtime
+deployment им не разрешаются. Явный owner-published Check `forge-build`
+(`kind: build`, non-runtime, без commands) допускает ровно одну typed
+`image_publish` job через собственный Central PAT и текущее назначение Developer.
+Новые actions/поля API и native SAT fallback не добавляются. Карточка сессии аддитивно возвращает optional
 `machine_assignment` без credentials. [Назначение, Git и границы роли](DEVELOPMENT_WORKSPACES.md#developer-configured-cli-v1).
 Существующие POST/DELETE `/projects/{project_id}/memberships` в central mode
 разрешают human owner с текущими правами проекта выдавать и отзывать членство

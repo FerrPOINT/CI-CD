@@ -171,8 +171,9 @@ impl WorkspaceAssignment {
             WorkspaceAction::Check { recipe, source_pipeline_id, .. } => profile["checks"]
                 .as_array().is_some_and(|checks| checks.iter().any(|check| {
                     check["key"] == *recipe && if self.is_developer() {
-                        source_pipeline_id.is_none() && check["executor"] == "forge"
-                            && check["requiresRuntime"] == false
+                        source_pipeline_id.is_none() && check["requiresRuntime"] == false
+                            && (check["executor"] == "forge" || (check["executor"] == "forge-build"
+                                && check["kind"] == "build" && check.get("commands").is_none()))
                     } else {
                         self.stage == "Deployment" && source_pipeline_id.is_some_and(|id| !id.is_nil())
                             && check["executor"] == "forge-delivery"
@@ -435,10 +436,16 @@ mod tests {
         assert!(!deployment.is_developer());
         assert!(deployment.require_same(&developer).is_err());
         let profile = json!({"checks":[{"key":"unit","executor":"forge","requiresRuntime":false},
-            {"key":"release","executor":"forge-delivery","requiresRuntime":true}]});
+            {"key":"release","executor":"forge-delivery","requiresRuntime":true},
+            {"key":"publish","kind":"build","executor":"forge-build","requiresRuntime":false}]});
         let release = WorkspaceAction::Check {recipe:"release".into(),source_commit:"a".repeat(40),source_pipeline_id:Some(Uuid::new_v4())};
         assert!(deployment.require_action(&release,&profile).is_ok());
         assert!(developer.require_action(&release,&profile).is_err());
+        let publication = WorkspaceAction::Check {recipe:"publish".into(),source_commit:"a".repeat(40),source_pipeline_id:None};
+        assert!(developer.require_action(&publication,&profile).is_ok());
+        assert!(deployment.require_action(&publication,&profile).is_err());
+        let mut runtime_profile = profile.clone(); runtime_profile["checks"][2]["requiresRuntime"] = json!(true);
+        assert!(developer.require_action(&publication,&runtime_profile).is_err());
         for (recipe, source_pipeline_id) in [("release",None),("release",Some(Uuid::nil())),("unit",None),("unit",Some(Uuid::new_v4())),("unknown",Some(Uuid::new_v4()))] {
             assert!(deployment.require_action(&WorkspaceAction::Check {recipe:recipe.into(),source_commit:"a".repeat(40),source_pipeline_id},&profile).is_err());
         }

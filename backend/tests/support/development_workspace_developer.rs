@@ -26,6 +26,7 @@ struct Owner {
     subject: Uuid,
     devops_subject: Uuid,
     source_reader: Uuid,
+    repository: Uuid,
     project_owner: Uuid,
     other_human: Uuid,
     revoked: bool,
@@ -121,6 +122,7 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
         subject,
         devops_subject:Uuid::new_v4(),
         source_reader,
+        repository: workspace.repository_id,
         project_owner: Uuid::new_v4(),
         other_human: Uuid::new_v4(),
         revoked: false,
@@ -172,6 +174,8 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
         .route("/fixture",post(|State(owner):State<Arc<RwLock<Owner>>>,Json(mode):Json<String>|async move {
             let mut owner=owner.write().unwrap();
             match mode.as_str() {
+                "foreign_repository"=>owner.context["execution"]["source_binding"]["repository_id"]=json!(Uuid::new_v4()),
+                "restore_repository"=>{ let repository=owner.repository; owner.context["execution"]["source_binding"]["repository_id"]=json!(repository); },
                 "stale"=>owner.context["execution"]["assignment"]["version"]=json!(2),
                 "restore"=>owner.context["execution"]["assignment"]["version"]=json!(1),
                 "deployment_ready"=>{
@@ -566,6 +570,7 @@ async fn child(data: serde_json::Value) {
         "Developer Git must not invoke ordinary delivery"
     );
     checks::exercise(&app, &pool, workspace, &data).await;
+    checks::exercise_publication(&app, &pool, workspace, &data, catalog.path()).await;
     let version: i64 = sqlx::query_scalar("SELECT version FROM development_workspaces WHERE id=$1")
         .bind(workspace)
         .fetch_one(&pool)
