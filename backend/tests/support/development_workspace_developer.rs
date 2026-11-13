@@ -12,6 +12,7 @@ const TOKEN: &str = "sdlc_pat_workspace_developer_fixture";
 const DEVOPS_TOKEN: &str = "sdlc_pat_workspace_devops_fixture";
 const SOURCE_READER: &str = "sdlc_pat_workspace_source_reader_fixture";
 const PROJECT_OWNER: &str = "sdlc_pat_workspace_project_owner_fixture";
+const OWNER_READER: &str = "workspace-current-owner-reader-fixture";
 const OTHER_HUMAN: &str = "sdlc_pat_workspace_other_human_fixture";
 const CHILD: &str = "FORGE_WORKSPACE_DEVELOPER_TEST";
 const SELECTOR: &str =
@@ -30,6 +31,13 @@ struct Owner {
     project_owner: Uuid,
     other_human: Uuid,
     revoked: bool,
+}
+
+fn current_application_access(subject: Uuid, role: &str, headers: &HeaderMap) -> Value {
+    let now=chrono::Utc::now();
+    json!({"schema_version":1,"issuer":format!("http://{}",headers["host"].to_str().unwrap()),
+        "subject":subject,"role":role,"applications":["ci-cd"],"revision":1,"enforced":true,
+        "observed_at":now,"expires_at":now+chrono::Duration::seconds(30)})
 }
 
 #[tokio::test]
@@ -147,9 +155,26 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
                 _=>panic!("unexpected fixture bearer"),
             };
             if owner.revoked {return (StatusCode::UNAUTHORIZED,Json(json!({})));}
-            (StatusCode::OK,Json(json!({"sub":subject,"email":email,
+            let mut profile=json!({"sub":subject,"email":email,
                 "subject_role":role,"scopes":if reader{vec!["ci-cd:read"]}else{vec!["ci-cd:read","ci-cd:write"]},
-                "observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(300)})))
+                "observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(300)});
+            if role!="service_account" {
+                profile["application_access"]=current_application_access(subject,role,&headers);
+            }
+            (StatusCode::OK,Json(profile))
+        }))
+        // The asynchronous human reconcile reads current Auth authority, never
+        // the deliberately unprivileged JIT users.role projection.
+        .route("/auth/access/decisions",post(|State(owner):State<Arc<RwLock<Owner>>>,headers:HeaderMap,Json(request):Json<Value>|async move {
+            assert_eq!(headers["authorization"],format!("Bearer {OWNER_READER}"));
+            assert_eq!(request["schema_version"],1);
+            let owner=owner.read().unwrap();
+            let decisions=request["subjects"].as_array().unwrap().iter().map(|subject| {
+                let role=if *subject==json!(owner.project_owner) {"admin"}
+                    else {assert_eq!(*subject,json!(owner.other_human));"user"};
+                current_application_access(subject.as_str().unwrap().parse().unwrap(),role,&headers)
+            }).collect::<Vec<_>>();
+            Json(json!({"schema_version":1,"decisions":decisions}))
         }))
         .route("/auth/directory",get(|State(owner):State<Arc<RwLock<Owner>>>,headers:HeaderMap|async move {
             assert_eq!(headers["authorization"],format!("Bearer {PROJECT_OWNER}"));
@@ -209,6 +234,8 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
             .env(CHILD, data.to_string())
             .env("CICD_AUTH__CENTRAL_JWKS_URI", format!("{origin}/oidc/jwks"))
             .env("CICD_AUTH__CENTRAL_ISSUER", &origin)
+            .env("CICD_AUTH__CENTRAL_APPLICATION_ACCESS_REQUIRED", "true")
+            .env("CICD_AUTH__CENTRAL_APPLICATION_ACCESS_READER_TOKEN", OWNER_READER)
             .env("CICD_NAMESPACE__TRACKER_URL", &origin)
             .env(
                 "CICD_NAMESPACE__TRACKER_INSTANCE_ID",
@@ -359,6 +386,9 @@ async fn child(data: serde_json::Value) {
     assert!(members.as_array().unwrap().iter().any(|member| member["user_id"]==actor.to_string() && member["role"]=="developer"));
     let (status, owner) = http(&app,"GET","/api/v1/auth/principal",Some(PROJECT_OWNER),json!(null)).await;
     assert_eq!(status,StatusCode::OK,"{owner}");
+    assert_eq!(sqlx::query_scalar::<_,String>("SELECT role FROM users WHERE id=$1")
+        .bind(owner["sub"].as_str().unwrap().parse::<Uuid>().unwrap()).fetch_one(&pool).await.unwrap(),
+        "developer", "current Auth admin must not promote the local profile");
     let audit_actor: String = sqlx::query_scalar("SELECT actor FROM audit_log WHERE resource_id=$1 AND action='project_membership.upserted'")
         .bind(project).fetch_one(&pool).await.unwrap();
     assert_eq!(audit_actor,format!("{}:{actor}:developer",owner["sub"].as_str().unwrap()));

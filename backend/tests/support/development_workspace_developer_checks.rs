@@ -229,13 +229,14 @@ pub(super) async fn exercise_publication(app:&Router,pool:&PgPool,workspace:Uuid
         .bind(current.project_id).fetch_one(pool).await.unwrap();
     for (name,token,expected) in [("anonymous",None,StatusCode::UNAUTHORIZED),
         ("readonly machine",Some(SOURCE_READER),StatusCode::FORBIDDEN),
-        ("neighbor human",Some(OTHER_HUMAN),StatusCode::CONFLICT),
+        ("neighbor human writer",Some(OTHER_HUMAN),StatusCode::CONFLICT),
+        ("neighbor admin writer",Some(PROJECT_OWNER),StatusCode::CONFLICT),
         ("native SAT",Some(native_token),StatusCode::FORBIDDEN)] {
         let attempted=request(command.clone());
         let attempted_id=attempted["operation_id"].as_str().unwrap().parse::<Uuid>().unwrap();
         let (status,body)=http(app,"POST",&path,token,attempted).await;
         assert_eq!(status,expected,"{name}: {body}");
-        if name=="neighbor human" {
+        if matches!(name,"neighbor human writer"|"neighbor admin writer") {
             // A legitimate human writer retains its normal route, but cannot
             // borrow the current machine's session or create its publication.
             assert_eq!(body["error"]["message"],"workspace_session_owned_by_another_actor");
@@ -500,12 +501,17 @@ async fn exercise_base_delivery(app:&Router,pool:&PgPool,workspace:Uuid,catalog:
     let directory=catalog.join("targets").join(current.catalog_target_id.to_string()).join("deliveries");
     std::fs::create_dir(&directory).unwrap();
     std::fs::write(directory.join(format!("{source}.json")),serde_json::to_vec(&envelope).unwrap()).unwrap();
+    let original_actor=store::operation(pool,workspace,operation).await.unwrap().actor_id;
     let (status,response)=http(app,"POST",&format!("{path}/{operation}/reconcile"),Some(PROJECT_OWNER),json!(null)).await;
     assert_eq!(status,StatusCode::OK,"{response}");
     tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
         let row=store::operation(pool,workspace,operation).await.unwrap();
         if row.state=="succeeded" {
-            assert!(row.pipeline_id.is_none());let result=row.result.unwrap();
+            assert!(row.pipeline_id.is_none());
+            assert_eq!(row.actor_id,original_actor,"recovery must retain original DevOps custody");
+            assert_ne!(row.recovery_actor_id,Some(original_actor),"human recovery must not adopt the machine session");
+            assert!(row.recovery_actor_id.is_some());
+            let result=row.result.unwrap();
             assert_eq!(result["baseOperationObservation"]["target"],target);
             assert_eq!(result["baseOperationObservation"]["deliveryReceipt"],envelope);
             assert_eq!(result["baseOperationObservation"]["sourcePipelineId"],source.to_string());break;
