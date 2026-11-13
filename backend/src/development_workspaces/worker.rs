@@ -253,7 +253,7 @@ async fn execute(
         sqlx::query("SELECT id FROM development_workspaces WHERE id=$1 FOR UPDATE").bind(workspace.id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
         if work.execution_plan.get("baseResourceTarget").is_some() {
             // Recovery authorizes observation, never adoption of another actor's session.
-            let original = super::machine::verify(pool, &workspace, work.id, work.actor_id,
+            let original = super::machine::verify(&mut *tx, &workspace, work.id, work.actor_id,
                 work.owner_subject, &action, &work.execution_plan, &state.config.secrets).await?;
             let WorkspaceAction::Check { source_commit, .. } = &action else {
                 return Err(ApiError::forbidden());
