@@ -8,6 +8,7 @@ pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
         "tools":[], "preparationChecks":["unit"], "requiredDeveloperChecks":["unit"],
         "checks":[{"key":"unit","executor":"forge","requiresRuntime":false,"commands":["test -f README.md"]},
             {"key":"release","executor":"forge-delivery","requiresRuntime":false},
+            {"key":"base-release","kind":"delivery","executor":"forge-delivery","requiresRuntime":false},
             {"key":"publish","kind":"build","executor":"forge-build","requiresRuntime":false}]});
     let profile_hash = store::request_hash(&profile).unwrap();
     let environment: Value = sqlx::query_scalar("SELECT jsonb_build_object('adapter','compose','environmentId',id,'projectId',project_id,'url',url) FROM environments WHERE id=$1")
@@ -37,7 +38,7 @@ pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
     std::fs::write(
         directory.join("recipes.json"),
         serde_json::to_vec(
-            &json!({"profileHash":profile_hash,"recipes":{"prepare":pipeline,"unit":pipeline,"release":delivery,"publish":publication}}),
+            &json!({"profileHash":profile_hash,"recipes":{"prepare":pipeline,"unit":pipeline,"release":delivery,"publish":publication,"base-release":{"version":1,"base_resource_rollout":base_target()}}}),
         )
         .unwrap(),
     )
@@ -340,7 +341,7 @@ pub(super) async fn exercise_publication(app:&Router,pool:&PgPool,workspace:Uuid
 
 // Current Central PAT and public HTTP coverage. This proves admission, original
 // read access and assignment revocation before a runner effect, not Helm execution.
-pub(super) async fn exercise_devops(app:&Router,pool:&PgPool,workspace:Uuid,data:&Value,catalog:&std::path::Path,developer_operation:Uuid) {
+pub(super) async fn exercise_devops(app:&Router,pool:&PgPool,workspace:Uuid,data:&Value,catalog:&std::path::Path,artifacts:&std::path::Path,developer_operation:Uuid) {
     let endpoint=format!("{}/fixture",data["origin"].as_str().unwrap());
     let client=reqwest::Client::new();
     let current=store::workspace(pool,workspace).await.unwrap();
@@ -406,6 +407,7 @@ pub(super) async fn exercise_devops(app:&Router,pool:&PgPool,workspace:Uuid,data
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     }}).await.unwrap();
     sqlx::query("UPDATE development_workspaces SET sources=$2 WHERE id=$1").bind(workspace).bind(&current.sources).execute(pool).await.unwrap();
+    exercise_base_delivery(app,pool,workspace,catalog,artifacts,commit).await;
     let version=store::workspace(pool,workspace).await.unwrap().version;
     let operation=Uuid::new_v4();
     let (status,response)=http(app,"POST",&path,Some(DEVOPS_TOKEN),json!({"operation_id":operation,"expected_version":version,"command":release})).await;
@@ -429,4 +431,94 @@ pub(super) async fn exercise_devops(app:&Router,pool:&PgPool,workspace:Uuid,data
     assert_eq!(status,StatusCode::FORBIDDEN,"{blocked}");
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id JOIN jobs j ON j.id=a.job_id JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1").bind(pipeline).fetch_one(pool).await.unwrap(),0);
     assert_eq!(http(app,"GET",&format!("{path}/{operation}"),Some(DEVOPS_TOKEN),json!(null)).await.0,StatusCode::OK);
+}
+
+fn base_target() -> Value {
+    json!({"schema":"pdlc/base-resource-target/v1","installationId":"fixture-installation",
+        "slot":"pdlc","component":"task-backend","namespace":"pdlc",
+        "namespaceUid":"11111111-1111-4111-8111-111111111111","deployment":"task-backend",
+        "deploymentUid":"22222222-2222-4222-8222-222222222222","container":"backend",
+        "publicationJob":"publish","publicationArtifact":"out/image.json"})
+}
+
+async fn exercise_base_delivery(app:&Router,pool:&PgPool,workspace:Uuid,catalog:&std::path::Path,
+    artifacts:&std::path::Path,commit:&str) {
+    use sha2::{Digest,Sha256};
+    let current=store::workspace(pool,workspace).await.unwrap();
+    let (source,stage,job,attempt)=(Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4());
+    let spec=json!({"context":".","dockerfile":"Dockerfile","repository":"registry.example.test/team/application",
+        "descriptor_artifact":"out/build.json","published_artifact":"out/image.json"});
+    let raw=serde_json::to_string(&json!({"version":1,"jobs":{"publish":{"image_publish":spec}}})).unwrap();
+    let plan=json!({"format":"v1-dag","version":1,"config_source":"development_workspace","resolved_commit_sha":commit,
+        "jobs":[{"key":"publish","image_publish":spec}]});
+    let hash=|bytes:&[u8]|format!("{:x}",Sha256::digest(bytes));
+    sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status) VALUES($1,$2,$3,$3,'success')")
+        .bind(source).bind(current.project_id).bind(commit).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO pipeline_plans(pipeline_id,config_source,parser_version,git_ref,resolved_commit_sha,config_sha256,plan_sha256,raw_config,plan) VALUES($1,'development_workspace','v1',$2,$2,$3,$4,$5,$6)")
+        .bind(source).bind(commit).bind(hash(raw.as_bytes())).bind(hash(&serde_json::to_vec(&plan).unwrap())).bind(&raw).bind(&plan).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'publish',0,'success')")
+        .bind(stage).bind(source).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,position,status) VALUES($1,$2,'publish','forge:runner-image-publish','forge:image-publish',0,'success')")
+        .bind(job).bind(stage).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,'success','initial')")
+        .bind(attempt).bind(job).execute(pool).await.unwrap();
+    let descriptor=b"original-publication-descriptor".to_vec();
+    let published=cicd_domain::published_image::PublishedImage::new(commit.into(),
+        format!("registry.example.test/team/application@sha256:{}","b".repeat(64)),hash(&descriptor)).unwrap();
+    for (name,bytes) in [("out/build.json",descriptor),("out/image.json",serde_json::to_vec(&published).unwrap())] {
+        let path=artifacts.join(Uuid::new_v4().to_string());std::fs::write(&path,&bytes).unwrap();
+        sqlx::query("INSERT INTO artifacts(id,job_id,attempt_id,name,storage_path,size_bytes,sha256,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '1 hour')")
+            .bind(Uuid::new_v4()).bind(job).bind(attempt).bind(cicd_domain::artifact_names::artifact_name_from_declared_path(name))
+            .bind(path.to_str().unwrap()).bind(bytes.len() as i64).bind(hash(&bytes)).execute(pool).await.unwrap();
+    }
+    let path=format!("/api/v1/development-workspaces/{workspace}/operations");
+    let operation=Uuid::new_v4();
+    let body=json!({"operation_id":operation,"expected_version":current.version,
+        "command":{"action":"check","recipe":"base-release","source_commit":commit,"source_pipeline_id":source}});
+    assert_eq!(http(app,"POST",&path,Some(TOKEN),body.clone()).await.0,StatusCode::FORBIDDEN);
+    let (status,queued)=http(app,"POST",&path,Some(DEVOPS_TOKEN),body.clone()).await;
+    assert_eq!(status,StatusCode::OK,"{queued}");
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,operation).await.unwrap();
+        if row.state=="unknown" {
+            assert!(row.pipeline_id.is_none());
+            assert_eq!(row.result.as_ref().unwrap()["reason"],"workspace_base_delivery_receipt_missing");break;
+        }
+        assert_ne!(row.state,"failed","{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    let target=base_target();
+    let receipt=json!({"schema":"pdlc/resource-rollout-delivery/v1","phase":"complete","operationId":Uuid::new_v4(),
+        "installationId":target["installationId"],"slot":target["slot"],
+        "planSha256":"a".repeat(64),"sourceConfigurationSha256":"b".repeat(64),"configurationSha256":"c".repeat(64),
+        "sourceCatalogSha256":"d".repeat(64),"normalReceiptSha256":"e".repeat(64),
+        "component":{"key":target["component"],"namespace":target["namespace"],"namespaceUid":target["namespaceUid"],
+            "deployment":target["deployment"],"deploymentUid":target["deploymentUid"],"container":target["container"]},
+        "images":{"backend":published.image_ref},"generation":3,"observedGeneration":3,
+        "replicas":1,"readyReplicas":1,"ready":true,"guard":"READY"});
+    let envelope=json!({"sha256":store::request_hash(&receipt).unwrap(),"receipt":receipt});
+    let directory=catalog.join("targets").join(current.catalog_target_id.to_string()).join("deliveries");
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::write(directory.join(format!("{source}.json")),serde_json::to_vec(&envelope).unwrap()).unwrap();
+    let (status,response)=http(app,"POST",&format!("{path}/{operation}/reconcile"),Some(PROJECT_OWNER),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{response}");
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,operation).await.unwrap();
+        if row.state=="succeeded" {
+            assert!(row.pipeline_id.is_none());let result=row.result.unwrap();
+            assert_eq!(result["baseOperationObservation"]["target"],target);
+            assert_eq!(result["baseOperationObservation"]["deliveryReceipt"],envelope);
+            assert_eq!(result["baseOperationObservation"]["sourcePipelineId"],source.to_string());break;
+        }
+        assert!(!matches!(row.state.as_str(),"failed"|"unknown"),"{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    let (status,original)=http(app,"GET",&format!("{path}/{operation}"),Some(DEVOPS_TOKEN),json!(null)).await;
+    assert_eq!(status,StatusCode::OK,"{original}");
+    assert_eq!(http(app,"POST",&path,Some(DEVOPS_TOKEN),body).await.1,original);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM pipelines WHERE variables->>'development_workspace_operation_id'=$1")
+        .bind(operation.to_string()).fetch_one(pool).await.unwrap(),0);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM deployments WHERE pipeline_id=$1")
+        .bind(source).fetch_one(pool).await.unwrap(),0);
+    eprintln!("FORGE_BASE_NATIVE_DELIVERY=verified");
 }

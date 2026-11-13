@@ -247,7 +247,11 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
             .any(|line| line == marker),
         "isolated Developer case did not confirm publication coverage"
     );
+    let base_marker = "FORGE_BASE_NATIVE_DELIVERY=verified";
+    assert!(String::from_utf8_lossy(&output.stderr).lines().any(|line| line == base_marker),
+        "isolated DevOps case did not confirm Base-native delivery coverage");
     eprintln!("{marker}");
+    eprintln!("{base_marker}");
 }
 
 async fn child(data: serde_json::Value) {
@@ -269,6 +273,8 @@ async fn child(data: serde_json::Value) {
     let mut config = cicd::config::RuntimeConfig::from_env_source(|_| None, false)
         .unwrap()
         .with_auth_secret(Some("workspace-developer-fixture-only".into()));
+    let artifacts = tempfile::tempdir().unwrap();
+    config.artifacts.root = artifacts.path().into();
     config.secrets.key = Some([7; 32]);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     config.http.bind = listener.local_addr().unwrap().to_string();
@@ -691,7 +697,7 @@ async fn child(data: serde_json::Value) {
         .unwrap(),
         1
     );
-    checks::exercise_devops(&app,&pool,workspace,&data,catalog.path(),begin).await;
+    checks::exercise_devops(&app,&pool,workspace,&data,catalog.path(),artifacts.path(),begin).await;
     assert_eq!(http(&app,"DELETE",&format!("{memberships}/{actor}"),Some(TOKEN),json!(null)).await.0,StatusCode::FORBIDDEN);
     let (status, removed) = http(&app,"DELETE",&format!("{memberships}/{actor}"),Some(PROJECT_OWNER),json!(null)).await;
     assert_eq!(status,StatusCode::OK,"{removed}");

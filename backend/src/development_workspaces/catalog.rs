@@ -264,6 +264,14 @@ pub(crate) fn operation_plan(
     let pipeline = recipes["recipes"]
         .get(recipe)
         .ok_or_else(|| ApiError::conflict("workspace_recipe_not_published"))?;
+    if pipeline.get("base_resource_rollout").is_some() {
+        let target = super::base_delivery::recipe(check.ok_or_else(|| ApiError::conflict("workspace_recipe_not_executable"))?, pipeline)?;
+        plan["recipe"] = serde_json::json!(recipe);
+        plan["recipeHash"] = serde_json::json!(cicd_infra::development_workspace::request_hash(pipeline).map_err(super::error)?);
+        plan["baseResourceTarget"] = serde_json::to_value(target).map_err(|_| ApiError::conflict("workspace_base_delivery_identity_invalid"))?;
+        super::base_delivery::require_action(action, &plan, &workspace.profile)?;
+        return Ok(plan);
+    }
     validate_recipe(&workspace.profile, recipe, pipeline)?;
     if pipeline["version"] != 1
         || pipeline["jobs"]

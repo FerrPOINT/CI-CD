@@ -121,7 +121,11 @@ pub(super) async fn tick(state: &AppState) -> Result<(), ApiError> {
                     work.request["action"].as_str(),
                     Some("register" | "create" | "observe" | "start" | "stop")
                 );
-                finish(pool,&work,if native || error.status.is_server_error() {"unknown"}else{"failed"},json!({"reason":if native {"native_result_unconfirmed"}else{error.message.as_str()},"status":error.status.as_u16()})).await?;
+                let mut result = json!({"reason":if native {"native_result_unconfirmed"}else{error.message.as_str()},"status":error.status.as_u16()});
+                if work.execution_plan.get("baseResourceTarget").is_some() && error.status.is_server_error() {
+                    result["requiresReconciliation"] = json!(true);
+                }
+                finish(pool,&work,if native || error.status.is_server_error() {"unknown"}else{"failed"},result).await?;
             }
         }
     }
@@ -247,6 +251,27 @@ async fn execute(
         if let Some(origin)=origin {origin.bind(&mut tx).await?;}
         if let Some(proof)=&machine {proof.clock.bind_commit_clock(&mut tx).await?;}
         sqlx::query("SELECT id FROM development_workspaces WHERE id=$1 FOR UPDATE").bind(workspace.id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+        if work.execution_plan.get("baseResourceTarget").is_some() {
+            // Recovery authorizes observation, never adoption of another actor's session.
+            let original = super::machine::verify(pool, &workspace, work.id, work.actor_id,
+                work.owner_subject, &action, &work.execution_plan, &state.config.secrets).await?;
+            let WorkspaceAction::Check { source_commit, .. } = &action else {
+                return Err(ApiError::forbidden());
+            };
+            let candidate = original.assignment.source["candidate_ref"].as_str().ok_or_else(ApiError::forbidden)?;
+            confirm_commit(state, &storage, source_commit, Some(candidate)).await?;
+            let observation = super::base_delivery::observation(state, &mut tx, &workspace,
+                work.id, &work.execution_plan, &action).await?;
+            original.clock.bind_commit_clock(&mut tx).await?;
+            if let Some(permit) = &permit { permit.require()?; }
+            if work.reconcile_only && let Some(original) = work.effect_id {
+                crate::quiescence::retire_workspace_effect(original).map_err(|_|
+                    ApiError::service_unavailable("workspace_original_custody_retirement_pending"))?;
+            }
+            finish_tx(&mut tx, work, &json!({"state":"succeeded","baseOperationObservation":observation})).await?;
+            tx.commit().await.map_err(ApiError::internal)?;
+            return Ok(None);
+        }
         if work.reconcile_only && matches!(action,WorkspaceAction::Prepare{..}|WorkspaceAction::Check{..}|WorkspaceAction::Build{..}) {
             let key=format!("pipeline-trigger:{}:development-workspace:{}",workspace.project_id,work.id);
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))").bind(key).execute(&mut *tx).await.map_err(ApiError::internal)?;

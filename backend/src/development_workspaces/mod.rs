@@ -1,6 +1,7 @@
 //! Human-managed project environments over existing identity and Forge execution.
 
 mod assignment;
+mod base_delivery;
 mod catalog;
 pub(crate) mod machine;
 pub(crate) mod machine_git;

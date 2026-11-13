@@ -347,3 +347,81 @@ writer, busy Stop, Stop/Start и сохранность данных/container i
 Используются готовые образы, синтетические Auth/Tracker и свои volumes;
 production credentials и данные не нужны. Проверка Kubernetes/R1 и IAB остаётся
 отдельной обязательной приёмкой.
+
+
+## Check для приложения под управлением Base
+
+`forge-delivery` может проверять отдельно объявленный Base-native target.
+Source workspace остаётся `services: []`: приложение, namespace, Deployment и
+данные принадлежат существующей установке Base. Check профиля имеет
+`kind: delivery`, `executor: forge-delivery`, `requiresRuntime: false` и не
+содержит commands. Опубликованный recipe содержит только `version: 1` и
+`base_resource_rollout`:
+
+```json
+{
+  "version": 1,
+  "base_resource_rollout": {
+    "schema": "pdlc/base-resource-target/v1",
+    "installationId": "<existing-installation>",
+    "slot": "pdlc",
+    "component": "task-backend",
+    "namespace": "<existing-namespace>",
+    "namespaceUid": "<existing-namespace-uuid>",
+    "deployment": "<existing-deployment>",
+    "deploymentUid": "<existing-deployment-uuid>",
+    "container": "<existing-container>",
+    "publicationJob": "publish",
+    "publicationArtifact": "out/image.json"
+  }
+}
+```
+
+В том же recipe запрещены jobs, Helm и команды. Target фиксируется в исходном
+execution plan; его identity не выводится из агентского отчёта. Собственная
+Central PAT, текущая Deployment assignment, session, candidate HEAD, проект,
+репозиторий и namespace проверяются перед результатом, в том числе при reconcile.
+Новый изменённый профиль требует нового immutable catalog target и обычной
+регистрации workspace; повторный Register не обновляет выбранные profile hashes.
+
+После настоящего Base `ResourceRollout` с COMPLETE и нормальным readback оператор
+экспортирует `delivery_receipt(component)` и публикует исходный envelope
+`{receipt, sha256}` в `targets/<target>/deliveries/<source_pipeline_id>.json`.
+Формат receipt — `pdlc/resource-rollout-delivery/v1`: hashes operation plan,
+исходной/выбранной конфигураций, source catalog и normal receipt; installation,
+slot, namespace/Deployment UID, container, точные immutable images и observed
+readiness. Это доверенная публикация владельца каталога, не загрузка агента.
+
+Forge проверяет точный успешный `source_pipeline_id` в том же проекте и SHA,
+immutable pipeline/config hashes, typed publication job, исходные artifact bytes
+и descriptor hash. Base image обязан совпасть с этим publication artifact.
+Check не создаёт pipeline/job/deployment: его `pipeline_id` остаётся null.
+Исходный operation result хранит `baseOperationObservation` с форматом
+`forge/base-operation-observation/v1`, `workspaceOperationId`, `workspaceId`,
+`sourcePipelineId`, `sourceCommit`, bounded `target` и исходным `deliveryReceipt`.
+GET/replay возвращает именно сохранённый результат. Нет подмены Helm receipt,
+сведений latest deployment, agent-held Base credential или пустого успеха.
+
+При отсутствии owner receipt операция получает `unknown`,
+`workspace_base_delivery_receipt_missing`, `requiresReconciliation: true`.
+После настоящего owner apply/publish оператор вызывает существующий reconcile
+той же операции; исходная machine authority проверяется повторно. Новую
+модельную/CI-команду для снятия этой блокировки не отправляют.
+
+Publication Check по-прежнему использует ровно один typed `image_publish` job:
+
+```json
+{"version":1,"jobs":{"publish":{"image_publish":{
+  "context":".","dockerfile":"Dockerfile.forge",
+  "repository":"<owner-approved-registry>/<project>/<application>",
+  "descriptor_artifact":"out/build.json","published_artifact":"out/image.json"
+}}}}
+```
+
+Forge экспортирует точное Git tree основного репозитория. Umbrella Dockerfile,
+ожидающий соседний services-base, без self-contained locked-SDK context непригоден.
+Для документального изменения допустим настоящий build от точного уже
+квалифицированного runtime digest с COPY изменяемого payload; это явно reuse
+бинарника, не утверждение о новой компиляции Rust. При изменении runtime source
+или зависимостей требуется настоящий соответствующий build и квалификация.
+Host/builder/registry grants и обычные проверки provenance сохраняются.

@@ -355,6 +355,9 @@ pub(crate) async fn lock_repository(
 
 /// Current machines use only their explicitly published Check executor.
 pub(super) fn require_pipeline(action: &WorkspaceAction, plan: &Value, profile: &Value) -> Result<(), ApiError> {
+    if plan.get("baseResourceTarget").is_some() {
+        return super::base_delivery::require_action(action, plan, profile);
+    }
     if let WorkspaceAction::Check { recipe, source_pipeline_id: None, .. } = action
         && let Some(check) = profile["checks"].as_array().and_then(|checks|
             checks.iter().find(|check| check["key"] == *recipe && check["executor"] == "forge-build"))

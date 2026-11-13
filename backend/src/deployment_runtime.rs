@@ -305,71 +305,12 @@ pub(crate) async fn prepare(
             .ok_or_else(|| ApiError::conflict("Deployment job absent from immutable plan"))?;
         let mut images = BTreeMap::new();
         for (value_path, binding) in &spec.images {
-            let entry = producer_plan["jobs"]
-                .as_array()
-                .and_then(|entries| {
-                    entries
-                        .iter()
-                        .find(|entry| entry["key"].as_str() == Some(&binding.job))
-                })
-                .ok_or_else(|| {
-                    ApiError::conflict("Publication producer absent from immutable plan")
-                })?;
-            let build: ImagePublishSpec = serde_json::from_value(entry["image_publish"].clone())
-                .map_err(|_| ApiError::conflict("Deployment image is not a typed publication"))?;
-            build.validate().map_err(ApiError::conflict)?;
-            if binding.artifact != build.published_artifact
-                || (external_plan.is_none()
-                    && !current["needs"].as_array().is_some_and(|needs| {
-                        needs
-                            .iter()
-                            .any(|v| v.as_str() == Some(binding.job.as_str()))
-                    }))
-            {
-                return Err(ApiError::conflict(
-                    "Deployment image binding differs from its required producer",
-                ));
+            if external_plan.is_none() && !current["needs"].as_array().is_some_and(|needs|
+                needs.iter().any(|v| v.as_str() == Some(binding.job.as_str()))) {
+                return Err(ApiError::conflict("Deployment image binding differs from its required producer"));
             }
-            let (producer_job, producer_attempt): (Uuid, Uuid) = sqlx::query_as(
-                "SELECT j.id,a.id FROM jobs j JOIN stages s ON s.id=j.stage_id
-             JOIN execution_attempts a ON a.job_id=j.id
-             WHERE s.pipeline_id=$1 AND j.name=$2 AND j.status='success'
-             AND j.command='forge:image-publish'
-             AND a.status='success' ORDER BY a.attempt_no DESC LIMIT 1",
-            )
-            .bind(producer_pipeline)
-            .bind(&binding.job)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(ApiError::internal)?
-            .ok_or_else(|| ApiError::conflict("Publication producer is not successful"))?;
-            let published_bytes = artifact(
-                tx,
-                artifacts,
-                producer_job,
-                producer_attempt,
-                &binding.artifact,
-            )
-            .await?;
-            let descriptor = artifact(
-                tx,
-                artifacts,
-                producer_job,
-                producer_attempt,
-                &build.descriptor_artifact,
-            )
-            .await?;
-            let published: PublishedImage = serde_json::from_slice(&published_bytes)
-                .map_err(|_| ApiError::conflict("Invalid publication artifact"))?;
-            let hash = format!("{:x}", Sha256::digest(&descriptor));
-            if !published.binds(commit, &hash)
-                || published.image_ref.split_once('@').map(|v| v.0)
-                    != Some(build.repository.as_str())
-            {
-                return Err(ApiError::conflict(
-                    "Published image does not bind this pipeline commit and descriptor",
-                ));
-            }
+            let published = publication_image(tx, artifacts, producer_plan, producer_pipeline,
+                commit, &binding.job, &binding.artifact).await?;
             images.insert(value_path.clone(), published);
         }
 
@@ -437,6 +378,58 @@ pub(crate) async fn prepare(
             .bind(rollback_source).execute(&mut **tx).await.map_err(ApiError::internal)?;
     }
     Ok(Some(offer))
+}
+
+
+/// Exact successful publication bytes shared by Helm delivery and Base-owned delivery.
+async fn publication_image(
+    tx: &mut Transaction<'_, Postgres>, artifacts: &ArtifactsConfig, producer_plan: &Value,
+    pipeline: Uuid, commit: &str, job: &str, artifact_name: &str,
+) -> Result<PublishedImage, ApiError> {
+    let entry = producer_plan["jobs"].as_array().and_then(|entries|
+        entries.iter().find(|entry| entry["key"].as_str() == Some(job)))
+        .ok_or_else(|| ApiError::conflict("Publication producer absent from immutable plan"))?;
+    let build: ImagePublishSpec = serde_json::from_value(entry["image_publish"].clone())
+        .map_err(|_| ApiError::conflict("Deployment image is not a typed publication"))?;
+    build.validate().map_err(ApiError::conflict)?;
+    if artifact_name != build.published_artifact {
+        return Err(ApiError::conflict("Deployment image binding differs from its required producer"));
+    }
+    let (producer_job, attempt): (Uuid, Uuid) = sqlx::query_as(
+        "SELECT j.id,a.id FROM jobs j JOIN stages s ON s.id=j.stage_id
+         JOIN execution_attempts a ON a.job_id=j.id
+         WHERE s.pipeline_id=$1 AND j.name=$2 AND j.status='success'
+         AND j.command='forge:image-publish' AND a.status='success'
+         ORDER BY a.attempt_no DESC LIMIT 1")
+        .bind(pipeline).bind(job).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::conflict("Publication producer is not successful"))?;
+    let bytes = artifact(tx, artifacts, producer_job, attempt, artifact_name).await?;
+    let descriptor = artifact(tx, artifacts, producer_job, attempt, &build.descriptor_artifact).await?;
+    let published: PublishedImage = serde_json::from_slice(&bytes)
+        .map_err(|_| ApiError::conflict("Invalid publication artifact"))?;
+    let hash = format!("{:x}", Sha256::digest(&descriptor));
+    if !published.binds(commit, &hash)
+        || published.image_ref.split_once('@').map(|v| v.0) != Some(build.repository.as_str()) {
+        return Err(ApiError::conflict("Published image does not bind this pipeline commit and descriptor"));
+    }
+    Ok(published)
+}
+
+pub(crate) async fn completed_publication_image(
+    tx: &mut Transaction<'_, Postgres>, artifacts: &ArtifactsConfig,
+    pipeline: Uuid, project: Uuid, commit: &str, job: &str, artifact_name: &str,
+) -> Result<PublishedImage, ApiError> {
+    let (plan, plan_hash, config_hash, raw, source): (Value, String, String, String, String) =
+        sqlx::query_as("SELECT pp.plan,pp.plan_sha256,pp.config_sha256,pp.raw_config,pp.config_source
+            FROM pipelines p JOIN pipeline_plans pp ON pp.pipeline_id=p.id
+            WHERE p.id=$1 AND p.project_id=$2 AND p.status='success'
+            AND p.commit_sha=$3 AND pp.resolved_commit_sha=$3
+            AND pp.config_source IN ('repository','development_workspace') FOR SHARE OF p,pp")
+            .bind(pipeline).bind(project).bind(commit).fetch_optional(&mut **tx).await
+            .map_err(ApiError::internal)?
+            .ok_or_else(|| ApiError::conflict("Completed publication pipeline for this project and commit required"))?;
+    require_immutable_plan(&plan, &plan_hash, &config_hash, &raw, &source, commit)?;
+    publication_image(tx, artifacts, &plan, pipeline, commit, job, artifact_name).await
 }
 
 async fn artifact(

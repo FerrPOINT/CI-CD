@@ -1,5 +1,14 @@
 # API v1 Specification — Forge CI/CD
 
+Для явно опубликованного Base-native delivery recipe исходный workspace Check
+возвращает `result.baseOperationObservation` (`forge/base-operation-observation/v1`):
+workspace operation/workspace IDs, `sourcePipelineId`, `sourceCommit`, bounded
+`target` и `{receipt,sha256}` в `deliveryReceipt`. Check не создаёт pipeline:
+`pipeline_id` остаётся null; source pipeline — настоящая успешная публикация.
+Trust и точная identity проверяются владельцем Forge по замороженному recipe и
+оригинальным Base/artifact bytes. Формат и owner publication описаны в
+[рабочих окружениях](DEVELOPMENT_WORKSPACES.md#check-для-приложения-под-управлением-base).
+
 Tracker consumer использует текущее техническое владение независимо от
 исторического `lease.expires_at`; current wire возвращает null. Подготовка
 configured Developer в Ready требует `execution.workspace_preparation_authorized=true`
