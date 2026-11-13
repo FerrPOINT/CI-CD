@@ -23,6 +23,7 @@ struct Owner {
     subject: Uuid,
     source_reader: Uuid,
     revoked: bool,
+    persistent: bool,
 }
 
 #[tokio::test]
@@ -115,6 +116,7 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
         subject,
         source_reader,
         revoked: false,
+        persistent: true,
         context: json!({
         "schema_version":1,"namespace":namespace,"tracker_instance_id":workspace.tracker_instance_id,
         "project_id":workspace.tracker_project_id,"task_id":task,"task_key":"DEV-1","state":"active",
@@ -132,7 +134,9 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
             if owner.revoked {return (StatusCode::UNAUTHORIZED,Json(json!({})));}
             (StatusCode::OK,Json(json!({"sub":if reader{owner.source_reader}else{owner.subject},"email":"developer@fixture.invalid",
                 "subject_role":"service_account","scopes":if reader{vec!["ci-cd:read"]}else{vec!["ci-cd:read","ci-cd:write"]},
-                "observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(300)})))
+                "observed_at":chrono::Utc::now(),"expires_at":if reader || !owner.persistent {
+                    json!(chrono::Utc::now()+chrono::Duration::seconds(300))
+                } else {Value::Null}})))
         }))
         .route("/api/v1/namespace-tasks/{id}",get(|State(owner):State<Arc<RwLock<Owner>>>, headers:HeaderMap, axum::extract::Path(id):axum::extract::Path<Uuid>, uri:axum::http::Uri|async move {
             assert_eq!(headers["authorization"],"Bearer workspace-reader-fixture");
@@ -151,6 +155,8 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
                 "stale"=>owner.context["execution"]["assignment"]["version"]=json!(2),
                 "restore"=>owner.context["execution"]["assignment"]["version"]=json!(1),
                 "revoked"=>owner.revoked=true,
+                "dated"=>owner.persistent=false,
+                "persistent"=>owner.persistent=true,
                 _=>panic!("unknown fixture mode"),
             }
             StatusCode::NO_CONTENT
@@ -285,7 +291,41 @@ async fn child(data: serde_json::Value) {
     .await
     .unwrap();
     let (status, card) = http(&app, "GET", &path, Some(TOKEN), json!(null)).await;
-    assert_eq!(status, StatusCode::OK, "{card}");
+    assert_eq!(status, StatusCode::OK, "persistent root ingress: {card}");
+    let client = reqwest::Client::new();
+    let control = format!("{}/fixture", data["origin"].as_str().unwrap());
+    // Same real bridge, router and DB principal: a dated root still works;
+    // switching back to explicit null must preserve current project rights.
+    let foreign_path = format!("/api/v1/development-workspaces/{}", id("other_workspace"));
+    for mode in ["dated", "persistent"] {
+        client
+            .post(&control)
+            .json(mode)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let (status, principal) = http(
+            &app,
+            "GET",
+            "/api/v1/auth/principal",
+            Some(TOKEN),
+            json!(null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{mode}: {principal}");
+        assert_eq!(principal["sub"], actor.to_string());
+        assert_eq!(principal["principal_type"], "service_account");
+        let (status, current) = http(&app, "GET", &path, Some(TOKEN), json!(null)).await;
+        assert_eq!(status, StatusCode::OK, "{mode}: {current}");
+        assert_eq!(current, card);
+        assert_eq!(
+            http(&app, "GET", &foreign_path, Some(TOKEN), json!(null)).await.0,
+            StatusCode::FORBIDDEN,
+            "{mode} cannot cross project membership",
+        );
+    }
     let mut observation = reqwest::Url::parse(&format!(
         "http://fixture/api/v1/namespace-repositories/{}/source",
         id("repository_id")
@@ -545,8 +585,6 @@ async fn child(data: serde_json::Value) {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let client = reqwest::Client::new();
-    let control = format!("{}/fixture", data["origin"].as_str().unwrap());
     client
         .post(&control)
         .json("stale")
@@ -670,6 +708,19 @@ async fn child(data: serde_json::Value) {
         .unwrap()
         .error_for_status()
         .unwrap();
+    assert_eq!(
+        http(
+            &app,
+            "GET",
+            "/api/v1/auth/principal",
+            Some(TOKEN),
+            json!(null),
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED,
+        "explicit revocation rejects the same persistent root before handler dispatch",
+    );
     assert!(
         http(&app, "GET", &path, Some(TOKEN), json!(null))
             .await

@@ -238,11 +238,9 @@ pub(crate) async fn require_auth(
                 .extensions
                 .get::<pdlc_auth_core::http_authority::RequestAuthority>()
                 .ok_or_else(|| ApiError::service_unavailable("Request authority guard missing"))?;
-            authority.restrict_to(
-                identity
-                    .original_deadline()?
-                    .ok_or_else(ApiError::forbidden)?,
-            );
+            if let Some(deadline) = identity.original_deadline()? {
+                authority.restrict_to(deadline);
+            }
             parts.extensions.insert(identity.claims.clone());
             parts.extensions.insert(identity);
             return Ok(next
