@@ -63,7 +63,7 @@ pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
 
 pub(super) async fn exercise(app: &Router, pool: &PgPool, workspace: Uuid, data: &Value, recipe: &str) {
     let (status, registered) = http(app,"POST","/api/v1/runner/register",None,
-        json!({"protocolVersion":1,"registrationToken":"workspace-runner-fixture","name":"workspace-checks","capabilities":{"executorKinds":["shell"],"pipelineVariables":true}})).await;
+        json!({"protocolVersion":1,"registrationToken":"workspace-runner-fixture","name":format!("workspace-checks-{}",Uuid::new_v4()),"capabilities":{"executorKinds":["shell"],"pipelineVariables":true}})).await;
     assert_eq!(status, StatusCode::CREATED, "{registered}");
     let runner = registered["credential"].as_str().unwrap();
     let (status, response) = http(app,"POST","/api/v1/runner/heartbeat",Some(runner),
