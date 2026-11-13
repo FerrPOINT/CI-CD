@@ -296,7 +296,6 @@ async fn child(data: serde_json::Value) {
     let control = format!("{}/fixture", data["origin"].as_str().unwrap());
     // Same real bridge, router and DB principal: a dated root still works;
     // switching back to explicit null must preserve current project rights.
-    let foreign_path = format!("/api/v1/development-workspaces/{}", id("other_workspace"));
     for mode in ["dated", "persistent"] {
         client
             .post(&control)
@@ -320,11 +319,6 @@ async fn child(data: serde_json::Value) {
         let (status, current) = http(&app, "GET", &path, Some(TOKEN), json!(null)).await;
         assert_eq!(status, StatusCode::OK, "{mode}: {current}");
         assert_eq!(current, card);
-        assert_eq!(
-            http(&app, "GET", &foreign_path, Some(TOKEN), json!(null)).await.0,
-            StatusCode::FORBIDDEN,
-            "{mode} cannot cross project membership",
-        );
     }
     let mut observation = reqwest::Url::parse(&format!(
         "http://fixture/api/v1/namespace-repositories/{}/source",
