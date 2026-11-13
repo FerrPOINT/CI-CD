@@ -12754,6 +12754,18 @@ components:
             - register
       - type: object
         required:
+        - catalog_target_id
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - adopt_profile
+          catalog_target_id:
+            type: string
+            format: uuid
+      - type: object
+        required:
         - action
         properties:
           action:

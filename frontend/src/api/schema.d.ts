@@ -4985,6 +4985,11 @@ export interface components {
             action: "register";
         } | {
             /** @enum {string} */
+            action: "adopt_profile";
+            /** Format: uuid */
+            catalog_target_id: string;
+        } | {
+            /** @enum {string} */
             action: "create";
         } | {
             /** @enum {string} */
