@@ -367,9 +367,9 @@ fn validate_developer_checks(
         let mut definitions = checks.iter().filter(|check| check["key"] == key);
         let check = definitions.next().ok_or_else(invalid)?;
         if definitions.next().is_some()
-            || check["executor"] != "forge"
+            || !matches!(check["executor"].as_str(), Some("forge" | "forge-build"))
             || check["requiresRuntime"] != false
-            || check["commands"].as_array().is_none_or(Vec::is_empty)
+            || (check["executor"] == "forge" && check["commands"].as_array().is_none_or(Vec::is_empty))
         {
             return Err(invalid());
         }
@@ -502,6 +502,16 @@ mod tests {
         profile["checks"].as_array_mut().unwrap().push(duplicate);
         assert!(validate_developer_checks(&profile, "profile", &published).is_err());
         profile["checks"].as_array_mut().unwrap().pop();
+        profile["checks"][1] = json!({"key":"build","kind":"build","executor":"forge-build","requiresRuntime":false});
+        profile["requiredDeveloperChecks"] = json!(["unit","build"]);
+        published["recipes"]["build"] = json!({"version":1,"jobs":{"publish":{"image_publish":{
+            "context":".","dockerfile":"Dockerfile","repository":"registry.test/owned",
+            "descriptor_artifact":"out/build.json","published_artifact":"out/image.json"
+        }}}});
+        assert!(validate_developer_checks(&profile, "profile", &published).is_ok());
+        profile["checks"][1]["commands"] = json!(["unapproved shell"]);
+        assert!(validate_developer_checks(&profile, "profile", &published).is_err());
+        profile["checks"][1].as_object_mut().unwrap().remove("commands");
         published["recipes"]["unit"] = serde_json::Value::Null;
         assert!(validate_developer_checks(&profile, "profile", &published).is_err());
     }
