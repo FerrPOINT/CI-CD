@@ -48,6 +48,11 @@ COPY services-base/base-operator/src /services-base/base-operator/src
 RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
 
+# Keep migration packaging independent from the already cached server build.
+RUN --mount=type=cache,id=forge-cargo-registry-rust188,target=/usr/local/cargo/registry,sharing=shared \
+    /usr/local/cargo/bin/cargo build --locked --release -p cicd-migrate --bin cicd-migrate \
+ && install -m 0755 /app/target/release/cicd-migrate /cicd-migrate
+
 FROM debian:bookworm-slim
 # docker-cli only (DooD): embedded runner spawns job containers through the
 # mounted host docker socket; no daemon runs inside this image. The static
@@ -98,6 +103,7 @@ WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
 COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner
 COPY --from=build /app/target/release/forge-quiesce /usr/local/bin/forge-quiesce
+COPY --from=build --chmod=0755 /cicd-migrate /usr/local/bin/cicd-migrate
 COPY --from=build /app/migrations /app/migrations
 COPY CI-CD/backend/migration-lineages /tmp/forge-lineages/backend/migration-lineages
 COPY CI-CD/scripts/migration_lineages.py /tmp/forge-lineages/scripts/migration_lineages.py

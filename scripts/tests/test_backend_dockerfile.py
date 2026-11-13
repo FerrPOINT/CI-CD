@@ -33,6 +33,23 @@ def staged_paths(
 
 
 class BackendDockerfileTests(unittest.TestCase):
+    def test_existing_migrator_is_packaged_without_changing_the_server_compile(self) -> None:
+        server = ("RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \\\n"
+                  " && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli")
+        for name in ("Dockerfile", "Dockerfile.umbrella"):
+            dockerfile = (DOCKERFILE.parent / name).read_text(encoding="utf-8")
+            build, runtime = dockerfile.split("FROM debian:bookworm-slim", 1)
+            with self.subTest(dockerfile=name):
+                self.assertEqual(build.count(server), 1)
+                following = build.split(server, 1)[1]
+                self.assertEqual(following.count("RUN "), 1)
+                self.assertIn("-p cicd-migrate --bin cicd-migrate", following)
+                self.assertNotIn("-p cicd-server", following)
+                self.assertNotIn("touch ", following)
+                self.assertNotIn("target=/app/target", following)
+                self.assertIn("install -m 0755 /app/target/release/cicd-migrate /cicd-migrate", following)
+                self.assertIn("COPY --from=build --chmod=0755 /cicd-migrate /usr/local/bin/cicd-migrate", runtime)
+
     def test_shared_migration_catalog_is_staged_in_both_build_recipes(self) -> None:
         root = DOCKERFILE.parents[1]
         source = (root / "backend/src/lib.rs").read_text(encoding="utf-8")
