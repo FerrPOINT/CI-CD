@@ -156,7 +156,7 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
             };
             if owner.revoked {return (StatusCode::UNAUTHORIZED,Json(json!({})));}
             let mut profile=json!({"sub":subject,"email":email,
-                "subject_role":role,"scopes":if reader{vec!["ci-cd:read"]}else{vec!["ci-cd:read","ci-cd:write"]},
+                "role":role,"subject_role":role,"scopes":if reader{vec!["ci-cd:read"]}else{vec!["ci-cd:read","ci-cd:write"]},
                 "observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(300)});
             if role!="service_account" {
                 profile["application_access"]=current_application_access(subject,role,&headers);
