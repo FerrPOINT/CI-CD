@@ -378,7 +378,7 @@ pub(crate) mod tests {
             actor: Uuid::new_v4(),
             subject,
             issuer: "https://fixture.invalid".into(),
-            assignment: DeveloperAssignment {
+            assignment: WorkspaceAssignment {
                 task_id: Uuid::new_v4(),
                 assignment_id: Uuid::new_v4(),
                 execution_id: Uuid::new_v4(),
