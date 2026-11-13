@@ -83,7 +83,7 @@ async fn repository_projection(
 fn validate_repository_proof(
     proof: &ConfirmedSpaceRead,
     identity: &pdlc_shared::space_access::CentralIdentity,
-    expires_at: i64,
+    expires_at: Option<i64>,
     space: &SpaceRef,
     revision: i64,
     state: &str,
@@ -91,6 +91,8 @@ fn validate_repository_proof(
 ) -> Result<(), ApiError> {
     let admission = proof.admission().map_err(owner_error)?;
     let now = chrono::Utc::now().timestamp();
+    let expires_at =
+        expires_at.map_or(proof.valid_until(), |expiry| expiry.min(proof.valid_until()));
     if !admission.can_read_space(identity, space, now, expires_at) {
         return Err(ApiError::forbidden());
     }
@@ -145,7 +147,7 @@ pub(crate) async fn saved_repository(
     validate_repository_proof(
         &proof,
         &identity,
-        owner.decision.expires_at.timestamp(),
+        Some(owner.decision.expires_at.timestamp()),
         &space,
         revision,
         &state,
@@ -540,7 +542,9 @@ pub async fn human_window(
                 &subject,
                 s,
                 chrono::Utc::now().timestamp(),
-                identity.claims.exp,
+                identity.claims.exp.map_or(scope.proof.valid_until(), |expiry| {
+                    expiry.min(scope.proof.valid_until())
+                }),
             )
         })
         .collect();

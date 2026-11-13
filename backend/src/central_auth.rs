@@ -307,7 +307,9 @@ pub async fn link_central_user(
         role: effective_role,
         ver: 0,
         iat: now.timestamp(),
-        exp: verified.lifetime.local_valid_until(),
+        exp: Some(
+            verified.lifetime.local_valid_until().ok_or_else(crate::api::ApiError::unauthorized)?,
+        ),
     })
 }
 
@@ -382,7 +384,7 @@ mod child_expiry_tests {
 
     #[tokio::test]
     async fn child_introspection_http_requires_authoritative_expiry_on_same_identity_response() {
-        use axum::{Json, Router, http::HeaderMap, http::Uri, routing::get};
+        use axum::{Json, Router, http::HeaderMap, http::Uri, routing::get, response::IntoResponse};
         use std::sync::{Arc, atomic::AtomicUsize, atomic::Ordering};
 
         const CHILD_PROCESS: &str = "FORGE_CHILD_INTROSPECTION_TEST_PROCESS";
@@ -415,6 +417,32 @@ mod child_expiry_tests {
                     "{case}"
                 );
             }
+            let root = try_verified_central("sdlc_pat_fixture_persistent").await.unwrap().unwrap();
+            assert_eq!(root.subject_role.as_deref(), Some("service_account"));
+            assert_eq!(root.lifetime.source_expires_at, None);
+            assert_eq!(root.lifetime.local_valid_until(), None);
+            assert_eq!(root.lifetime.monotonic_deadline(), None);
+            let clock = crate::git_host::GitDeadline::identity(&root);
+            assert!(clock.current());
+            assert_eq!(clock.valid_until().unwrap(), None);
+            // A real preparation/request proof may narrow this operation, but
+            // cannot mutate the underlying root credential into an expiring one.
+            let proof = root.confirmation_validity().unwrap();
+            assert_eq!(
+                clock.cap_until(proof.valid_until).valid_until().unwrap().unwrap().timestamp(),
+                proof.valid_until,
+            );
+            assert_eq!(root.lifetime.local_valid_until(), None);
+            assert!(
+                try_central_child("sdlc_pat_fixture_persistent").await.is_err(),
+                "Auth delegated child remains finite",
+            );
+            let dated = try_verified_central("sdlc_pat_fixture_dated_root").await.unwrap().unwrap();
+            assert!(dated.lifetime.local_valid_until().is_some());
+            assert!(crate::git_host::GitDeadline::identity(&dated).valid_until().unwrap().is_some());
+            for case in ["human_no_bound", "root_missing_bound", "revoked_root"] {
+                assert!(try_verified_central(&format!("sdlc_pat_fixture_{case}")).await.is_err(), "{case}");
+            }
             return;
         }
 
@@ -434,7 +462,7 @@ mod child_expiry_tests {
                             "scopes":["ci-cd:read"],"display_name":"Fixture"});
                         if uri.query().is_none() {
                             legacy_count.fetch_add(1, Ordering::SeqCst);
-                            return Json(wire);
+                            return Json(wire).into_response();
                         }
                         assert_eq!(uri.query(), Some("include_lifetime=true"));
                         child_count.fetch_add(1, Ordering::SeqCst);
@@ -461,10 +489,28 @@ mod child_expiry_tests {
                             "Bearer sdlc_pat_fixture_malformed" => {
                                 wire["expires_at"] = json!("not-a-clock")
                             }
+                            "Bearer sdlc_pat_fixture_persistent" => {
+                                wire["subject_role"] = json!("service_account");
+                                wire["expires_at"] = serde_json::Value::Null;
+                            }
+                            "Bearer sdlc_pat_fixture_dated_root" => {
+                                wire["subject_role"] = json!("service_account");
+                            }
+                            "Bearer sdlc_pat_fixture_human_no_bound" => {
+                                wire["subject_role"] = json!("user");
+                                wire["expires_at"] = serde_json::Value::Null;
+                            }
+                            "Bearer sdlc_pat_fixture_root_missing_bound" => {
+                                wire["subject_role"] = json!("service_account");
+                                wire.as_object_mut().unwrap().remove("expires_at");
+                            }
+                            "Bearer sdlc_pat_fixture_revoked_root" => {
+                                return axum::http::StatusCode::UNAUTHORIZED.into_response();
+                            }
                             "Bearer sdlc_pat_fixture_valid" => (),
                             _ => panic!("unexpected fixture bearer"),
                         }
-                        Json(wire)
+                        Json(wire).into_response()
                     }
                 }),
             );
@@ -496,7 +542,7 @@ mod child_expiry_tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(legacy_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(child_calls.load(Ordering::SeqCst), 7);
+        assert_eq!(child_calls.load(Ordering::SeqCst), 13);
     }
 }
 

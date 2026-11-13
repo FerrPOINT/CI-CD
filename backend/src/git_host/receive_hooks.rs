@@ -239,7 +239,9 @@ impl ReceiveHooks {
     /// Keep custom/task transaction policy, then check the original proof
     /// immediately before native Git prepares its reference transaction.
     pub(super) fn proof_deadline(&self, proof: deadline::GitDeadline) -> Result<(), ApiError> {
-        let (boot_until, wall_until) = proof.hook_bounds()?;
+        let Some((boot_until, wall_until)) = proof.hook_bounds()? else {
+            return Ok(());
+        };
         let target = self.directory.join("reference-transaction");
         let saved = self.directory.join("prior-reference-transaction");
         let delegate = if executable(&target) {
