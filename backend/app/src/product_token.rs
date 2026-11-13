@@ -73,7 +73,7 @@ impl LocalPersonalToken {
             role: owner.decision.role.as_str().into(),
             ver: 0,
             iat: self.wall_started.timestamp(),
-            exp: owner.decision.expires_at.timestamp(),
+            exp: Some(owner.decision.expires_at.timestamp()),
         };
         Ok(ConfirmedPersonalToken { claims, owner })
     }

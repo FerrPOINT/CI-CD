@@ -224,7 +224,7 @@ async fn available_hosted_catalog_pages_filter_exclusions_and_save_by_exact_uuid
         role: "admin".into(),
         ver: 0,
         iat: 0,
-        exp: i64::MAX,
+        exp: Some(i64::MAX),
     };
     let router = axum::Router::new()
         .route(

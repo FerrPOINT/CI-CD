@@ -812,7 +812,7 @@ mod tests {
             role: "admin".to_string(),
             ver: 0,
             iat: 0,
-            exp: 900,
+            exp: Some(900),
         };
         assert!(api_token_scope_allows(&claims, "GET"));
         assert!(!api_token_scope_allows(&claims, "POST"));

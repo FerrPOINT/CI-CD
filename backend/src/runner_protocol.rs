@@ -621,7 +621,7 @@ pub(crate) async fn ack_runner_lease(
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
     let owner_clock =
         lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
-    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?;
+    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?.flatten();
     let row = sqlx::query_as::<_, LeaseControlRow>(
         "UPDATE job_leases \
          SET acknowledged_at = COALESCE(acknowledged_at, now()), last_renewed_at = now(), lease_expires_at = LEAST(lease_expires_at, COALESCE($6::timestamptz,lease_expires_at)) \
@@ -679,7 +679,7 @@ pub(crate) async fn renew_runner_lease(
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
     let owner_clock =
         lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
-    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?;
+    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?.flatten();
     let row = sqlx::query_as::<_, LeaseControlRow>(
         "UPDATE job_leases \
          SET lease_expires_at = LEAST(now() + ($5::bigint * interval '1 second'),COALESCE($7::timestamptz,now() + ($5::bigint * interval '1 second'))), \
@@ -856,6 +856,7 @@ pub(crate) async fn resolve_runner_lease_secrets(
         expires_at: owner_clock
             .map(|clock| clock.valid_until())
             .transpose()?
+            .flatten()
             .map_or(
                 Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS),
                 |until| until.min(Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS)),

@@ -238,11 +238,9 @@ pub(crate) async fn require_auth(
                 .extensions
                 .get::<pdlc_auth_core::http_authority::RequestAuthority>()
                 .ok_or_else(|| ApiError::service_unavailable("Request authority guard missing"))?;
-            authority.restrict_to(
-                identity
-                    .original_deadline()?
-                    .ok_or_else(ApiError::forbidden)?,
-            );
+            if let Some(deadline) = identity.original_deadline()? {
+                authority.restrict_to(deadline);
+            }
             parts.extensions.insert(identity.claims.clone());
             parts.extensions.insert(identity);
             return Ok(next
@@ -434,8 +432,7 @@ pub(crate) async fn require_auth(
     if let Some(verified) = central_authority {
         return pdlc_auth_core::human_request::with_human_request(
             local_user,
-            &verified.context,
-            verified.application_access.clone(),
+            &verified,
             dispatch,
         )
         .await
@@ -443,10 +440,10 @@ pub(crate) async fn require_auth(
     }
     if let Some(source) = product_authority {
         let context = source.context();
-        return pdlc_auth_core::human_request::with_human_request(
+        return pdlc_auth_core::human_request::with_application_owner_request(
             local_user,
             &context,
-            Some(source.owner().clone()),
+            source.owner(),
             dispatch,
         )
         .await
@@ -1020,7 +1017,7 @@ impl VerifiedRequestIdentity {
             if !source.lifetime.is_current() {
                 return Err(ApiError::forbidden());
             }
-            return Ok(Some(source.lifetime.monotonic_deadline()));
+            return Ok(source.lifetime.monotonic_deadline());
         }
         if let Some(source) = &self.product_personal {
             if !source.is_current() {
@@ -1183,7 +1180,7 @@ async fn local_identity_for_bearer_token(
             role: "service_account".to_string(),
             ver: 0,
             iat: now.timestamp(),
-            exp: now.timestamp() + 900,
+            exp: Some(now.timestamp() + 900),
             service_account_name: Some(sa_name),
         })
     } else if token.starts_with("cicd_") {
@@ -1217,7 +1214,7 @@ async fn local_identity_for_bearer_token(
             role,
             ver: 0,
             iat: now.timestamp(),
-            exp: now.timestamp() + 900,
+            exp: Some(now.timestamp() + 900),
         })
     } else {
         if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
@@ -1256,7 +1253,7 @@ mod token_scope_tests {
             role: "admin".into(),
             ver: 0,
             iat: 1,
-            exp: i64::MAX,
+            exp: Some(i64::MAX),
         };
         assert!(api_token_scope_allows(&claims, "GET"));
         assert!(!api_token_scope_allows(&claims, "POST"));

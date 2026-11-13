@@ -192,11 +192,15 @@ pub(super) async fn operate(
     if reconcile {
         command.arg("--reconcile");
     }
-    if let Some(clock) = crate::pipeline_authority::current_clock() {
-        command.env(
-            "PDLC_DEVELOPMENT_AUTHORITY_UNTIL",
-            clock.valid_until()?.timestamp().to_string(),
-        );
+    if let Some(until) = crate::pipeline_authority::current_clock()
+        .map(|clock| clock.valid_until())
+        .transpose()?
+        .flatten()
+    {
+        command.env("PDLC_DEVELOPMENT_AUTHORITY_UNTIL", until.timestamp().to_string());
+    } else {
+        // Never inherit an unrelated parent process's credential clock.
+        command.env_remove("PDLC_DEVELOPMENT_AUTHORITY_UNTIL");
     }
     bind(command.as_std_mut(), &custody)?;
     effect

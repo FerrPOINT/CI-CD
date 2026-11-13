@@ -30,6 +30,16 @@ Service account не подменяет человека. Сохранённый
 
 ### Developer configured-cli-v1
 
+Auth root PAT с явным `expires_at: null` не задаёт Git/workspace таймер.
+Отсутствующее поле срока не считается бессрочным credential. Отдельные сроки
+Space/application proof и подготовки Tracker продолжают ограничивать свою
+операцию; они не становятся сроком жизни root PAT или принятого назначения.
+Закрытый Git callback ticket переносит тот же bearer, а не выпускает Auth child:
+его обязательный nullable `until` сохраняет исходный срок (включая числовой срок
+ранее созданных tickets). Callback вновь проверяет активный root, scopes и то же
+неизменное назначение; сохранённый ticket не разрешает выбрать нового владельца.
+Настоящие delegated Auth credentials и human/JWT остаются конечными.
+
 Адаптер постоянной machine identity добавлен в исходники; его локальная
 квалификация, поставка и настоящий initial/rework учитываются отдельно.
 Он использует те же API и `cicd-cli dev-workspace`. Старые task-workspace API

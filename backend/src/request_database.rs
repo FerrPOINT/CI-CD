@@ -4,10 +4,12 @@
 use sqlx::{PgConnection, postgres::PgPoolOptions};
 
 async fn stamp(connection: &mut PgConnection) -> Result<(), sqlx::Error> {
-    if let Some(clock) = crate::pipeline_authority::current_clock() {
-        let until = clock
-            .valid_until()
-            .map_err(|_| sqlx::Error::Protocol("Original human authority expired".into()))?;
+    let until = crate::pipeline_authority::current_clock()
+        .map(|clock| clock.valid_until())
+        .transpose()
+        .map_err(|_| sqlx::Error::Protocol("Original human authority expired".into()))?
+        .flatten();
+    if let Some(until) = until {
         let remaining = (until - chrono::Utc::now()).num_milliseconds().max(1);
         // PostgreSQL 17 bounds the whole explicit/implicit transaction as well as
         // each statement. This includes deferred work ordered after the clock
