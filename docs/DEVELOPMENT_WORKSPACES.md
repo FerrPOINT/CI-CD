@@ -381,8 +381,9 @@ Source workspace остаётся `services: []`: приложение, namespac
 execution plan; его identity не выводится из агентского отчёта. Собственная
 Central PAT, текущая Deployment assignment, session, candidate HEAD, проект,
 репозиторий и namespace проверяются перед результатом, в том числе при reconcile.
-Новый изменённый профиль требует нового immutable catalog target и обычной
-регистрации workspace; повторный Register не обновляет выбранные profile hashes.
+Изменённый профиль публикуется новым immutable catalog target. Для того же
+environment он принимается существующей workspace через `adopt_profile`,
+а не второй регистрацией; повторный Register не обновляет выбранные hashes.
 
 После настоящего Base `ResourceRollout` с COMPLETE и нормальным readback оператор
 экспортирует `delivery_receipt(component)` и публикует исходный envelope
@@ -425,3 +426,40 @@ Forge экспортирует точное Git tree основного репо
 бинарника, не утверждение о новой компиляции Rust. При изменении runtime source
 или зависимостей требуется настоящий соответствующий build и квалификация.
 Host/builder/registry grants и обычные проверки provenance сохраняются.
+
+
+## Принятие новой редакции профиля
+
+Один environment принадлежит одной workspace. Его действующий human Maintainer
+принимает owner-published catalog target через существующий operations API:
+
+```json
+{
+  "operation_id": "<original-operation-uuid>",
+  "expected_version": 12,
+  "command": {"action":"adopt_profile","catalog_target_id":"<published-target-uuid>"}
+}
+```
+
+`POST /api/v1/development-workspaces/{workspace_id}/operations` проверяет права
+и текущую version. Агентам действие запрещено. Активная сессия, queued/running/
+unknown операция или незакрытая pipeline custody блокируют принятие. Новый
+профиль обязан сохранить project/repository/environment/Tracker и физические
+sections repositories/services/storage/secrets. Старый и новый native runtime
+descriptor должны совпадать с точным runtimeHash исходной подтверждённой native
+операции из текущей observation; порядок дат и latest-поиск не используются.
+
+Workspace UUID, environment, physical target ID, данные, Stop intent, источники
+и наблюдения сохраняются. В одной транзакции меняются текущие profile/catalog
+hashes и создаётся terminal operation; local preparation сбрасывается, поэтому
+новая работа требует обычного Prepare. Исторические request/execution_plan/result
+не переписываются. GET и повтор исходного ключа возвращают прежний результат.
+В новой операции сохраняются обе owner-published редакции профиля.
+
+При новом catalog target для прежнего physical target оператор публикует тот же
+проверенный descriptor в `instances/<stable-target-id>/runtime.json`, с прежними
+`id`, adapter, namespace/namespaceUid либо Compose identity, services/storage/
+secrets/inventory. Новое приложение, environment, namespace или PVC не создаются.
+Вторая регистрация на занятый environment возвращает
+`409 workspace_environment_already_owned`. Отдельная CLI-команда и новая route
+для adoption не нужны; действие доступно оператору через существующий JSON API.

@@ -18,6 +18,7 @@ pub enum RuntimeState {
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkspaceAction {
     Register {},
+    AdoptProfile { catalog_target_id: Uuid },
     Create {},
     Prepare {
         sources: Vec<SelectedSource>,
@@ -84,6 +85,7 @@ impl WorkspaceAction {
         matches!(
             self,
             Self::Register {}
+                | Self::AdoptProfile { .. }
                 | Self::Create {}
                 | Self::Stop {}
                 | Self::BeginSession { .. }
@@ -117,6 +119,7 @@ impl WorkspaceAction {
                     .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
         };
         match self {
+            Self::AdoptProfile { catalog_target_id } if catalog_target_id.is_nil() => Err("invalid_catalog_target"),
             Self::BeginSession { task } if !key(task) => Err("invalid_task_reference"),
             Self::EndSession { session_id } if session_id.is_nil() => {
                 Err("invalid_session_identity")
@@ -178,6 +181,13 @@ impl WorkspaceAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_adoption_is_explicit_and_requires_a_free_workspace() {
+        let action=WorkspaceAction::AdoptProfile { catalog_target_id:Uuid::new_v4() };
+        assert!(action.requires_free_workspace());assert!(!action.requires_session());assert!(action.validate().is_ok());
+        assert!(WorkspaceAction::AdoptProfile { catalog_target_id:Uuid::nil() }.validate().is_err());
+    }
 
     #[test]
     fn stopping_needs_free_workspace_but_checks_need_the_current_session() {

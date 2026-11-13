@@ -5,7 +5,7 @@ use serde_json::Value;
 pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
     let workspace = store::workspace(pool, id).await.unwrap();
     let profile = json!({"apiVersion":"pdlc.dev/workspace/v1", "repositories":[{"key":"source"}],
-        "tools":[], "preparationChecks":["unit"], "requiredDeveloperChecks":["unit"],
+        "tools":[], "services":[], "storage":[], "secrets":[], "preparationChecks":["unit"], "requiredDeveloperChecks":["unit"],
         "checks":[{"key":"unit","executor":"forge","requiresRuntime":false,"commands":["test -f README.md"]},
             {"key":"release","executor":"forge-delivery","requiresRuntime":false},
             {"key":"base-release","kind":"delivery","executor":"forge-delivery","requiresRuntime":false},
@@ -45,9 +45,23 @@ pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
     .unwrap();
     sqlx::query("UPDATE development_workspaces SET profile=$2,profile_hash=$3,catalog_hash=$4,environment_hash=$5 WHERE id=$1")
         .bind(id).bind(profile).bind(profile_hash).bind(store::request_hash(&public).unwrap()).bind(environment_hash).execute(pool).await.unwrap();
+    // Previously registered physical ownership is fixture input; adoption itself
+    // exercises real public HTTP/SQL and performs no Kubernetes effect.
+    let runtime=json!({"id":workspace.target_id,"adapter":"kubernetes","namespace":"fixture",
+        "namespaceUid":Uuid::new_v4(),"kubectl":["kubectl"],"services":[],"storage":[],"secrets":[],"inventory":{"images":[]}});
+    let instance=root.join("instances").join(workspace.target_id.to_string());std::fs::create_dir_all(&instance).unwrap();
+    std::fs::write(instance.join("runtime.json"),serde_json::to_vec(&runtime).unwrap()).unwrap();
+    let registered=Uuid::new_v4();let request=json!({"action":"register"});
+    let observation=json!({"state":"succeeded","operationId":registered,"result":{"observation":{"runtime":"stopped"}}});
+    sqlx::query("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,execution_plan,state,result,finished_at) VALUES($1,$2,$3,$3,$4,$5,1,$6,'succeeded',$7,clock_timestamp())")
+        .bind(registered).bind(id).bind(workspace.created_by).bind(store::request_hash(&json!({"action":request,"expected_version":1})).unwrap())
+        .bind(&request).bind(json!({"runtimeHash":store::request_hash(&runtime).unwrap()})).bind(&observation).execute(pool).await.unwrap();
+    sqlx::query("UPDATE development_workspaces SET runtime='stopped',observed_at=clock_timestamp(),observation=$2 WHERE id=$1")
+        .bind(id).bind(observation).execute(pool).await.unwrap();
+
 }
 
-pub(super) async fn exercise(app: &Router, pool: &PgPool, workspace: Uuid, data: &Value) {
+pub(super) async fn exercise(app: &Router, pool: &PgPool, workspace: Uuid, data: &Value, recipe: &str) {
     let (status, registered) = http(app,"POST","/api/v1/runner/register",None,
         json!({"protocolVersion":1,"registrationToken":"workspace-runner-fixture","name":"workspace-checks","capabilities":{"executorKinds":["shell"],"pipelineVariables":true}})).await;
     assert_eq!(status, StatusCode::CREATED, "{registered}");
@@ -63,7 +77,7 @@ pub(super) async fn exercise(app: &Router, pool: &PgPool, workspace: Uuid, data:
         "repositories":[{"key":"source","commit":commit,"dirty":false}],"tools":[]}});
     for command in [
         prepare,
-        json!({"action":"check","recipe":"unit","source_commit":commit}),
+        json!({"action":"check","recipe":recipe,"source_commit":commit}),
     ] {
         let operation = Uuid::new_v4();
         let version: i64 =
@@ -527,4 +541,103 @@ async fn exercise_base_delivery(app:&Router,pool:&PgPool,workspace:Uuid,catalog:
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM deployments WHERE pipeline_id=$1")
         .bind(source).fetch_one(pool).await.unwrap(),0);
     eprintln!("FORGE_BASE_NATIVE_DELIVERY=verified");
+}
+
+
+pub(super) async fn exercise_profile_adoption(app:&Router,pool:&PgPool,workspace:Uuid,data:&Value,
+    catalog:&std::path::Path,old_operation:Uuid) {
+    let before=store::workspace(pool,workspace).await.unwrap();
+    let old_folder=catalog.join("targets").join(before.catalog_target_id.to_string());
+    let mut public:Value=serde_json::from_slice(&std::fs::read(old_folder.join("public.json")).unwrap()).unwrap();
+    let next=Uuid::new_v4();public["id"]=json!(next);public["profile_id"]=json!(Uuid::new_v4());
+    public["profile"]["checks"].as_array_mut().unwrap().push(json!({"key":"adopted-unit","executor":"forge","requiresRuntime":false,"commands":["test -f README.md"]}));
+    public["profile_hash"]=json!(store::request_hash(&public["profile"]).unwrap());
+    let next_folder=catalog.join("targets").join(next.to_string());std::fs::create_dir(&next_folder).unwrap();
+    std::fs::write(next_folder.join("public.json"),serde_json::to_vec(&public).unwrap()).unwrap();
+    std::fs::write(next_folder.join("profile.json"),serde_json::to_vec(&public["profile"]).unwrap()).unwrap();
+    let mut recipes:Value=serde_json::from_slice(&std::fs::read(old_folder.join("recipes.json")).unwrap()).unwrap();
+    recipes["profileHash"]=public["profile_hash"].clone();recipes["recipes"]["adopted-unit"]=recipes["recipes"]["unit"].clone();
+    std::fs::write(next_folder.join("recipes.json"),serde_json::to_vec(&recipes).unwrap()).unwrap();
+    let path=format!("/api/v1/development-workspaces/{workspace}/operations");
+    let old_http=http(app,"GET",&format!("{path}/{old_operation}"),Some(TOKEN),json!(null)).await;
+    assert_eq!(old_http.0,StatusCode::OK);
+    let adopt=json!({"action":"adopt_profile","catalog_target_id":next});
+    let request=|version:i64|json!({"operation_id":Uuid::new_v4(),"expected_version":version,"command":adopt});
+    for token in [TOKEN,OTHER_HUMAN] {
+        assert_eq!(http(app,"POST",&path,Some(token),request(before.version)).await.0,StatusCode::FORBIDDEN);
+    }
+    let stale=http(app,"POST",&path,Some(PROJECT_OWNER),request(before.version-1)).await;
+    assert_eq!(stale.0,StatusCode::CONFLICT,"{stale:?}");
+    assert_eq!(stale.1["error"]["message"],"workspace_version_conflict");
+    // Catalog ownership is checked before a current selection can change.
+    let mut foreign=public.clone();foreign["repository_id"]=json!(Uuid::new_v4());
+    foreign["repositories"][0]["repository_id"]=foreign["repository_id"].clone();
+    std::fs::write(next_folder.join("public.json"),serde_json::to_vec(&foreign).unwrap()).unwrap();
+    let denied=http(app,"POST",&path,Some(PROJECT_OWNER),request(before.version)).await;
+    assert_eq!(denied.0,StatusCode::CONFLICT,"{denied:?}");
+    assert_eq!(denied.1["error"]["message"],"workspace_profile_adoption_identity_mismatch");
+    std::fs::write(next_folder.join("public.json"),serde_json::to_vec(&public).unwrap()).unwrap();
+    let instance=catalog.join("instances").join(before.target_id.to_string()).join("runtime.json");
+    let original_runtime=std::fs::read(&instance).unwrap();
+    let mut foreign_runtime:Value=serde_json::from_slice(&original_runtime).unwrap();foreign_runtime["namespaceUid"]=json!(Uuid::new_v4());
+    std::fs::write(&instance,serde_json::to_vec(&foreign_runtime).unwrap()).unwrap();
+    let denied=http(app,"POST",&path,Some(PROJECT_OWNER),request(before.version)).await;
+    assert_eq!(denied.0,StatusCode::CONFLICT,"{denied:?}");
+    assert_eq!(denied.1["error"]["message"],"workspace_original_runtime_identity_unconfirmed");
+    std::fs::write(&instance,&original_runtime).unwrap();
+    // Existing environment ownership is a conflict, never a second row or a 500.
+    let registration=json!({"id":Uuid::new_v4(),"operation_id":Uuid::new_v4(),"catalog_target_id":next,"name":"Duplicate environment","create":false});
+    let duplicate=http(app,"POST",&format!("/api/v1/projects/{}/development-workspaces",before.project_id),Some(PROJECT_OWNER),registration).await;
+    assert_eq!(duplicate.0,StatusCode::CONFLICT,"{duplicate:?}");
+    assert_eq!(duplicate.1["error"]["message"],"workspace_environment_already_owned");
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM development_workspaces WHERE environment_id=$1")
+        .bind(before.environment_id).fetch_one(pool).await.unwrap(),1);
+    let begin=Uuid::new_v4();
+    let (status,reply)=http(app,"POST",&path,Some(PROJECT_OWNER),json!({"operation_id":begin,"expected_version":before.version,"command":{"action":"begin_session","task":data["task"]}})).await;
+    assert_eq!(status,StatusCode::OK,"{reply}");
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,begin).await.unwrap();
+        if row.state=="succeeded" {break;}
+        assert!(!matches!(row.state.as_str(),"failed"|"unknown"),"{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    let held=store::workspace(pool,workspace).await.unwrap();
+    let denied=http(app,"POST",&path,Some(PROJECT_OWNER),request(held.version)).await;
+    assert_eq!(denied.0,StatusCode::CONFLICT,"{denied:?}");
+    assert_eq!(denied.1["error"]["message"],"workspace_has_active_session");
+    let end=Uuid::new_v4();
+    assert_eq!(http(app,"POST",&path,Some(PROJECT_OWNER),json!({"operation_id":end,"expected_version":held.version,"command":{"action":"end_session","session_id":begin}})).await.0,StatusCode::OK);
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,end).await.unwrap();if row.state=="succeeded" {break;}
+        assert!(!matches!(row.state.as_str(),"failed"|"unknown"),"{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    let body=request(store::workspace(pool,workspace).await.unwrap().version);
+    let (status,accepted)=http(app,"POST",&path,Some(PROJECT_OWNER),body.clone()).await;
+    assert_eq!(status,StatusCode::OK,"{accepted}");assert_eq!(accepted["state"],"succeeded");
+    assert_eq!(http(app,"POST",&path,Some(PROJECT_OWNER),body).await.1,accepted);
+    let after=store::workspace(pool,workspace).await.unwrap();
+    assert_eq!((after.id,after.environment_id,after.repository_id,after.target_id,after.tracker_instance_id,after.tracker_project_id),
+        (before.id,before.environment_id,before.repository_id,before.target_id,before.tracker_instance_id,before.tracker_project_id));
+    assert_eq!(after.catalog_target_id,next);assert_eq!(after.preparation,"unprepared");assert_eq!(after.local_preparation,json!({}));
+    assert_eq!(after.observation,before.observation);assert_eq!(after.desired_runtime,before.desired_runtime);
+    assert_eq!(http(app,"GET",&format!("{path}/{old_operation}"),Some(TOKEN),json!(null)).await.1,old_http.1);
+    let old=store::operation(pool,workspace,old_operation).await.unwrap();
+    assert_eq!(http(app,"POST",&path,Some(TOKEN),json!({"operation_id":old.id,"expected_version":old.expected_version,"command":old.request})).await.1,old_http.1);
+    let begin=Uuid::new_v4();
+    assert_eq!(http(app,"POST",&path,Some(TOKEN),json!({"operation_id":begin,"expected_version":after.version,"command":{"action":"begin_session","task":data["task"]}})).await.0,StatusCode::OK);
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,begin).await.unwrap();if row.state=="succeeded" {break;}
+        assert!(!matches!(row.state.as_str(),"failed"|"unknown"),"{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    exercise(app,pool,workspace,data,"adopted-unit").await;
+    let end=Uuid::new_v4();let version=store::workspace(pool,workspace).await.unwrap().version;
+    assert_eq!(http(app,"POST",&path,Some(TOKEN),json!({"operation_id":end,"expected_version":version,"command":{"action":"end_session","session_id":begin}})).await.0,StatusCode::OK);
+    tokio::time::timeout(std::time::Duration::from_secs(10),async {loop {
+        let row=store::operation(pool,workspace,end).await.unwrap();if row.state=="succeeded" {break;}
+        assert!(!matches!(row.state.as_str(),"failed"|"unknown"),"{:?}",row.result);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }}).await.unwrap();
+    eprintln!("FORGE_PROFILE_ADOPTION=verified");
 }

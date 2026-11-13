@@ -141,13 +141,7 @@ pub(super) async fn operate(
         );
     }
     let root = catalog::root(state)?;
-    let target = if workspace.target_id == workspace.catalog_target_id {
-        catalog::target_path(root, workspace.target_id, "runtime.json")
-    } else {
-        root.join("instances")
-            .join(workspace.target_id.to_string())
-            .join("runtime.json")
-    };
+    let target = catalog::runtime_path(root, workspace.target_id, workspace.catalog_target_id);
     let profile = catalog::target_path(root, workspace.catalog_target_id, "profile.json");
     // Validate confinement and frozen inputs before selecting a private operator.
     if catalog::read_json(root, &profile)? != workspace.profile {

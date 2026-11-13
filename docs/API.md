@@ -1,5 +1,12 @@
 # API v1 Specification — Forge CI/CD
 
+Human Maintainer может принять опубликованную редакцию профиля существующей
+workspace через `command:{action:"adopt_profile",catalog_target_id}` в обычном
+`POST /api/v1/development-workspaces/{id}/operations`, с исходным operation UUID
+и `expected_version`. Это атомарное metadata-действие при неизменной физической
+identity; новые агенты/окружения не создаются, старые операции не переписываются.
+Подробности и отказы описаны в [контракте workspace](DEVELOPMENT_WORKSPACES.md#принятие-новой-редакции-профиля).
+
 Для явно опубликованного Base-native delivery recipe исходный workspace Check
 возвращает `result.baseOperationObservation` (`forge/base-operation-observation/v1`):
 workspace operation/workspace IDs, `sourcePipelineId`, `sourceCommit`, bounded

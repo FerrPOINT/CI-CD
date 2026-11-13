@@ -298,6 +298,9 @@ async fn execute(
             return Ok(None);
         }
         let result = match &action {
+            WorkspaceAction::AdoptProfile { .. } => {
+                return Err(ApiError::conflict("workspace_profile_adoption_must_complete_on_submission"));
+            }
             WorkspaceAction::Close {} | WorkspaceAction::ConvertToStand {} => {
                 return Err(ApiError::conflict("workspace_retirement_must_complete_on_submission"));
             }

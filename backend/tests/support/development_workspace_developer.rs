@@ -277,8 +277,12 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
     let base_marker = "FORGE_BASE_NATIVE_DELIVERY=verified";
     assert!(String::from_utf8_lossy(&output.stderr).lines().any(|line| line == base_marker),
         "isolated DevOps case did not confirm Base-native delivery coverage");
+    let adoption_marker="FORGE_PROFILE_ADOPTION=verified";
+    assert!(String::from_utf8_lossy(&output.stderr).lines().any(|line|line==adoption_marker),
+        "isolated case did not confirm profile adoption coverage");
     eprintln!("{marker}");
     eprintln!("{base_marker}");
+    eprintln!("{adoption_marker}");
 }
 
 async fn child(data: serde_json::Value) {
@@ -613,7 +617,7 @@ async fn child(data: serde_json::Value) {
         pipelines, 0,
         "Developer Git must not invoke ordinary delivery"
     );
-    checks::exercise(&app, &pool, workspace, &data).await;
+    checks::exercise(&app, &pool, workspace, &data,"unit").await;
     checks::exercise_publication(&app, &pool, workspace, &data, catalog.path()).await;
     let version: i64 = sqlx::query_scalar("SELECT version FROM development_workspaces WHERE id=$1")
         .bind(workspace)
@@ -727,6 +731,7 @@ async fn child(data: serde_json::Value) {
         .unwrap(),
         1
     );
+    checks::exercise_profile_adoption(&app,&pool,workspace,&data,catalog.path(),begin).await;
     checks::exercise_devops(&app,&pool,workspace,&data,catalog.path(),artifacts.path(),begin).await;
     assert_eq!(http(&app,"DELETE",&format!("{memberships}/{actor}"),Some(TOKEN),json!(null)).await.0,StatusCode::FORBIDDEN);
     let (status, removed) = http(&app,"DELETE",&format!("{memberships}/{actor}"),Some(PROJECT_OWNER),json!(null)).await;

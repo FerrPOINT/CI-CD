@@ -268,6 +268,7 @@ pub async fn enqueue(
     if matches!(
         action,
         WorkspaceAction::Stop {}
+            | WorkspaceAction::AdoptProfile { .. }
             | WorkspaceAction::Start {}
             | WorkspaceAction::EndSession { .. }
             | WorkspaceAction::RecoverSession { .. }
@@ -281,6 +282,23 @@ pub async fn enqueue(
     let mut operation: Operation = sqlx::query_as("INSERT INTO development_workspace_operations(id,workspace_id,actor_id,owner_subject,request_hash,request,expected_version,execution_plan) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *")
         .bind(operation).bind(workspace).bind(actor).bind(owner).bind(hash).bind(request)
         .bind(expected_version).bind(execution_plan).fetch_one(&mut **tx).await?;
+    if let WorkspaceAction::AdoptProfile { catalog_target_id } = action {
+        let target = &execution_plan["profileAdoption"]["target"];
+        if target["id"] != catalog_target_id.to_string() || !target["profile"].is_object() {
+            return Err(Error::Conflict("workspace_profile_adoption_snapshot_invalid"));
+        }
+        sqlx::query("UPDATE development_workspaces SET catalog_target_id=$2,profile_id=$3,profile=$4,
+            profile_hash=$5,catalog_hash=$6,preparation='unprepared',local_preparation='{}' WHERE id=$1")
+            .bind(workspace).bind(catalog_target_id)
+            .bind(target["profile_id"].as_str().and_then(|id|id.parse::<Uuid>().ok()).ok_or(Error::Conflict("workspace_profile_adoption_snapshot_invalid"))?)
+            .bind(&target["profile"]).bind(execution_plan["profileHash"].as_str().ok_or(Error::Conflict("workspace_profile_adoption_snapshot_invalid"))?)
+            .bind(execution_plan["catalogHash"].as_str().ok_or(Error::Conflict("workspace_profile_adoption_snapshot_invalid"))?)
+            .execute(&mut **tx).await?;
+        operation = sqlx::query_as("UPDATE development_workspace_operations SET state='succeeded',finished_at=clock_timestamp(),result=$2 WHERE id=$1 RETURNING *")
+            .bind(operation.id).bind(serde_json::json!({"state":"succeeded","catalogTargetId":catalog_target_id,
+                "profileId":target["profile_id"],"profileHash":execution_plan["profileHash"],"catalogHash":execution_plan["catalogHash"]}))
+            .fetch_one(&mut **tx).await?;
+    }
     if retirement {
         let promote = matches!(action, WorkspaceAction::ConvertToStand {});
         if promote {

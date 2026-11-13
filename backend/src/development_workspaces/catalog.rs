@@ -193,6 +193,18 @@ pub(crate) fn operation_plan(
     ) {
         return Ok(serde_json::json!({}));
     }
+    if let WorkspaceAction::AdoptProfile { catalog_target_id } = action {
+        let previous = target(state, workspace.catalog_target_id)?;
+        let choice = target(state, *catalog_target_id)?;
+        let root = root(state)?;
+        let current_runtime = read_json(root, &runtime_path(root, workspace.target_id, workspace.catalog_target_id))?;
+        let selected_runtime = read_json(root, &runtime_path(root, workspace.target_id, choice.id))?;
+        validate_adoption(workspace, &previous, &choice, &current_runtime, &selected_runtime)?;
+        return Ok(serde_json::json!({"profileAdoption":{"previous":previous,"target":choice,
+            "runtimeHash":cicd_infra::development_workspace::request_hash(&current_runtime).map_err(super::error)?},
+            "catalogHash":cicd_infra::development_workspace::request_hash(&serde_json::to_value(&choice).map_err(|_|ApiError::conflict("workspace_profile_invalid"))?).map_err(super::error)?,
+            "profileHash":choice.profile_hash}));
+    }
     let choice = target(state, workspace.catalog_target_id)?;
     let value = serde_json::to_value(&choice)
         .map_err(|_| ApiError::internal_with_message("workspace_catalog_encoding_failed"))?;
@@ -219,13 +231,7 @@ pub(crate) fn operation_plan(
             | WorkspaceAction::Start {}
             | WorkspaceAction::Stop {}
     ) {
-        let path = if workspace.target_id == workspace.catalog_target_id {
-            target_path(root, workspace.target_id, "runtime.json")
-        } else {
-            root.join("instances")
-                .join(workspace.target_id.to_string())
-                .join("runtime.json")
-        };
+        let path = runtime_path(root, workspace.target_id, workspace.catalog_target_id);
         let runtime = read_json(root, &path)?;
         if runtime["id"] != workspace.target_id.to_string() {
             return Err(ApiError::conflict("workspace_runtime_identity_changed"));
@@ -341,6 +347,32 @@ pub(crate) fn operation_plan(
     );
     plan["pipeline"] = pipeline;
     Ok(plan)
+}
+
+pub(super) fn runtime_path(root: &Path, target: Uuid, catalog: Uuid) -> PathBuf {
+    if target == catalog { target_path(root, target, "runtime.json") }
+    else { root.join("instances").join(target.to_string()).join("runtime.json") }
+}
+
+fn validate_adoption(workspace: &cicd_infra::development_workspace::Workspace,
+    previous: &TargetChoice, choice: &TargetChoice, current: &Value, selected: &Value) -> Result<(),ApiError> {
+    let old = serde_json::to_value(previous).map_err(|_|ApiError::conflict("workspace_profile_invalid"))?;
+    if cicd_infra::development_workspace::request_hash(&old).map_err(super::error)? != workspace.catalog_hash
+        || previous.profile != workspace.profile || previous.profile_hash != workspace.profile_hash
+        || previous.id != workspace.catalog_target_id
+        || choice.repository_id != workspace.repository_id || previous.repository_id != workspace.repository_id
+        || choice.configuration_id.is_some_and(|id| id != workspace.project_id)
+        || choice.environment_id != workspace.environment_id || previous.environment_id != workspace.environment_id
+        || choice.environment_hash != workspace.environment_hash || previous.environment_hash != workspace.environment_hash
+        || choice.kind != previous.kind || choice.public_origin != previous.public_origin
+        || serde_json::to_value(&choice.repositories).map_err(|_|ApiError::conflict("workspace_profile_invalid"))?
+            != serde_json::to_value(&previous.repositories).map_err(|_|ApiError::conflict("workspace_profile_invalid"))?
+        || ["repositories","services","storage","secrets"].iter().any(|key| choice.profile[*key] != previous.profile[*key])
+        || current != selected || current["id"] != workspace.target_id.to_string()
+        || !matches!(current["adapter"].as_str(),Some("kubernetes"|"compose")) {
+        return Err(ApiError::conflict("workspace_profile_adoption_identity_mismatch"));
+    }
+    Ok(())
 }
 
 fn validate_developer_checks(
@@ -478,8 +510,62 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_developer_checks, validate_recipe};
-    use serde_json::json;
+    use super::{runtime_path, validate_adoption, validate_developer_checks, validate_recipe, SourceRepository, TargetChoice};
+    use serde_json::{json, Value};
+    use std::path::Path;
+    use uuid::Uuid;
+
+    fn adoption_fixture()->(cicd_infra::development_workspace::Workspace,TargetChoice,TargetChoice,Value) {
+        let (project,repository,environment,target)=(Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4());
+        let profile=serde_json::json!({"apiVersion":"pdlc.dev/workspace/v1","repositories":[{"key":"source"}],"services":[],"storage":[],"secrets":[],"checks":[]});
+        let previous=TargetChoice {id:target,repository_id:repository,configuration_id:Some(project),
+            profile_id:Uuid::new_v4(),environment_id:environment,environment_hash:"a".repeat(64),name:"Current".into(),kind:"existing".into(),
+            public_origin:None,profile_hash:cicd_infra::development_workspace::request_hash(&profile).unwrap(),profile,
+            repositories:vec![SourceRepository{key:"source".into(),repository_id:repository,clone_url:"https://fixture.invalid/repo.git".into()}]};
+        let workspace=serde_json::from_value(serde_json::json!({"id":Uuid::new_v4(),"project_id":project,"repository_id":repository,
+            "tracker_instance_id":Uuid::new_v4(),"tracker_project_id":Uuid::new_v4(),"environment_id":environment,"environment_hash":previous.environment_hash,
+            "name":"Current","profile_id":previous.profile_id,"target_id":target,"catalog_target_id":target,
+            "profile_hash":previous.profile_hash,"catalog_hash":cicd_infra::development_workspace::request_hash(&serde_json::to_value(&previous).unwrap()).unwrap(),
+            "public_origin":null,"profile":previous.profile,"sources":[],"local_preparation":{},"preparation":"unprepared",
+            "runtime":"stopped","desired_runtime":"stopped","observation":{},"observed_at":null,"version":1,
+            "created_by":Uuid::new_v4(),"owner_name":null,"created_at":chrono::Utc::now(),"retired_at":null})).unwrap();
+        let mut next=previous.clone();next.id=Uuid::new_v4();next.profile_id=Uuid::new_v4();
+        next.profile["checks"]=serde_json::json!([{"key":"new","executor":"forge","requiresRuntime":false,"commands":["test -f README.md"]}]);
+        next.profile_hash=cicd_infra::development_workspace::request_hash(&next.profile).unwrap();
+        let runtime=serde_json::json!({"id":target,"adapter":"kubernetes","namespace":"fixture","namespaceUid":Uuid::new_v4(),"services":[],"storage":[],"secrets":[]});
+        (workspace,previous,next,runtime)
+    }
+
+    #[test]
+    fn profile_adoption_preserves_the_same_physical_target() {
+        let (workspace,previous,next,runtime)=adoption_fixture();
+        validate_adoption(&workspace,&previous,&next,&runtime,&runtime).unwrap();
+        let root=Path::new("/catalog");
+        assert_eq!(runtime_path(root,workspace.target_id,next.id),root.join("instances").join(workspace.target_id.to_string()).join("runtime.json"));
+    }
+    #[test]
+    fn profile_adoption_rejects_foreign_repository_environment_and_owner_projection() {
+        let (workspace,previous,next,runtime)=adoption_fixture();
+        for field in ["project","repository","environment","environment_hash","public_origin","kind"] {
+            let mut changed=next.clone();
+            match field {"project"=>changed.configuration_id=Some(Uuid::new_v4()),"repository"=>changed.repository_id=Uuid::new_v4(),
+                "environment"=>changed.environment_id=Uuid::new_v4(),"environment_hash"=>changed.environment_hash="b".repeat(64),
+                "public_origin"=>changed.public_origin=Some("https://foreign.invalid".into()),_=>changed.kind="template".into()}
+            assert!(validate_adoption(&workspace,&previous,&changed,&runtime,&runtime).is_err(),"{field}");
+        }
+    }
+    #[test]
+    fn profile_adoption_cannot_change_runtime_or_physical_profile_sections() {
+        let (workspace,previous,next,runtime)=adoption_fixture();
+        for field in ["namespaceUid","id","services"] {
+            let mut changed=runtime.clone();changed[field]=serde_json::json!("foreign");
+            assert!(validate_adoption(&workspace,&previous,&next,&runtime,&changed).is_err(),"{field}");
+        }
+        for field in ["repositories","services","storage","secrets"] {
+            let mut changed=next.clone();changed.profile[field]=serde_json::json!([{"key":"foreign"}]);
+            assert!(validate_adoption(&workspace,&previous,&changed,&runtime,&runtime).is_err(),"{field}");
+        }
+    }
 
     #[test]
     fn developer_policy_requires_distinct_published_executable_checks() {

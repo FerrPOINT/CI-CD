@@ -1314,3 +1314,31 @@ async fn native_delivery_hold_blocks_only_its_instance_until_confirmed() {
     );
     f.close().await;
 }
+
+
+#[tokio::test]
+async fn profile_adoption_waits_for_original_operations_sessions_and_pipeline_custody() {
+    let f=Fixture::new().await;
+    let action=WorkspaceAction::AdoptProfile {catalog_target_id:Uuid::new_v4()};
+    let queued=f.enqueue(Uuid::new_v4(),f.actor,1,WorkspaceAction::BeginSession{task:"DEV-1".into()}).await.unwrap();
+    assert!(matches!(f.enqueue(Uuid::new_v4(),f.actor,f.version().await,action.clone()).await,
+        Err(store::Error::Conflict("workspace_operation_in_progress"))));
+    sqlx::query("UPDATE development_workspace_operations SET state='failed',finished_at=clock_timestamp(),result=$2 WHERE id=$1")
+        .bind(queued.id).bind(json!({"state":"failed"})).execute(&f.pool).await.unwrap();
+    let session=Uuid::new_v4();
+    sqlx::query("INSERT INTO development_workspace_sessions(id,workspace_id,actor_id,owner_subject,task_id,task_ref) VALUES($1,$2,$3,$3,$4,'DEV-1')")
+        .bind(session).bind(f.workspace).bind(f.actor).bind(Uuid::new_v4()).execute(&f.pool).await.unwrap();
+    assert!(matches!(f.enqueue(Uuid::new_v4(),f.actor,f.version().await,action.clone()).await,
+        Err(store::Error::Conflict("workspace_has_active_session"))));
+    sqlx::query("UPDATE development_workspace_sessions SET ended_at=clock_timestamp() WHERE id=$1")
+        .bind(session).execute(&f.pool).await.unwrap();
+    let pipeline=Uuid::new_v4();
+    sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','queued')")
+        .bind(pipeline).bind(f.project).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO deployments(id,environment_id,pipeline_id,git_ref,status) VALUES($1,$2,$3,'main','pending')")
+        .bind(Uuid::new_v4()).bind(f.environment).bind(pipeline).execute(&f.pool).await.unwrap();
+    assert!(matches!(f.enqueue(Uuid::new_v4(),f.actor,f.version().await,action).await,
+        Err(store::Error::Conflict("workspace_has_active_pipeline"))));
+    eprintln!("FORGE_PROFILE_ADOPTION_BUSY=verified");
+    f.close().await;
+}

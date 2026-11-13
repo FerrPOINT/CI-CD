@@ -154,7 +154,29 @@ async fn enqueue(
     {
         return Ok(original);
     }
+    // Adoption is an atomic metadata effect, using the current locked selection.
+    let current = if matches!(action,WorkspaceAction::AdoptProfile { .. }) {
+        Some(sqlx::query_as::<_,Workspace>("SELECT * FROM development_workspaces WHERE id=$1 FOR UPDATE")
+            .bind(workspace.id).fetch_one(&mut **tx).await.map_err(ApiError::internal)?)
+    } else { None };
+    let workspace = current.as_ref().unwrap_or(workspace);
     let mut plan = catalog::operation_plan(state, workspace, action)?;
+    if let WorkspaceAction::AdoptProfile { .. } = action {
+        let (instance,project) = tracker_project_binding(&mut **tx,workspace.repository_id).await?;
+        if (instance,project) != (workspace.tracker_instance_id,workspace.tracker_project_id) {
+            return Err(ApiError::conflict("workspace_tracker_project_binding_changed"));
+        }
+        // The exact original native observation seals the physical descriptor;
+        // a mutable catalog file alone cannot replace that identity.
+        let observed:Option<String> = sqlx::query_scalar::<_,Option<String>>("SELECT execution_plan->>'runtimeHash' FROM development_workspace_operations
+            WHERE id=$1 AND workspace_id=$2 AND state='succeeded' AND result=$3
+            AND request->>'action' IN ('register','create','observe','start','stop')")
+            .bind(workspace.observation["operationId"].as_str().and_then(|id|id.parse::<Uuid>().ok()))
+            .bind(workspace.id).bind(&workspace.observation).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?.flatten();
+        if observed.as_deref() != plan["profileAdoption"]["runtimeHash"].as_str() || observed.is_none() {
+            return Err(ApiError::conflict("workspace_original_runtime_identity_unconfirmed"));
+        }
+    }
     if machine_authority.is_some() {
         machine::require_pipeline(action, &plan, &workspace.profile)?;
     }
@@ -336,6 +358,13 @@ pub(crate) async fn detail(
     }))
 }
 
+async fn tracker_project_binding<'e,E>(executor:E,repository:Uuid)->Result<(Uuid,Uuid),ApiError>
+where E:sqlx::Executor<'e,Database=sqlx::Postgres> {
+    sqlx::query_as("SELECT w.tracker_instance_id,w.tracker_project_id FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE r.id=$1 AND w.state='active'")
+        .bind(repository).fetch_optional(executor).await.map_err(ApiError::internal)?
+        .ok_or_else(||ApiError::conflict("workspace_tracker_project_binding_required"))
+}
+
 #[utoipa::path(post,path="/api/v1/projects/{project_id}/development-workspaces",params(("project_id"=Uuid,Path)),request_body=RegisterWorkspace,responses((status=200,body=Operation)),tag="development-workspaces")]
 pub(crate) async fn register(
     State(state): State<Arc<AppState>>,
@@ -388,6 +417,9 @@ pub(crate) async fn register(
         {
             return Err(ApiError::conflict("workspace_target_binding_mismatch"));
         }
+        let environment_owner:Option<Uuid> = sqlx::query_scalar("SELECT id FROM development_workspaces WHERE environment_id=$1")
+            .bind(choice.environment_id).fetch_optional(&mut *tx).await.map_err(ApiError::internal)?;
+        if environment_owner.is_some() { return Err(ApiError::conflict("workspace_environment_already_owned")); }
         let environment_matches = sqlx::query(
             "UPDATE environments SET purpose='workspace_target' WHERE id=$1 AND project_id=$2",
         )
@@ -406,11 +438,7 @@ pub(crate) async fn register(
         } else {
             choice.id
         };
-        let tracker: Option<(Uuid,Uuid)> = sqlx::query_as(
-            "SELECT w.tracker_instance_id,w.tracker_project_id FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE r.id=$1 AND w.state='active'",
-        ).bind(repository).fetch_optional(&mut *tx).await.map_err(ApiError::internal)?;
-        let (tracker_instance, tracker_project) = tracker
-            .ok_or_else(|| ApiError::conflict("workspace_tracker_project_binding_required"))?;
+        let (tracker_instance,tracker_project) = tracker_project_binding(&mut *tx,repository).await?;
         let catalog_hash = store::request_hash(
             &serde_json::to_value(&choice)
                 .map_err(|_| ApiError::conflict("invalid_workspace_catalog"))?,
@@ -473,6 +501,7 @@ pub(crate) async fn submit(
     if matches!(
         input.command,
         WorkspaceAction::RecoverSession { .. }
+            | WorkspaceAction::AdoptProfile { .. }
             | WorkspaceAction::Close {}
             | WorkspaceAction::ConvertToStand {}
     ) {
