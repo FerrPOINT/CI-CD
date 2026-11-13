@@ -231,7 +231,7 @@ async fn namespace_delivery_reader_middleware_preserves_machine_and_human_bounda
                 sub: READER.into(),
                 aud: "sdlc".into(),
                 iss: "http://namespace-fixture.test".into(),
-                exp: Some(Utc::now().timestamp() + 300),
+                exp: Utc::now().timestamp() + 300,
                 iat: Utc::now().timestamp(),
                 role: Some("admin".into()),
                 scopes: vec!["ci-cd:read".into()],
