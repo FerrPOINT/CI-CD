@@ -1576,8 +1576,7 @@ pub async fn list_tree(
     if let Some(page) = params.page() {
         return Ok(Json(read_tree_page(&path, &spec, subpath, page).await?));
     }
-    let output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
+    let output = committed_git(&path)
         .args(["ls-tree", "-l", "-z", "--", &spec])
         .output()
         .await
@@ -1644,6 +1643,15 @@ async fn read_tree_page(
     Ok(entries)
 }
 
+// A recorded commit identifies its actual objects, independent of mutable refs/replace.
+fn committed_git(path: &std::path::Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("git");
+    command
+        .arg(format!("--git-dir={}", path.display()))
+        .env("GIT_NO_REPLACE_OBJECTS", "1");
+    command
+}
+
 pub(crate) async fn read_committed_tree(
     repository: &std::path::Path,
     commit: &str,
@@ -1680,10 +1688,8 @@ async fn collect_tree_entries(
     seen: &mut usize,
     entries: &mut Vec<TreeEntry>,
 ) -> Result<bool, ApiError> {
-    let mut command = tokio::process::Command::new("git");
-    command
-        .arg(format!("--git-dir={}", path.display()))
-        .args(["ls-tree", "-l", "-z"]);
+    let mut command = committed_git(path);
+    command.args(["ls-tree", "-l", "-z"]);
     if directories_only {
         command.arg("-d");
     }
@@ -1841,8 +1847,7 @@ pub(crate) async fn read_blob_content(
         String::from_utf8_lossy(&bytes).into_owned()
     };
     // Resolve blob sha for the response.
-    let sha_output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
+    let sha_output = committed_git(path)
         .args(["rev-parse", &spec])
         .output()
         .await
@@ -1863,8 +1868,7 @@ pub(crate) async fn read_blob_content(
 const MAX_BLOB_LEN: usize = 512 * 1024;
 
 async fn read_blob(path: &std::path::Path, spec: &str) -> Result<(Vec<u8>, i64, bool), ApiError> {
-    let size_output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
+    let size_output = committed_git(path)
         .args(["cat-file", "-s", spec])
         .output()
         .await
@@ -1880,8 +1884,7 @@ async fn read_blob(path: &std::path::Path, spec: &str) -> Result<(Vec<u8>, i64, 
         return Err(ApiError::bad_request("git returned an invalid blob size"));
     }
 
-    let mut child = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
+    let mut child = committed_git(path)
         .args(["cat-file", "blob", spec])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

@@ -528,5 +528,22 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(entries.len(), 1);
+        let original_tree = serde_json::to_value(&entries).unwrap();
+        git(&bare, &["replace", &original, &current]);
+        let still_original =
+            crate::pulls::read_blob_content(&bare, &pinned.sha, "example.txt".into())
+                .await
+                .unwrap();
+        assert_eq!(
+            serde_json::to_value(still_original).unwrap()["content"],
+            "original committed source"
+        );
+        let still_original_tree = crate::pulls::read_committed_tree(&bare, &pinned.sha, "", 2, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(still_original_tree).unwrap(),
+            original_tree
+        );
     }
 }
