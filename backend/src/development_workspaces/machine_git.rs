@@ -27,7 +27,14 @@ struct Ticket {
     issuer: String,
     assignment: WorkspaceAssignment,
     token: String,
-    until: i64,
+    #[serde(deserialize_with = "required_bound")]
+    until: Option<i64>,
+}
+
+// Required nullable field: explicit null carries the same persistent root;
+// an absent field is corrupt custody, never an unbounded default.
+fn required_bound<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+    Option::<i64>::deserialize(deserializer)
 }
 
 pub(crate) struct Authorization {
@@ -121,7 +128,7 @@ pub(crate) async fn admit(
     let verified = identity.central.ok_or_else(ApiError::forbidden)?;
     let issuer = verified.issuer.clone();
     let proof = machine::confirm_identity(
-        pool,
+        &mut *pool.acquire().await.map_err(ApiError::internal)?,
         &workspace,
         identity.claims.sub,
         verified,
@@ -143,7 +150,7 @@ pub(crate) async fn admit(
             issuer,
             assignment: proof.assignment.clone(),
             token: token.into(),
-            until: proof.clock.valid_until()?.timestamp(),
+            until: proof.clock.valid_until()?.map(|until| until.timestamp()),
         };
         let plain = serde_json::to_string(&ticket).map_err(|_| ApiError::forbidden())?;
         Some(
@@ -197,7 +204,7 @@ async fn check_callback(
         crate::platform::decrypt_secret(&request.developer_workspace, &state.config.secrets)
             .map_err(|_| ApiError::forbidden())?;
     let ticket: Ticket = serde_json::from_str(&plain).map_err(|_| ApiError::forbidden())?;
-    if ticket.purpose != PURPOSE || chrono::Utc::now().timestamp() >= ticket.until {
+    if ticket.purpose != PURPOSE || ticket.until.is_some_and(|until| chrono::Utc::now().timestamp() >= until) {
         return Err(ApiError::forbidden());
     }
     let pool = super::pool(state)?;
@@ -221,7 +228,7 @@ async fn check_callback(
         return Err(ApiError::forbidden());
     }
     let proof = machine::confirm_identity(
-        pool,
+        &mut *pool.acquire().await.map_err(ApiError::internal)?,
         &workspace,
         ticket.actor,
         verified,
@@ -230,7 +237,11 @@ async fn check_callback(
         AssignmentAccess::Active,
     )
     .await?;
-    proof.clock.cap_until(ticket.until).require()?;
+    if let Some(until) = ticket.until {
+        proof.clock.cap_until(until).require()?;
+    } else {
+        proof.clock.require()?;
+    }
     Ok(crate::task_git::CandidateCheckReadback {
         verified: true,
         triggered: false,
@@ -358,6 +369,39 @@ pub(crate) mod tests {
             assert!(serde_json::from_value::<crate::task_git::PushRequest>(body).is_err());
         }
     }
+    #[test]
+    fn same_root_ticket_bound_is_required_and_nullable() {
+        let subject = Uuid::new_v4();
+        let ticket = Ticket {
+            purpose: PURPOSE.into(),
+            workspace: Uuid::new_v4(),
+            actor: Uuid::new_v4(),
+            subject,
+            issuer: "https://fixture.invalid".into(),
+            assignment: DeveloperAssignment {
+                task_id: Uuid::new_v4(),
+                assignment_id: Uuid::new_v4(),
+                execution_id: Uuid::new_v4(),
+                agent_id: Uuid::new_v4(),
+                version: 7,
+                machine_subject: subject,
+                requirement_revision: 3,
+                stage: "Development".into(),
+                source: serde_json::json!({}),
+            },
+            token: "sdlc_pat_fixture_same_root".into(),
+            until: None,
+        };
+        let mut wire = serde_json::to_value(ticket).unwrap();
+        assert_eq!(serde_json::from_value::<Ticket>(wire.clone()).unwrap().until, None);
+        wire["until"] = serde_json::json!(123);
+        assert_eq!(serde_json::from_value::<Ticket>(wire.clone()).unwrap().until, Some(123));
+        wire["until"] = serde_json::json!("never");
+        assert!(serde_json::from_value::<Ticket>(wire.clone()).is_err());
+        wire.as_object_mut().unwrap().remove("until");
+        assert!(serde_json::from_value::<Ticket>(wire).is_err());
+    }
+
     #[test]
     fn git_workspace_locator_is_explicit_and_is_not_an_account_alias() {
         assert_eq!(workspace_user("git").unwrap(), None);

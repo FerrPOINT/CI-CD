@@ -2,14 +2,17 @@
 use super::*;
 use serde_json::Value;
 
-pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid) {
+pub(super) async fn publish(pool: &PgPool, root: &std::path::Path, id: Uuid, required: bool) {
     let workspace = store::workspace(pool, id).await.unwrap();
-    let profile = json!({"apiVersion":"pdlc.dev/workspace/v1", "repositories":[{"key":"source"}],
-        "tools":[], "services":[], "storage":[], "secrets":[], "preparationChecks":["unit"], "requiredDeveloperChecks":["unit"],
+    let mut profile = json!({"apiVersion":"pdlc.dev/workspace/v1", "repositories":[{"key":"source"}],
+        "tools":[], "services":[], "storage":[], "secrets":[], "preparationChecks":["unit"],
         "checks":[{"key":"unit","executor":"forge","requiresRuntime":false,"commands":["test -f README.md"]},
             {"key":"release","executor":"forge-delivery","requiresRuntime":false},
             {"key":"base-release","kind":"delivery","executor":"forge-delivery","requiresRuntime":false},
             {"key":"publish","kind":"build","executor":"forge-build","requiresRuntime":false}]});
+    if required {
+        profile["requiredDeveloperChecks"] = json!(["unit"]);
+    }
     let profile_hash = store::request_hash(&profile).unwrap();
     let environment: Value = sqlx::query_scalar("SELECT jsonb_build_object('adapter','compose','environmentId',id,'projectId',project_id,'url',url) FROM environments WHERE id=$1")
         .bind(workspace.environment_id).fetch_one(pool).await.unwrap();

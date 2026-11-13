@@ -185,7 +185,7 @@ async fn saved_connections_group_filter_preserves_uuid_namespace_and_combined_pa
         role: "admin".into(),
         ver: 0,
         iat: 0,
-        exp: i64::MAX,
+        exp: Some(i64::MAX),
     };
     let router = cicd::repository_sync::routes()
         .with_state(state.clone())

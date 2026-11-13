@@ -5,8 +5,8 @@ use tokio::io::AsyncReadExt;
 
 #[derive(Clone, Copy)]
 pub(crate) struct GitDeadline {
-    instant: Instant,
-    until: i64,
+    instant: Option<Instant>,
+    until: Option<i64>,
 }
 impl GitDeadline {
     pub(crate) fn native(instant: Instant) -> Result<Self, ApiError> {
@@ -20,7 +20,10 @@ impl GitDeadline {
             )
             .ok_or_else(ApiError::forbidden)?
             .timestamp();
-        let clock = Self { instant, until };
+        let clock = Self {
+            instant: Some(instant),
+            until: Some(until),
+        };
         clock.require()?;
         Ok(clock)
     }
@@ -28,13 +31,13 @@ impl GitDeadline {
         proof: &pdlc_auth_core::application_access::VerifiedApplicationAccess,
     ) -> Self {
         Self {
-            instant: proof.monotonic_deadline(),
-            until: proof.decision.expires_at.timestamp(),
+            instant: Some(proof.monotonic_deadline()),
+            until: Some(proof.decision.expires_at.timestamp()),
         }
     }
     pub(crate) fn request(
         authority: &pdlc_auth_core::http_authority::RequestAuthority,
-        until: i64,
+        until: Option<i64>,
     ) -> Result<Option<Self>, ApiError> {
         let Some(instant) = authority.original_deadline() else {
             return Ok(None);
@@ -50,20 +53,22 @@ impl GitDeadline {
             .ok_or_else(ApiError::forbidden)?
             .timestamp();
         let clock = Self {
-            instant,
-            until: until.min(local_until),
+            instant: Some(instant),
+            until: Some(until.map_or(local_until, |until| until.min(local_until))),
         };
         clock.require()?;
         Ok(Some(clock))
     }
-    pub(crate) fn valid_until(self) -> Result<DateTime<Utc>, ApiError> {
+    pub(crate) fn valid_until(self) -> Result<Option<DateTime<Utc>>, ApiError> {
         self.require()?;
-        DateTime::from_timestamp(self.until, 0).ok_or_else(ApiError::forbidden)
+        self.until
+            .map(|until| DateTime::from_timestamp(until, 0).ok_or_else(ApiError::forbidden))
+            .transpose()
     }
     pub(crate) fn intersect(self, other: Self) -> Self {
         Self {
-            instant: self.instant.min(other.instant),
-            until: self.until.min(other.until),
+            instant: self.instant.into_iter().chain(other.instant).min(),
+            until: self.until.into_iter().chain(other.until).min(),
         }
     }
     /// Freshness only, including lock/COMMIT waits. No role or namespace grant.
@@ -72,14 +77,18 @@ impl GitDeadline {
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     ) -> Result<(), ApiError> {
         self.require()?;
+        // A persistent root has no credential deadline. Independent finite owners
+        // intersect this clock before reaching their existing COMMIT fence.
+        let Some(instant) = self.instant else {
+            return Ok(());
+        };
         // Observe DB time before measuring original remaining monotonic life.
         // This fixed cap cannot be extended by DB/client clock skew or SQL waits.
         let observed_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&mut **transaction)
             .await
             .map_err(ApiError::internal)?;
-        let remaining = self
-            .instant
+        let remaining = instant
             .checked_duration_since(Instant::now())
             .ok_or_else(ApiError::unauthorized)?;
         let cap = observed_at
@@ -87,7 +96,7 @@ impl GitDeadline {
                 chrono::Duration::from_std(remaining).map_err(|_| ApiError::unauthorized())?,
             )
             .ok_or_else(ApiError::unauthorized)?
-            .min(self.valid_until()?);
+            .min(self.valid_until()?.ok_or_else(ApiError::unauthorized)?);
         let id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO forge_request_commit_fences(fence_id,valid_until)
@@ -112,27 +121,41 @@ impl GitDeadline {
         }
     }
     pub(crate) fn cap_until(self, until: i64) -> Self {
+        // The cap belongs to an actual preparation/owner, not credential renewal.
+        let until = self.until.map_or(until, |original| original.min(until));
+        let wall = Utc::now().timestamp();
+        let cap = until
+            .checked_sub(wall)
+            .and_then(|remaining| u64::try_from(remaining).ok())
+            .and_then(|remaining| Instant::now().checked_add(Duration::from_secs(remaining)));
         Self {
-            until: self.until.min(until),
-            ..self
+            until: Some(until),
+            instant: match (self.instant, cap) {
+                (Some(original), Some(cap)) => Some(original.min(cap)),
+                (_, cap) => cap,
+            },
         }
     }
     pub(super) fn product_personal(
         source: &cicd_app::product_token::ConfirmedPersonalToken,
     ) -> Self {
         Self {
-            instant: source.owner().monotonic_deadline(),
-            until: source.owner().decision.expires_at.timestamp(),
+            instant: Some(source.owner().monotonic_deadline()),
+            until: Some(source.owner().decision.expires_at.timestamp()),
         }
     }
     pub(crate) fn admission(source: &pdlc_auth_core::service_bridge::ConfirmedSpaceRead) -> Self {
         Self {
-            instant: source.monotonic_deadline(),
-            until: source.valid_until(),
+            instant: Some(source.monotonic_deadline()),
+            until: Some(source.valid_until()),
         }
     }
     pub(crate) fn current(self) -> bool {
-        Instant::now() < self.instant && Utc::now().timestamp() < self.until
+        match (self.instant, self.until) {
+            (None, None) => true,
+            (Some(instant), Some(until)) => Instant::now() < instant && Utc::now().timestamp() < until,
+            _ => false,
+        }
     }
     pub(crate) fn commit_error(error: sqlx::Error) -> ApiError {
         if error.as_database_error().is_some_and(|db| {
@@ -153,7 +176,11 @@ impl GitDeadline {
     }
     /// Translate only the remaining fixed window, conservatively rounded down.
     #[cfg(target_os = "linux")]
-    pub(super) fn hook_bounds(self) -> Result<(u64, i64), ApiError> {
+    pub(super) fn hook_bounds(self) -> Result<Option<(u64, i64)>, ApiError> {
+        self.require()?;
+        let (Some(instant), Some(until)) = (self.instant, self.until) else {
+            return Ok(None);
+        };
         let mut clock = libc::timespec {
             tv_sec: 0,
             tv_nsec: 0,
@@ -163,8 +190,7 @@ impl GitDeadline {
             return Err(ApiError::service_unavailable("Git fixed clock unavailable"));
         }
         self.require()?;
-        let remaining = self
-            .instant
+        let remaining = instant
             .saturating_duration_since(Instant::now())
             .as_secs();
         let cap = u64::try_from(clock.tv_sec)
@@ -172,10 +198,14 @@ impl GitDeadline {
             .and_then(|seconds| seconds.checked_add(remaining))
             .filter(|_| remaining > 0)
             .ok_or_else(|| ApiError::service_unavailable("Git proof window insufficient"))?;
-        Ok((cap, self.until))
+        Ok(Some((cap, until)))
     }
     #[cfg(not(target_os = "linux"))]
-    pub(super) fn hook_bounds(self) -> Result<(u64, i64), ApiError> {
+    pub(super) fn hook_bounds(self) -> Result<Option<(u64, i64)>, ApiError> {
+        self.require()?;
+        if self.instant.is_none() {
+            return Ok(None);
+        }
         Err(ApiError::service_unavailable(
             "Git fixed-clock hooks require Linux",
         ))
@@ -243,8 +273,8 @@ async fn output_with_stdout(
         proof.require()?;
     }
     let expiry = async {
-        match proof {
-            Some(proof) => tokio::time::sleep_until(proof.instant.into()).await,
+        match proof.and_then(|proof| proof.instant) {
+            Some(instant) => tokio::time::sleep_until(instant.into()).await,
             None => std::future::pending::<()>().await,
         }
     };
@@ -291,7 +321,7 @@ async fn output_with_stdout(
         })
     };
     let stop = async {
-        if proof.is_none() {
+        if proof.and_then(|proof| proof.instant).is_none() {
             std::future::pending::<()>().await;
         }
         loop {
@@ -348,4 +378,26 @@ async fn output_with_stdout(
         ));
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persistent_transport_preserves_an_independent_finite_owner() {
+        let root = GitDeadline { instant: None, until: None };
+        assert!(root.current());
+        assert_eq!(root.valid_until().unwrap(), None);
+        assert_eq!(root.hook_bounds().unwrap(), None);
+        let finite = GitDeadline::native(Instant::now() + Duration::from_secs(30)).unwrap();
+        assert_eq!(root.intersect(finite).instant, finite.instant);
+        assert_eq!(finite.intersect(root).until, finite.until);
+        let capped = root.cap_until(Utc::now().timestamp() + 20);
+        assert!(capped.current());
+        assert!(capped.instant.is_some());
+        assert!(capped.valid_until().unwrap().is_some());
+        assert!(!root.cap_until(Utc::now().timestamp() - 1).current());
+        assert_eq!(root.until, None);
+    }
 }

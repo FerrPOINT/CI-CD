@@ -428,7 +428,7 @@ async fn sync_http_defaults_cas_history_and_effective_permissions() {
         role: "admin".into(),
         ver: 0,
         iat: 0,
-        exp: i64::MAX,
+        exp: Some(i64::MAX),
     };
     let state = std::sync::Arc::new(cicd::api::AppState {
         pool: Some(pool.clone()),
@@ -2141,7 +2141,7 @@ async fn sync_server_pages_large_lists_history_and_refs() {
         role: "admin".into(),
         ver: 0,
         iat: 0,
-        exp: i64::MAX,
+        exp: Some(i64::MAX),
     };
     let router = cicd::repository_sync::routes()
         .with_state(state)

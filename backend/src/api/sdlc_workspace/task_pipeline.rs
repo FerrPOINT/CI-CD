@@ -426,7 +426,12 @@ pub(crate) async fn before_delegated_effect(
     attempt: Uuid,
     config: &crate::runner::RuntimeRunnerConfig,
 ) -> Result<Option<crate::git_host::GitDeadline>, ApiError> {
-    let owner_clock = crate::pipeline_authority::confirm(pool, pipeline, attempt).await?;
+    let owner_clock = crate::pipeline_authority::confirm(
+        &mut *pool.acquire().await.map_err(ApiError::internal)?,
+        pipeline,
+        attempt,
+    )
+    .await?;
     if let Some(clock) = owner_clock {
         clock.require()?;
     }

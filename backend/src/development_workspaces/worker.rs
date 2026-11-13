@@ -172,7 +172,7 @@ async fn execute(
     let machine = if local_role == "service_account" && !work.reconcile_only {
         Some(
             super::machine::verify(
-                pool,
+                &mut *pool.acquire().await.map_err(ApiError::internal)?,
                 &workspace,
                 work.id,
                 actor,
@@ -434,7 +434,7 @@ async fn launch_pipeline(
         let action =
             serde_json::from_value(work.request.clone()).map_err(|_| ApiError::forbidden())?;
         let proof = super::machine::verify(
-            pool,
+            &mut *pool.acquire().await.map_err(ApiError::internal)?,
             workspace,
             work.id,
             work.actor_id,

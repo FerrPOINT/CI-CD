@@ -86,12 +86,10 @@ impl IdentityDeletionWindow {
     pub(crate) fn confirmed(
         source: &pdlc_auth_core::service_bridge::VerifiedCentralToken,
     ) -> Result<Self, OwnerError> {
-        let original = crate::git_host::GitDeadline::identity(source);
-        let cap = crate::git_host::GitDeadline::native(source.lifetime.monotonic_deadline())
-            .map_err(|_| OwnerError::Expired)?;
-        Ok(Self {
-            clock: original.intersect(cap),
-        })
+        let confirmation = source.confirmation_validity().map_err(|_| OwnerError::Expired)?;
+        let clock = crate::git_host::GitDeadline::identity(source).cap_until(confirmation.valid_until);
+        clock.require().map_err(|_| OwnerError::Expired)?;
+        Ok(Self { clock })
     }
     pub fn is_current(&self) -> bool {
         self.clock.current()

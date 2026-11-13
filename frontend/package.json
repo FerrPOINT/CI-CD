@@ -24,8 +24,6 @@
   "dependencies": {
     "@pdlc/ui": "file:../../services-base/base-modules/ui",
     "@tanstack/react-query": "^5.74.4",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
     "i18next": "^26.4.0",
     "lucide-react": "^0.487.0",
     "playwright": "^1.62.1",
@@ -33,7 +31,6 @@
     "react-dom": "^19.1.0",
     "react-i18next": "^15.5.0",
     "react-router": "^8.4.0",
-    "tailwind-merge": "^3.2.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
@@ -56,7 +53,7 @@
     "tailwindcss": "^4.1.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
-    "vite": "^6.4.4",
+    "vite": "^6.4.5",
     "vitest": "^4.1.12",
     "yaml": "2.9.0"
   },

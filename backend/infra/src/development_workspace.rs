@@ -5,7 +5,7 @@ use cicd_domain::development_workspace::WorkspaceAction;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgExecutor, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -88,10 +88,10 @@ pub struct Operation {
     pub finished_at: Option<DateTime<Utc>>,
 }
 
-pub async fn workspace(pool: &PgPool, id: Uuid) -> Result<Workspace, Error> {
+pub async fn workspace(database: impl PgExecutor<'_>, id: Uuid) -> Result<Workspace, Error> {
     sqlx::query_as("SELECT w.*,u.username AS owner_name FROM development_workspaces w JOIN users u ON u.id=w.created_by WHERE w.id=$1")
         .bind(id)
-        .fetch_optional(pool)
+        .fetch_optional(database)
         .await?
         .ok_or(Error::NotFound)
 }

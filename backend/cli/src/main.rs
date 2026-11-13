@@ -1026,7 +1026,15 @@ async fn qualified_repository_pr_commands_send_the_repository_as_one_segment() {
     assert_eq!(response["method"], "GET");
     assert_eq!(response["path"], "/api/v1/repos/team%2Fshop/pulls/page");
 
-    let close = Cli::parse_from(["cicd", "pr", "close", "--repo", "team/shop", "--number", "1"]);
+    let close = Cli::parse_from([
+        "cicd",
+        "pr",
+        "close",
+        "--repo",
+        "team/shop",
+        "--number",
+        "1",
+    ]);
     let response = execute(&api, close.command).await.unwrap();
     assert_eq!(response["method"], "POST");
     assert_eq!(response["path"], "/api/v1/repos/team%2Fshop/pulls/1/action");

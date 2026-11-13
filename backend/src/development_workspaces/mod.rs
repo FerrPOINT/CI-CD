@@ -160,6 +160,14 @@ async fn enqueue(
             .bind(workspace.id).fetch_one(&mut **tx).await.map_err(ApiError::internal)?)
     } else { None };
     let workspace = current.as_ref().unwrap_or(workspace);
+    if machine_authority.is_some()
+        && matches!(action, WorkspaceAction::BeginSession { .. })
+        && workspace.profile.get("requiredDeveloperChecks").is_none()
+    {
+        return Err(ApiError::conflict(
+            "workspace_required_developer_checks_missing",
+        ));
+    }
     let mut plan = catalog::operation_plan(state, workspace, action)?;
     if let WorkspaceAction::AdoptProfile { .. } = action {
         let (instance,project) = tracker_project_binding(&mut **tx,workspace.repository_id).await?;

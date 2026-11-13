@@ -361,6 +361,18 @@ Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` prox
 Приостановка producers и source-owned writer closure перед backup описаны в
 [FORGE_QUIESCENCE](FORGE_QUIESCENCE.md) и [ADR-0033](adr/0033-product-local-quiescence.md).
 
+## Публикация файлов артефактов
+
+Payload/hash/fsync выполняются в принадлежащей upload blocking-операции до
+SQL-locks. Её guard удаляет только неопубликованный файл; отмена HTTP не теряет
+владение продолжающейся записью. Публикация берёт pipeline, job, attempt и затем
+upload session в существующем порядке retry/cancel. После отправки COMMIT файл
+сохраняется до разрешения исхода. Отрицательный readback разрешает очистку только
+после повторного получения того же владельческого барьера на новом соединении.
+Недоступная сверка сохраняет bytes; новый upload автоматически не запускается.
+Скачивание сохраняет containment и checksum, а filesystem/hash выполняет вне
+async executor. Прежний HTTP DTO и оригинальный admission deadline сохранены.
+
 ## Минимальный Reviewer
 
 [ADR-0047](adr/0047-task-bound-reviewer.md) использует существующие Task links,

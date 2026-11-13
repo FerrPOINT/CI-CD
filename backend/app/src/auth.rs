@@ -54,7 +54,8 @@ pub struct AccessClaims {
     #[serde(default)]
     pub ver: i64,
     pub iat: i64,
-    pub exp: i64,
+    /// None is only valid for a verified persistent machine credential, never a JWT.
+    pub exp: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -149,7 +150,7 @@ pub fn issue_access_with_secret_version(
         role: role.to_string(),
         ver: token_version,
         iat: now.timestamp(),
-        exp: exp.timestamp(),
+        exp: Some(exp.timestamp()),
     };
     let token = jsonwebtoken::encode(&Header::default(), &claims, &encoding_secret(secret))
         .map_err(|_| AuthError::Invalid)?;
@@ -177,6 +178,10 @@ pub fn verify_access_with_secret(token: &str, secret: &str) -> Result<AccessClai
         jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::Expired,
         _ => AuthError::Invalid,
     })?;
+    // A persistent root PAT is verified by Auth introspection, never this JWT path.
+    if data.claims.exp.is_none() {
+        return Err(AuthError::Invalid);
+    }
     Ok(data.claims)
 }
 
@@ -552,6 +557,24 @@ mod tests {
         assert_eq!(claims.sub, user_id);
         assert_eq!(claims.sid, Some(session_id));
         assert_eq!(claims.role, "admin");
+        assert_eq!(claims.exp, Some(pair.expires_at));
+    }
+
+    #[test]
+    fn local_jwt_never_accepts_a_missing_or_null_expiry() {
+        let pair = issue_access_with_secret(Uuid::new_v4(), "admin", Uuid::new_v4(), "test-secret").unwrap();
+        let claims = verify_access_with_secret(&pair.access_token, "test-secret").unwrap();
+        let original = serde_json::to_value(claims).unwrap();
+        for missing in [false, true] {
+            let mut wire = original.clone();
+            if missing {
+                wire.as_object_mut().unwrap().remove("exp");
+            } else {
+                wire["exp"] = serde_json::Value::Null;
+            }
+            let token = jsonwebtoken::encode(&Header::default(), &wire, &encoding_secret("test-secret")).unwrap();
+            assert!(verify_access_with_secret(&token, "test-secret").is_err());
+        }
     }
 
     #[test]

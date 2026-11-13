@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
+pub mod central_directory;
 pub mod development_workspace;
 pub mod pull_merge;
 pub mod repository_sync;
@@ -277,6 +278,15 @@ pub async fn open_attempt_id(
     job_id: Uuid,
     trigger: &str,
 ) -> Result<Uuid, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    open_attempt_id_on(&mut connection, job_id, trigger).await
+}
+
+pub async fn open_attempt_id_on(
+    connection: &mut sqlx::PgConnection,
+    job_id: Uuid,
+    trigger: &str,
+) -> Result<Uuid, sqlx::Error> {
     let attempt_id = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM execution_attempts \
          WHERE job_id = $1 AND status IN ('queued','running') \
@@ -284,7 +294,7 @@ pub async fn open_attempt_id(
          LIMIT 1",
     )
     .bind(job_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *connection)
     .await?;
 
     if let Some(attempt_id) = attempt_id {
@@ -302,7 +312,7 @@ pub async fn open_attempt_id(
     .bind(job_id)
     .bind(Uuid::new_v4())
     .bind(trigger)
-    .fetch_one(pool)
+    .fetch_one(&mut *connection)
     .await
 }
 

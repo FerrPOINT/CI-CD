@@ -1,4 +1,7 @@
 import hashlib
+import io
+import subprocess
+import tarfile
 import json
 import shutil
 import tempfile
@@ -22,8 +25,8 @@ class MigrationLineagesTest(unittest.TestCase):
             root = Path(temporary)
             shutil.copytree(self.backend / "migrations", root / "migrations")
             shutil.copytree(self.backend / "migration-lineages", root / "migration-lineages")
-            (root / "migrations/0118_future.sql").write_bytes(b"SELECT 1;\n")
-            self.assertEqual(reviewer_v1(root)["0118_future.sql"], b"SELECT 1;\n")
+            (root / "migrations/0119_future.sql").write_bytes(b"SELECT 1;\n")
+            self.assertEqual(reviewer_v1(root)["0119_future.sql"], b"SELECT 1;\n")
             (root / "migrations/0117_pull_task_and_comments.sql").write_bytes(b"SELECT 2;\n")
             with self.assertRaisesRegex(ValueError, "Reviewer migration checksum changed"):
                 reviewer_v1(root)
@@ -35,6 +38,36 @@ class MigrationLineagesTest(unittest.TestCase):
             self.assertEqual(hashlib.sha384(files[entry["file"]]).hexdigest(), entry["sha384"])
         self.assertEqual(files["0100_shared_space_lifecycle.sql"], (self.backend / "migrations/0096_shared_space_lifecycle.sql").read_bytes())
         self.assertEqual(len(files), len(list((self.backend / "migrations").glob("*.sql"))))
+
+    def test_git_blob_transport_restores_only_manifest_declared_bytes(self):
+        expected = project(self.backend)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = subprocess.check_output([
+                "git", "-C", str(self.backend.parent), "archive", "HEAD",
+                "backend/migrations", "backend/migration-lineages",
+            ])
+            with tarfile.open(fileobj=io.BytesIO(archive)) as source:
+                source.extractall(root, filter="data")
+            exported = root / "backend"
+            # PDLC4's qualified export restores immutable Git SQL blobs after
+            # archive extraction, preserving its already-applied LF history.
+            for sql in exported.rglob("*.sql"):
+                sql.write_bytes(subprocess.check_output([
+                    "git", "-C", str(self.backend.parent), "show",
+                    "HEAD:" + sql.relative_to(root).as_posix(),
+                ]))
+            with self.assertRaisesRegex(ValueError, "checksum changed"):
+                project(exported)
+            self.assertEqual(project(exported, input_format="git-blob"), expected)
+            changed = exported / "migrations/0001_bootstrap_v1.sql"
+            changed.write_bytes(changed.read_bytes() + b"SELECT 99;")
+            with self.assertRaisesRegex(ValueError, "checksum changed"):
+                project(exported, input_format="git-blob")
+
+    def test_unknown_input_format_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "input format"):
+            project(self.backend, input_format="guess")
 
     def test_historical_tampering_is_rejected_and_future_bytes_shared(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -700,8 +700,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 117,
-    "latest_required_version": 117,
+    "latest_applied_version": 118,
+    "latest_required_version": 118,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1513,7 +1513,14 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs \
 {"started": true}
 ```
 
-**Errors:** `404` — job не найден; `409` — job не manual или уже стартовал.
+Снятие manual-признака и постановка в существующую очередь выполняются одной
+транзакцией под блокировкой pipeline. Ошибка публикации откатывает оба изменения;
+успешный legacy-запуск сохраняет исходный ID попытки. Два конкурентных запроса
+не создают повторную постановку. Ответ подтверждает допуск к dispatch, а не
+фактический старт процесса. Принятая отмена выкладки запрещает новый запуск.
+
+**Errors:** `404` — job не найден; `409` — job не manual, уже стартовал,
+родительский pipeline завершён либо отсутствует ожидающая попытка.
 
 ---
 
@@ -2378,6 +2385,48 @@ GET/list/save вычисляют его из полномочий текущег
 не знает нового поля, надо штатно вернуть blocked у изменённых подключений,
 дождаться завершения/остановки их runs и проверить readback. Старый parser
 нельзя запускать поверх сохранённых settings source_fast_forward.
+
+## Deployment request replay и подтверждённая отмена
+
+Создание `POST /api/v1/environments/{environment_id}/deployments` и rollback
+`POST /api/v1/deployments/{deployment_id}/rollback` принимают необязательный UUID
+`request_key`. Он хранится в существующем deployment store и уникален в пределах
+environment. Новый fingerprint связывает ключ с проверенным автором, типом
+операции, target и входными параметрами. Повтор возвращает исходную выкладку;
+иной payload/автор либо legacy key без доказанного fingerprint даёт `409`.
+Запись новой выкладки и audit event атомарны. Старые клиенты без ключа сохраняют
+прежнее создание отдельной записи. Pipeline publication использует прежний
+идемпотентный owner trigger, а не новый orchestrator.
+
+Исходный результат читается точно по ключу через
+`GET /api/v1/environments/{environment_id}/deployment-requests/{request_key}`
+либо по ID через `GET /api/v1/deployments/{deployment_id}`. Оба возвращают прежний
+Deployment DTO и применяют обычные app/role/project guards. Список последних
+50 выкладок не является подтверждением отсутствия старой операции.
+
+`POST /api/v1/deployments/{deployment_id}/cancel` атомарно сохраняет единственный
+`cancel_requested_at` и проверенного автора аудита. Повтор безопасен. Пока
+существующий pipeline/runner reconciler не подтвердил окончание исполнения,
+ответ — `202` с текущим Deployment. Подтверждённое terminal состояние возвращает
+`200`; успешная выкладка, успевшая завершиться, остаётся успешной. Для failed
+без pipeline ответ `200` подтверждает ранее принятое намерение отмены. Если
+выкладка уже была failed без такого намерения, команда возвращает `409`, не
+меняя запись и аудит. При pipeline отдельно проверяется его terminal outcome.
+Потерянный ответ не заменяется выводом из одного failed DTO: повторяется
+идемпотентная команда того же ID. Отмена не запускает rollback. Новое создание/публикация pipeline и retry проверяют
+сохранённый запрет; один terminal status БД не заменяет physical custody proof.
+Откат на writer, игнорирующий cancel intent, запрещён при открытых отменах.
+
+Job status endpoint сохранён, но ручная metadata-команда не подтверждает
+завершение ещё исполняющегося worker. Job, attempt, queue, агрегаты родителей и
+событие изменяются одной transaction после проверки актуального состояния и
+custody. Ошибка outbox откатывает изменение; действующий terminal outcome не
+перезаписывается конкурентной командой.
+
+Job log SSE читает bounded cursor batches до 200 строк непосредственно при
+потреблении response. Disconnect прекращает SQL polling без detached worker;
+ошибка БД завершает stream ошибкой. После terminal attempt дочитывается хвост,
+затем отправляется `done`. Безлимитная очередь и повторный COUNT не используются.
 
 
 ### Область и расписание внешнего синка

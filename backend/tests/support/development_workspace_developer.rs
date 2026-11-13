@@ -31,6 +31,7 @@ struct Owner {
     project_owner: Uuid,
     other_human: Uuid,
     revoked: bool,
+    persistent: bool,
 }
 
 fn current_application_access(subject: Uuid, role: &str, headers: &HeaderMap) -> Value {
@@ -134,6 +135,7 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
         project_owner: Uuid::new_v4(),
         other_human: Uuid::new_v4(),
         revoked: false,
+        persistent: true,
         context: json!({
         "schema_version":1,"namespace":namespace,"tracker_instance_id":workspace.tracker_instance_id,
         "project_id":workspace.tracker_project_id,"task_id":task,"task_key":"DEV-1","state":"active",
@@ -157,7 +159,9 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
             if owner.revoked {return (StatusCode::UNAUTHORIZED,Json(json!({})));}
             let mut profile=json!({"sub":subject,"email":email,
                 "role":role,"subject_role":role,"scopes":if reader{vec!["ci-cd:read"]}else{vec!["ci-cd:read","ci-cd:write"]},
-                "observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(300)});
+                "observed_at":chrono::Utc::now(),"expires_at":if role != "service_account" || reader || !owner.persistent {
+                    json!(chrono::Utc::now()+chrono::Duration::seconds(300))
+                } else {Value::Null}});
             if role!="service_account" {
                 profile["application_access"]=current_application_access(subject,role,&headers);
             }
@@ -213,6 +217,8 @@ async fn configured_developer_is_fenced_by_assignment_and_keeps_humans_separate(
                 },
                 "deployment_running"=>owner.context["execution"]["status"]=json!("InProgress"),
                 "revoked"=>owner.revoked=true,
+                "dated"=>owner.persistent=false,
+                "persistent"=>owner.persistent=true,
                 _=>panic!("unknown fixture mode"),
             }
             StatusCode::NO_CONTENT
@@ -300,7 +306,7 @@ async fn child(data: serde_json::Value) {
         .await
         .unwrap();
     let catalog = tempfile::tempdir().unwrap();
-    checks::publish(&pool, catalog.path(), workspace).await;
+    checks::publish(&pool, catalog.path(), workspace, true).await;
     let mut config = cicd::config::RuntimeConfig::from_env_source(|_| None, false)
         .unwrap()
         .with_auth_secret(Some("workspace-developer-fixture-only".into()));
@@ -400,7 +406,35 @@ async fn child(data: serde_json::Value) {
         .bind(actor).fetch_one(&pool).await.unwrap();
     assert_eq!(machine_role,"service_account");
     let (status, card) = http(&app, "GET", &path, Some(TOKEN), json!(null)).await;
-    assert_eq!(status, StatusCode::OK, "{card}");
+    assert_eq!(status, StatusCode::OK, "persistent root ingress: {card}");
+    let client = reqwest::Client::new();
+    let control = format!("{}/fixture", data["origin"].as_str().unwrap());
+    // Same real bridge, router and DB principal: a dated root still works;
+    // switching back to explicit null must preserve current project rights.
+    for mode in ["dated", "persistent"] {
+        client
+            .post(&control)
+            .json(mode)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let (status, principal) = http(
+            &app,
+            "GET",
+            "/api/v1/auth/principal",
+            Some(TOKEN),
+            json!(null),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{mode}: {principal}");
+        assert_eq!(principal["sub"], actor.to_string());
+        assert_eq!(principal["principal_type"], "service_account");
+        let (status, current) = http(&app, "GET", &path, Some(TOKEN), json!(null)).await;
+        assert_eq!(status, StatusCode::OK, "{mode}: {current}");
+        assert_eq!(current, card);
+    }
     let mut observation = reqwest::Url::parse(&format!(
         "http://fixture/api/v1/namespace-repositories/{}/source",
         id("repository_id")
@@ -493,6 +527,28 @@ async fn child(data: serde_json::Value) {
             StatusCode::FORBIDDEN
         );
     }
+    checks::publish(&pool, catalog.path(), workspace, false).await;
+    let unsupported = Uuid::new_v4();
+    let (status, denied) = http(
+        &app, "POST", &format!("{path}/operations"), Some(TOKEN),
+        json!({"operation_id":unsupported,"expected_version":1,"command":{"action":"begin_session","task":task.to_string()}}),
+    ).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{denied}");
+    assert!(
+        denied
+            .to_string()
+            .contains("workspace_required_developer_checks_missing"),
+        "{denied}"
+    );
+    assert!(store::session(&pool, workspace).await.unwrap().is_none());
+    let recorded: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM development_workspace_operations WHERE id=$1")
+            .bind(unsupported)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded, 0);
+    checks::publish(&pool, catalog.path(), workspace, true).await;
     let begin = Uuid::new_v4();
     assert_eq!(http(&app,"POST",&format!("/api/v1/development-workspaces/{}/operations",id("other_workspace")),Some(TOKEN),json!({"operation_id":Uuid::new_v4(),"expected_version":1,"command":{"action":"begin_session","task":task.to_string()}})).await.0,StatusCode::FORBIDDEN);
     let request = json!({"operation_id":begin,"expected_version":1,"command":{"action":"begin_session","task":task.to_string()}});
@@ -507,6 +563,18 @@ async fn child(data: serde_json::Value) {
     assert_eq!(status, StatusCode::OK, "{result}");
     assert!(!result.to_string().contains(TOKEN));
     assert!(!result.to_string().contains("sealed"));
+    checks::publish(&pool, catalog.path(), workspace, false).await;
+    let (status, replay) = http(
+        &app,
+        "POST",
+        &format!("{path}/operations"),
+        Some(TOKEN),
+        request.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay, result);
+    checks::publish(&pool, catalog.path(), workspace, true).await;
     let plan: serde_json::Value = sqlx::query_scalar(
         "SELECT execution_plan FROM development_workspace_operations WHERE id=$1",
     )
@@ -595,7 +663,10 @@ async fn child(data: serde_json::Value) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{pull}");
-    assert_eq!(pull["primary_tracker_instance_id"], data["tracker_instance_id"]);
+    assert_eq!(
+        pull["primary_tracker_instance_id"],
+        data["tracker_instance_id"]
+    );
     assert_eq!(pull["primary_task_id"], task.to_string());
     assert_eq!(pull["repository_id"], data["repository_id"]);
     let (status, readback) = http(
@@ -624,8 +695,6 @@ async fn child(data: serde_json::Value) {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let client = reqwest::Client::new();
-    let control = format!("{}/fixture", data["origin"].as_str().unwrap());
     client
         .post(&control)
         .json("stale")
@@ -748,6 +817,19 @@ async fn child(data: serde_json::Value) {
         .unwrap()
         .error_for_status()
         .unwrap();
+    assert_eq!(
+        http(
+            &app,
+            "GET",
+            "/api/v1/auth/principal",
+            Some(TOKEN),
+            json!(null),
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED,
+        "explicit revocation rejects the same persistent root before handler dispatch",
+    );
     assert!(
         http(&app, "GET", &path, Some(TOKEN), json!(null))
             .await

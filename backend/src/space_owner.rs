@@ -8,7 +8,7 @@ use axum::{
 };
 use pdlc_shared::{
     resource_context::{ResourceKind, ResourceRef},
-    space_access::{AdmissionValidity, CentralIdentity, SpaceRef},
+    space_access::{CentralIdentity, SpaceRef},
     space_lifecycle::{
         DesiredSpaceState, SpaceOwnerAuthority, SpaceOwnerCommandV2, SpaceOwnerReadbackV2,
     },
@@ -71,21 +71,18 @@ async fn owner_auth(mut req: Request, next: Next) -> Result<Response, ApiError> 
     {
         return Err(ApiError::forbidden());
     }
-    let validity = AdmissionValidity::confirmed(
-        verified.lifetime.source_observed_at,
-        verified.lifetime.local_valid_until(),
-        i64::MAX,
-    )
-    .ok_or_else(ApiError::unauthorized)?;
-    let proof = SpaceOwnerAuthority::confirmed(
+    let validity = verified.confirmation_validity().map_err(|_| ApiError::unauthorized())?;
+    let mut proof = SpaceOwnerAuthority::confirmed(
         CentralIdentity {
             issuer: verified.issuer,
             subject: verified.context.user_id,
         },
         validity,
     )
-    .ok_or_else(ApiError::unauthorized)?
-    .restrict_deadline(verified.lifetime.monotonic_deadline());
+    .ok_or_else(ApiError::unauthorized)?;
+    if let Some(deadline) = verified.lifetime.monotonic_deadline() {
+        proof = proof.restrict_deadline(deadline);
+    }
     current(&proof)?;
     req.extensions_mut().insert(proof);
     Ok(next.run(req).await)

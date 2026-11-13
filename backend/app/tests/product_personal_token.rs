@@ -123,7 +123,7 @@ async fn original_product_token_keeps_scope_project_and_current_owner_limits() {
         .unwrap()
         .confirm(proof(owner, &["ci-cd"]))
         .unwrap();
-    assert!(current.claims().exp <= (Utc::now() + chrono::Duration::seconds(30)).timestamp());
+    assert!(current.claims().exp.unwrap() <= (Utc::now() + chrono::Duration::seconds(30)).timestamp());
     sqlx::query("UPDATE users SET enabled=false WHERE id=$1")
         .bind(user)
         .execute(&pool)

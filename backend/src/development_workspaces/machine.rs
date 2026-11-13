@@ -14,7 +14,7 @@ use pdlc_auth_core::service_bridge::VerifiedCentralToken;
 use pdlc_shared::resource_context::NamespaceRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgExecutor, PgPool};
 use std::future::Future;
 use uuid::Uuid;
 
@@ -201,13 +201,13 @@ fn require_token(verified: &VerifiedCentralToken, write: bool) -> Result<Uuid, A
 }
 
 async fn project_access(
-    pool: &PgPool,
+    database: impl PgExecutor<'_>,
     actor: Uuid,
     project: Uuid,
     write: bool,
 ) -> Result<(), ApiError> {
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM project_memberships m JOIN users u ON u.id=m.user_id WHERE m.project_id=$1 AND m.user_id=$2 AND u.enabled AND u.role='service_account' AND (NOT $3 OR m.role IN ('developer','maintainer')))")
-        .bind(project).bind(actor).bind(write).fetch_one(pool).await.map_err(ApiError::internal)?;
+        .bind(project).bind(actor).bind(write).fetch_one(database).await.map_err(ApiError::internal)?;
     if allowed {
         Ok(())
     } else {
@@ -296,16 +296,19 @@ pub(crate) async fn authenticate(
     })
 }
 
-async fn namespace(pool: &PgPool, workspace: &Workspace) -> Result<NamespaceRef, ApiError> {
+async fn namespace(
+    connection: &mut PgConnection,
+    workspace: &Workspace,
+) -> Result<NamespaceRef, ApiError> {
     let row:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT registry_instance_id,namespace_id FROM forge_workspace_projects WHERE tracker_instance_id=$1 AND tracker_project_id=$2 AND state='active'")
-        .bind(workspace.tracker_instance_id).bind(workspace.tracker_project_id).fetch_optional(pool).await.map_err(ApiError::internal)?;
+        .bind(workspace.tracker_instance_id).bind(workspace.tracker_project_id).fetch_optional(&mut *connection).await.map_err(ApiError::internal)?;
     let (registry_instance_id, namespace_id) = row.ok_or_else(ApiError::forbidden)?;
     let namespace = NamespaceRef {
         registry_instance_id,
         namespace_id,
     };
     let row:Option<(Uuid,Value)>=sqlx::query_as("SELECT r.group_id,b.command FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=$1 AND r.kind='hosted' AND r.ready AND b.state='active'")
-        .bind(workspace.repository_id).fetch_optional(pool).await.map_err(ApiError::internal)?;
+        .bind(workspace.repository_id).fetch_optional(&mut *connection).await.map_err(ApiError::internal)?;
     let (group, command) = row.ok_or_else(ApiError::forbidden)?;
     let command: pdlc_shared::resource_context::OwnerCommand =
         serde_json::from_value(command).map_err(|_| ApiError::forbidden())?;
@@ -402,7 +405,11 @@ pub(super) async fn seal(
     let subject = require_token(verified, true)?;
     let pool = super::pool(state)?;
     project_access(pool, identity.claims.sub, workspace.project_id, true).await?;
-    let namespace = namespace(pool, workspace).await?;
+    let namespace = namespace(
+        &mut *pool.acquire().await.map_err(ApiError::internal)?,
+        workspace,
+    )
+    .await?;
     let task = if let WorkspaceAction::BeginSession { task } = action {
         tracker::read_task(
             &namespace,
@@ -466,7 +473,7 @@ pub(super) struct Confirmed {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn verify(
-    pool: &PgPool,
+    connection: &mut PgConnection,
     workspace: &Workspace,
     operation: Uuid,
     actor: Uuid,
@@ -501,7 +508,7 @@ pub(super) async fn verify(
         return Err(ApiError::forbidden());
     }
     let proof = confirm_identity(
-        pool,
+        connection,
         workspace,
         actor,
         verified,
@@ -517,7 +524,7 @@ pub(super) async fn verify(
 }
 
 pub(super) async fn confirm_identity(
-    pool: &PgPool,
+    connection: &mut PgConnection,
     workspace: &Workspace,
     actor: Uuid,
     verified: VerifiedCentralToken,
@@ -529,14 +536,14 @@ pub(super) async fn confirm_identity(
     let profile: Option<(String, Option<String>, bool)> =
         sqlx::query_as("SELECT role,central_sub,enabled FROM users WHERE id=$1")
             .bind(actor)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *connection)
             .await
             .map_err(ApiError::internal)?;
     if profile != Some(("service_account".into(), Some(subject.to_string()), true)) {
         return Err(ApiError::forbidden());
     }
-    project_access(pool, actor, workspace.project_id, write).await?;
-    let namespace = namespace(pool, workspace).await?;
+    project_access(&mut *connection, actor, workspace.project_id, write).await?;
+    let namespace = namespace(&mut *connection, workspace).await?;
     let (assignment, preparation) =
         tracker::read_assignment(&namespace, workspace, saved.task_id, subject, access).await?;
     assignment.require_same(saved)?;
@@ -550,16 +557,16 @@ pub(super) async fn confirm_identity(
 }
 
 pub(crate) async fn pipeline_clock(
-    pool: &PgPool,
+    connection: &mut PgConnection,
     pipeline: Uuid,
     attempt: Uuid,
 ) -> Result<Option<GitDeadline>, ApiError> {
     let row:Option<(Uuid,Uuid,Uuid,Uuid,Value,Value)>=sqlx::query_as("SELECT o.id,o.workspace_id,o.actor_id,o.owner_subject,o.request,o.execution_plan FROM development_workspace_operations o JOIN pipelines p ON p.id=o.pipeline_id JOIN stages s ON s.pipeline_id=p.id JOIN jobs j ON j.stage_id=s.id JOIN execution_attempts a ON a.job_id=j.id WHERE p.id=$1 AND a.id=$2 AND o.execution_plan ? 'developerAuthority'")
-        .bind(pipeline).bind(attempt).fetch_optional(pool).await.map_err(ApiError::internal)?;
+        .bind(pipeline).bind(attempt).fetch_optional(&mut *connection).await.map_err(ApiError::internal)?;
     let Some((operation, workspace, actor, subject, request, plan)) = row else {
         return Ok(None);
     };
-    let workspace = store::workspace(pool, workspace)
+    let workspace = store::workspace(&mut *connection, workspace)
         .await
         .map_err(super::error)?;
     let action: WorkspaceAction =
@@ -568,7 +575,7 @@ pub(crate) async fn pipeline_clock(
         ApiError::service_unavailable("workspace_machine_credential_storage_unavailable")
     })?;
     let proof = verify(
-        pool,
+        &mut *connection,
         &workspace,
         operation,
         actor,

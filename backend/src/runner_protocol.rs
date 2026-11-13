@@ -621,7 +621,7 @@ pub(crate) async fn ack_runner_lease(
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
     let owner_clock =
         lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
-    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?;
+    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?.flatten();
     let row = sqlx::query_as::<_, LeaseControlRow>(
         "UPDATE job_leases \
          SET acknowledged_at = COALESCE(acknowledged_at, now()), last_renewed_at = now(), lease_expires_at = LEAST(lease_expires_at, COALESCE($6::timestamptz,lease_expires_at)) \
@@ -679,7 +679,7 @@ pub(crate) async fn renew_runner_lease(
     let token_hash = crate::auth::hash_token(input.lease_token.trim());
     let owner_clock =
         lease_owner_clock(db, lease_id, runner.id, &token_hash, input.fencing_token).await?;
-    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?;
+    let owner_until = owner_clock.map(|clock| clock.valid_until()).transpose()?.flatten();
     let row = sqlx::query_as::<_, LeaseControlRow>(
         "UPDATE job_leases \
          SET lease_expires_at = LEAST(now() + ($5::bigint * interval '1 second'),COALESCE($7::timestamptz,now() + ($5::bigint * interval '1 second'))), \
@@ -856,6 +856,7 @@ pub(crate) async fn resolve_runner_lease_secrets(
         expires_at: owner_clock
             .map(|clock| clock.valid_until())
             .transpose()?
+            .flatten()
             .map_or(
                 Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS),
                 |until| until.min(Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS)),
@@ -1423,7 +1424,7 @@ async fn claim_next_work(
             Err(error) => return Err(ApiError::internal(error)),
         };
         let owner_clock =
-            crate::pipeline_authority::confirm(db, row.pipeline_id, row.attempt_id).await?;
+            crate::pipeline_authority::confirm(&mut tx, row.pipeline_id, row.attempt_id).await?;
         if let Some(clock) = owner_clock {
             clock.bind_commit_clock(&mut tx).await?;
         }
@@ -2909,7 +2910,12 @@ async fn lease_owner_clock(
         }
         return Err(ApiError::gone("lease is no longer active"));
     };
-    crate::pipeline_authority::confirm(db, pipeline, attempt).await
+    crate::pipeline_authority::confirm(
+        &mut *db.acquire().await.map_err(ApiError::internal)?,
+        pipeline,
+        attempt,
+    )
+    .await
 }
 
 #[cfg(test)]
