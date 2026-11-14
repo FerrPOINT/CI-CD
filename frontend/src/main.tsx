@@ -1,3 +1,4 @@
+import { ssoConfig } from "./shared/auth/auth-provider";
 import { queryClient } from "./shared/query-client";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -13,7 +14,7 @@ import {
 } from "@pdlc/ui/lib";
 import { router } from "./app/router";
 import "./index.css";
-import { relaySsoCallback, ssoNamespace } from "@pdlc/ui/sso";
+import { relaySsoCallback } from "@pdlc/ui/sso";
 import {
   capturePlatformReturn,
   getPlatformProduct,
@@ -24,7 +25,7 @@ import {
 setPlatformQueryClient(queryClient);
 capturePlatformReturn(import.meta.env.VITE_PLATFORM_ORIGIN);
 
-if (!relaySsoCallback(ssoNamespace(import.meta.env.VITE_AUTH_NAMESPACE))) {
+if (!relaySsoCallback(ssoConfig.namespace, ssoConfig.callbackPath)) {
   const root = createRoot(document.getElementById("root")!);
   getPlatformProduct()?.onRetire(() => {
     root.unmount();
