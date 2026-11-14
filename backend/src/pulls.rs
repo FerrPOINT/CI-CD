@@ -1576,8 +1576,7 @@ pub async fn list_tree(
     if let Some(page) = params.page() {
         return Ok(Json(read_tree_page(&path, &spec, subpath, page).await?));
     }
-    let output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
+    let output = committed_git(&path)
         .args(["ls-tree", "-l", "-z", "--", &spec])
         .output()
         .await
@@ -1644,6 +1643,40 @@ async fn read_tree_page(
     Ok(entries)
 }
 
+// A recorded commit identifies its actual objects, independent of mutable refs/replace.
+fn committed_git(path: &std::path::Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("git");
+    command
+        .arg(format!("--git-dir={}", path.display()))
+        .env("GIT_NO_REPLACE_OBJECTS", "1");
+    command
+}
+
+pub(crate) async fn read_committed_tree(
+    repository: &std::path::Path,
+    commit: &str,
+    subpath: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<TreeEntry>, ApiError> {
+    let spec = if subpath.is_empty() {
+        commit.to_owned()
+    } else {
+        format!("{commit}:{subpath}")
+    };
+    read_tree_page(
+        repository,
+        &spec,
+        subpath,
+        TreePage {
+            limit,
+            offset,
+            search: None,
+        },
+    )
+    .await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn collect_tree_entries(
     path: &std::path::Path,
@@ -1655,10 +1688,8 @@ async fn collect_tree_entries(
     seen: &mut usize,
     entries: &mut Vec<TreeEntry>,
 ) -> Result<bool, ApiError> {
-    let mut command = tokio::process::Command::new("git");
-    command
-        .arg(format!("--git-dir={}", path.display()))
-        .args(["ls-tree", "-l", "-z"]);
+    let mut command = committed_git(path);
+    command.args(["ls-tree", "-l", "-z"]);
     if directories_only {
         command.arg("-d");
     }
@@ -1798,8 +1829,17 @@ pub async fn get_blob(
         .filter(|r| !r.is_empty())
         .unwrap_or("HEAD");
     let git_ref = resolve_view_ref(&path, git_ref).await;
-    let spec = format!("{git_ref}:{}", params.path);
-    let (bytes, size, truncated) = read_blob(&path, &spec).await?;
+    Ok(Json(read_blob_content(&path, &git_ref, params.path).await?))
+}
+
+pub(crate) async fn read_blob_content(
+    repository: &std::path::Path,
+    commit: &str,
+    file: String,
+) -> Result<BlobContent, ApiError> {
+    let path = repository;
+    let spec = format!("{commit}:{file}");
+    let (bytes, size, truncated) = read_blob(path, &spec).await?;
     let binary = bytes.iter().take(8000).any(|b| *b == 0);
     let content = if binary {
         String::new()
@@ -1807,8 +1847,7 @@ pub async fn get_blob(
         String::from_utf8_lossy(&bytes).into_owned()
     };
     // Resolve blob sha for the response.
-    let sha_output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
+    let sha_output = committed_git(path)
         .args(["rev-parse", &spec])
         .output()
         .await
@@ -1816,21 +1855,20 @@ pub async fn get_blob(
     let sha = String::from_utf8_lossy(&sha_output.stdout)
         .trim()
         .to_string();
-    Ok(Json(BlobContent {
-        path: params.path,
+    Ok(BlobContent {
+        path: file,
         sha,
         size,
         content,
         binary,
         truncated,
-    }))
+    })
 }
 
 const MAX_BLOB_LEN: usize = 512 * 1024;
 
 async fn read_blob(path: &std::path::Path, spec: &str) -> Result<(Vec<u8>, i64, bool), ApiError> {
-    let size_output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
+    let size_output = committed_git(path)
         .args(["cat-file", "-s", spec])
         .output()
         .await
@@ -1846,8 +1884,7 @@ async fn read_blob(path: &std::path::Path, spec: &str) -> Result<(Vec<u8>, i64, 
         return Err(ApiError::bad_request("git returned an invalid blob size"));
     }
 
-    let mut child = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
+    let mut child = committed_git(path)
         .args(["cat-file", "blob", spec])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
