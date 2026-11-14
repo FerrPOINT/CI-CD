@@ -1,5 +1,16 @@
 # Интеграция CI-CD с Base
 
+## SDK: действующий контракт подтверждённых полномочий
+
+SDK закреплён на `1b7aa3d52b4133d1c533744a02f0478158a1f44e`, уже принятом
+Fleet. Код Forge использует `VerifiedCentralToken.confirmation_validity()`,
+необязательный credential deadline и `with_human_request` с проверенным токеном.
+Прежний pin `5f5bcb5e41d7289ded05bca72b212d58e49c445d` этих контрактов
+не содержит. Исправлен источник зависимости; адаптеры авторизации и старый
+протокол не добавлены. Cargo manifests используемых Rust SDK-пакетов между
+этими SHA совпадают. Независимые UI/skills pins и producer cohort Base CLI
+сохранены. Компиляция и PostgreSQL gate учитываются отдельно.
+
 ## UI0.3.33 — общая адаптивная шапка
 
 Принят точный Base UI producer `d2b8b2b74d878f12cfed97629885d088ca7767e7`, reference
