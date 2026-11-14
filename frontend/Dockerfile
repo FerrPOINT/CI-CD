@@ -30,6 +30,7 @@ ENV VITE_PLATFORM_ORIGIN=${VITE_PLATFORM_ORIGIN}
 RUN pnpm build
 
 FROM nginx:1.31.4-alpine
+ENV NGINX_ENTRYPOINT_WORKER_PROCESSES_AUTOTUNE=1
 ARG VITE_NAMESPACE_ENABLED="false"
 LABEL io.pdlc.namespace-ui.enabled=${VITE_NAMESPACE_ENABLED}
 COPY CI-CD/frontend/nginx.conf /etc/nginx/conf.d/default.conf
