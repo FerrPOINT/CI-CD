@@ -32,6 +32,7 @@ export const ssoConfig = {
   issuer: import.meta.env.VITE_AUTH_ISSUER ?? 'http://localhost:7701',
   clientId: import.meta.env.VITE_AUTH_CLIENT_ID ?? 'ci-cd',
   namespace: ssoNamespace(import.meta.env.VITE_AUTH_NAMESPACE),
+  callbackPath: `${import.meta.env.BASE_URL}sso/callback`,
 }
 
 interface AuthContextValue {
@@ -77,7 +78,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const epoch = generation.current
     const cached = retirePrivateState()
     if (cached) { setSession(cached); setStatus('authenticated'); return }
-    if (['/login', '/sso/callback'].includes(window.location.pathname)) { setStatus('anonymous'); return }
+    const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+    if ([`${basePath}/login`, `${basePath}/sso/callback`].includes(window.location.pathname)) { setStatus('anonymous'); return }
     setStatus('checking')
     void restoreSso(ssoConfig).then(sso => {
       if (!active || epoch !== generation.current) return

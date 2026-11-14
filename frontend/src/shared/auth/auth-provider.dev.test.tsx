@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const session = vi.hoisted(() => ({
@@ -31,7 +31,8 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-describe('deployment-owned SSO client', () => {
+describe.each(['/', '/forge/'])('deployment-owned SSO client below %s', (basePath) => {
+  beforeEach(() => vi.stubEnv('BASE_URL', basePath))
   it.each([
     { configured: undefined, expected: 'ci-cd' },
     { configured: 'ci-cd-dev', expected: 'ci-cd-dev' },
@@ -50,6 +51,7 @@ describe('deployment-owned SSO client', () => {
         issuer: 'http://localhost:8701',
         clientId: expected,
         namespace: namespace ?? 'sdlc',
+        callbackPath: `${basePath}sso/callback`,
       }),
     )
   })
@@ -73,8 +75,40 @@ describe('deployment-owned SSO client', () => {
         issuer: 'http://localhost:8701',
         clientId: 'ci-cd-dev',
         namespace: 'sdlc',
+        callbackPath: `${basePath}sso/callback`,
       }),
     )
     expect(sso.restoreSso).not.toHaveBeenCalled()
   })
+  it.each([
+    ['/', 'login'], ['/', 'sso/callback'],
+    ['/forge/', 'login'], ['/forge/', 'sso/callback'],
+  ])('keeps public entry %s%s out of automatic restoration', async (base, path) => {
+    const previous = window.location.pathname + window.location.search
+    vi.stubEnv('BASE_URL', base)
+    window.history.replaceState(null, '', base + path)
+    try {
+      const { AuthProvider } = await import('./auth-provider')
+      render(<AuthProvider><div>Fixture</div></AuthProvider>)
+      expect(sso.restoreSso).not.toHaveBeenCalled()
+    } finally {
+      cleanup()
+      window.history.replaceState(null, '', previous)
+    }
+  })
+
+  it.each(['/', '/forge/'])('still restores a protected entry below %s', async (base) => {
+    const previous = window.location.pathname + window.location.search
+    vi.stubEnv('BASE_URL', base)
+    window.history.replaceState(null, '', base + 'pipelines')
+    try {
+      const { AuthProvider } = await import('./auth-provider')
+      render(<AuthProvider><div>Fixture</div></AuthProvider>)
+      await waitFor(() => expect(sso.restoreSso).toHaveBeenCalledTimes(1))
+    } finally {
+      cleanup()
+      window.history.replaceState(null, '', previous)
+    }
+  })
+
 })
